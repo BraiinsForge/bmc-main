@@ -409,7 +409,8 @@ def _group_a(ctx: _Ctx) -> None:
     catalog.clear_nix_store(ctx.quiesced_pin, assume_yes=ctx.yes)
     for sid in _GROUP_A_ORDER:
         _DRIVERS[sid](ctx)
-    require(ctx.quiesced_pin is None, "group A did not complete its recovery flash")
+    # The drivers clear the pin; pyright keeps the assignment's narrowing across their calls.
+    require(ctx.quiesced_pin is None, "group A did not complete its recovery flash")  # pyright: ignore[reportUnnecessaryComparison]
 
 
 def _require_b_preconditions(ctx: _Ctx) -> None:

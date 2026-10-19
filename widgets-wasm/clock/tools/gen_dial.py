@@ -134,17 +134,10 @@ def generate(
     )
 
 
-def verify(
-    width: float,
-    height: float,
-    inset_lr: float,
-    inset_tb: float,
-    tick_width: float = 1.0,
-) -> None:
+def verify(width: float, height: float, inset_lr: float, inset_tb: float) -> None:
     """Assert 60 equally-spaced ticks split 12 major / 48 minor."""
     cx, cy = width / 2, height / 2
     inner: Rect = (inset_lr, width - inset_lr, inset_tb, height - inset_tb)
-    panel: Rect = (0.0, width, 0.0, height)
     angles_major: list[float] = []
     angles_minor: list[float] = []
     for k in range(TICK_COUNT):
@@ -187,7 +180,7 @@ def main(
         verify_ticks: check 60 equally-spaced ticks (12 major / 48 minor)
     """
     if verify_ticks:
-        verify(width, height, inset_lr, inset_tb, tick_width)
+        verify(width, height, inset_lr, inset_tb)
     _ = sys.stdout.write(generate(width, height, inset_lr, inset_tb, tick_width))
 
 

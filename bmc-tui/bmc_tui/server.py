@@ -267,7 +267,7 @@ class _Handler(BaseHTTPRequestHandler):
         if view is not None:
             return view, None
         for prefix, root in self._mounts:
-            if isinstance(root, Path) and root.is_dir() and request.path.startswith(prefix):
+            if root.is_dir() and request.path.startswith(prefix):
                 target = _mount_target(root, request.path, prefix)
                 if target is not None:
                     return self._views[prefix], target

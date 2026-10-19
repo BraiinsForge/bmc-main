@@ -140,7 +140,7 @@ def test_entrypoint_parses_args_and_runs() -> None:
 
 def test_entrypoint_aborts_with_exit_1() -> None:
     @entrypoint
-    def main(args: _Args) -> None:
+    def main(_args: _Args) -> None:
         raise Abort("kaboom")
 
     with pytest.raises(SystemExit) as exc:
@@ -150,7 +150,7 @@ def test_entrypoint_aborts_with_exit_1() -> None:
 
 def test_entrypoint_bad_args_exits_nonzero() -> None:
     @entrypoint
-    def main(args: _Args) -> None: ...
+    def main(_args: _Args) -> None: ...
 
     with pytest.raises(SystemExit) as exc:
         main([])  # missing required --device
@@ -161,7 +161,7 @@ def test_entrypoint_renders_captured_output_on_command_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     @entrypoint
-    def main(args: _Args) -> None:
+    def main(_args: _Args) -> None:
         raise subprocess.CalledProcessError(
             1,
             ["ssh", "root@device", "bmc-nix-cli add-packages"],
@@ -184,7 +184,7 @@ def test_entrypoint_renders_bytes_stderr_on_command_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     @entrypoint
-    def main(args: _Args) -> None:
+    def main(_args: _Args) -> None:
         raise subprocess.CalledProcessError(
             1, ["ssh", "root@device", "cat > /tmp/fw.tar"], stderr=b"dd: no space left\n"
         )
@@ -199,7 +199,7 @@ def test_entrypoint_renders_signal_death_on_command_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     @entrypoint
-    def main(args: _Args) -> None:
+    def main(_args: _Args) -> None:
         # Negative returncode is subprocess's encoding for "killed by signal".
         raise subprocess.CalledProcessError(-15, ["ssh", "root@device", "sleep 100"])
 

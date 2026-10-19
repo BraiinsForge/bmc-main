@@ -62,10 +62,10 @@ class _Ssh:
         stdout = json.dumps({"ubus_rpc_session": _SESSION}) if "session create" in command else ""
         return subprocess.CompletedProcess(argv, 0, stdout, "")
 
-    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+    def stream(self, _argv: list[str], _chunks: Iterable[bytes]) -> None:
         pytest.fail("the stage never streams to the device")
 
-    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+    def stream_output(self, _argv: list[str], _on_line: Callable[[str], None]) -> int:
         pytest.fail("the stage never streams from the device")
 
     def ran(self, fragment: str) -> bool:

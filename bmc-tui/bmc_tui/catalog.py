@@ -1454,9 +1454,6 @@ def pin_device_address(
     return console.lit(run.pinned_host)
 
 
-_ORCHESTRATOR = "bmc-nix-service-orchestrator"
-
-
 @stage("Clear nix store")
 def clear_nix_store(
     dev: Device,
@@ -3128,7 +3125,7 @@ def _installed_package_names(list_packages_json: str) -> list[str]:
 
 
 @stage("Remove widget for reinstall")
-def remove_package(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
+def remove_package(dev: Device, widget: str) -> str:
     # Idempotent so the e2e re-runs after a mid-flight abort: a run that removed
     # the widget but died before reinstalling leaves it absent, and remove-packages
     # errors on an absent package.

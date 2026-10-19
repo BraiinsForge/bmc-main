@@ -56,13 +56,13 @@ class _Exec:
         self._lines = lines
         self._code = code
 
-    def run(self, argv: list[str]) -> CompletedProcess[str]:
+    def run(self, _argv: list[str]) -> CompletedProcess[str]:
         raise NotImplementedError
 
-    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+    def stream(self, _argv: list[str], _chunks: Iterable[bytes]) -> None:
         raise NotImplementedError
 
-    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+    def stream_output(self, _argv: list[str], on_line: Callable[[str], None]) -> int:
         for line in self._lines:
             on_line(line)
         return self._code

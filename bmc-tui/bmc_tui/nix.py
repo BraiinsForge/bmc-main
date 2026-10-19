@@ -87,7 +87,7 @@ class Nix(Protocol):
         """Leaf names of every `category == "widget"` deck package."""
         ...
 
-    def list_packages(self, prefix: str = _DECK_PACKAGES) -> list[str]:
+    def list_packages(self, prefix: str = _DECK_PACKAGES, /) -> list[str]:
         """Leaf names of every deck package in `prefix`'s set.
 
         Each profile holds its own set, so a suggestion drawn from the release
@@ -95,7 +95,7 @@ class Nix(Protocol):
         """
         ...
 
-    def resolve(self, attr: Attr) -> Pkg:
+    def resolve(self, attr: Attr, /) -> Pkg:
         """Detect index-vs-raw package and read its name, version, installable."""
         ...
 
@@ -103,17 +103,17 @@ class Nix(Protocol):
         """Whether the flake is being built from an uncommitted worktree."""
         ...
 
-    def build(self, pkgs: list[Pkg]) -> list[Built]:
+    def build(self, pkgs: list[Pkg], /) -> list[Built]:
         """Realise every package's closure in one nix invocation; native nix
         progress goes to stderr. Returns the builts in the input order."""
         ...
 
-    def build_out(self, attr: Attr) -> StorePath:
+    def build_out(self, attr: Attr, /) -> StorePath:
         """Realise a single derivation and return its lone out-path — for
         artifacts (e.g. the init tarball) that carry no package metadata."""
         ...
 
-    def out_path(self, attr: Attr) -> StorePath:
+    def out_path(self, attr: Attr, /) -> StorePath:
         """The store path an index package *would* have, without building it.
 
         Input-addressed, so it answers whether a device is running this
@@ -121,23 +121,23 @@ class Nix(Protocol):
         """
         ...
 
-    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
+    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str], /) -> list[StorePath]:
         """Realise attrs of a parameterized nix file (`--impure -f`) in ONE
         invocation — one consistent evaluation of the mutable worktree —
         returning their out-paths in attr order. Flake outputs cannot take
         parameters."""
         ...
 
-    def copy(self, store_paths: list[StorePath], dest: str) -> None:
+    def copy(self, store_paths: list[StorePath], dest: str, /) -> None:
         """Copy closures to `dest`. Under --dry-run, log and skip."""
         ...
 
-    def generate_cache_key(self, name: str, secret: Path) -> str:
+    def generate_cache_key(self, name: str, secret: Path, /) -> str:
         """Write a fresh NAR-signing secret to `secret` and return its
         public key."""
         ...
 
-    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
+    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path, /) -> None:
         """Copy closures into a local file:// binary cache, signing every
         path with `secret`."""
         ...

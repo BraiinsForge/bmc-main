@@ -569,9 +569,7 @@ def _ssdp_listener(local_ip: str, port: int, stop_event: threading.Event) -> Non
         sock.close()
 
 
-def _ssdp_announce(
-    local_ip: str, port: int, name: str, stop_event: threading.Event
-) -> None:
+def _ssdp_announce(local_ip: str, port: int, stop_event: threading.Event) -> None:
     """Broadcast SSDP alive notifications so UPnP control points can find us."""
     SSDP_ADDR = '239.255.255.250'
     SSDP_PORT = 1900
@@ -622,7 +620,7 @@ def spawn_builtin_renderer(
 
     stop_event = threading.Event()
     ssdp_thread = threading.Thread(
-        target=_ssdp_announce, args=(local_ip, port, name, stop_event), daemon=True
+        target=_ssdp_announce, args=(local_ip, port, stop_event), daemon=True
     )
     ssdp_thread.start()
     listener_thread = threading.Thread(

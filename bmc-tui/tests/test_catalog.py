@@ -77,7 +77,7 @@ class _Exec:
     def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
         self.streams.append((argv, b"".join(chunks)))
 
-    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+    def stream_output(self, argv: list[str], _on_line: Callable[[str], None]) -> int:
         self.stream_outputs.append(argv)
         return self._stream_code
 
@@ -135,16 +135,16 @@ class _FakeNix:
     def discover_widgets(self) -> list[str]:
         return []
 
-    def list_packages(self, prefix: str = "") -> list[str]:
+    def list_packages(self, _prefix: str = "") -> list[str]:
         return []
 
     def dirty_tree(self) -> bool:
         return False
 
-    def resolve(self, attr: Attr) -> Pkg:
+    def resolve(self, _attr: Attr) -> Pkg:
         raise NotImplementedError
 
-    def build(self, pkgs: list[Pkg]) -> list[Built]:
+    def build(self, _pkgs: list[Pkg]) -> list[Built]:
         return []
 
     def build_out(self, attr: Attr) -> StorePath:
@@ -161,11 +161,11 @@ class _FakeNix:
         _ = secret.write_text("sk")
         return f"{name}:PUBLICKEY"
 
-    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
+    def copy_signed(self, _store_paths: list[StorePath], cache: Path, _secret: Path) -> None:
         cache.mkdir(parents=True, exist_ok=True)
         _ = (cache / "fake.narinfo").write_text("StorePath: /nix/store/fake\n")
 
-    def copy(self, store_paths: list[StorePath], dest: str) -> None:
+    def copy(self, _store_paths: list[StorePath], _dest: str) -> None:
         return None
 
 
@@ -493,19 +493,19 @@ class _Nix:
     def dirty_tree(self) -> bool:
         return self.dirty
 
-    def build_out(self, attr: Attr) -> StorePath:
+    def build_out(self, _attr: Attr) -> StorePath:
         return StorePath(self.out_dir)
 
-    def out_path(self, attr: Attr) -> StorePath:
+    def out_path(self, _attr: Attr) -> StorePath:
         return StorePath(self.out_dir)
 
-    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
+    def build_file(self, _file: str, _attrs: list[Attr], _args: dict[str, str]) -> list[StorePath]:
         raise NotImplementedError
 
-    def generate_cache_key(self, name: str, secret: Path) -> str:
+    def generate_cache_key(self, _name: str, _secret: Path) -> str:
         raise NotImplementedError
 
-    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
+    def copy_signed(self, _store_paths: list[StorePath], _cache: Path, _secret: Path) -> None:
         raise NotImplementedError
 
     def resolve(self, attr: Attr) -> Pkg:
@@ -1910,7 +1910,7 @@ def _list_packages(*names: str) -> str:
 
 def test_remove_package_removes_when_present() -> None:
     backend = _Exec(_routes({"list-packages": _list_packages("core", "widget-blockheight")}))
-    catalog.remove_package(Device("h", backend=backend), _cycle(), "widget-blockheight")
+    catalog.remove_package(Device("h", backend=backend), "widget-blockheight")
     assert any("remove-packages --name widget-blockheight" in run[-1] for run in backend.runs)
 
 
@@ -1918,7 +1918,7 @@ def test_remove_package_skips_when_absent() -> None:
     # A prior run that removed the widget but aborted before reinstalling leaves it
     # absent; the re-run must skip rather than error on remove-packages.
     backend = _Exec(_routes({"list-packages": _list_packages("core")}))
-    catalog.remove_package(Device("h", backend=backend), _cycle(), "widget-blockheight")
+    catalog.remove_package(Device("h", backend=backend), "widget-blockheight")
     assert all("remove-packages" not in run[-1] for run in backend.runs)
 
 
@@ -2745,7 +2745,7 @@ _MOUNTINFO = (
 _MOUNTINFO_RELEASED = "17 1 0:5 / /dev rw - devtmpfs devtmpfs rw\n"
 
 
-def test_release_data_partition_records_identity_and_asserts_by_majmin(tmp_path: Path) -> None:
+def test_release_data_partition_records_identity_and_asserts_by_majmin() -> None:
     reads = iter([_MOUNTINFO, _MOUNTINFO_RELEASED])
 
     def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":

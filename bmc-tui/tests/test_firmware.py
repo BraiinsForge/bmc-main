@@ -252,6 +252,7 @@ def _shown_rows(monkeypatch: pytest.MonkeyPatch, pick: int) -> list[Sequence[Seq
     shown: list[Sequence[Sequence[str]]] = []
 
     def choose(_question: str, rows: Sequence[Sequence[str]], *, columns: Sequence[str]) -> int:
+        del columns
         shown.append(rows)
         return pick
 

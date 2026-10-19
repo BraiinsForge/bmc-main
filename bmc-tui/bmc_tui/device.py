@@ -127,15 +127,15 @@ def _captured_text(captured: str | bytes | None) -> str:
 class Exec(Protocol):
     """Subprocess backend Device runs through — injected so tests need no ssh."""
 
-    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+    def run(self, argv: list[str], /) -> "subprocess.CompletedProcess[str]":
         """Run a command to completion and capture its output."""
         ...
 
-    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+    def stream(self, argv: list[str], chunks: Iterable[bytes], /) -> None:
         """Run a command, feeding `chunks` to its stdin."""
         ...
 
-    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+    def stream_output(self, argv: list[str], on_line: Callable[[str], None], /) -> int:
         """Run a command, calling `on_line` for each output line as it arrives;
         return the exit code without raising on a nonzero one."""
         ...

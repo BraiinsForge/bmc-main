@@ -528,6 +528,7 @@ def test_package_server_start_failure_stops_stored_process(
     def fail_after_start(
         _dev: object, _plan: object, cycle: catalog.UpgradeCycle, *, firmwares: list[str]
     ) -> None:
+        del firmwares
         cycle.server = _StartedProcess()
         raise Abort("package server startup")
 

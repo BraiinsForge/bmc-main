@@ -84,7 +84,7 @@ class InstallWidgetE2e:
             catalog.register_upgrade_server(dev, cycle)
             catalog.require_exclusive_package_server(dev)
             catalog.grpc_login(dev, cycle)
-            catalog.remove_package(dev, cycle, self.widget)
+            catalog.remove_package(dev, self.widget)
             catalog.list_installable_widgets(dev, cycle, self.widget)
             catalog.check_for_install(dev, cycle, self.widget)
             catalog.snapshot_server_instance(dev, cycle)

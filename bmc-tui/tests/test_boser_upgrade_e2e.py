@@ -282,10 +282,10 @@ class _DeviceScript:
         }
         return subprocess.CompletedProcess(argv, 0, stdout=answers[command] + "\n", stderr="")
 
-    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+    def stream(self, _argv: list[str], _chunks: Iterable[bytes]) -> None:
         raise AssertionError("the runner never uploads")
 
-    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+    def stream_output(self, _argv: list[str], _on_line: Callable[[str], None]) -> int:
         raise AssertionError("the runner never streams a command")
 
     def install_weather(self) -> None:

@@ -46,10 +46,10 @@ class _Exec:
         stdout = self._created if "session create" in command else ""
         return subprocess.CompletedProcess(argv, 0, stdout, "")
 
-    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+    def stream(self, _argv: list[str], _chunks: Iterable[bytes]) -> None:
         pytest.fail("a session never streams to the device")
 
-    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+    def stream_output(self, _argv: list[str], _on_line: Callable[[str], None]) -> int:
         pytest.fail("a session never streams from the device")
 
 

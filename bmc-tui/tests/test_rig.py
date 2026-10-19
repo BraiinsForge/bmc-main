@@ -148,28 +148,28 @@ class _FakeCacheNix:
     def discover_widgets(self) -> list[str]:
         return []
 
-    def list_packages(self, prefix: str = "") -> list[str]:
+    def list_packages(self, _prefix: str = "") -> list[str]:
         return []
 
     def dirty_tree(self) -> bool:
         return False
 
-    def resolve(self, attr: Attr) -> Pkg:
+    def resolve(self, _attr: Attr) -> Pkg:
         raise NotImplementedError
 
-    def build(self, pkgs: list[Pkg]) -> list[Built]:
+    def build(self, _pkgs: list[Pkg]) -> list[Built]:
         return []
 
-    def build_out(self, attr: Attr) -> StorePath:
+    def build_out(self, _attr: Attr) -> StorePath:
         raise NotImplementedError
 
-    def out_path(self, attr: Attr) -> StorePath:
+    def out_path(self, _attr: Attr) -> StorePath:
         raise NotImplementedError
 
-    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
+    def build_file(self, _file: str, _attrs: list[Attr], _args: dict[str, str]) -> list[StorePath]:
         raise NotImplementedError
 
-    def copy(self, store_paths: list[StorePath], dest: str) -> None:
+    def copy(self, _store_paths: list[StorePath], _dest: str) -> None:
         return None
 
 
@@ -228,7 +228,7 @@ def test_rig_server_port_before_start_is_a_bug(tmp_path: Path) -> None:
 def test_sign_variant_shells_out_to_the_host_cli(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
-    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, stdout="sysupgrade-e2e-1:SIG\n", stderr="")
 
