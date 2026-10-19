@@ -34,7 +34,7 @@ use crate::api::{
     resource_needed, wire,
 };
 use crate::manifest_params::Params;
-use crate::model::Data;
+use crate::model::{Data, DriverCard};
 use crate::parse;
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -63,9 +63,16 @@ fn build(handle: PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(resource_of(handle).url(slug)).timeout(FETCH_TIMEOUT))
 }
 
+/// Why a reply was set aside. Either way the last good data stays.
+enum Rejection {
+    /// The fetch failed, or what came back cannot be read.
+    Failed,
+    /// It answers for a request the widget has since replaced.
+    Stale,
+}
+
 /// Everything provable before any parser runs.
-/// `None` keeps the last good data, whatever the fault.
-fn valid_reply(resource: Resource, response: &FetchResponse) -> Option<JsonDoc> {
+fn valid_reply(resource: Resource, response: &FetchResponse) -> Result<JsonDoc, Rejection> {
     if !response.ok() {
         // A cold server answers 503 until its first upstream snapshot
         // lands, which can take minutes. Holding the last good payload
@@ -75,7 +82,7 @@ fn valid_reply(resource: Resource, response: &FetchResponse) -> Option<JsonDoc> 
             resource.name(),
             response.status
         );
-        return None;
+        return Err(Rejection::Failed);
     }
     // Absent is tolerated; a captive portal's `text/html` and a header
     // the host could not parse are not — neither names JSON.
@@ -90,7 +97,7 @@ fn valid_reply(resource: Resource, response: &FetchResponse) -> Option<JsonDoc> 
             resource.name(),
             content_type
         );
-        return None;
+        return Err(Rejection::Failed);
     }
     let json = response.json();
     if !json.is_valid() {
@@ -98,7 +105,7 @@ fn valid_reply(resource: Resource, response: &FetchResponse) -> Option<JsonDoc> 
             "formula-1: {} body is not JSON; keeping the last good data",
             resource.name()
         );
-        return None;
+        return Err(Rejection::Failed);
     }
     let want = resource.envelope_id(Params::current().driver.as_manifest_value());
     if json.str(wire::RESOURCE).as_deref() != Some(want.as_str()) {
@@ -106,9 +113,9 @@ fn valid_reply(resource: Resource, response: &FetchResponse) -> Option<JsonDoc> 
             "formula-1: {} reply answers for another resource; keeping the last good data",
             resource.name()
         );
-        return None;
+        return Err(Rejection::Stale);
     }
-    Some(json)
+    Ok(json)
 }
 
 fn keep_last_good(resource: Resource) {
@@ -120,8 +127,16 @@ fn keep_last_good(resource: Resource) {
 
 fn on_reply(handle: PollHandle, response: &FetchResponse) {
     let resource = resource_of(handle);
-    let Some(json) = valid_reply(resource, response) else {
-        return;
+    let json = match valid_reply(resource, response) {
+        Ok(json) => json,
+        Err(Rejection::Failed) => {
+            if resource == Resource::Driver {
+                DATA.with(|data| data.borrow_mut().driver.settle_without_card());
+                request_frame();
+            }
+            return;
+        }
+        Err(Rejection::Stale) => return,
     };
     DATA.with(|data| {
         let mut data = data.borrow_mut();
@@ -134,10 +149,14 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
                 Ok(rows) => data.driver_stats = rows,
                 Err(parse::Malformed) => keep_last_good(resource),
             },
-            Resource::Driver => match parse::driver(&json) {
-                Ok(driver) => data.driver = Some(driver),
-                Err(parse::Malformed) => keep_last_good(resource),
-            },
+            Resource::Driver => {
+                if let Ok(driver) = parse::driver(&json) {
+                    data.driver = DriverCard::Ready(driver);
+                } else {
+                    keep_last_good(resource);
+                    data.driver.settle_without_card();
+                }
+            }
             Resource::Teams => match parse::teams(&json) {
                 Ok(rows) => data.teams = rows,
                 Err(parse::Malformed) => keep_last_good(resource),
@@ -230,7 +249,7 @@ pub fn start() {
 /// Drop the held card and re-fetch: the reply may never come, and the
 /// old person's card must not sit under the new setting until it does.
 pub fn invalidate_driver() {
-    DATA.with(|data| data.borrow_mut().driver = None);
+    DATA.with(|data| data.borrow_mut().driver = DriverCard::Loading);
     invalidate(Resource::Driver);
 }
 

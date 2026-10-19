@@ -176,7 +176,12 @@ pub fn wanted(data: &crate::model::Data) -> Vec<Wanted<'_>> {
     // Only the selected row: the statistics screen is the one view drawing
     // a headshot or a nationality flag, and it draws a single driver.
     // Sweeping the table would decode ~22 unseen pairs, evicting what is drawn.
-    for driver in data.driver.iter().chain(data.selected_driver_stats()) {
+    for driver in data
+        .driver
+        .ready()
+        .into_iter()
+        .chain(data.selected_driver_stats())
+    {
         want(ImageKind::Headshot, &driver.headshot_url);
         want(ImageKind::Flag, &driver.nationality_flag_url);
     }
@@ -247,7 +252,8 @@ mod tests {
     #[test]
     fn the_sweep_covers_every_drawn_image_and_nothing_else() {
         use crate::model::{
-            Data, DriverStats, LiveBoard, NextRace, StandingsRow, TimingBoard, TimingRow,
+            Data, DriverCard, DriverStats, LiveBoard, NextRace, StandingsRow, TimingBoard,
+            TimingRow,
         };
 
         let data = Data {
@@ -271,7 +277,7 @@ mod tests {
                     ..DriverStats::default()
                 },
             ],
-            driver: Some(DriverStats {
+            driver: DriverCard::Ready(DriverStats {
                 jolpica_id: "selected".to_owned(),
                 headshot_url: url("https://x.test/driver-face.png"),
                 nationality_flag_url: url("https://x.test/driver-flag.png"),
@@ -328,10 +334,10 @@ mod tests {
     /// state where no other view can have cached it first.
     #[test]
     fn the_statistics_screen_fetches_its_own_constructors_mark() {
-        use crate::model::{Data, DriverStats, DriverTeam, Team};
+        use crate::model::{Data, DriverCard, DriverStats, DriverTeam, Team};
 
         let data = Data {
-            driver: Some(DriverStats {
+            driver: DriverCard::Ready(DriverStats {
                 jolpica_id: "max_verstappen".to_owned(),
                 ..DriverStats::default()
             }),
@@ -357,10 +363,10 @@ mod tests {
 
     #[test]
     fn a_headshot_and_a_flag_of_one_driver_are_told_apart() {
-        use crate::model::{Data, DriverStats};
+        use crate::model::{Data, DriverCard, DriverStats};
 
         let data = Data {
-            driver: Some(DriverStats {
+            driver: DriverCard::Ready(DriverStats {
                 headshot_url: url("https://x.test/shared.png"),
                 nationality_flag_url: url("https://x.test/shared.png"),
                 ..DriverStats::default()

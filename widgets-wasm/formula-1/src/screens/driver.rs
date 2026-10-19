@@ -30,14 +30,14 @@
 use bmc_wasm_sdk::*;
 
 use crate::images::{self, ImageKind};
-use crate::model::{DriverStats, ImageUrl, SizeBucket};
+use crate::model::{DriverCard, DriverStats, ImageUrl, SizeBucket};
 use crate::screens::parts::{self, LabelWeight, Yields, color, font, space};
 
 /// Everything the screen draws.
 #[derive(Clone, Debug)]
 pub struct DriverViewData {
     pub bucket: SizeBucket,
-    pub driver: Option<DriverStats>,
+    pub driver: DriverCard,
     /// From the teams table, which is the only resource naming one.
     pub team_logo_url: ImageUrl,
 }
@@ -352,28 +352,31 @@ fn stats(driver: &DriverStats, layout: Layout) -> Node {
     parts::stat_col(rows)
 }
 
-/// One driver, or the empty state while nothing has arrived.
+/// The header over a message in place of the card.
+fn notice(message: &str, bucket: SizeBucket) -> Node {
+    parts::frame(
+        vec![
+            parts::header(vec![parts::title("Driver stats", bucket)], false, bucket),
+            center(
+                props!(flex: 1.0),
+                [text(
+                    message,
+                    style!(size: font::notice(bucket), color: color::TEXT_MUTED),
+                )],
+            ),
+        ],
+        bucket,
+    )
+}
+
+/// One driver, or a notice of where its fetch has got.
 #[must_use]
 pub fn driver_view(view: &DriverViewData) -> Node {
     let layout = layout(view.bucket);
-    let Some(driver) = view.driver.as_ref() else {
-        return parts::frame(
-            vec![
-                parts::header(
-                    vec![parts::title("Driver stats", view.bucket)],
-                    false,
-                    view.bucket,
-                ),
-                center(
-                    props!(flex: 1.0),
-                    [text(
-                        "Driver unavailable",
-                        style!(size: font::notice(view.bucket), color: color::TEXT_MUTED),
-                    )],
-                ),
-            ],
-            view.bucket,
-        );
+    let driver = match &view.driver {
+        DriverCard::Ready(driver) => driver,
+        DriverCard::Loading => return notice("Loading driver…", view.bucket),
+        DriverCard::Unavailable => return notice("Driver unavailable", view.bucket),
     };
 
     let body = match portrait(driver, layout) {

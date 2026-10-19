@@ -75,6 +75,22 @@ frames = 24
 [shot.knobs]
 Size = "Deck small"
 
+[[shot]]
+name = "driver-loading-full"
+scene = "bmc_gallery::f1::Driver Loading"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "driver-loading-small"
+scene = "bmc_gallery::f1::Driver Loading"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+
 # Imperial units and a 12-hour clock, which the stat rows format against —
 # the widest values the driver frames have to seat.
 [[shot]]

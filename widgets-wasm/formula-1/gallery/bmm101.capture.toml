@@ -157,6 +157,14 @@ frames = 8
 [shot.knobs]
 Size = "BMM"
 
+[[shot]]
+name = "driver-loading-bmm101"
+scene = "bmc_gallery::f1::Driver Loading"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"
+
 # `Driver Grid` is absent with the stress scenes: it walks the whole field at
 # fullscreen and declares no size knob, so it cannot be pinned to a viewport.
 

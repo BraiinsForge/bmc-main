@@ -93,9 +93,9 @@ mod wasm_glue {
                 })
             }
             crate::api::Screen::Driver => {
-                let driver = data.selected_driver_stats().cloned();
+                let driver = data.selected_driver_card();
                 let team_logo_url = driver
-                    .as_ref()
+                    .ready()
                     .map(|it| data.team_logo(&it.jolpica_id))
                     .unwrap_or_default();
                 crate::screens::driver::driver_view(&DriverViewData {

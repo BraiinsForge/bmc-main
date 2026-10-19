@@ -470,6 +470,35 @@ pub struct DriverTeam {
     pub team_id: u64,
 }
 
+/// The selected driver's card, as far as its fetch has got.
+#[derive(Clone, Debug, Default)]
+pub enum DriverCard {
+    /// Asked for, with no answer yet.
+    #[default]
+    Loading,
+    /// The fetch settled without a card.
+    Unavailable,
+    Ready(DriverStats),
+}
+
+impl DriverCard {
+    #[must_use]
+    pub fn ready(&self) -> Option<&DriverStats> {
+        match self {
+            Self::Ready(driver) => Some(driver),
+            Self::Loading | Self::Unavailable => None,
+        }
+    }
+
+    /// A fetch settled without a card: one still loading has its answer,
+    /// while one already held stays up until a good reply replaces it.
+    pub fn settle_without_card(&mut self) {
+        if matches!(self, Self::Loading) {
+            *self = Self::Unavailable;
+        }
+    }
+}
+
 /// Everything fetched so far.
 /// A resource that has never answered — or answered
 /// while the server was still warming its caches — stays empty,
@@ -478,7 +507,7 @@ pub struct DriverTeam {
 pub struct Data {
     pub standings: Vec<StandingsRow>,
     pub driver_stats: Vec<DriverStats>,
-    pub driver: Option<DriverStats>,
+    pub driver: DriverCard,
     pub teams: Vec<Team>,
     pub driver_teams: Vec<DriverTeam>,
     pub next_race: Option<NextRace>,
@@ -536,20 +565,34 @@ impl Data {
     /// The card stands alone for a driver the table has no row for.
     #[must_use]
     pub fn selected_driver_stats(&self) -> Option<&DriverStats> {
-        let id = self.driver.as_ref()?.jolpica_id.as_str();
+        let id = self.driver.ready()?.jolpica_id.as_str();
         self.driver_stats
             .iter()
             .find(|row| row.jolpica_id == id)
-            .or(self.driver.as_ref())
+            .or(self.driver.ready())
+    }
+
+    /// [`Self::driver`] with its statistics row joined in once the card is ready.
+    #[must_use]
+    pub fn selected_driver_card(&self) -> DriverCard {
+        match self.driver {
+            DriverCard::Loading => DriverCard::Loading,
+            DriverCard::Unavailable => DriverCard::Unavailable,
+            DriverCard::Ready(_) => DriverCard::Ready(
+                self.selected_driver_stats()
+                    .expect("BUG: a ready card is its own statistics row at worst")
+                    .clone(),
+            ),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CarNumber, Color, Data, DriverStats, DriverStatus, DriverTeam, FALLBACK_TEAM_COLOR,
-        ImageUrl, LiveBoard, SectorColor, SizeBucket, Team, TimingBoard, TimingText, TireCompound,
-        size_bucket, team_color,
+        CarNumber, Color, Data, DriverCard, DriverStats, DriverStatus, DriverTeam,
+        FALLBACK_TEAM_COLOR, ImageUrl, LiveBoard, SectorColor, SizeBucket, Team, TimingBoard,
+        TimingText, TireCompound, size_bucket, team_color,
     };
 
     #[test]
@@ -752,10 +795,33 @@ mod tests {
         assert!(data.running_board().is_none());
     }
 
+    /// A switch to another driver shows the card loading, not missing,
+    /// until the fetch for that driver settles.
+    #[test]
+    fn a_card_reads_unavailable_only_once_its_fetch_settles_without_one() {
+        let mut data = Data::default();
+        assert!(matches!(data.selected_driver_card(), DriverCard::Loading));
+        data.driver.settle_without_card();
+        assert!(matches!(
+            data.selected_driver_card(),
+            DriverCard::Unavailable
+        ));
+    }
+
+    #[test]
+    fn a_failed_refresh_keeps_the_card_already_held() {
+        let mut card = DriverCard::Ready(driver("hamilton", 44, "Lewis Hamilton"));
+        card.settle_without_card();
+        assert!(
+            card.ready().is_some(),
+            "a refresh that failed must not take the card down"
+        );
+    }
+
     #[test]
     fn the_selected_driver_joins_the_stats_table_by_its_key() {
         let data = Data {
-            driver: Some(driver("hamilton", 44, "Lewis Hamilton")),
+            driver: DriverCard::Ready(driver("hamilton", 44, "Lewis Hamilton")),
             driver_stats: vec![driver("max_verstappen", 1, "Max Verstappen"), {
                 let mut row = driver("hamilton", 44, "Lewis Hamilton");
                 row.gp_wins = Some(105);
@@ -774,7 +840,7 @@ mod tests {
     #[test]
     fn a_number_shared_with_another_driver_joins_neither_to_the_other() {
         let data = Data {
-            driver: Some(driver("hamilton", 44, "Lewis Hamilton")),
+            driver: DriverCard::Ready(driver("hamilton", 44, "Lewis Hamilton")),
             driver_stats: vec![{
                 let mut row = driver("hulkenberg", 44, "Nico Hülkenberg");
                 row.gp_wins = Some(0);
@@ -794,7 +860,7 @@ mod tests {
         // The tables come from different upstreams, so a driver can
         // appear in one before the other. The thinner row beats nothing.
         let data = Data {
-            driver: Some(driver("bearman_reserve", 87, "Reserve Driver")),
+            driver: DriverCard::Ready(driver("bearman_reserve", 87, "Reserve Driver")),
             driver_stats: vec![driver("max_verstappen", 1, "Max Verstappen")],
             ..Data::default()
         };

@@ -64,6 +64,8 @@ BMM101's 480×320 panel has a frame of its own.
 - The wider frames add the personal details — age, weight, height, nationality with its flag, and the race engineer.
   BMM101 shows them too, in one column beside the portrait.
 - A driver whose card the deployment has not filled in shows what is known rather than blanking the screen.
+- While a newly picked driver's card is on its way the screen reads *Loading driver…*; it reads *Driver unavailable*
+  only once Nexus has answered without one.
 
 ### Let the widget choose the screen
 

@@ -28,9 +28,9 @@ use bmc_wasm_sdk::{CalendarDate, LocalDateTime};
 
 use crate::images::ImageKind;
 use crate::model::{
-    CarNumber, DriverStats, DriverStatus, ImageUrl, LiveBoard, NextRace, Sector, SectorColor,
-    Session, SizeBucket, StandingsRow, TimingBoard, TimingRow, TimingText, TireCompound,
-    team_color,
+    CarNumber, DriverCard, DriverStats, DriverStatus, ImageUrl, LiveBoard, NextRace, Sector,
+    SectorColor, Session, SizeBucket, StandingsRow, TimingBoard, TimingRow, TimingText,
+    TireCompound, team_color,
 };
 use crate::screens::driver::DriverViewData;
 use crate::screens::live::LiveViewData;
@@ -862,9 +862,9 @@ pub fn drivers() -> Vec<DriverStats> {
 
 /// One driver's card, with the mark the teams table would have supplied.
 #[must_use]
-pub fn driver_card(bucket: SizeBucket, driver: Option<DriverStats>) -> DriverViewData {
+pub fn driver_card(bucket: SizeBucket, driver: DriverCard) -> DriverViewData {
     let team_logo_url = driver
-        .as_ref()
+        .ready()
         .map(|it| logo_url(&it.team))
         .unwrap_or_default();
     DriverViewData {
@@ -877,7 +877,11 @@ pub fn driver_card(bucket: SizeBucket, driver: Option<DriverStats>) -> DriverVie
 /// The championship leader, whom the design's own frame shows.
 #[must_use]
 pub fn driver(bucket: SizeBucket) -> DriverViewData {
-    driver_card(bucket, drivers().into_iter().next())
+    let leader = drivers()
+        .into_iter()
+        .next()
+        .expect("BUG: fixtures name a driver");
+    driver_card(bucket, DriverCard::Ready(leader))
 }
 
 const OVERLONG: &str = "An upstream string far longer than any column of this widget seats";
@@ -920,7 +924,7 @@ pub fn driver_overlong(bucket: SizeBucket) -> DriverViewData {
     OVERLONG.clone_into(&mut driver.team);
     OVERLONG.clone_into(&mut driver.nationality);
     driver.race_engineer = Some(OVERLONG.to_owned());
-    driver_card(bucket, Some(driver))
+    driver_card(bucket, DriverCard::Ready(driver))
 }
 
 #[must_use]
@@ -930,22 +934,29 @@ pub fn driver_unranked(bucket: SizeBucket) -> DriverViewData {
         .next()
         .expect("BUG: fixtures name a driver");
     driver.ranking = None;
-    driver_card(bucket, Some(driver))
+    driver_card(bucket, DriverCard::Ready(driver))
 }
 
 /// A rookie: no engineer named yet, no debut season, nothing won.
 #[must_use]
 pub fn driver_sparse(bucket: SizeBucket) -> DriverViewData {
-    driver_card(
-        bucket,
-        drivers().into_iter().find(|it| it.race_engineer.is_none()),
-    )
+    let rookie = drivers()
+        .into_iter()
+        .find(|it| it.race_engineer.is_none())
+        .expect("BUG: fixtures name a driver with no engineer");
+    driver_card(bucket, DriverCard::Ready(rookie))
 }
 
-/// Between seasons, or before the first reply has landed.
+/// Just picked, its card not yet answered for.
+#[must_use]
+pub fn driver_loading(bucket: SizeBucket) -> DriverViewData {
+    driver_card(bucket, DriverCard::Loading)
+}
+
+/// Asked for, and answered without a card: between seasons, or not yet derived.
 #[must_use]
 pub fn driver_unavailable(bucket: SizeBucket) -> DriverViewData {
-    driver_card(bucket, None)
+    driver_card(bucket, DriverCard::Unavailable)
 }
 
 /// Pad `value` to `width` digits.

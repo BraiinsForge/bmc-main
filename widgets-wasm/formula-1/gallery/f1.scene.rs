@@ -22,7 +22,7 @@
 //! Every scene stages each device frame, side by side where the pane has room.
 
 use bmc_gallery::prelude::*;
-use formula_1::model::{SizeBucket, size_bucket};
+use formula_1::model::{DriverCard, SizeBucket, size_bucket};
 use formula_1::screens::{driver, fixtures, live, next_race, standings};
 
 scene_meta! { title: "Widgets / Formula 1" }
@@ -334,7 +334,7 @@ fn driver_placeholders(ctx: &mut SceneCtx, ui: &mut Ui) {
             stats.height = None;
             stats.race_engineer = None;
             stats.debut_year = None;
-            driver::driver_view(&fixtures::driver_card(bucket, Some(stats)))
+            driver::driver_view(&fixtures::driver_card(bucket, DriverCard::Ready(stats)))
         }
     });
 }
@@ -363,7 +363,15 @@ fn next_race_overlong(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
-/// Between seasons, or before the first reply has landed.
+/// Just picked: the card's fetch has not settled yet.
+#[scene]
+fn driver_loading(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || driver::driver_view(&fixtures::driver_loading(bucket))
+    });
+}
+
+/// Asked for, and answered without a card.
 #[scene]
 fn driver_unavailable(ctx: &mut SceneCtx, ui: &mut Ui) {
     size_stages(ctx, ui, |bucket| {
@@ -379,7 +387,7 @@ fn driver_grid(ctx: &mut SceneCtx, ui: &mut Ui) {
     seed_images();
     for stats in fixtures::drivers() {
         let (name, team) = (stats.name.clone(), stats.team.clone());
-        let view = fixtures::driver_card(SizeBucket::Full, Some(stats));
+        let view = fixtures::driver_card(SizeBucket::Full, DriverCard::Ready(stats));
         ui.heading(&name);
         ui.label(&team);
         ctx.node_stage(ui, SizeBucket::Full.design_size(), move || {
