@@ -68,7 +68,7 @@ pub struct ModelRow {
     pub degraded: usize,
     pub off: usize,
     pub hashrate: Option<Hashrate>,
-    pub series: Vec<Option<ChartPoint>>,
+    pub series: Vec<Vec<ChartPoint>>,
     pub power: Option<ElectricPower>,
     pub efficiency: Option<MiningEfficiency>,
     pub avg_temp: Option<Temperature>,

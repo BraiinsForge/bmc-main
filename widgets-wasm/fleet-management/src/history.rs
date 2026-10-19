@@ -147,7 +147,7 @@ impl ChartWindow {
     /// The window that exactly spans a series — for fixtures and stories, whose
     /// baked points should fill the whole width.
     #[must_use]
-    pub fn covering(series: &[Option<ChartPoint>]) -> Self {
+    pub fn covering(series: &[Vec<ChartPoint>]) -> Self {
         let mut ats = series.iter().flatten().map(|p| p.at);
         let start = ats.next().unwrap_or(0);
         let end = ats.next_back().unwrap_or(start);
@@ -365,7 +365,7 @@ impl HistoryView<'_> {
     }
 
     #[must_use]
-    pub(crate) fn total_series(&self) -> Vec<Option<ChartPoint>> {
+    pub(crate) fn total_series(&self) -> Vec<Vec<ChartPoint>> {
         self.fleet_tier().total.plot(self.window)
     }
 
@@ -374,7 +374,7 @@ impl HistoryView<'_> {
         &self,
         family: Option<DeviceFamily>,
         label: &str,
-    ) -> Vec<Option<ChartPoint>> {
+    ) -> Vec<Vec<ChartPoint>> {
         self.fleet_tier()
             .models
             .get(&(family.map(DeviceFamily::index), label.to_owned()))
@@ -382,7 +382,7 @@ impl HistoryView<'_> {
     }
 
     #[must_use]
-    pub(crate) fn device_series(&self, id: &DeviceId) -> Vec<Option<ChartPoint>> {
+    pub(crate) fn device_series(&self, id: &DeviceId) -> Vec<Vec<ChartPoint>> {
         self.history
             .devices
             .get(id)
@@ -1081,9 +1081,8 @@ mod tests {
                 .view(ChartSpan::FifteenMinutes, window)
                 .model_series(Some(DeviceFamily::Bos), "BOS BMM"),
             vec![
-                Some(ChartPoint { at: 0, value: 4.0 }),
-                None,
-                Some(ChartPoint { at: 75, value: 5.0 }),
+                vec![ChartPoint { at: 0, value: 4.0 }],
+                vec![ChartPoint { at: 75, value: 5.0 }],
             ],
             "rediscovered, the model continues across the downtime's gap"
         );
@@ -1207,12 +1206,11 @@ mod tests {
         assert_eq!(
             restored.view(ChartSpan::OneHour, window).total_series(),
             vec![
-                Some(ChartPoint { at: 0, value: 10.0 }),
-                None,
-                Some(ChartPoint {
+                vec![ChartPoint { at: 0, value: 10.0 }],
+                vec![ChartPoint {
                     at: downtime,
                     value: 12.0
-                }),
+                }],
             ],
             "the downtime separates cached data from live"
         );
@@ -1259,12 +1257,11 @@ mod tests {
                 .view(ChartSpan::FifteenMinutes, window)
                 .total_series(),
             vec![
-                Some(ChartPoint { at: 0, value: 10.0 }),
-                None,
-                Some(ChartPoint {
+                vec![ChartPoint { at: 0, value: 10.0 }],
+                vec![ChartPoint {
                     at: 30,
                     value: 12.0
-                }),
+                }],
             ],
             "the saved break splits the line though the slots alone would join it"
         );

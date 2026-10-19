@@ -53,7 +53,7 @@ pub struct DashboardViewData {
     pub off: usize,
     pub auth: usize,
     pub hashrate: Option<Hashrate>,
-    pub hashrate_series: Vec<Option<ChartPoint>>,
+    pub hashrate_series: Vec<Vec<ChartPoint>>,
     pub window: ChartWindow,
     pub power: Option<ElectricPower>,
     pub efficiency: Option<MiningEfficiency>,

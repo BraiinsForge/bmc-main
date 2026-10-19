@@ -63,7 +63,7 @@ pub struct DeviceDetailData {
     pub mac: Option<String>,
     pub state: DeviceStatus,
     pub hashrate: Option<Hashrate>,
-    pub hashrate_series: Vec<Option<ChartPoint>>,
+    pub hashrate_series: Vec<Vec<ChartPoint>>,
     pub window: ChartWindow,
     pub nominal_hashrate: Option<Hashrate>,
     pub power: Option<ElectricPower>,

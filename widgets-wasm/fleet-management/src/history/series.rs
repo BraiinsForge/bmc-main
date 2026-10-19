@@ -170,17 +170,15 @@ impl Series {
         self.samples.iter().copied().collect()
     }
 
-    /// The buckets a chart draws over `window`, oldest first: a point per bucket with a value,
-    /// and `None` where the line breaks, at a bucket without a value
-    /// or between buckets more than [`MAX_SLOT_STEP`] slots apart.
-    /// A break only ever follows a point: consecutive ones collapse, and none leads.
+    /// The runs of joined points a chart draws over `window`, oldest first, one point per bucket with a value.
+    /// A run ends at a bucket without a value and where more than [`MAX_SLOT_STEP`] slots lie between two buckets.
     /// Of the buckets before the window, only the newest is kept,
     /// and only while it joins the first one inside, so the line enters from the left edge.
     /// A bucket stamped after the window's end is not drawn:
     /// a clock set back leaves one until the history follows it.
     /// Nor is the newest while it is open in the slot holding the window's end,
     /// as every reading still moves it.
-    pub(super) fn plot(&self, window: ChartWindow) -> Vec<Option<ChartPoint>> {
+    pub(super) fn plot(&self, window: ChartWindow) -> Vec<Vec<ChartPoint>> {
         let start = window.end - window.span_secs;
         let still_moving = self.newest == Newest::Open && self.has_sampled_slot_of(window.end);
         let settled = self.samples.len() - usize::from(still_moving);
@@ -193,31 +191,34 @@ impl Series {
             .range(..drawable)
             .rposition(|s| s.at < start)
             .unwrap_or(0);
-        let mut out: Vec<Option<ChartPoint>> = Vec::with_capacity(drawable - first);
+        let mut runs: Vec<Vec<ChartPoint>> = Vec::new();
+        let mut run: Vec<ChartPoint> = Vec::new();
         let mut prev_slot: Option<i64> = None;
         for s in self.samples.range(first..drawable) {
             let slot = slot_of(s.at, self.interval_secs);
             if prev_slot.is_some_and(|prev| slot - prev > MAX_SLOT_STEP) {
-                push_break(&mut out);
+                end_run(&mut runs, &mut run);
             }
             match s.value {
-                Some(value) => out.push(Some(ChartPoint { at: s.at, value })),
-                None => push_break(&mut out),
+                Some(value) => run.push(ChartPoint { at: s.at, value }),
+                None => end_run(&mut runs, &mut run),
             }
             prev_slot = Some(slot);
         }
-        let enters_alone = matches!(out.first(), Some(Some(p)) if p.at < start)
-            && !matches!(out.get(1), Some(Some(_)));
-        if enters_alone {
-            out.drain(..out.len().min(2));
+        end_run(&mut runs, &mut run);
+        if runs
+            .first()
+            .is_some_and(|r| matches!(r.as_slice(), [p] if p.at < start))
+        {
+            runs.remove(0);
         }
-        out
+        runs
     }
 }
 
-fn push_break(out: &mut Vec<Option<ChartPoint>>) {
-    if matches!(out.last(), Some(Some(_))) {
-        out.push(None);
+fn end_run(runs: &mut Vec<Vec<ChartPoint>>, run: &mut Vec<ChartPoint>) {
+    if !run.is_empty() {
+        runs.push(std::mem::take(run));
     }
 }
 
@@ -577,11 +578,11 @@ mod tests {
         holding(&ats.iter().map(|&at| (at, Some(1.0))).collect::<Vec<_>>())
     }
 
-    fn breaks(plot: &[Option<ChartPoint>]) -> usize {
-        plot.iter().filter(|p| p.is_none()).count()
+    fn breaks(plot: &[Vec<ChartPoint>]) -> usize {
+        plot.len().saturating_sub(1)
     }
 
-    fn ats(plot: &[Option<ChartPoint>]) -> Vec<i64> {
+    fn ats(plot: &[Vec<ChartPoint>]) -> Vec<i64> {
         plot.iter().flatten().map(|p| p.at).collect()
     }
 
@@ -638,15 +639,14 @@ mod tests {
         assert_eq!(
             s.plot(WINDOW),
             vec![
-                Some(ChartPoint { at: 0, value: 1.0 }),
-                None,
-                Some(ChartPoint { at: 30, value: 2.0 }),
+                vec![ChartPoint { at: 0, value: 1.0 }],
+                vec![ChartPoint { at: 30, value: 2.0 }],
             ]
         );
     }
 
     #[test]
-    fn breaks_next_to_each_other_collapse_into_one() {
+    fn an_empty_bucket_and_the_downtime_after_it_leave_no_empty_run() {
         let s = holding(&[
             (0, Some(1.0)),
             (15, Some(1.0)),
@@ -662,8 +662,8 @@ mod tests {
     }
 
     #[test]
-    fn a_plot_never_starts_on_a_break() {
-        let one = |at| vec![Some(ChartPoint { at, value: 1.0 })];
+    fn a_bucket_without_a_value_before_the_first_point_leaves_no_empty_run() {
+        let one = |at| vec![vec![ChartPoint { at, value: 1.0 }]];
         assert_eq!(
             holding(&[(0, None), (15, Some(1.0))]).plot(WINDOW),
             one(15),
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(
             holding(&[(885, None), (900, Some(1.0))]).plot(LATER_WINDOW),
             one(900),
-            "an entering bucket without a value leaves no break behind"
+            "nor does an entering bucket without a value"
         );
     }
 
@@ -757,8 +757,8 @@ mod tests {
     fn a_bucket_before_the_window_cut_off_by_a_gap_is_not_plotted() {
         let s = present(&[600, 960, 975]);
         assert_eq!(s.plot(LATER_WINDOW), {
-            let p = |at| Some(ChartPoint { at, value: 1.0 });
-            vec![p(960), p(975)]
+            let p = |at| ChartPoint { at, value: 1.0 };
+            vec![vec![p(960), p(975)]]
         });
     }
 
@@ -772,10 +772,10 @@ mod tests {
         let s = holding(&[(885, Some(1.0)), (900, None), (915, Some(1.0))]);
         assert_eq!(
             s.plot(LATER_WINDOW),
-            vec![Some(ChartPoint {
+            vec![vec![ChartPoint {
                 at: 915,
                 value: 1.0
-            })]
+            }]]
         );
     }
 
@@ -802,12 +802,8 @@ mod tests {
             let drawn = ats(&plot);
 
             assert!(
-                !matches!(plot.first(), Some(None)),
-                "case {case}: starts on a break"
-            );
-            assert!(
-                plot.windows(2).all(|w| w[0].is_some() || w[1].is_some()),
-                "case {case}: two breaks in a row"
+                plot.iter().all(|run| !run.is_empty()),
+                "case {case}: an empty run"
             );
             assert!(
                 drawn.windows(2).all(|w| w[0] < w[1]),
@@ -825,14 +821,18 @@ mod tests {
                 drawn.iter().all(|&at| at <= window.end),
                 "case {case}: a point after the window's end"
             );
-            let before: Vec<usize> = plot
+            let before: Vec<(usize, usize)> = plot
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| matches!(p, Some(q) if q.at < start))
-                .map(|(i, _)| i)
+                .flat_map(|(i, run)| {
+                    run.iter()
+                        .enumerate()
+                        .filter(|(_, p)| p.at < start)
+                        .map(move |(j, _)| (i, j))
+                })
                 .collect();
             assert!(
-                before.is_empty() || (before == [0] && matches!(plot.get(1), Some(Some(_)))),
+                before.is_empty() || (before == [(0, 0)] && plot[0].len() > 1),
                 "case {case}: a point before the window is not a line entering from the edge"
             );
         }

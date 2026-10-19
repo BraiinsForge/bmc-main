@@ -57,7 +57,7 @@ pub struct DeviceRow {
     pub click_id: String,
     pub status: DeviceStatus,
     pub hashrate: Option<Hashrate>,
-    pub series: Vec<Option<ChartPoint>>,
+    pub series: Vec<Vec<ChartPoint>>,
     pub power: Option<ElectricPower>,
     pub efficiency: Option<MiningEfficiency>,
     pub avg_temp: Option<Temperature>,

@@ -307,12 +307,12 @@ fn status_item(
 }
 
 // The filled area chart + trend line for a hashrate series, mapped into `w`x`h`.
-// Points sit by their time within `window`; each `None` breaks the fill and stroke
-// into separate runs, so the chart never draws a false line across missing data.
+// Points sit by their time within `window`; each run gets its own fill and stroke,
+// so the chart never draws a false line across missing data.
 // `top_frac` leaves headroom above the chart (hero text).
 #[must_use]
 pub fn area_chart(
-    series: &[Option<ChartPoint>],
+    series: &[Vec<ChartPoint>],
     window: ChartWindow,
     w: f32,
     h: f32,
@@ -333,7 +333,7 @@ pub fn area_chart(
 // never reaches. Sparklines stay bare.
 #[must_use]
 pub fn scaled_area_chart(
-    series: &[Option<ChartPoint>],
+    series: &[Vec<ChartPoint>],
     window: ChartWindow,
     w: f32,
     h: f32,
@@ -386,7 +386,7 @@ pub fn scaled_area_chart(
 // ── Series → drawable runs (time-placed, gap-broken) ─────────────────
 
 // Min and max of the plotted values; `(0, 0)` when none.
-fn value_range(series: &[Option<ChartPoint>]) -> (f32, f32) {
+fn value_range(series: &[Vec<ChartPoint>]) -> (f32, f32) {
     series
         .iter()
         .flatten()
@@ -397,11 +397,10 @@ fn value_range(series: &[Option<ChartPoint>]) -> (f32, f32) {
         .unwrap_or((0.0, 0.0))
 }
 
-// Fill, trend line, and sample markers for each contiguous run of present,
-// gap-free samples; `y_of` maps a value to a y pixel and x is placed by
-// timestamp within `window`.
+// Fill, trend line, and sample markers for each run;
+// `y_of` maps a value to a y pixel and x is placed by time within `window`.
 fn draw_runs(
-    series: &[Option<ChartPoint>],
+    series: &[Vec<ChartPoint>],
     window: ChartWindow,
     w: f32,
     h: f32,
@@ -410,8 +409,8 @@ fn draw_runs(
     let x_of = time_x(window, w);
     let r = marker_radius(h);
     let mut draws = Vec::new();
-    for run in runs(series) {
-        let pts: Vec<(f32, f32)> = run.iter().map(|&(at, v)| (x_of(at), y_of(v))).collect();
+    for run in series {
+        let pts: Vec<(f32, f32)> = run.iter().map(|p| (x_of(p.at), y_of(p.value))).collect();
         // Two-plus points form the interpolated curve and its fill; a lone point
         // is just its marker below.
         if pts.len() >= 2 {
@@ -480,15 +479,6 @@ fn time_x(window: ChartWindow, w: f32) -> impl Fn(i64) -> f32 {
         reason = "chart pixel coordinates tolerate f32"
     )]
     move |at: i64| (at - start) as f32 / span as f32 * w
-}
-
-// Split into runs of points between the breaks.
-fn runs(series: &[Option<ChartPoint>]) -> Vec<Vec<(i64, f32)>> {
-    series
-        .split(Option::is_none)
-        .filter(|run| !run.is_empty())
-        .map(|run| run.iter().flatten().map(|p| (p.at, p.value)).collect())
-        .collect()
 }
 
 // Round axis ceiling ≥ `raw` and gridline step (1/2/5 × 10ⁿ).
@@ -762,7 +752,7 @@ mod tests {
 
     #[test]
     fn a_lone_point_draws_on_a_data_fit_axis() {
-        let draws = scaled_area_chart(&[Some(POINT)], WINDOW, 200.0, 100.0, 0.0, None, false);
+        let draws = scaled_area_chart(&[vec![POINT]], WINDOW, 200.0, 100.0, 0.0, None, false);
         assert!(
             marker_ys(&draws).first().is_some_and(|&y| (y - fitted_y(
                 POINT.value,
@@ -782,7 +772,7 @@ mod tests {
             value: 90.0,
         };
         let draws = scaled_area_chart(
-            &[Some(POINT), Some(newest)],
+            &[vec![POINT, newest]],
             WINDOW,
             200.0,
             100.0,

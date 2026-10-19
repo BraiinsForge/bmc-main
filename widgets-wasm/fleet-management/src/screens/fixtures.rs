@@ -35,18 +35,18 @@ use crate::view::device_click_id;
 
 const TABLE_PAGE_SIZE: usize = 4;
 
-/// Wrap raw hashrate values into evenly-spaced, present samples for a story.
-fn samples(values: &[f32]) -> Vec<Option<ChartPoint>> {
-    values
-        .iter()
-        .enumerate()
-        .map(|(i, &value)| {
-            Some(ChartPoint {
+/// Wrap raw hashrate values into one run of evenly-spaced points for a story.
+fn samples(values: &[f32]) -> Vec<Vec<ChartPoint>> {
+    vec![
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, &value)| ChartPoint {
                 at: i64::try_from(i).unwrap_or(0) * 60,
                 value,
             })
-        })
-        .collect()
+            .collect(),
+    ]
 }
 
 fn family_of(name: &str) -> Option<DeviceFamily> {
@@ -180,7 +180,7 @@ pub fn sample_table_page(page: usize) -> TableViewData {
 }
 
 /// The window a story's baked series should fill — the whole width.
-fn story_window(series: Option<&[Option<ChartPoint>]>) -> ChartWindow {
+fn story_window(series: Option<&[Vec<ChartPoint>]>) -> ChartWindow {
     ChartWindow::covering(series.unwrap_or(&[]))
 }
 
