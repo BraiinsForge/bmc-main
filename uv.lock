@@ -4,6 +4,7 @@ requires-python = ">=3.13"
 
 [manifest]
 members = [
+    "bmc-clock-tools",
     "bmc-scripts",
     "bmc-tui",
     "bmc-virt",
@@ -18,6 +19,17 @@ dev = [
     { name = "pytest-cov", specifier = ">=5" },
     { name = "types-grpcio", specifier = ">=1.84" },
 ]
+
+[[package]]
+name = "bmc-clock-tools"
+version = "0.0.0"
+source = { editable = "widgets-wasm/clock/tools" }
+dependencies = [
+    { name = "tyro" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tyro", specifier = ">=0.9" }]
 
 [[package]]
 name = "bmc-scripts"

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -48,9 +48,12 @@ Usage:
     gen_dial.py --width 317 --height 238 --inset-lr 30 --inset-tb 20 --verify
 """
 
-import argparse
 import math
 import sys
+from typing import Annotated
+
+import tyro
+from tyro.conf import arg
 
 MINOR_COLOR = '#262626'
 MAJOR_COLOR = '#fff'
@@ -168,33 +171,25 @@ def verify(
     )
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description='Generate a rectangular clock dial SVG.')
-    ap.add_argument('--width', type=float, required=True)
-    ap.add_argument('--height', type=float, required=True)
-    ap.add_argument(
-        '--inset-lr',
-        type=float,
-        required=True,
-        help='left/right cardinal tick length (px)',
-    )
-    ap.add_argument(
-        '--inset-tb',
-        type=float,
-        required=True,
-        help='top/bottom cardinal tick length (px)',
-    )
-    ap.add_argument('--tick-width', type=float, default=1.0)
-    ap.add_argument(
-        '--verify',
-        action='store_true',
-        help='check 60 equally-spaced ticks (12 major / 48 minor)',
-    )
-    a = ap.parse_args()
-    if a.verify:
-        verify(a.width, a.height, a.inset_lr, a.inset_tb, a.tick_width)
-    sys.stdout.write(generate(a.width, a.height, a.inset_lr, a.inset_tb, a.tick_width))
+def main(
+    width: float,
+    height: float,
+    inset_lr: float,
+    inset_tb: float,
+    tick_width: float = 1.0,
+    verify_ticks: Annotated[bool, arg(name='verify')] = False,
+) -> None:
+    """Generate a rectangular clock dial SVG.
+
+    Args:
+        inset_lr: left/right cardinal tick length (px)
+        inset_tb: top/bottom cardinal tick length (px)
+        verify_ticks: check 60 equally-spaced ticks (12 major / 48 minor)
+    """
+    if verify_ticks:
+        verify(width, height, inset_lr, inset_tb, tick_width)
+    sys.stdout.write(generate(width, height, inset_lr, inset_tb, tick_width))
 
 
 if __name__ == '__main__':
-    main()
+    tyro.cli(main)
