@@ -30,11 +30,10 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from bmc_virt.commands import Cmd
-    from bmc_virt.events import Event
+from bmc_virt.commands import Cmd
+from bmc_virt.events import Event
 
 # ── Message types ──────────────────────────────────────────────────────────────
 

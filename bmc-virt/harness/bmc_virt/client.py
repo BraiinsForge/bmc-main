@@ -30,12 +30,9 @@ from __future__ import annotations
 import contextlib
 import socket
 import threading
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from bmc_virt.protocol import PROTOCOL_VERSION, Msg, MsgType
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 # ── TCP keepalive tuning ───────────────────────────────────────────────────────
 # Start probing after 5s idle, probe every 3s, give up after 3 failures → ~14s

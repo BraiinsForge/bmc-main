@@ -37,7 +37,7 @@ from typing import Protocol
 
 from bmc_tui import catalog, console, fw_index, nix
 from bmc_tui.bos_version import BosVersion
-from bmc_tui.catalog import FirmwareCycle, StreamResult  # noqa: TC001
+from bmc_tui.catalog import FirmwareCycle, StreamResult
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Nix

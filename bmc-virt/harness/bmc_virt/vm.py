@@ -22,11 +22,14 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 from rich.live import Live
 from rich.text import Text
@@ -35,19 +38,12 @@ from bmc_virt import ui
 from bmc_virt.client import Client, DaemonConnectionError
 from bmc_virt.commands import Ack, Cmd
 from bmc_virt.events import Event, ReceivedEvent
-from bmc_virt.metrics import MetricsCollector as _MetricsCollector
+from bmc_virt.metrics import MetricsCollector
 from bmc_virt.protocol import Msg, MsgType
 from bmc_virt.protocol import cmd as _cmd_factory
 from bmc_virt.rr import RrHandle
 from bmc_virt.screenshot import capture as _capture_frame
 from bmc_virt.ssh import Ssh
-
-if TYPE_CHECKING:
-    import subprocess
-    from collections.abc import Callable, Iterator
-    from pathlib import Path
-
-    from bmc_virt.metrics import MetricsCollector
 
 # ── Default connection parameters ──────────────────────────────────────────────
 
@@ -92,7 +88,7 @@ class _MetricsFactory:
         With interval (seconds): background thread polls automatically.
         Pass ``processes=[...]`` to also sample per-process VmRSS/RssShmem.
         """
-        return _MetricsCollector(self._vm, label, interval=interval, processes=processes)
+        return MetricsCollector(self._vm, label, interval=interval, processes=processes)
 
 
 class VM:

@@ -36,7 +36,6 @@ select = [
     "B", # flake8-bugbear
     "A", # flake8-builtins
     "SIM", # flake8-simplify
-    "TCH", # flake8-type-checking
     "RUF", # ruff-specific
     "PTH", # flake8-use-pathlib
     "PL", # pylint

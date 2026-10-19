@@ -23,12 +23,10 @@
 import io
 import tarfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from bmc_tui.image import Image
-
-if TYPE_CHECKING:
-    import pytest
 
 _TOP = "sysupgrade-stm32mp15_ii3-emmc"
 
@@ -96,7 +94,7 @@ def test_members_empty_for_non_tar(tmp_path: Path) -> None:
     assert Image(junk).is_sysupgrade is False
 
 
-def test_print_shows_name_and_size(tmp_path: Path, capsys: "pytest.CaptureFixture[str]") -> None:
+def test_print_shows_name_and_size(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     fw = tmp_path / "fw.tar"
     _make_tar(fw)
     Image(fw).print()

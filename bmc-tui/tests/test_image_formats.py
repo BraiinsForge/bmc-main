@@ -20,8 +20,9 @@
 
 """Unit tests for the image-format harness log parsing and verdicts."""
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import pytest
 
@@ -29,9 +30,6 @@ from bmc_tui.nix import StorePath
 from bmc_tui.procedures import image_formats as fmt
 from bmc_tui.server import Request, ResponseValue
 from bmc_tui.stage import Abort
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 BASE = "http://host:8000"
 
