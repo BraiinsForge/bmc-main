@@ -27,28 +27,51 @@
 //! This is needed for protocols like DACP where the remote device (iTunes/Music)
 //! connects TO the client during pairing.
 //!
+//! An [`HttpListener`] is the only handle to its listener,
+//! and dropping it closes the listener,
+//! so a widget keeps the handle for as long as it wants requests.
+//! The callback borrows the listener its request arrived on;
+//! to close the listener from there, take the stored handle.
+//!
 //! # Example
 //!
 //! ```ignore
+//! use std::cell::RefCell;
+//!
+//! use bmc_wasm_sdk::*;
 //! use bmc_wasm_sdk::http_listener::*;
+//!
+//! thread_local! {
+//!     static LISTENER: RefCell<Option<HttpListener>> = const { RefCell::new(None) };
+//! }
 //!
 //! fn start_pairing() {
 //!     let listener = http_listen(0, on_request); // port 0 = ephemeral
-//!     log_info!("listening on port {}", listener.port());
+//!     if let Some(listener) = &listener {
+//!         log_info!("listening on port {}", listener.port());
+//!     }
+//!     LISTENER.set(listener);
 //! }
 //!
-//! fn on_request(listener: HttpListener, req: &HttpRequest) {
+//! fn on_request(_listener: &HttpListener, req: &HttpRequest) {
 //!     log_info!("{} {}", req.method, req.path);
 //!     req.respond(200, "Content-Type: text/plain", b"OK");
+//!     if req.path == "/paired" {
+//!         if let Some(listener) = LISTENER.take() {
+//!             listener.close();
+//!         }
+//!     }
 //! }
 //! ```
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::mem::ManuallyDrop;
 
 use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
 // Host function imports
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_http_listen(port: u32) -> u32;
@@ -65,26 +88,36 @@ unsafe extern "C" {
 }
 
 /// Callback type: `fn(listener, request)`.
-pub type RequestCallback = fn(HttpListener, &HttpRequest);
+pub type RequestCallback = fn(&HttpListener, &HttpRequest);
 
-/// Handle to an active HTTP listener.
-#[derive(Clone, Copy, Debug)]
-pub struct HttpListener(pub Option<HttpListenerId>);
+/// The only handle to an HTTP listener; dropping it closes the listener.
+#[derive(Debug, PartialEq, Eq)]
+pub struct HttpListener(HttpListenerId);
 
 impl HttpListener {
-    /// Get the actual bound port (useful when port=0 for ephemeral).
-    /// Returns `0` if the listener failed to bind.
+    /// The bound port, which the host picks when the listener asked for port 0.
+    ///
+    /// Returns 0 once the listener is closed,
+    /// such as on a callback's argument after the callback closed the stored handle.
+    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn port(&self) -> u16 {
-        let Some(id) = self.0 else { return 0 };
-        unsafe { host_http_get_port(id.to_wire()) as u16 }
+        unsafe { host_http_get_port(self.0.to_wire()) as u16 }
     }
 
-    /// Close this listener and stop accepting connections.
-    pub fn close(&self) {
-        let Some(id) = self.0 else { return };
-        LISTENERS.with(|l| l.borrow_mut().remove(&id));
-        unsafe { host_http_close_listener(id.to_wire()) }
+    /// Close the listener. A request already due in the same delivery pass is dropped.
+    pub fn close(self) {
+        drop(self);
+    }
+}
+
+impl Drop for HttpListener {
+    fn drop(&mut self) {
+        LISTENERS.with_borrow_mut(|listeners| listeners.remove(&self.0));
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            host_http_close_listener(self.0.to_wire());
+        }
     }
 }
 
@@ -102,6 +135,7 @@ impl HttpRequest {
     /// Send an HTTP response for this request.
     ///
     /// Headers should be newline-delimited `"Key: Value"` pairs.
+    #[cfg(target_arch = "wasm32")]
     pub fn respond(&self, status: u16, headers: &str, body: &[u8]) {
         unsafe {
             host_http_respond(
@@ -139,17 +173,19 @@ fn register_callback(cb: RequestCallback) -> usize {
 ///
 /// Use `port = 0` for an ephemeral port (check `listener.port()` after).
 /// The `callback` is invoked for each inbound request.
-pub fn http_listen(port: u16, callback: RequestCallback) -> HttpListener {
+///
+/// Returns `None` if the host refuses the listener or cannot bind it.
+#[cfg(target_arch = "wasm32")]
+#[must_use = "dropping the returned HttpListener closes it"]
+pub fn http_listen(port: u16, callback: RequestCallback) -> Option<HttpListener> {
     let cb_idx = register_callback(callback);
-    let listener_id = HttpListenerId::from_wire(unsafe { host_http_listen(u32::from(port)) });
-    if let Some(id) = listener_id {
-        LISTENERS.with(|l| l.borrow_mut().insert(id, cb_idx));
-    }
-    HttpListener(listener_id)
+    let listener_id = HttpListenerId::from_wire(unsafe { host_http_listen(u32::from(port)) })?;
+    LISTENERS.with_borrow_mut(|listeners| listeners.insert(listener_id, cb_idx));
+    Some(HttpListener(listener_id))
 }
 
 /// Called by the host when an inbound HTTP request is ready.
-#[unsafe(no_mangle)]
+#[cfg_attr(target_arch = "wasm32", unsafe(no_mangle))]
 pub extern "C" fn __on_http_request(
     listener_id: u32,
     request_id: u32,
@@ -182,18 +218,21 @@ pub extern "C" fn __on_http_request(
         body,
     };
 
-    let listener = HttpListener(Some(listener_id));
-
     let cb = LISTENERS
         .with(|l| l.borrow().get(&listener_id).copied())
         .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
 
     if let Some(cb) = cb {
-        cb(listener, &req);
+        // Borrowed for the request only; dropping it would close the listener.
+        cb(&ManuallyDrop::new(HttpListener(listener_id)), &req);
     }
 }
 
 /// Take ownership of a host-allocated string buffer.
+#[expect(
+    clippy::same_length_and_capacity,
+    reason = "__alloc returns exactly the requested bytes"
+)]
 fn take_string(ptr: u32, len: u32) -> String {
     if len == 0 || ptr == 0 {
         return String::new();
@@ -203,9 +242,94 @@ fn take_string(ptr: u32, len: u32) -> String {
 }
 
 /// Take ownership of a host-allocated byte buffer.
+#[expect(
+    clippy::same_length_and_capacity,
+    reason = "__alloc returns exactly the requested bytes"
+)]
 fn take_vec(ptr: u32, len: u32) -> Vec<u8> {
     if len == 0 || ptr == 0 {
         return Vec::new();
     }
     unsafe { Vec::from_raw_parts(ptr as *mut u8, len as usize, len as usize) }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::{Cell, RefCell};
+
+    use bmc_wasm_protocol::HttpListenerId;
+
+    use super::{
+        __on_http_request, HttpListener, HttpRequest, LISTENERS, RequestCallback, register_callback,
+    };
+
+    thread_local! {
+        static SEEN: Cell<Option<HttpListenerId>> = const { Cell::new(None) };
+        static STORED: RefCell<Option<HttpListener>> = const { RefCell::new(None) };
+    }
+
+    fn listen(callback: RequestCallback) -> HttpListener {
+        let id = HttpListenerId::from_wire(1).expect("BUG: test ids are non-zero");
+        let cb_idx = register_callback(callback);
+        LISTENERS.with_borrow_mut(|listeners| listeners.insert(id, cb_idx));
+        HttpListener(id)
+    }
+
+    fn deliver(id: HttpListenerId) {
+        __on_http_request(id.to_wire(), 1, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    fn is_registered(id: HttpListenerId) -> bool {
+        LISTENERS.with_borrow(|registered| registered.contains_key(&id))
+    }
+
+    fn record(listener: &HttpListener, _request: &HttpRequest) {
+        SEEN.set(Some(listener.0));
+    }
+
+    fn close_stored(_listener: &HttpListener, _request: &HttpRequest) {
+        if let Some(stored) = STORED.take() {
+            stored.close();
+        }
+    }
+
+    #[test]
+    fn a_request_reaches_its_callback_with_its_listener() {
+        let listener = listen(record);
+
+        deliver(listener.0);
+
+        assert_eq!(SEEN.get(), Some(listener.0));
+    }
+
+    #[test]
+    fn a_request_leaves_its_listener_open() {
+        let listener = listen(record);
+
+        deliver(listener.0);
+
+        assert!(is_registered(listener.0));
+    }
+
+    #[test]
+    fn a_dropped_handle_stops_its_requests() {
+        let listener = listen(record);
+        let id = listener.0;
+
+        drop(listener);
+        deliver(id);
+
+        assert_eq!(SEEN.get(), None);
+    }
+
+    #[test]
+    fn a_callback_can_close_its_own_listener_through_the_stored_handle() {
+        let listener = listen(close_stored);
+        let id = listener.0;
+        STORED.set(Some(listener));
+
+        deliver(id);
+
+        assert!(!is_registered(id));
+    }
 }

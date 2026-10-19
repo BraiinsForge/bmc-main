@@ -354,7 +354,7 @@ pub mod calendar;
 pub mod credentials;
 pub mod format;
 pub mod host;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod http_listener;
 #[cfg(target_arch = "wasm32")]
 pub mod json;
