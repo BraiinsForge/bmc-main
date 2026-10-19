@@ -218,7 +218,7 @@ def stream_flash(dev: Device, command: str) -> Path:
     ):
 
         def on_line(line: str) -> None:
-            log.write(f"{line}\n")
+            _ = log.write(f"{line}\n")
             event = parse_line(line)
             if event is None:
                 # Blank lines are shown but not retained: inside a bounded tail

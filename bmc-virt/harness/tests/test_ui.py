@@ -73,7 +73,7 @@ def test_returns_timezone_aware_timestamp(tty_stdin: None) -> None:
 def test_captures_prompt_and_ack_when_metrics_given(tty_stdin: None) -> None:
     metrics = _RecordingCapture()
 
-    ui.instruct_user("+D20", metrics=metrics)
+    _ = ui.instruct_user("+D20", metrics=metrics)
 
     assert metrics.labels == [">+D20", "<+D20"]
 
@@ -90,7 +90,7 @@ def test_raises_when_stdin_is_not_a_tty(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr("builtins.input", _press_enter)
 
     with pytest.raises(RuntimeError, match="requires a TTY"):
-        ui.instruct_user("Tap +D20")
+        _ = ui.instruct_user("Tap +D20")
 
 
 def test_raises_before_capturing_when_not_a_tty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -100,7 +100,7 @@ def test_raises_before_capturing_when_not_a_tty(monkeypatch: pytest.MonkeyPatch)
     metrics = _RecordingCapture()
 
     with pytest.raises(RuntimeError):
-        ui.instruct_user("Tap +D20", metrics=metrics)
+        _ = ui.instruct_user("Tap +D20", metrics=metrics)
 
     assert metrics.labels == []
 
@@ -110,7 +110,7 @@ def test_panel_is_rendered_to_stdout(tty_stdin: None, monkeypatch: pytest.Monkey
     buffer = io.StringIO()
     monkeypatch.setattr(ui.out, "file", buffer)
 
-    ui.instruct_user("Tap +D20")
+    _ = ui.instruct_user("Tap +D20")
 
     rendered = buffer.getvalue()
     assert "Tap +D20" in rendered

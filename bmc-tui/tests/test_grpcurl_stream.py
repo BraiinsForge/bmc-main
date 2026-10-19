@@ -81,7 +81,7 @@ def _server(behavior: Behavior) -> Generator[int]:
     try:
         yield port
     finally:
-        server.stop(0).wait()
+        _ = server.stop(0).wait()
 
 
 def _argv(port: int, *, max_time: float = 5) -> list[str]:
@@ -176,7 +176,7 @@ def test_grpcurl_max_time_exposes_deadline_exceeded() -> None:
 
     def stall(_request: bytes, _context: grpc.ServicerContext) -> Iterator[bytes]:
         yield _DOWNLOADING
-        release.wait(5)
+        _ = release.wait(5)
 
     with _server(stall) as port:
         proc = _run(port, max_time=0.2)
@@ -201,7 +201,7 @@ def _serve_for_process(port_queue: Queue[int], reached: Event) -> None:
     port = server.add_insecure_port("127.0.0.1:0")
     server.start()
     port_queue.put(port)
-    server.wait_for_termination()
+    _ = server.wait_for_termination()
 
 
 def test_grpcurl_abrupt_server_process_loss_after_verifying() -> None:
@@ -229,7 +229,7 @@ def test_grpcurl_abrupt_server_process_loss_after_verifying() -> None:
             server.join()
         if client.poll() is None:
             client.kill()
-            client.wait()
+            _ = client.wait()
     proc = subprocess.CompletedProcess(client.args, client.returncode, stdout, stderr)
     assert proc.returncode != 0
     assert _objects(proc.stdout)[:3] == [

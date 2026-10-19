@@ -188,7 +188,7 @@ def main(
     """
     if verify_ticks:
         verify(width, height, inset_lr, inset_tb, tick_width)
-    sys.stdout.write(generate(width, height, inset_lr, inset_tb, tick_width))
+    _ = sys.stdout.write(generate(width, height, inset_lr, inset_tb, tick_width))
 
 
 if __name__ == '__main__':

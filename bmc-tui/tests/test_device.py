@@ -81,7 +81,7 @@ def test_read_returns_stripped_stdout_over_ssh() -> None:
 
 def test_run_executes_when_not_dry_run() -> None:
     backend = _FakeExec()
-    Device("h", backend=backend).run("sysupgrade x")
+    _ = Device("h", backend=backend).run("sysupgrade x")
     assert backend.runs[0][-1] == "sysupgrade x"
 
 
@@ -89,7 +89,7 @@ def test_run_skips_under_dry_run() -> None:
     backend = _FakeExec()
     token = dry_run.set(True)
     try:
-        Device("h", backend=backend).run("sysupgrade x")
+        _ = Device("h", backend=backend).run("sysupgrade x")
     finally:
         dry_run.reset(token)
     assert backend.runs == []
@@ -97,7 +97,7 @@ def test_run_skips_under_dry_run() -> None:
 
 def test_push_streams_file_over_ssh(tmp_path: Path) -> None:
     fw = tmp_path / "fw.tar"
-    fw.write_bytes(b"firmware-bytes")
+    _ = fw.write_bytes(b"firmware-bytes")
     backend = _FakeExec()
     Device("h", backend=backend).push(fw, RemotePath("/mnt/data/fw.tar"))
     argv, data = backend.streams[0]
@@ -108,7 +108,7 @@ def test_push_streams_file_over_ssh(tmp_path: Path) -> None:
 
 def test_push_quotes_remote_path(tmp_path: Path) -> None:
     local = tmp_path / "f.bin"
-    local.write_bytes(b"x")
+    _ = local.write_bytes(b"x")
     backend = _FakeExec()
     dev = Device("h", backend=backend)
     dev.push(local, RemotePath("/mnt/data/odd name.tar.gz"))
@@ -118,7 +118,7 @@ def test_push_quotes_remote_path(tmp_path: Path) -> None:
 
 def test_push_skips_under_dry_run(tmp_path: Path) -> None:
     fw = tmp_path / "fw.tar"
-    fw.write_bytes(b"x")
+    _ = fw.write_bytes(b"x")
     backend = _FakeExec()
     token = dry_run.set(True)
     try:
@@ -130,7 +130,7 @@ def test_push_skips_under_dry_run(tmp_path: Path) -> None:
 
 def test_extract_tar_streams_into_remote_tar(tmp_path: Path) -> None:
     tarball = tmp_path / "nix.tar.gz"
-    tarball.write_bytes(b"init-bytes")
+    _ = tarball.write_bytes(b"init-bytes")
     backend = _FakeExec()
     Device("h", backend=backend).extract_tar(tarball)
     argv, data = backend.streams[0]
@@ -141,7 +141,7 @@ def test_extract_tar_streams_into_remote_tar(tmp_path: Path) -> None:
 
 def test_extract_tar_skips_under_dry_run(tmp_path: Path) -> None:
     tarball = tmp_path / "nix.tar.gz"
-    tarball.write_bytes(b"x")
+    _ = tarball.write_bytes(b"x")
     backend = _FakeExec()
     token = dry_run.set(True)
     try:
@@ -210,14 +210,14 @@ def test_target_parses_release_target_and_shares_board_cache() -> None:
 
 def test_run_swallows_disconnect_when_expected() -> None:
     backend = _FakeExec(error=subprocess.CalledProcessError(255, ["ssh"]))
-    Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
+    _ = Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
 
 
 def test_run_swallows_signal_killed_session_when_disconnect_expected() -> None:
     # a rebooting device can kill the remote session with a signal instead of
     # dropping the connection; 246 is -SIGUSR1 wrapped to an unsigned byte
     backend = _FakeExec(error=subprocess.CalledProcessError(246, ["ssh"]))
-    Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
+    _ = Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
 
 
 def test_run_swallows_raw_negative_signal_death_when_disconnect_expected() -> None:
@@ -225,19 +225,19 @@ def test_run_swallows_raw_negative_signal_death_when_disconnect_expected() -> No
     # (-N), not 128+N; run must treat that as session death too, matching
     # run_captured. The old `>= 128`-only predicate re-raised it.
     backend = _FakeExec(error=subprocess.CalledProcessError(-15, ["ssh"]))
-    Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
+    _ = Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
 
 
 def test_run_reraises_remote_failure_even_when_disconnect_expected() -> None:
     backend = _FakeExec(error=subprocess.CalledProcessError(1, ["ssh"]))
     with pytest.raises(subprocess.CalledProcessError):
-        Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)
+        _ = Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)
 
 
 def test_run_reraises_disconnect_when_not_expected() -> None:
     backend = _FakeExec(error=subprocess.CalledProcessError(255, ["ssh"]))
     with pytest.raises(subprocess.CalledProcessError):
-        Device("h", backend=backend).run("sysupgrade x")
+        _ = Device("h", backend=backend).run("sysupgrade x")
 
 
 # ── run_streamed ─────────────────────────────────────────────────────────────
@@ -357,7 +357,7 @@ while True:
 
 def _fake_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> Path:
     ssh = tmp_path / "ssh"
-    ssh.write_text(f"#!{sys.executable}\n{body}")
+    _ = ssh.write_text(f"#!{sys.executable}\n{body}")
     ssh.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}:{Path(sys.executable).parent}")
     return ssh
@@ -375,7 +375,7 @@ def _accepts(address: str) -> bool:
 def test_forward_yields_a_local_port_ssh_forwards_to_the_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
 
     with Device("deck").forward(80) as address:
         assert _accepts(address)
@@ -390,7 +390,7 @@ def test_forward_yields_a_local_port_ssh_forwards_to_the_device(
 def test_a_refused_forward_aborts_with_ssh_s_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake_ssh(
+    _ = _fake_ssh(
         tmp_path,
         monkeypatch,
         "import sys\nprint('administratively prohibited', file=sys.stderr)\nsys.exit(255)\n",

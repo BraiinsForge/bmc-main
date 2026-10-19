@@ -60,7 +60,7 @@ def _uuid(image: Path) -> str:
 def ext4_image(tmp_path: Path) -> Path:
     image = tmp_path / "disk.img"
     with image.open("wb") as f:
-        f.truncate(8 * 1024 * 1024)
+        _ = f.truncate(8 * 1024 * 1024)
     mkfs = _run(["mkfs.ext4", "-F", "-q", str(image)])
     assert mkfs.returncode == 0, mkfs.stderr
     return image

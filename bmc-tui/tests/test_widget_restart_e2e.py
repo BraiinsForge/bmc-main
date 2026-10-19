@@ -279,7 +279,7 @@ def test_baseline_waits_for_the_compositor_connection() -> None:
 def test_baseline_does_not_retry_missing_retained_spawn_history() -> None:
     fake = _Device(read=("", _raw(_snapshot((_thin(30, 120, "clock"),)))))
     with pytest.raises(Abort, match="no retained spawn log"):
-        e2e._wait_for_baseline(fake, clock=lambda: 0.0)
+        _ = e2e._wait_for_baseline(fake, clock=lambda: 0.0)
     assert len(fake.read_commands) == 2
 
 
@@ -331,7 +331,7 @@ def test_log_delta_reports_a_missing_marker() -> None:
 def test_log_delta_reports_missing_file_logging() -> None:
     fake = _Device(read=e2e._LOG_UNAVAILABLE)
     with pytest.raises(Abort, match="became unavailable"):
-        e2e._log_delta(fake, e2e._LogCursor(nonce="nonce"))
+        _ = e2e._log_delta(fake, e2e._LogCursor(nonce="nonce"))
 
 
 def test_log_delta_reports_archive_decompression_failure() -> None:
@@ -355,7 +355,7 @@ def test_log_history_reports_archive_decompression_failure() -> None:
     failure = f"{e2e._LOG_ARCHIVE_FAILED} /var/log/bmc/bmc.log.1.gz"
     fake = _Device(read=failure)
     with pytest.raises(Abort, match=r"failed to decompress /var/log/bmc/bmc\.log\.1\.gz"):
-        e2e._log_history(fake)
+        _ = e2e._log_history(fake)
 
 
 def test_log_wait_retries_while_rotated_history_is_in_flight() -> None:
@@ -378,7 +378,7 @@ def test_log_wait_retries_while_rotated_history_is_in_flight() -> None:
 
 def test_log_wait_stops_after_repeated_history_loss() -> None:
     with pytest.raises(Abort, match=r"lost .* recovery history"):
-        e2e._wait_for_log(
+        _ = e2e._wait_for_log(
             lambda: e2e._LOG_HISTORY_LOST,
             {30},
             timeout=10,
@@ -390,7 +390,7 @@ def test_log_wait_stops_after_repeated_history_loss() -> None:
 def test_log_wait_clears_a_transient_history_failure() -> None:
     reads = iter((e2e._LOG_HISTORY_LOST, ""))
     with pytest.raises(Abort, match="no compositor reconnection evidence"):
-        e2e._wait_for_log(
+        _ = e2e._wait_for_log(
             lambda: next(reads),
             {30},
             timeout=1,
@@ -432,7 +432,7 @@ def test_log_wait_retries_a_transient_ssh_failure() -> None:
 def test_log_cursor_reports_missing_file_logging() -> None:
     dev = _Device(run=e2e._LOG_UNAVAILABLE)
     with pytest.raises(Abort, match="enable file logging"):
-        e2e._log_cursor(dev)
+        _ = e2e._log_cursor(dev)
 
 
 def test_log_cursor_writes_a_unique_window_marker() -> None:
@@ -476,7 +476,7 @@ def test_kill_rejects_a_changed_process_identity() -> None:
 def test_log_wait_reports_missing_reconnection() -> None:
     clock = iter((0.0, 1.0))
     with pytest.raises(Abort, match="no compositor reconnection evidence"):
-        e2e._wait_for_log(
+        _ = e2e._wait_for_log(
             lambda: "",
             {30},
             timeout=1,
@@ -503,7 +503,7 @@ def test_transition_wait_reports_the_current_failure() -> None:
     snapshot = _raw(_snapshot((_thin(30, 120, "clock"),)))
     reads = iter(("", snapshot))
     with pytest.raises(Abort, match="process transition not observed"):
-        e2e._wait_for_transition(
+        _ = e2e._wait_for_transition(
             lambda: next(reads),
             1,
             lambda _snapshot: False,
@@ -515,7 +515,7 @@ def test_transition_wait_reports_the_current_failure() -> None:
 def test_transition_wait_rejects_a_partial_fleet() -> None:
     snapshot = _raw(_snapshot((_thin(30, 120, "clock"),)))
     with pytest.raises(Abort, match="expected 2 wasm thins, found 1"):
-        e2e._wait_for_transition(
+        _ = e2e._wait_for_transition(
             lambda: snapshot,
             2,
             lambda _snapshot: True,

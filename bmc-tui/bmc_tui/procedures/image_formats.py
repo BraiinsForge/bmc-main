@@ -456,7 +456,7 @@ def _push(dev: Device, cases: list[Case], base_url: str, dwell: int) -> None:
 
 
 def _backup(dev: Device) -> None:
-    dev.run(f"[ -f {BACKUP} ] || cp {CONFIG} {BACKUP}")
+    _ = dev.run(f"[ -f {BACKUP} ] || cp {CONFIG} {BACKUP}")
     console.kv("backup", BACKUP)
 
 
@@ -464,7 +464,7 @@ def _restore(dev: Device) -> None:
     if dev.read(f"[ -f {BACKUP} ] && echo yes || echo no").strip() != "yes":
         console.warn(f"no backup at {BACKUP} — leaving the device config alone")
         return
-    dev.run(f"cp {BACKUP} {CONFIG} && rm -f {BACKUP}")
+    _ = dev.run(f"cp {BACKUP} {CONFIG} && rm -f {BACKUP}")
     catalog.restart_compositor(dev)
     console.ok("previous config restored")
 

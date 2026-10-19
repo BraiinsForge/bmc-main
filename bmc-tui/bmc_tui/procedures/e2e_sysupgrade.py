@@ -62,7 +62,7 @@ class E2eSysupgrade:
         make_server: Callable[[Path], rig.RigServer] | None = None,
     ) -> None:
         if self.dry_run:
-            dry_run.set(True)
+            _ = dry_run.set(True)
         dev = dev or Device(self.device)
         backend = backend or nix.real()
         state = catalog.E2eRun(image_a=Image(self.image_a), image_b=Image(self.image_b))

@@ -154,7 +154,7 @@ class _RealExec:
                 msg = "BUG: Popen(stdin=PIPE) produced no stdin"
                 raise RuntimeError(msg)
             for chunk in chunks:
-                stdin.write(chunk)
+                _ = stdin.write(chunk)
             stdin.close()
             stderr = proc.stderr.read() if proc.stderr is not None else b""
         if proc.returncode:
@@ -338,7 +338,7 @@ class Device:
     def reachable(self) -> bool:
         """True if SSH answers. Read-only, safe under --dry-run."""
         try:
-            self.read("true")
+            _ = self.read("true")
         except (subprocess.SubprocessError, OSError):
             return False
         return True
@@ -369,7 +369,7 @@ class Device:
     def log_window(self, path: RemotePath) -> "LogWindow":
         """Stamp `path` and return a handle onto what follows the stamp."""
         nonce = uuid.uuid4().hex
-        self.run(f"echo '{_WINDOW_MARK} {nonce}' >> {path}")
+        _ = self.run(f"echo '{_WINDOW_MARK} {nonce}' >> {path}")
         return LogWindow(self, path, nonce)
 
 

@@ -149,9 +149,9 @@ bm.verts.ensure_lookup_table()
 for i in range(5):
     ni = (i + 1) % 5
     # Upper kite: apex-top, upper[i], lower[i], upper[next]
-    bm.faces.new([top_apex, upper_ring[i], lower_ring[i], upper_ring[ni]])
+    _ = bm.faces.new([top_apex, upper_ring[i], lower_ring[i], upper_ring[ni]])
     # Lower kite: apex-bot, lower[next], upper[next], lower[i]
-    bm.faces.new([bot_apex, lower_ring[ni], upper_ring[ni], lower_ring[i]])
+    _ = bm.faces.new([bot_apex, lower_ring[ni], upper_ring[ni], lower_ring[i]])
 
 bm.faces.ensure_lookup_table()
 bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])

@@ -114,7 +114,7 @@ SUITE_ORDER = (*_GROUP_A_ORDER, *_GROUP_B_ORDER, *_GROUP_C_ORDER)
 def _best_effort(action: Callable[[], object]) -> None:
     """Cleanup must not mask the failure that triggered it."""
     try:
-        action()
+        _ = action()
     except Exception as e:
         console.kv("cleanup failed", str(e))
 
@@ -126,7 +126,7 @@ def _restore_step(*, failed: bool, action: Callable[[], object]) -> None:
     if failed:
         _best_effort(action)
     else:
-        action()
+        _ = action()
 
 
 @dataclass
@@ -282,7 +282,7 @@ def _wrong_key_signature(ctx: _Ctx) -> str:
         msg = "BUG: the rig was not assembled before tampering"
         raise RuntimeError(msg)
     wrong_secret = r.secret.with_name("wrong-key.secret")
-    ctx.nix.generate_cache_key(rig.CACHE_KEY_NAME, wrong_secret)
+    _ = ctx.nix.generate_cache_key(rig.CACHE_KEY_NAME, wrong_secret)
     signed = rig.sign_variant(r.host_cli, wrong_secret, a)
     if signed.signature is None:
         msg = "BUG: sign_variant returned an unsigned variant"
@@ -422,7 +422,7 @@ def _require_b_preconditions(ctx: _Ctx) -> None:
 
 def _scenario_blank_data_partition(ctx: _Ctx) -> None:
     _require_b_preconditions(ctx)
-    _prepare_flash(ctx, ctx.image_a)
+    _ = _prepare_flash(ctx, ctx.image_a)
     pinned = _pinned(ctx)  # quiesce stops services: mDNS may die — numeric address only
     catalog.quiesce_nix(pinned)
     catalog.release_data_partition(pinned, ctx.state)
@@ -437,7 +437,7 @@ def _scenario_corrupt_fs_metadata(ctx: _Ctx) -> None:
     # pushes it; the corruption stage runs that pushed binary.
     _require_b_preconditions(ctx)
     catalog.build_debugfs(ctx.nix, ctx.prov)
-    _prepare_flash(ctx, ctx.image_a)
+    _ = _prepare_flash(ctx, ctx.image_a)
     pinned = _pinned(ctx)
     catalog.push_debugfs(pinned, ctx.prov)
     catalog.quiesce_nix(pinned)
@@ -449,7 +449,7 @@ def _scenario_corrupt_fs_metadata(ctx: _Ctx) -> None:
 
 def _scenario_store_remnants(ctx: _Ctx) -> None:
     _require_b_preconditions(ctx)
-    _prepare_flash(ctx, ctx.image_a)
+    _ = _prepare_flash(ctx, ctx.image_a)
     pinned = _pinned(ctx)
     catalog.quiesce_nix(pinned)
     catalog.plant_store_remnants(pinned)
@@ -459,7 +459,7 @@ def _scenario_store_remnants(ctx: _Ctx) -> None:
 
 def _scenario_missing_store_db(ctx: _Ctx) -> None:
     _require_b_preconditions(ctx)
-    _prepare_flash(ctx, ctx.image_a)
+    _ = _prepare_flash(ctx, ctx.image_a)
     pinned = _pinned(ctx)
     catalog.quiesce_nix(pinned)
     catalog.plant_store_witness(pinned)
@@ -470,7 +470,7 @@ def _scenario_missing_store_db(ctx: _Ctx) -> None:
 
 def _scenario_unmounted_store(ctx: _Ctx) -> None:
     _require_b_preconditions(ctx)
-    _prepare_flash(ctx, ctx.image_a)
+    _ = _prepare_flash(ctx, ctx.image_a)
     pinned = _pinned(ctx)
     catalog.quiesce_nix(pinned)
     catalog.plant_store_witness(pinned)  # store intact, /nix just unmounted
@@ -539,7 +539,7 @@ def _attempt_upgrade_abort(
     use the pinned device (the plan-wide rule; no reboot happens, so
     the pin stays valid through the whole window)."""
     _require_c_preconditions(ctx)
-    _prepare_flash(ctx, ctx.image_b)
+    _ = _prepare_flash(ctx, ctx.image_b)
     pinned = _pinned(ctx)
     catalog.drop_e2e_marker(pinned)
     catalog.record_upgrade_state(pinned, ctx.state)
@@ -580,7 +580,7 @@ def _scenario_malformed_index(ctx: _Ctx) -> None:
 def _scenario_wrong_cache_key(ctx: _Ctx) -> None:
     _require_c_preconditions(ctx)
     catalog.ensure_bump_absent(ctx.dev, ctx.run)
-    _prepare_flash(ctx, ctx.image_b)
+    _ = _prepare_flash(ctx, ctx.image_b)
     pinned = _pinned(ctx)
     catalog.drop_e2e_marker(pinned)
     catalog.record_upgrade_state(pinned, ctx.state)
@@ -623,7 +623,7 @@ def _scenario_cache_swap_retry(ctx: _Ctx) -> None:
     if r is None:
         msg = "BUG: the rig was not assembled before C1"
         raise RuntimeError(msg)
-    _prepare_flash(ctx, ctx.image_b)
+    _ = _prepare_flash(ctx, ctx.image_b)
     pinned = _pinned(ctx)
     catalog.drop_e2e_marker(pinned)
     catalog.record_upgrade_state(pinned, ctx.state)
@@ -652,7 +652,7 @@ def _scenario_cache_swap_retry(ctx: _Ctx) -> None:
     # retry with the riders
     catalog.plant_stale_next_marker(pinned)  # C5
     catalog.record_generation(pinned, ctx.run)
-    _prepare_flash(ctx, ctx.image_b)
+    _ = _prepare_flash(ctx, ctx.image_b)
     catalog.record_servers_json(_pinned(ctx), ctx.state)  # D5
     catalog.flash_e2e(_pinned(ctx), ctx.image_b, assume_yes=ctx.yes, state=ctx.state)
     catalog.wait_for_device(ctx.dev)
@@ -672,7 +672,7 @@ def _scenario_full_store(ctx: _Ctx) -> None:
     and the running system is left exactly as it was."""
     _require_c_preconditions(ctx)
     catalog.ensure_bump_absent(ctx.dev, ctx.run)
-    _prepare_flash(ctx, ctx.image_b)
+    _ = _prepare_flash(ctx, ctx.image_b)
     pinned = _pinned(ctx)
     catalog.drop_e2e_marker(pinned)
     catalog.record_upgrade_state(pinned, ctx.state)
@@ -733,7 +733,7 @@ def _same_version_reflash(ctx: _Ctx, *, via_shm: bool, expect_image: Image | Non
         # trust_image_keys, so only the /dev/shm staging copy and sysupgrade's
         # own /tmp/sysupgrade.img coexist during the flash — all tmpfs (RAM).
         memory_need = 2 * image.size + image.rootfs_size + _FLASH_HEADROOM
-    _prepare_flash(ctx, image, memory_need=memory_need)
+    _ = _prepare_flash(ctx, image, memory_need=memory_need)
     pinned = _pinned(ctx)
     if via_shm:
         catalog.sweep_uploaded_images(pinned, ctx.run)  # the /tmp upload only fed trust_image_keys
@@ -767,7 +767,7 @@ def _scenario_servers_json(ctx: _Ctx) -> None:
     flash of image B (the first boot into the target), then the
     preservation assertions."""
     _require_c_preconditions(ctx)
-    _prepare_flash(ctx, ctx.image_b)
+    _ = _prepare_flash(ctx, ctx.image_b)
     pinned = _pinned(ctx)
     catalog.drop_e2e_marker(pinned)
     catalog.record_servers_json(pinned, ctx.state)
@@ -785,7 +785,7 @@ def _scenario_stale_next_marker(ctx: _Ctx) -> None:
     """Standalone C5: initialized store on A → plant the stale marker, then
     one good-rig upgrade flash of B with the C5 assertions."""
     _require_c_preconditions(ctx)
-    _prepare_flash(ctx, ctx.image_b)
+    _ = _prepare_flash(ctx, ctx.image_b)
     pinned = _pinned(ctx)
     catalog.drop_e2e_marker(pinned)
     catalog.plant_stale_next_marker(pinned)
@@ -866,7 +866,7 @@ class E2eSysupgradeFaults:
         make_server: Callable[[Path], rig.RigServer] | None = None,
     ) -> None:
         if self.dry_run:
-            dry_run.set(True)
+            _ = dry_run.set(True)
         dev = dev or Device(self.device)
         backend = backend or nix.real()
         run = catalog.E2eRun(image_a=Image(self.image_a), image_b=Image(self.image_b))

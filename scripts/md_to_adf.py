@@ -254,7 +254,7 @@ def main(
         return 1
 
     body = json.dumps(document, indent=2, ensure_ascii=False)
-    sys.stdout.buffer.write(f'{body}\n'.encode('utf-8'))
+    _ = sys.stdout.buffer.write(f'{body}\n'.encode('utf-8'))
     return 0
 
 

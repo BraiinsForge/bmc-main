@@ -70,7 +70,7 @@ def test_snapshot_parses_typed_processes_and_selects_blockheight() -> None:
 )
 def test_snapshot_rejects_malformed_or_unhealthy_process_sets(raw: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        e2e.parse_snapshot(raw)
+        _ = e2e.parse_snapshot(raw)
 
 
 def test_health_deadline_retries_until_expected_inventory_arrives() -> None:
@@ -89,7 +89,7 @@ def test_health_deadline_retries_until_expected_inventory_arrives() -> None:
 def test_health_deadline_reports_last_failure() -> None:
     clock = _clock([0, 1])
     with pytest.raises(Abort, match="expected one compositor"):
-        e2e._wait_healthy(
+        _ = e2e._wait_healthy(
             lambda: "",
             timeout=1,
             sleep=lambda _delay: None,
@@ -116,13 +116,13 @@ def test_completed_pid_trace_includes_endpoint_and_requires_sampler_evidence() -
     assert e2e._classify_trace(10, trace) == e2e._Transition.ONE
 
     with pytest.raises(Abort, match="sampler produced no samples"):
-        e2e._complete_trace((), 11)
+        _ = e2e._complete_trace((), 11)
 
 
 def test_completed_pid_trace_rejects_an_observed_third_compositor() -> None:
     trace = e2e._complete_trace((frozenset({10}), frozenset({11})), 12)
     with pytest.raises(Abort, match="more than one"):
-        e2e._classify_trace(10, trace)
+        _ = e2e._classify_trace(10, trace)
 
 
 def test_sampler_interval_is_accepted_by_integer_only_busybox_sleep() -> None:
@@ -175,9 +175,9 @@ def test_profile_probe_strips_output_and_propagates_failure() -> None:
         raise RuntimeError("probe failed")
 
     with pytest.raises(RuntimeError, match="probe failed"):
-        e2e._profile_generation(fail)
+        _ = e2e._profile_generation(fail)
     with pytest.raises(Abort, match="unexpected widget reload hook probe"):
-        e2e._profile_generation(lambda _command: "")
+        _ = e2e._profile_generation(lambda _command: "")
 
 
 @pytest.mark.parametrize("replace_host", [False, True])
@@ -302,7 +302,7 @@ def test_variant_creation_cleans_created_worktree_when_edit_fails(tmp_path: Path
         tmp_path / "repo", tmp_path / "variants", git=git, append=fail_edit
     )
     with pytest.raises(RuntimeError, match="edit failed"):
-        worktrees.create()
+        _ = worktrees.create()
     assert any(args[:3] == ("worktree", "remove", "--force") for args in calls)
 
 

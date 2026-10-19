@@ -81,7 +81,7 @@ def served(tmp_path: Path) -> Iterator[tuple[FwIndexServer, str, Path]]:
     yields the server, its base URL and the root to add more files to."""
     root = tmp_path / "serve"
     root.mkdir()
-    (root / "firmware.tar").write_bytes(_FIRMWARE_BYTES)
+    _ = (root / "firmware.tar").write_bytes(_FIRMWARE_BYTES)
     with FwIndexServer(root, port=0, bind_ip="127.0.0.1") as server:
         yield server, f"http://127.0.0.1:{server.port}", root
 
@@ -101,13 +101,13 @@ def test_is_url_false_for_paths(spec: str) -> None:
 
 def test_obtain_uses_a_local_path_in_place(tmp_path: Path) -> None:
     local = tmp_path / "fw.tar"
-    local.write_bytes(_FIRMWARE_BYTES)
+    _ = local.write_bytes(_FIRMWARE_BYTES)
     assert firmware.obtain(str(local), index_url="http://unused/").path == local
 
 
 def test_obtain_aborts_on_a_missing_local_path(tmp_path: Path) -> None:
     with pytest.raises(Abort, match="image not found"):
-        firmware.obtain(str(tmp_path / "missing.tar"), index_url="http://unused/")
+        _ = firmware.obtain(str(tmp_path / "missing.tar"), index_url="http://unused/")
 
 
 def test_cache_dir_honours_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -163,7 +163,7 @@ def test_download_reuses_a_verified_cached_tar(
 ) -> None:
     server, base_url, _root = served
     dest = tmp_path / "firmware.tar"
-    dest.write_bytes(_FIRMWARE_BYTES)
+    _ = dest.write_bytes(_FIRMWARE_BYTES)
 
     firmware.download_firmware(f"{base_url}/firmware.tar", dest, sha256=_SHA256, size=None)
 
@@ -175,7 +175,7 @@ def test_download_without_a_checksum_always_fetches(
 ) -> None:
     server, base_url, _root = served
     dest = tmp_path / "firmware.tar"
-    dest.write_bytes(b"stale")
+    _ = dest.write_bytes(b"stale")
 
     firmware.download_firmware(f"{base_url}/firmware.tar", dest, sha256=None, size=None)
 
@@ -215,7 +215,7 @@ def test_download_names_the_cached_tar_after_the_url(
 
 def test_download_rejects_a_url_without_a_file_name() -> None:
     with pytest.raises(Abort, match="no file name"):
-        firmware.download("http://host/releases/")
+        _ = firmware.download("http://host/releases/")
 
 
 # ── release index ─────────────────────────────────────────────────────────────
@@ -224,27 +224,27 @@ def test_download_rejects_a_url_without_a_file_name() -> None:
 def test_fetch_releases_reads_the_served_index(served: tuple[FwIndexServer, str, Path]) -> None:
     _server, base_url, root = served
     release = _release("2026-09-11-0-ff0d18a2-26.09", f"{base_url}/firmware.tar")
-    (root / "index.v1.json").write_text(_index(release))
+    _ = (root / "index.v1.json").write_text(_index(release))
 
     assert firmware.fetch_releases(f"{base_url}/index.v1.json") == [release]
 
 
 def test_fetch_releases_aborts_on_an_empty_index(served: tuple[FwIndexServer, str, Path]) -> None:
     _server, base_url, root = served
-    (root / "index.v1.json").write_text(_index())
+    _ = (root / "index.v1.json").write_text(_index())
 
     with pytest.raises(Abort, match="no releases"):
-        firmware.fetch_releases(f"{base_url}/index.v1.json")
+        _ = firmware.fetch_releases(f"{base_url}/index.v1.json")
 
 
 def test_fetch_releases_aborts_on_a_foreign_document(
     served: tuple[FwIndexServer, str, Path],
 ) -> None:
     _server, base_url, root = served
-    (root / "index.v1.json").write_text("<html>")
+    _ = (root / "index.v1.json").write_text("<html>")
 
     with pytest.raises(Abort, match="cannot read the release index"):
-        firmware.fetch_releases(f"{base_url}/index.v1.json")
+        _ = firmware.fetch_releases(f"{base_url}/index.v1.json")
 
 
 def _shown_rows(monkeypatch: pytest.MonkeyPatch, pick: int) -> list[Sequence[Sequence[str]]]:
@@ -291,7 +291,7 @@ def test_pick_release_shows_an_unparsable_version_verbatim(
         size=None,
     )
 
-    firmware.pick_release([odd])
+    _ = firmware.pick_release([odd])
 
     assert shown[0][0][0] == lit("nightly-build-7")
 
@@ -300,7 +300,7 @@ def test_pick_release_aborts_without_a_terminal(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(console, "choose", stubs.returning(None))
 
     with pytest.raises(Abort, match="pass --image"):
-        firmware.pick_release([_release("2026-09-11-0-ff0d18a2-26.09", "http://x/fw.tar")])
+        _ = firmware.pick_release([_release("2026-09-11-0-ff0d18a2-26.09", "http://x/fw.tar")])
 
 
 def test_obtain_from_the_index_downloads_the_picked_release(
@@ -310,7 +310,7 @@ def test_obtain_from_the_index_downloads_the_picked_release(
     monkeypatch.setattr(console, "choose", stubs.returning(0))
     _server, base_url, root = served
     release = _release("2026-09-11-0-ff0d18a2-26.09", f"{base_url}/firmware.tar")
-    (root / "index.v1.json").write_text(_index(release))
+    _ = (root / "index.v1.json").write_text(_index(release))
 
     image = firmware.obtain(None, index_url=f"{base_url}/index.v1.json")
 

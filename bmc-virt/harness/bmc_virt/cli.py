@@ -69,9 +69,9 @@ class SshCommand:
     def run(self, conn: Connection) -> None:
         result = conn.ssh().run(" ".join(self.cmd), check=False)
         if result.stdout:
-            sys.stdout.write(result.stdout)
+            _ = sys.stdout.write(result.stdout)
         if result.stderr:
-            sys.stderr.write(result.stderr)
+            _ = sys.stderr.write(result.stderr)
         sys.exit(result.returncode)
 
 

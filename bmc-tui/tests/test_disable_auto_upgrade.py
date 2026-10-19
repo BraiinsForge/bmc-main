@@ -169,28 +169,28 @@ def test_a_bmc_that_does_not_answer_defers_the_disable(
 
 def test_a_bmc_refusing_the_call_fails_the_deploy(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(Abort, match="SetAutoUpgrade failed"):
-        _run(monkeypatch, _Grpcurl(_EXIT_UNAUTHENTICATED))
+        _ = _run(monkeypatch, _Grpcurl(_EXIT_UNAUTHENTICATED))
 
 
 def test_a_disable_that_succeeded_is_not_repeated(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = catalog.Deployment(attrs=[])
-    _run(monkeypatch, _Grpcurl(0), plan=plan)
+    _ = _run(monkeypatch, _Grpcurl(0), plan=plan)
     grpcurl = _Grpcurl()
-    _run_deferred(monkeypatch, grpcurl, plan)
+    _ = _run_deferred(monkeypatch, grpcurl, plan)
     assert grpcurl.calls == []
 
 
 def test_a_deferred_disable_waits_for_the_deployed_bmc(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = catalog.Deployment(attrs=[])
     grpcurl = _Grpcurl(_EXIT_DIAL_FAILED, _EXIT_UNAVAILABLE, 0)
-    _run_deferred(monkeypatch, grpcurl, plan)
+    _ = _run_deferred(monkeypatch, grpcurl, plan)
     assert len(grpcurl.calls) == 3, "a restarted bmc takes a while to answer"
     assert plan.auto_upgrade_disabled
 
 
 def test_a_deferred_attempt_cannot_outlast_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
     grpcurl = _Grpcurl(0)
-    _run_deferred(monkeypatch, grpcurl, catalog.Deployment(attrs=[]))
+    _ = _run_deferred(monkeypatch, grpcurl, catalog.Deployment(attrs=[]))
     argv = grpcurl.calls[0]
     max_time = int(argv[argv.index("-max-time") + 1])
     assert max_time <= catalog._BMC_READY_TIMEOUT, (
@@ -203,7 +203,7 @@ def test_a_deployed_bmc_that_never_answers_fails_the_deploy(
 ) -> None:
     monkeypatch.setattr(catalog, "_BMC_READY_TIMEOUT", 0.0)
     with pytest.raises(Abort, match="automatic upgrades are still on"):
-        _run_deferred(monkeypatch, _Grpcurl(_EXIT_DIAL_FAILED), catalog.Deployment(attrs=[]))
+        _ = _run_deferred(monkeypatch, _Grpcurl(_EXIT_DIAL_FAILED), catalog.Deployment(attrs=[]))
 
 
 def test_the_session_outlives_the_grpc_call_and_the_boser_fallback(
@@ -236,7 +236,7 @@ def test_a_boser_refusal_fails_the_deploy_and_destroys_the_session(
     ssh = _Ssh()
     refused = _Boser(Abort("PATCH /api/v1/upgrade/auto-upgrade: HTTP 401"))
     with pytest.raises(Abort, match="HTTP 401"):
-        _run(monkeypatch, _Grpcurl(catalog._GRPCURL_EXIT_UNIMPLEMENTED), ssh, refused)
+        _ = _run(monkeypatch, _Grpcurl(catalog._GRPCURL_EXIT_UNIMPLEMENTED), ssh, refused)
     assert ssh.ran("session destroy")
 
 

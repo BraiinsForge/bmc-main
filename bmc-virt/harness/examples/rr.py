@@ -40,7 +40,7 @@ with VM.connect(timeout=60) as vm:
     # ── Verify the app is up before we touch rr ───────────────────────────
 
     ui.header("Wait for app")
-    vm.wait_for(Event.APP_READY, timeout=60)
+    _ = vm.wait_for(Event.APP_READY, timeout=60)
     ui.ok("app.ready")
 
     # ── Start rr recording ────────────────────────────────────────────────
@@ -56,18 +56,18 @@ with VM.connect(timeout=60) as vm:
     # Wait for the app to come back up under rr
     ui.header("Wait for app under rr")
     with ui.spinner("waiting for app.started..."):
-        vm.wait_next(Event.APP_STARTED, timeout=120)
+        _ = vm.wait_next(Event.APP_STARTED, timeout=120)
     ui.ok("app.started under rr")
 
     with ui.spinner("waiting for app.ready (slow under rr)..."):
-        vm.wait_next(Event.APP_READY, timeout=120)
+        _ = vm.wait_next(Event.APP_READY, timeout=120)
     ui.ok("app.ready under rr")
 
     # ── Exercise the app while recording ──────────────────────────────────
 
     ui.header("Exercise app under rr")
-    vm.exec("echo 'hello from rr'", verbose=True)
-    vm.exec("ls /root/", verbose=True)
+    _ = vm.exec("echo 'hello from rr'", verbose=True)
+    _ = vm.exec("ls /root/", verbose=True)
     sleep(2)
 
     # ── Stop recording ────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ with VM.connect(timeout=60) as vm:
         for part in rel.parent.parts:
             existing = next((c for c in node.children if c.label == f"[bold]{part}/[/bold]"), None)
             node = existing or node.add(f"[bold]{part}/[/bold]")
-        node.add(f"[cyan]{rel.name}[/cyan]  [dim]{_humanize(sz)}[/dim]")
+        _ = node.add(f"[cyan]{rel.name}[/cyan]  [dim]{_humanize(sz)}[/dim]")
 
     ui.out.print(tree)
     ui.out.print()

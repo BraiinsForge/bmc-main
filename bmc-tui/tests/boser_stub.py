@@ -129,7 +129,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        _ = self.wfile.write(payload)
 
     def _error(self, status: int, code: str, message: str) -> None:
         self._reply(status, {"error": code, "message": message})
@@ -177,11 +177,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        self.wfile.write(b": keepalive\n\n")
+        _ = self.wfile.write(b": keepalive\n\n")
         for event in script.events:
             if event.get("state") in ("COMPLETED", "REBOOTING"):
                 script.before_terminal()
-            self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+            _ = self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
             self.wfile.flush()
 
     def do_GET(self) -> None:

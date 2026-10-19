@@ -208,7 +208,7 @@ for face_indices in found_faces:
         return math.atan2(v.dot(cross_ref), v.dot(ref))
 
     ordered = sorted(face_indices, key=angle_key)
-    bm.faces.new([bm_verts[i] for i in ordered])
+    _ = bm.faces.new([bm_verts[i] for i in ordered])
 
 bm.faces.ensure_lookup_table()
 bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])

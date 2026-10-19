@@ -152,12 +152,12 @@ def deploy(vm: VM, wasm: Path) -> None:
     ui.header("Deploy mesh-demo scene")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(SCENE_CONFIG, indent=2) + "\n")
+    _ = CONFIG_PATH.write_text(json.dumps(SCENE_CONFIG, indent=2) + "\n")
 
-    vm.exec(f'mkdir -p "{REMOTE_WASM_DIR}"')
-    vm.exec(f': > "{BMC_LOG}"')
+    _ = vm.exec(f'mkdir -p "{REMOTE_WASM_DIR}"')
+    _ = vm.exec(f': > "{BMC_LOG}"')
     # Widget log is append-only — truncate so we capture only this run.
-    vm.exec(f': > "{REMOTE_WIDGET_LOG}"')
+    _ = vm.exec(f': > "{REMOTE_WIDGET_LOG}"')
 
     vm.push(src=wasm, dst=REMOTE_WASM_PATH)
     ui.ok(f"Pushed {wasm.name} → {REMOTE_WASM_PATH}")
@@ -180,12 +180,12 @@ def restart_app(vm: VM) -> None:
         raise SystemExit(ack.error or "b-bmc-openwrt restart failed")
 
     with ui.spinner("waiting for app ready..."):
-        vm.wait_for(
+        _ = vm.wait_for(
             Event.APP_STARTED,
             timeout=60,
             where=lambda evt: evt.ts.astimezone(UTC) >= restart_started_at,
         )
-        vm.wait_for(
+        _ = vm.wait_for(
             Event.APP_READY,
             timeout=60,
             where=lambda evt: evt.ts.astimezone(UTC) >= restart_started_at,
@@ -205,19 +205,19 @@ def run_experiment(vm: VM) -> None:
     ) as m:
         # Settle the seeded scene so baseline isn't mid-init transients.
         sleep(2)
-        m.capture("baseline")
+        _ = m.capture("baseline")
 
         # ``instruct_user`` records "<tap" on prompt and ">tap" on ack;
         # the 0.5s background poller fills the curve between, so a
         # third "settled after" snapshot would be redundant.
         for tap in TAP_LADDER:
-            ui.instruct_user(tap, metrics=m)
+            _ = ui.instruct_user(tap, metrics=m)
             sleep(2)
 
-        m.capture("final")
+        _ = m.capture("final")
 
         m.report()
-        m.chart(CHART_DST)
+        _ = m.chart(CHART_DST)
         ui.ok(f"Chart saved to {CHART_DST}")
 
 
@@ -247,7 +247,7 @@ def main() -> None:
 
     with VM.connect(timeout=60) as vm:
         ui.ok("Connected to VM")
-        vm.wait_for(Event.APP_READY, timeout=60)
+        _ = vm.wait_for(Event.APP_READY, timeout=60)
         deploy(vm, wasm)
         restart_app(vm)
         run_experiment(vm)

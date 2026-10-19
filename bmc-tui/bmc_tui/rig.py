@@ -121,7 +121,7 @@ def write_serve_root(root: Path, variants: list[Variant], base_url: str) -> None
     variant. Store artifacts are symlinked, not copied — the handler follows
     symlinks and the tarballs are large."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / FEED_NAME).write_text(feed_document(variants, base_url))
+    _ = (root / FEED_NAME).write_text(feed_document(variants, base_url))
     (root / "tarballs").mkdir(exist_ok=True)
     for v in variants:
         index_dir = root / "index" / v.bos_version
@@ -157,8 +157,8 @@ def _rewrite_feed(root: Path, mutate: "Callable[[FeedEntry], object]") -> None:
     feed = root / FEED_NAME
     doc = msgspec.json.decode(feed.read_bytes(), type=Feed)
     for entry in doc["entries"]:
-        mutate(entry)
-    feed.write_text(json.dumps(doc, indent=2))
+        _ = mutate(entry)
+    _ = feed.write_text(json.dumps(doc, indent=2))
 
 
 def corrupt_tarball(root: Path, name: str) -> None:
@@ -170,7 +170,7 @@ def corrupt_tarball(root: Path, name: str) -> None:
     require(len(data) > 0, f"served tarball {name} is empty — an empty artifact reached the rig")
     data[-1] ^= 0xFF
     served.unlink()
-    served.write_bytes(bytes(data))
+    _ = served.write_bytes(bytes(data))
 
 
 def corrupt_index(root: Path, bos_version: str) -> None:
@@ -178,13 +178,13 @@ def corrupt_index(root: Path, bos_version: str) -> None:
     write_serve_root re-links the store copy."""
     served = root / "index" / bos_version / INDEX_NAME
     served.unlink()
-    served.write_text("{ this is not json")
+    _ = served.write_text("{ this is not json")
 
 
 def swap_cache_away(cache: Path) -> None:
     """C1 tamper: move the cache aside — reversible, unlike emptying it
     (write_serve_root does not recreate the cache)."""
-    cache.rename(cache.with_name(cache.name + ".withheld"))
+    _ = cache.rename(cache.with_name(cache.name + ".withheld"))
 
 
 def restore_cache(cache: Path) -> None:
@@ -195,7 +195,7 @@ def restore_cache(cache: Path) -> None:
         if cache.exists():
             msg = f"BUG: both {cache.name} and {withheld.name} exist — refusing to clobber"
             raise RuntimeError(msg)
-        withheld.rename(cache)
+        _ = withheld.rename(cache)
 
 
 CACHE_KEY_NAME = "sysupgrade-e2e-1"
@@ -327,7 +327,7 @@ class RigServer:
             handler.send_header("Content-Length", str(size))
             handler.end_headers()
             with tarball.open("rb") as source:
-                handler.wfile.write(source.read(prefix))
+                _ = handler.wfile.write(source.read(prefix))
                 handler.wfile.flush()
             deadline = time.monotonic() + _STALL_MAX_SECONDS
             while self._fault is FaultMode.STALL and time.monotonic() < deadline:

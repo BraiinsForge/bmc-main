@@ -225,7 +225,7 @@ def _offer_stale_firmware_cleanup(dev: Device, available: int) -> int:
     if not console.confirm("remove them?"):
         return available
 
-    dev.run("rm -f " + " ".join(shlex.quote(p) for p in stale))
+    _ = dev.run("rm -f " + " ".join(shlex.quote(p) for p in stale))
     return _mem_available(dev)
 
 
@@ -278,7 +278,7 @@ def sysupgrade(
     if skip_nix:
         # Old device nix.conf files with build-users-group=nixbld can break staging.
         env += "BOS_NIX_SKIP=1 "
-    nix_progress.stream_flash(dev, f"{env}sysupgrade {flag}{shlex.quote(image.remote_path)}")
+    _ = nix_progress.stream_flash(dev, f"{env}sysupgrade {flag}{shlex.quote(image.remote_path)}")
     return f"{console.lit(image.version)} → reboot"
 
 
@@ -290,7 +290,7 @@ def cleanup_firmware(dev: Device, image: Image) -> str:
 
     Clearing it up front means the upload is never skipped by the checksum
     shortcut in `upload_firmware`, so every flash sends bytes it just verified."""
-    dev.run(f"rm -f {shlex.quote(image.remote_path)}")
+    _ = dev.run(f"rm -f {shlex.quote(image.remote_path)}")
     return console.lit(image.remote_path)
 
 
@@ -353,7 +353,7 @@ def ensure_nix_cli(nix: Nix, dev: Device) -> None:
     def bootstrap() -> None:
         [built] = nix.build([nix.resolve(Attr(".#deck-packages.bmc-nix-cli"))])
         nix.copy([built.store_path], dev.copy_dest)
-        dev.run(_register_cmd([built], cli=f"{built.store_path}/bin/bmc-nix-cli"))
+        _ = dev.run(_register_cmd([built], cli=f"{built.store_path}/bin/bmc-nix-cli"))
 
     ensure(compatible, bootstrap, "compatible bmc-nix-cli bootstrap did not take")
 
@@ -508,7 +508,7 @@ def remove_superseded_packages(dev: Device, plan: Deployment) -> str:
             f"remove-packages --name {shlex.quote(name)}"
         )
         try:
-            dev.run(cmd)
+            _ = dev.run(cmd)
         except subprocess.SubprocessError as error:
             reason = _removal_failure(error)
             dropped.append(
@@ -559,7 +559,7 @@ def restore_cleared_servers(dev: Device) -> str:
     # Only the marker lets `register-server` update a bootstrapped factory.
     if config.get("bootstrapped_factory"):
         return f"{kept}: it holds a bootstrapped factory entry"
-    dev.run(f"rm {SERVERS_JSON}")
+    _ = dev.run(f"rm {SERVERS_JSON}")
     removed = "would remove" if dry_run.get() else "removed"
     return f"{removed} the emptied {SERVERS_JSON}; the shipped default applies again"
 
@@ -767,7 +767,7 @@ def register_default_servers(
 
     commands = [_register_server_cmd(entry) for entry in entries]
     for command in commands:
-        dev.run(command)
+        _ = dev.run(command)
     ids = ", ".join(str(entry["id"]) for entry in entries)
     if disabled:
         skipped = ", ".join(str(entry["id"]) for entry in disabled)
@@ -802,7 +802,7 @@ def stop_compositor(
     after the widget teardown — wait them out, or the memory gate that
     follows samples RAM they still hold.
     """
-    dev.run("service bmc-compositor stop")
+    _ = dev.run("service bmc-compositor stop")
     if dry_run.get():
         return "stop logged (dry-run)"
     failure = _poll_until(
@@ -826,7 +826,7 @@ def compositor_pid(dev: Device) -> Pid | None:
 
 def start_compositor(dev: Device) -> None:
     """Cleanup counterpart of stop_compositor; a no-op when already up."""
-    dev.run("service bmc-compositor start")
+    _ = dev.run("service bmc-compositor start")
 
 
 def _await_orchestrator(
@@ -859,7 +859,7 @@ def restart_compositor(dev: Device) -> str:
     if dry_run.get():
         return "skipped (dry-run)"
 
-    dev.run("/etc/init.d/bmc-compositor restart")
+    _ = dev.run("/etc/init.d/bmc-compositor restart")
     return "restarted"
 
 
@@ -978,7 +978,7 @@ def push_nix_cli(dev: Device, plan: Provisioning) -> str:
         msg = "BUG: bmc-nix-cli was not built before the push stage"
         raise RuntimeError(msg)
     dev.push(cli, _REMOTE_CLI)
-    dev.run(f"chmod +x {shlex.quote(_REMOTE_CLI)}")
+    _ = dev.run(f"chmod +x {shlex.quote(_REMOTE_CLI)}")
     return f"→ {console.lit(_REMOTE_CLI)}"
 
 
@@ -1004,7 +1004,7 @@ def push_debugfs(dev: Device, plan: Provisioning) -> str:
         msg = "BUG: debugfs was not built before the push stage"
         raise RuntimeError(msg)
     dev.push(debugfs, _REMOTE_DEBUGFS)
-    dev.run(f"chmod +x {shlex.quote(_REMOTE_DEBUGFS)}")
+    _ = dev.run(f"chmod +x {shlex.quote(_REMOTE_DEBUGFS)}")
     return f"→ {console.lit(_REMOTE_DEBUGFS)}"
 
 
@@ -1013,7 +1013,7 @@ def prepare_data_partition(dev: Device, data_partition: str) -> str:
     """Fsck/format/mount /mnt/data via the pushed CLI; a healthy running
     Deck makes this a mount-state no-op."""
 
-    dev.run(
+    _ = dev.run(
         f"{shlex.quote(_REMOTE_CLI)} prepare-data-partition "
         f"--data-partition {shlex.quote(data_partition)}"
     )
@@ -1058,8 +1058,8 @@ def ensure_store_absent(dev: Device) -> str:
             # A bind mount would keep referencing the unlinked directory
             # inode after rmdir, so the post-init mount identity check
             # could never pass again.
-            dev.run(f"umount {_NIX_STORE}")
-        dev.run(f"rmdir {_NIX_BACKING}")
+            _ = dev.run(f"umount {_NIX_STORE}")
+        _ = dev.run(f"rmdir {_NIX_BACKING}")
         return "removed an empty leftover store dir"
     return "store is clean"
 
@@ -1108,7 +1108,7 @@ def activate_profile(dev: Device, plan: Provisioning) -> str:
     if profile_path is None:
         msg = "BUG: tarball metadata was not read before activation"
         raise RuntimeError(msg)
-    dev.run(f"{shlex.quote(_REMOTE_CLI)} mount")
+    _ = dev.run(f"{shlex.quote(_REMOTE_CLI)} mount")
     if not dry_run.get():
         # `mount` reports AlreadyMounted for ANY /nix mount without
         # checking the source; verify the identity ourselves, like the
@@ -1118,7 +1118,7 @@ def activate_profile(dev: Device, plan: Provisioning) -> str:
             f"{console.lit(_NIX_STORE)} is not backed by {console.lit(_NIX_BACKING)} after mount",
         )
     entrypoint = f"{profile_path}/1-link/core/activation/entrypoint"
-    dev.run(shlex.quote(entrypoint))
+    _ = dev.run(shlex.quote(entrypoint))
     return f"activated {console.lit('generation 1')}"
 
 
@@ -1128,7 +1128,7 @@ def cleanup_remote_artifacts(dev: Device, plan: Provisioning) -> str:
     failed stage."""
 
     paths = [p for p in (plan.remote_tarball, _REMOTE_CLI, _REMOTE_DEBUGFS) if p]
-    dev.run(f"rm -f {' '.join(shlex.quote(p) for p in paths)}")
+    _ = dev.run(f"rm -f {' '.join(shlex.quote(p) for p in paths)}")
     return ", ".join(console.lit(p) for p in paths)
 
 
@@ -1327,8 +1327,8 @@ def register_rig(dev: Device, run: E2eRun) -> str:
             "servers": [],
         }
     )
-    dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {SERVERS_JSON}")
-    dev.run(
+    _ = dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {SERVERS_JSON}")
+    _ = dev.run(
         f"{shlex.quote(_REMOTE_CLI)} register-server --id e2e "
         f"--feed-url {shlex.quote(r.feed_url)} "
         f"--index-public-key {shlex.quote(r.cache_public_key)} "
@@ -1485,7 +1485,7 @@ def clear_nix_store(
     _quiesce(dev, timeout=timeout, sleep=sleep, clock=clock)
     if dry_run.get():
         return "cleardown logged (dry-run)"
-    dev.run(f"rm -rf {_NIX_BACKING}")
+    _ = dev.run(f"rm -rf {_NIX_BACKING}")
     return f"cleared {console.lit(_NIX_BACKING)}"
 
 
@@ -1511,13 +1511,13 @@ def _quiesce(
     )
     if failure is not None:
         raise Abort(f"the store is still referenced: {failure}")
-    dev.run("sync")
+    _ = dev.run("sync")
     # Boot can stack /nix bind mounts (each enabled copy of the activator
     # runs mount_nix), so peel until the mount table is clear.
     for _ in range(8):
         if not dev.read(f"grep ' {_NIX_STORE} ' /proc/mounts || true"):
             break
-        dev.run(f"umount {_NIX_STORE}")
+        _ = dev.run(f"umount {_NIX_STORE}")
     require(
         not dev.read(f"grep ' {_NIX_STORE} ' /proc/mounts || true"),
         f"{console.lit(_NIX_STORE)} is still mounted after umount",
@@ -1616,7 +1616,7 @@ def release_data_partition(dev: Device, state: FaultsState) -> str:
     assert entry is not None  # narrowed by require
     majmin, _mount, device = entry
     uuid = _blkid_uuid(dev, device)
-    dev.run(f"umount {shlex.quote(_DATA_MOUNT)}")
+    _ = dev.run(f"umount {shlex.quote(_DATA_MOUNT)}")
     state.partition = DataPartition(device=device, majmin=majmin, uuid=uuid)
     if dry_run.get():
         return "release logged (dry-run)"
@@ -1641,7 +1641,7 @@ def corrupt_partition_blank(dev: Device, state: FaultsState) -> str:
     """Zero the superblock region so blkid sees no filesystem — the ladder
     must take the mkfs branch (observable: a new UUID)."""
     p = _require_partition(state)
-    dev.run(f"dd if=/dev/zero of={shlex.quote(p.device)} bs=64k count=1 conv=fsync")
+    _ = dev.run(f"dd if=/dev/zero of={shlex.quote(p.device)} bs=64k count=1 conv=fsync")
     return f"first 64 KiB of {console.lit(p.device)} zeroed"
 
 
@@ -1664,7 +1664,7 @@ def corrupt_partition_metadata(
     e2fsprogs has no debugfs, so the harness ships its own (push_debugfs)."""
     p = _require_partition(state)
     for command in _B2_DEBUGFS_COMMANDS:
-        dev.run(f"{shlex.quote(debugfs)} -w -R '{command}' {shlex.quote(p.device)}")
+        _ = dev.run(f"{shlex.quote(debugfs)} -w -R '{command}' {shlex.quote(p.device)}")
     return f"root links_count zeroed + errors flag set on {console.lit(p.device)}"
 
 
@@ -1703,7 +1703,7 @@ def _clear_orchestrator(
     disappears."""
 
     query = shlex.quote(json.dumps({"name": _ORCHESTRATOR}))
-    dev.run(f"ubus call service delete {query} 2>/dev/null || true")
+    _ = dev.run(f"ubus call service delete {query} 2>/dev/null || true")
     if dry_run.get():
         return
     lingering = _poll_until(
@@ -1738,10 +1738,10 @@ def _stop_generation_services(dev: Device, generation: str) -> None:
     links = dev.read(f"ls {shlex.quote(generation)}/etc/rc.d/ 2>/dev/null || true").split()
     shutdown = [_rc_name(link) for link in sorted(links) if link.startswith("K")]
     for name in shutdown:
-        dev.run(f"/etc/init.d/{shlex.quote(name)} shutdown 2>/dev/null || true")
+        _ = dev.run(f"/etc/init.d/{shlex.quote(name)} shutdown 2>/dev/null || true")
     services = dev.read(f"ls {shlex.quote(generation)}/etc/init.d/ 2>/dev/null || true").split()
     for name in sorted(set(services)):
-        dev.run(f"/etc/init.d/{shlex.quote(name)} stop 2>/dev/null || true")
+        _ = dev.run(f"/etc/init.d/{shlex.quote(name)} stop 2>/dev/null || true")
 
 
 def _nix_reference_holders(dev: Device) -> str | None:
@@ -1810,7 +1810,7 @@ def trust_image_keys(dev: Device, image: Image) -> str:
     destructive, so a failure leaves the device untouched."""
 
     rootfs = f"{image.sysupgrade_dir}/rootfs.img"
-    dev.run(
+    _ = dev.run(
         "d=$(mktemp -d) && trap 'rm -rf \"$d\"' EXIT && "
         f'tar -xf {shlex.quote(image.remote_path)} -C "$d" {shlex.quote(rootfs)} && '
         f'unsquashfs -q -n -d "$d/r" "$d/{rootfs}" etc/opkg/keys && '
@@ -1843,7 +1843,7 @@ def flash_e2e(
     )
     command = f"sysupgrade {shlex.quote(remote_path or image.remote_path)}"
     if state is None:
-        dev.run(command, expect_disconnect=True)
+        _ = dev.run(command, expect_disconnect=True)
         return f"{console.lit(image.version)} → reboot"
     outcome = dev.run_captured(command)
     if outcome is not None:
@@ -1991,7 +1991,7 @@ def require_upgrade_state_untouched(dev: Device, state: FaultsState) -> str:
 @stage("Sweep download artifact")
 def sweep_download_artifact(dev: Device) -> str:
     paths = " ".join(shlex.quote(path) for path in _DOWNLOAD_ARTIFACTS)
-    dev.run(f"rm -f {paths}")
+    _ = dev.run(f"rm -f {paths}")
     if dry_run.get():
         return "download artifact sweep logged (dry-run)"
     for path in _DOWNLOAD_ARTIFACTS:
@@ -2120,13 +2120,13 @@ def drop_e2e_marker(dev: Device) -> str:
     is-initialized only checks the directory. Scenario B's preservation
     discriminator: it must survive an in-place upgrade."""
 
-    dev.run(f"touch {_E2E_MARKER}")
+    _ = dev.run(f"touch {_E2E_MARKER}")
     return console.lit(_E2E_MARKER)
 
 
 @stage("Clean up e2e marker")
 def cleanup_e2e_marker(dev: Device) -> str:
-    dev.run(f"rm -f {_E2E_MARKER}")
+    _ = dev.run(f"rm -f {_E2E_MARKER}")
     return console.lit(_E2E_MARKER)
 
 
@@ -2136,7 +2136,7 @@ def sweep_uploaded_images(dev: Device, run: E2eRun) -> str:
     a declined flash; a flashed image is gone with the reboot anyway."""
 
     paths = [run.image_a.remote_path, run.image_b.remote_path]
-    dev.run("rm -f " + " ".join(shlex.quote(p) for p in paths))
+    _ = dev.run("rm -f " + " ".join(shlex.quote(p) for p in paths))
     return ", ".join(console.lit(p) for p in paths)
 
 
@@ -2344,8 +2344,8 @@ def register_rig_tampered(dev: Device, run: E2eRun, *, wrong_public_key: str) ->
             "servers": [],
         }
     )
-    dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {SERVERS_JSON}")
-    dev.run(
+    _ = dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {SERVERS_JSON}")
+    _ = dev.run(
         f"{shlex.quote(_REMOTE_CLI)} register-server --id e2e "
         f"--feed-url {shlex.quote(r.feed_url)} "
         f"--index-public-key {shlex.quote(wrong_public_key)} "
@@ -2366,7 +2366,7 @@ def register_rig_tampered(dev: Device, run: E2eRun, *, wrong_public_key: str) ->
 def plant_store_witness(dev: Device) -> str:
     """A file inside the promoted store whose disappearance proves the init
     path wiped rather than reused it (B4/B5)."""
-    dev.run(f"touch {_WITNESS}")
+    _ = dev.run(f"touch {_WITNESS}")
     return console.lit(_WITNESS)
 
 
@@ -2382,7 +2382,7 @@ def require_witness_gone(dev: Device) -> str:
 @stage("Plant staging remnants (B3)")
 def plant_store_remnants(dev: Device) -> str:
     """Leftovers of an interrupted staged extraction: init must clear both."""
-    dev.run(
+    _ = dev.run(
         f"mkdir -p {_NIX_BACKING}.tmp/junk && touch {_NIX_BACKING}.tmp/junk/f {_NIX_BACKING}.wiped"
     )
     return f"{console.lit(_NIX_BACKING + '.tmp')} + {console.lit(_NIX_BACKING + '.wiped')}"
@@ -2398,7 +2398,7 @@ def require_remnants_gone(dev: Device) -> str:
 @stage("Delete store database (B4)")
 def delete_store_db(dev: Device) -> str:
     db = f"{_NIX_BACKING}/var/nix/db/db.sqlite"
-    dev.run(f"rm -f {shlex.quote(db)}")
+    _ = dev.run(f"rm -f {shlex.quote(db)}")
     return f"{console.lit(db)} deleted"
 
 
@@ -2453,7 +2453,7 @@ def upload_firmware_shm(dev: Device, image: Image) -> str:
     # mkdir the RESOLVED dir: on OpenWRT /dev/shm is a symlink (to /tmp/shm,
     # present at boot) — creating the target covers a resolved-target-missing
     # case, where the push's `cat >` would fail with ENOENT.
-    dev.run(f'mkdir -p "$(readlink -f {shlex.quote(_SHM_DIR)})"')
+    _ = dev.run(f'mkdir -p "$(readlink -f {shlex.quote(_SHM_DIR)})"')
     dev.push(image.path, remote)
     if dry_run.get():
         return f"→ {console.lit(remote)}"
@@ -2466,7 +2466,7 @@ def upload_firmware_shm(dev: Device, image: Image) -> str:
 
 @stage("Sweep /dev/shm upload")
 def sweep_shm_upload(dev: Device, image: Image) -> str:
-    dev.run(f"rm -f {shlex.quote(shm_path(image))}")
+    _ = dev.run(f"rm -f {shlex.quote(shm_path(image))}")
     return console.lit(shm_path(image))
 
 
@@ -2485,7 +2485,7 @@ def clear_nix_narinfo_cache(dev: Device) -> str:
     substituter even after the rig's cache is restored. bmc-nix passes no
     countermeasure to nix-store --realise (product finding, tracked
     separately); the harness deletes the cache files instead."""
-    dev.run(f"rm -f {_NARINFO_CACHE_GLOB}")
+    _ = dev.run(f"rm -f {_NARINFO_CACHE_GLOB}")
     return console.lit(_NARINFO_CACHE_GLOB)
 
 
@@ -2499,7 +2499,7 @@ def plant_stale_next_marker(dev: Device) -> str:
     regular file would survive activation and false-fail require_stale_next_gone.
     The target (a generation link like `1-link`) may dangle — the sweep
     removes any non-kept next.* symlink regardless of where it points."""
-    dev.run(f"ln -sfn 1-link {_PROFILE_DIR}/{_STALE_NEXT_MARKER}")
+    _ = dev.run(f"ln -sfn 1-link {_PROFILE_DIR}/{_STALE_NEXT_MARKER}")
     return console.lit(_STALE_NEXT_MARKER)
 
 
@@ -2557,15 +2557,17 @@ def fill_store_filesystem(dev: Device) -> str:
     The Deck writes its data partition at roughly 7 MB/s,
     so filling 1.7 GiB took about four minutes."""
     spacer_blocks = _STORE_BALLAST_MARGIN_MIB
-    dev.run(f"dd if=/dev/zero of={_STORE_BALLAST_SPACER} bs=1M count={spacer_blocks} 2>/dev/null")
-    dev.run(f"dd if=/dev/zero of={_STORE_BALLAST} bs=1M 2>/dev/null || true")
+    _ = dev.run(
+        f"dd if=/dev/zero of={_STORE_BALLAST_SPACER} bs=1M count={spacer_blocks} 2>/dev/null"
+    )
+    _ = dev.run(f"dd if=/dev/zero of={_STORE_BALLAST} bs=1M 2>/dev/null || true")
     if not dry_run.get():
         available = _store_available_kib(dev)
         require(
             available == 0,
             f"{console.lit(_DATA_MOUNT)} still has {available} KiB free after ballasting",
         )
-    dev.run(f"rm -f {_STORE_BALLAST_SPACER}")
+    _ = dev.run(f"rm -f {_STORE_BALLAST_SPACER}")
     return f"{console.lit(_DATA_MOUNT)} down to {_STORE_BALLAST_MARGIN_MIB} MiB"
 
 
@@ -2574,7 +2576,7 @@ def sweep_store_ballast(dev: Device) -> str:
     """A run killed outright never reaches its teardown, and the ballast it
     leaves fails every later scenario with ENOSPC noise instead of the
     message that scenario expects."""
-    dev.run(f"rm -f {_STORE_BALLAST} {_STORE_BALLAST_SPACER}")
+    _ = dev.run(f"rm -f {_STORE_BALLAST} {_STORE_BALLAST_SPACER}")
     return f"{console.lit(_STORE_BALLAST)} absent"
 
 
@@ -2825,7 +2827,7 @@ def _restore_each(*, failed: bool, actions: list[Callable[[], object]]) -> None:
     errors: list[Exception] = []
     for action in actions:
         try:
-            action()
+            _ = action()
         except Exception as e:
             errors.append(e)
     if errors:
@@ -2870,10 +2872,10 @@ def stop_upgrade_server(cycle: UpgradeCycle) -> None:
         return
     server.terminate()
     try:
-        server.wait(timeout=10)
+        _ = server.wait(timeout=10)
     except subprocess.TimeoutExpired:
         server.kill()
-        server.wait()
+        _ = server.wait()
 
 
 def _upgrade_server_port_released(host: str, port: int) -> bool:
@@ -2910,7 +2912,7 @@ def stop_upgrade_server_group(cycle: UpgradeCycle) -> None:
     leader_timed_out = False
     if server.poll() is None:
         try:
-            server.wait(timeout=10)
+            _ = server.wait(timeout=10)
         except subprocess.TimeoutExpired:
             leader_timed_out = True
     ports_released = not leader_timed_out and _upgrade_server_ports_released(cycle)
@@ -2918,7 +2920,7 @@ def stop_upgrade_server_group(cycle: UpgradeCycle) -> None:
         with suppress(ProcessLookupError):
             os.killpg(server.pid, signal.SIGKILL)
         if server.poll() is None:
-            server.wait(timeout=10)
+            _ = server.wait(timeout=10)
 
     require(
         _upgrade_server_ports_released(cycle),
@@ -2928,7 +2930,7 @@ def stop_upgrade_server_group(cycle: UpgradeCycle) -> None:
 
 @stage("Register server on device")
 def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
-    dev.run(upgrade_server_registration_command(cycle))
+    _ = dev.run(upgrade_server_registration_command(cycle))
     return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.feed_url)}"
 
 
@@ -3134,7 +3136,7 @@ def remove_package(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
         f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} list-packages --format json"
     )
     done_if(widget not in _installed_package_names(raw))
-    dev.run(
+    _ = dev.run(
         f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} "
         f"remove-packages --name {shlex.quote(widget)}"
     )
@@ -3617,14 +3619,14 @@ def snapshot_remote_file(dev: Device, remote_path: str, into: Path | None = None
         return FileSnapshot(remote_path, None)
     data = _snapshot_bytes(dev, remote_path)
     if into is not None:
-        into.write_bytes(data)
+        _ = into.write_bytes(data)
     _verify_snapshot(dev, remote_path, data)
     return FileSnapshot(remote_path, into, None if into is not None else data)
 
 
 def restore_remote_file(dev: Device, snap: FileSnapshot) -> None:
     if not snap.present:
-        dev.run(f"rm -f {shlex.quote(snap.remote_path)}")
+        _ = dev.run(f"rm -f {shlex.quote(snap.remote_path)}")
     elif snap.local is not None:
         dev.push(snap.local, RemotePath(snap.remote_path))
     else:
@@ -3634,7 +3636,7 @@ def restore_remote_file(dev: Device, snap: FileSnapshot) -> None:
             raise RuntimeError(msg)
         encoded = base64.b64encode(contents).decode()
         temporary = f"{snap.remote_path}.tmp"
-        dev.run(
+        _ = dev.run(
             f"echo {shlex.quote(encoded)} | base64 -d > {shlex.quote(temporary)} "
             f"&& mv {shlex.quote(temporary)} {shlex.quote(snap.remote_path)} && sync"
         )
@@ -3656,33 +3658,33 @@ def snapshot_remote_dir(dev: Device, remote_path: str, into: Path) -> DirSnapsho
     parent, name = _remote_dir_parts(remote_path)
     remote_archive = _remote_keys_archive()
     try:
-        dev.run(
+        _ = dev.run(
             f"tar -C {shlex.quote(parent)} -cf {shlex.quote(remote_archive)} {shlex.quote(name)}"
         )
         expected_size = _remote_size(dev, remote_archive)
         expected_sha = _remote_sha(dev, remote_archive).lower()
         data = _snapshot_bytes(dev, remote_archive)
-        into.write_bytes(data)
+        _ = into.write_bytes(data)
         require(
             len(data) == expected_size and hashlib.sha256(data).hexdigest() == expected_sha,
             f"snapshot of {console.lit(remote_path)} was incomplete or corrupt",
         )
         return DirSnapshot(remote_path, into)
     finally:
-        dev.run(f"rm -f {shlex.quote(remote_archive)}")
+        _ = dev.run(f"rm -f {shlex.quote(remote_archive)}")
 
 
 def restore_remote_dir(dev: Device, snap: DirSnapshot) -> None:
-    dev.run(f"rm -rf {shlex.quote(snap.remote_path)}")
+    _ = dev.run(f"rm -rf {shlex.quote(snap.remote_path)}")
     if snap.archive is None:
         return
     parent, _ = _remote_dir_parts(snap.remote_path)
     remote_archive = _remote_keys_archive()
     try:
         dev.push(snap.archive, RemotePath(remote_archive))
-        dev.run(f"tar -C {shlex.quote(parent)} -xf {shlex.quote(remote_archive)}")
+        _ = dev.run(f"tar -C {shlex.quote(parent)} -xf {shlex.quote(remote_archive)}")
     finally:
-        dev.run(f"rm -f {shlex.quote(remote_archive)}")
+        _ = dev.run(f"rm -f {shlex.quote(remote_archive)}")
 
 
 def _bcp_siblings(dev: Device) -> frozenset[str]:
@@ -3703,7 +3705,7 @@ def restore_servers_config(dev: Device, cycle: FirmwareCycle) -> None:
     restore_remote_file(dev, snapshot)
     directory = SERVERS_JSON.rpartition("/")[0]
     for name in sorted(_bcp_siblings(dev) - cycle.bcp_before):
-        dev.run(f"rm -f {shlex.quote(f'{directory}/{name}')}")
+        _ = dev.run(f"rm -f {shlex.quote(f'{directory}/{name}')}")
 
 
 @stage("Preflight versions")
@@ -3749,7 +3751,7 @@ def ensure_anchor_version(dev: Device, cycle: FirmwareCycle) -> str:
     if running.version < offered.version:
         return f"{console.lit(running.canonical)} is already older than the image release"
     anchored = anchored_version(running, offered)
-    dev.run(f"printf '%s\\n' {shlex.quote(anchored.canonical)} > {_BOS_VERSION}")
+    _ = dev.run(f"printf '%s\\n' {shlex.quote(anchored.canonical)} > {_BOS_VERSION}")
     cycle.running_version = anchored
     return f"{console.lit(running.canonical)} → {console.lit(anchored.canonical)}"
 
@@ -3802,7 +3804,7 @@ def snapshot_opkg_keys(dev: Device, cycle: FirmwareCycle) -> str:
 
 @stage("Remove uploaded firmware")
 def remove_uploaded_image(dev: Device, image: Image, cycle: FirmwareCycle) -> str:
-    dev.run(f"rm -f {shlex.quote(image.remote_path)}")
+    _ = dev.run(f"rm -f {shlex.quote(image.remote_path)}")
     cycle.upload_present = False
     return console.lit(image.remote_path)
 
@@ -3833,7 +3835,7 @@ def scan_bmc_pids(dev: Device) -> list[int]:
 
 def kill_bmc_pids(dev: Device, pids: list[int]) -> None:
     for pid in pids:
-        dev.run(f"kill -TERM {pid}")
+        _ = dev.run(f"kill -TERM {pid}")
 
     deadline = time.monotonic() + _BMC_KILL_WAIT
     remaining = scan_bmc_pids(dev)
@@ -3843,13 +3845,13 @@ def kill_bmc_pids(dev: Device, pids: list[int]) -> None:
 
     if remaining:
         for pid in remaining:
-            dev.run(f"kill -KILL {pid}")
+            _ = dev.run(f"kill -KILL {pid}")
         remaining = scan_bmc_pids(dev)
     require(not remaining, f"bmc-openwrt is still running after KILL: {remaining}")
 
 
 def quiesce_bmc(dev: Device) -> None:
-    dev.run("service bmc-compositor stop")
+    _ = dev.run("service bmc-compositor stop")
     pids = scan_bmc_pids(dev)
     if pids:
         kill_bmc_pids(dev, pids)
@@ -3895,8 +3897,8 @@ def point_bmc_at_index(dev: Device, cycle: FirmwareCycle) -> str:
     )
     edited = script.replace(_ENV_PARAM, f"{_ENV_PARAM}{_index_env_token(cycle)} ", 1)
     cycle.bmc_log_offset = int(dev.read(f"wc -c < {_BMC_LOG} 2>/dev/null || echo 0"))
-    dev.run(f"printf '%s' {shlex.quote(edited)} > {_INIT_SCRIPT}")
-    dev.run("service bmc-compositor restart")
+    _ = dev.run(f"printf '%s' {shlex.quote(edited)} > {_INIT_SCRIPT}")
+    _ = dev.run("service bmc-compositor restart")
     expected = _index_env_token(cycle).strip('"')
     deadline = time.monotonic() + _BMC_RESTART_TIMEOUT
     while True:
@@ -3932,7 +3934,9 @@ def strip_index_override(dev: Device, cycle: FirmwareCycle) -> bool:
             f"{_INIT_SCRIPT} carries an unexpected BMC_INDEX_URL entry",
         )
         return False
-    dev.run(f"printf '%s' {shlex.quote(script.replace(injected, _ENV_PARAM, 1))} > {_INIT_SCRIPT}")
+    _ = dev.run(
+        f"printf '%s' {shlex.quote(script.replace(injected, _ENV_PARAM, 1))} > {_INIT_SCRIPT}"
+    )
     return True
 
 
@@ -3952,7 +3956,7 @@ def await_bmc_ready(dev: Device, cycle: FirmwareCycle) -> str:
                 f"bmc gRPC did not answer within {_BMC_READY_TIMEOUT:.0f}s; "
                 f"new bmc log:\n{bmc_log_tail(dev, cycle) or '(no new log output)'}",
             )
-            subprocess.run(
+            _ = subprocess.run(
                 _grpcurl_argv(
                     _grpc_address(dev),
                     "AuthenticationService/Login",
@@ -4341,7 +4345,7 @@ def poll_boot_id_change(
     deadline = clock() + timeout
     while clock() < deadline:
         try:
-            verify_device_identity(dev, cycle)
+            _ = verify_device_identity(dev, cycle)
             boot_id = read_boot_id(dev)
         except (subprocess.CalledProcessError, OSError):
             pass
@@ -4382,7 +4386,7 @@ def restore_after_success(dev: Device, cycle: FirmwareCycle) -> str:
     restore_remote_file(dev, nix_conf_snapshot)
     cycle.opkg_keys_snapshot = None
     stripped = strip_index_override(dev, cycle)
-    dev.run("service bmc-compositor start")
+    _ = dev.run("service bmc-compositor start")
     verify_stock_service(dev)
     suffix = ", index override stripped" if stripped else ""
     return f"servers.json and nix.conf restored{suffix}"

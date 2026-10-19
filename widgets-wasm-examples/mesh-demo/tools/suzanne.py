@@ -104,7 +104,7 @@ for node in nodes:
 # Create nodes for baking
 output_node = nodes.new('ShaderNodeOutputMaterial')
 bsdf = nodes.new('ShaderNodeBsdfPrincipled')
-links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
+_ = links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
 
 # Create a procedural noise texture for visual interest
 tex_coord = nodes.new('ShaderNodeTexCoord')
@@ -114,7 +114,7 @@ common.expect(noise.inputs['Detail'], bpy.types.NodeSocketFloat).default_value =
 common.expect(
     noise.inputs['Roughness'], bpy.types.NodeSocketFloatFactor
 ).default_value = 0.6
-links.new(tex_coord.outputs['Object'], noise.inputs['Vector'])
+_ = links.new(tex_coord.outputs['Object'], noise.inputs['Vector'])
 
 # Color ramp for a nice warm clay look
 ramp = nodes.new('ShaderNodeValToRGB')
@@ -125,7 +125,7 @@ color_ramp.elements[0].position = 0.3
 color_ramp.elements[0].color = (0.45, 0.28, 0.18, 1.0)  # dark clay
 color_ramp.elements[1].position = 0.7
 color_ramp.elements[1].color = (0.75, 0.52, 0.35, 1.0)  # light clay
-links.new(noise.outputs['Fac'], ramp.inputs['Fac'])
+_ = links.new(noise.outputs['Fac'], ramp.inputs['Fac'])
 
 # Image texture node for bake target
 bake_img = bpy.data.images.new('SuzanneBake', width=512, height=512)
@@ -135,7 +135,7 @@ img_node.select = True
 nodes.active = img_node
 
 # Connect noise to BSDF for baking
-links.new(ramp.outputs['Color'], bsdf.inputs['Base Color'])
+_ = links.new(ramp.outputs['Color'], bsdf.inputs['Base Color'])
 common.expect(
     bsdf.inputs['Roughness'], bpy.types.NodeSocketFloatFactor
 ).default_value = 0.8
@@ -164,7 +164,7 @@ bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'})
 # Now rewire material to use the baked image instead of procedural
 for node in [noise, ramp, tex_coord]:
     nodes.remove(node)
-links.new(img_node.outputs['Color'], bsdf.inputs['Base Color'])
+_ = links.new(img_node.outputs['Color'], bsdf.inputs['Base Color'])
 
 # Shade smooth
 bpy.ops.object.shade_smooth()

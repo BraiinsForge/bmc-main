@@ -121,10 +121,10 @@ tetra_verts = [
 bm.verts.ensure_lookup_table()
 
 # 4 triangular faces — winding for outward normals
-bm.faces.new([tetra_verts[0], tetra_verts[1], tetra_verts[2]])
-bm.faces.new([tetra_verts[0], tetra_verts[3], tetra_verts[1]])
-bm.faces.new([tetra_verts[0], tetra_verts[2], tetra_verts[3]])
-bm.faces.new([tetra_verts[1], tetra_verts[3], tetra_verts[2]])
+_ = bm.faces.new([tetra_verts[0], tetra_verts[1], tetra_verts[2]])
+_ = bm.faces.new([tetra_verts[0], tetra_verts[3], tetra_verts[1]])
+_ = bm.faces.new([tetra_verts[0], tetra_verts[2], tetra_verts[3]])
+_ = bm.faces.new([tetra_verts[1], tetra_verts[3], tetra_verts[2]])
 
 bm.faces.ensure_lookup_table()
 bm.normal_update()

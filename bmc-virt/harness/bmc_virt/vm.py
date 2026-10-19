@@ -203,7 +203,7 @@ class VM:
                         if e.name == event and (where is None or where(e)):
                             return e
 
-                self._new_event.wait(timeout=min(remaining, 0.5))
+                _ = self._new_event.wait(timeout=min(remaining, 0.5))
 
     def wait_next(
         self,
@@ -226,7 +226,7 @@ class VM:
                         if e.name == event and (where is None or where(e)):
                             return e
 
-                self._new_event.wait(timeout=min(remaining, 0.5))
+                _ = self._new_event.wait(timeout=min(remaining, 0.5))
 
     def events(self) -> Iterator[ReceivedEvent]:
         """Iterate over live events as they arrive (blocking)."""
@@ -234,7 +234,7 @@ class VM:
         while True:
             with self._new_event:
                 while seen >= len(self._history):
-                    self._new_event.wait(timeout=1.0)
+                    _ = self._new_event.wait(timeout=1.0)
                 with self._history_lock:
                     batch = self._history[seen:]
                     seen = len(self._history)
@@ -353,7 +353,7 @@ class VM:
         finally:
             if spinner:
                 spinner.stop()
-            self._pending_acks.pop(request_id, None)
+            _ = self._pending_acks.pop(request_id, None)
 
         if verbose:
             ack_result(result)

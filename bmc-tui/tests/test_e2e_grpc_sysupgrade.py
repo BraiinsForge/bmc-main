@@ -123,7 +123,7 @@ class IndexServer(fw_index.FwIndexServer):
 
     @override
     def __enter__(self) -> "IndexServer":
-        super().__enter__()
+        _ = super().__enter__()
         self.entered = True
         index_path = next(self.root.rglob("index.v1.json"), None)
         self.index_text = index_path.read_text() if index_path is not None else None

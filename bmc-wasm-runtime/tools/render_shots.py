@@ -61,7 +61,7 @@ def run(
     output = output or PATH_DEFAULT_OUT / widget
     wasm_file = build_example_wasm(widget)
 
-    subprocess.run(
+    _ = subprocess.run(
         [
             'cargo',
             'run',
@@ -90,7 +90,7 @@ def run(
         frames = sorted(frame_dir.glob('*.png'))
         if len(frames) == 1:
             platform, viewport, _dataset = frame_dir.relative_to(output).parts
-            frames[0].rename(output / f'{platform}-{viewport}.png')
+            _ = frames[0].rename(output / f'{platform}-{viewport}.png')
 
     # Prune what the flatten emptied, deepest first.
     for path in sorted((p for p in output.rglob('*') if p.is_dir()), reverse=True):

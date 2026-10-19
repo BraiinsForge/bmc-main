@@ -244,4 +244,4 @@ class TestSingleClient:
         reject_messages: list[Msg] = []
         with pytest.raises(DaemonProtocolError):
             # The second connect should fail — server sends an ack (not hello) and closes
-            Client.connect("127.0.0.1", daemon.port, reject_messages.append)
+            _ = Client.connect("127.0.0.1", daemon.port, reject_messages.append)

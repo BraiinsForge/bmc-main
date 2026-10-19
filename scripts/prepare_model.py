@@ -81,7 +81,7 @@ def main(
     # Write the Blender-side script to a temp file
     blender_script = _BLENDER_SCRIPT
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(blender_script)
+        _ = f.write(blender_script)
         script_path = f.name
 
     try:

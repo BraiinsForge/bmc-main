@@ -78,10 +78,10 @@ def save_png(path: str, px_buf: list[float], img_size: int) -> None:
 
     ihdr = struct.pack('>IIBBBBB', img_size, img_size, 8, 6, 0, 0, 0)
     with open(path, 'wb') as f:
-        f.write(b'\x89PNG\r\n\x1a\n')
-        f.write(png_chunk(b'IHDR', ihdr))
-        f.write(png_chunk(b'IDAT', idat))
-        f.write(png_chunk(b'IEND', b''))
+        _ = f.write(b'\x89PNG\r\n\x1a\n')
+        _ = f.write(png_chunk(b'IHDR', ihdr))
+        _ = f.write(png_chunk(b'IDAT', idat))
+        _ = f.write(png_chunk(b'IEND', b''))
 
 
 # --- Font rendering ---
@@ -342,7 +342,7 @@ def setup_material(
 
     output_node = nodes.new('ShaderNodeOutputMaterial')
     bsdf = nodes.new('ShaderNodeBsdfPrincipled')
-    links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
+    _ = links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
     expect(
         bsdf.inputs['Roughness'], bpy.types.NodeSocketFloatFactor
     ).default_value = 0.3
@@ -351,7 +351,7 @@ def setup_material(
     albedo_img = bpy.data.images.load(albedo_path)
     albedo_node = nodes.new('ShaderNodeTexImage')
     expect(albedo_node, bpy.types.ShaderNodeTexImage).image = albedo_img
-    links.new(albedo_node.outputs['Color'], bsdf.inputs['Base Color'])
+    _ = links.new(albedo_node.outputs['Color'], bsdf.inputs['Base Color'])
 
     if os.path.exists(normal_path):
         nmap_img = bpy.data.images.load(normal_path)
@@ -364,8 +364,8 @@ def setup_material(
         expect(nmap_node, bpy.types.ShaderNodeTexImage).image = nmap_img
         normal_map_node = nodes.new('ShaderNodeNormalMap')
         expect(normal_map_node, bpy.types.ShaderNodeNormalMap).space = 'TANGENT'
-        links.new(nmap_node.outputs['Color'], normal_map_node.inputs['Color'])
-        links.new(normal_map_node.outputs['Normal'], bsdf.inputs['Normal'])
+        _ = links.new(nmap_node.outputs['Color'], normal_map_node.inputs['Color'])
+        _ = links.new(normal_map_node.outputs['Normal'], bsdf.inputs['Normal'])
 
     mesh = mesh_of(obj)
     mesh.materials.clear()

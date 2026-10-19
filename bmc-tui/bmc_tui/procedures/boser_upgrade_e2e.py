@@ -88,7 +88,7 @@ class BoserUpgradeE2e:
         workdir = Path(tempfile.mkdtemp(dir=scratch)).resolve()
         serve_root = workdir / "firmware"
         serve_root.mkdir()
-        (serve_root / boser_index.INDEX_NAME).write_text(document)
+        _ = (serve_root / boser_index.INDEX_NAME).write_text(document)
         if image is not None:
             (serve_root / "firmware.tar").symlink_to(image.path)
         cycle = catalog.UpgradeCycle(
@@ -118,7 +118,7 @@ class BoserUpgradeE2e:
             with FwIndexServer(serve_root, port=self.firmware_port):
                 catalog.launch_upgrade_server(cycle, argv)
                 instructions = operator_instructions(cycle, base_url)
-                (workdir / "operator.txt").write_text(instructions)
+                _ = (workdir / "operator.txt").write_text(instructions)
                 console.code(instructions, "sh")
                 prompt = "Type ready once Boser serves with the printed registration: "
                 while ask(prompt).strip() != "ready":

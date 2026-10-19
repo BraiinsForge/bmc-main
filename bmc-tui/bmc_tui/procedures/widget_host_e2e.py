@@ -251,7 +251,7 @@ class _PidSampler:
             raise self._error
 
     def stop(self) -> None:
-        self._dev.run(f"touch {self._marker}")
+        _ = self._dev.run(f"touch {self._marker}")
         self._thread.join(10)
         require(not self._thread.is_alive(), "compositor PID sampler did not stop")
         if self._error is not None:
@@ -310,7 +310,7 @@ def _real_git(cwd: Path, args: Sequence[str]) -> str:
 
 def _append(path: Path, content: str) -> None:
     with path.open("a") as output:
-        output.write(content)
+        _ = output.write(content)
 
 
 @dataclass(frozen=True)
@@ -364,7 +364,7 @@ class _VariantWorktrees:
             for variant in _VARIANTS:
                 path = self._root / variant.name
                 require(not path.exists(), f"temporary worktree already exists: {path}")
-                self._git(self._repo, ("worktree", "add", "--detach", str(path), "HEAD"))
+                _ = self._git(self._repo, ("worktree", "add", "--detach", str(path), "HEAD"))
                 self._created.append(path)
                 listed = self._git(path, ("lfs", "ls-files", "--name-only"))
                 lfs_paths = [path / name for name in listed.splitlines() if name]
@@ -384,7 +384,7 @@ class _VariantWorktrees:
 
     def cleanup(self) -> None:
         for path in reversed(self._created):
-            self._git(self._repo, ("worktree", "remove", "--force", str(path)))
+            _ = self._git(self._repo, ("worktree", "remove", "--force", str(path)))
         self._created.clear()
 
 
@@ -417,20 +417,20 @@ class Evidence:
             "host": _process_payload(snapshot.host),
             "thins": [_process_payload(thin) for thin in snapshot.thins],
         }
-        (self.root / f"{name}-snapshot.json").write_text(
+        _ = (self.root / f"{name}-snapshot.json").write_text(
             json.dumps(payload, indent=2, default=str) + "\n"
         )
 
     def trace(self, name: str, samples: Sequence[frozenset[int]]) -> None:
         lines = [" ".join(str(pid) for pid in sorted(sample)) or "-" for sample in samples]
-        (self.root / f"{name}-pid-trace.txt").write_text("\n".join(lines) + "\n")
+        _ = (self.root / f"{name}-pid-trace.txt").write_text("\n".join(lines) + "\n")
 
     def text(self, name: str, content: str) -> None:
-        (self.root / name).write_text(content)
+        _ = (self.root / name).write_text(content)
 
     def passed(self, scenario: str) -> None:
         with (self.root / "status.txt").open("a") as output:
-            output.write(f"{scenario}: PASS\n")
+            _ = output.write(f"{scenario}: PASS\n")
 
 
 @dataclass
@@ -596,7 +596,7 @@ class WidgetHostE2e:
         sampler = _PidSampler(dev)
         sampler.start()
         try:
-            dev.run(f"kill -KILL {combined.compositor.pid}")
+            _ = dev.run(f"kill -KILL {combined.compositor.pid}")
             crashed = self._snapshot(dev, len(baseline.thins))
         finally:
             sampler.stop()

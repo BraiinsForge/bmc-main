@@ -301,7 +301,7 @@ def write_die(
             f,
             indent=2,
         )
-        f.write('\n')
+        _ = f.write('\n')
 
 
 def main_for_die(

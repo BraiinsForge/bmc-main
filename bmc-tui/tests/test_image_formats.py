@@ -187,7 +187,7 @@ def test_select_runs_every_case_including_the_adversarial_ones() -> None:
     picked = fmt._select([fmt.CASES[0].name])
     assert [c.name for c in picked] == [fmt.CASES[0].name]
     with pytest.raises(Abort):
-        fmt._select(["no-such-case"])
+        _ = fmt._select(["no-such-case"])
 
 
 def test_preflight_refuses_a_corpus_that_cannot_be_attributed() -> None:

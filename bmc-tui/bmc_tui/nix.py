@@ -264,7 +264,7 @@ class _RealNix:
         # quiet ssh's post-quantum-KEX warning
         env = dict(os.environ)
         env["NIX_SSHOPTS"] = f"{env.get('NIX_SSHOPTS', '')} -o LogLevel=ERROR".strip()
-        subprocess.run(["nix", "copy", "--to", dest, *store_paths], check=True, env=env)
+        _ = subprocess.run(["nix", "copy", "--to", dest, *store_paths], check=True, env=env)
 
     def generate_cache_key(self, name: str, secret: Path) -> str:
         proc = subprocess.run(
@@ -273,7 +273,7 @@ class _RealNix:
             text=True,
             check=True,
         )
-        secret.write_text(proc.stdout)
+        _ = secret.write_text(proc.stdout)
         secret.chmod(0o600)
         public = subprocess.run(
             ["nix", "key", "convert-secret-to-public"],
@@ -287,7 +287,7 @@ class _RealNix:
     def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
         # Host-side artifact staging, not a device mutation — runs under
         # --dry-run like `build`; the ?secret-key param signs on write.
-        subprocess.run(
+        _ = subprocess.run(
             ["nix", "copy", "--to", f"file://{cache}?secret-key={secret}", *store_paths],
             check=True,
         )

@@ -65,7 +65,7 @@ class Args:
 def _run(cmd: list[str]) -> None:
     """Mirror `device.run`: capture output as text and raise on non-zero — the
     exact call shape whose failure the entrypoint now surfaces."""
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    _ = subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
 @stage("Check local toolchain")
@@ -85,7 +85,9 @@ def register_packages(scenario: Scenario) -> str:
         case "uncaptured":
             # No capture: the command's output streams straight to the terminal,
             # so the handler has nothing to render but the status header.
-            subprocess.run(["sh", "-c", 'echo "live output to your terminal"; exit 2'], check=True)
+            _ = subprocess.run(
+                ["sh", "-c", 'echo "live output to your terminal"; exit 2'], check=True
+            )
     return "packages registered"
 
 

@@ -131,7 +131,7 @@ def download_firmware(url: str, dest: Path, *, sha256: str | None, size: int | N
     except BaseException:
         part.unlink(missing_ok=True)
         raise
-    part.replace(dest)
+    _ = part.replace(dest)
     if sha256 is not None and Image(dest).sha256 != sha256:
         dest.unlink()
         raise Abort(f"download corrupted: {console.lit(dest.name)} checksum mismatch")
@@ -145,7 +145,7 @@ def _fetch(url: str, dest: Path, *, label: str, size: int | None) -> None:
         total = size if size is not None else _content_length(response)
         with console.progress(label, total) as advance:
             while chunk := response.read(_CHUNK):
-                sink.write(chunk)
+                _ = sink.write(chunk)
                 advance(len(chunk))
                 received += len(chunk)
     # http.client returns short on a cut connection rather than raising,

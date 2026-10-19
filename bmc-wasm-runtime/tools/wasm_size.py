@@ -55,7 +55,7 @@ def build_and_optimize(example: str) -> tuple[Path, Path]:
     # by default, and `strip = true` drops the target_features section
     # wasm-opt would read them from — so name them explicitly.
     # Only these two: the gate should still reject features wasmi disables.
-    subprocess.run(
+    _ = subprocess.run(
         [
             'wasm-opt',
             '-Oz',

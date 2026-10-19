@@ -300,7 +300,7 @@ def test_download_stall_resumes_retained_bytes_before_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     tarball = tmp_path / "init.tar.gz"
-    tarball.write_bytes(b"complete tarball")
+    _ = tarball.write_bytes(b"complete tarball")
     server = _TarballServer()
     calls: list[str] = []
     pinned = object()
@@ -353,7 +353,7 @@ def test_download_stall_rejects_unresumed_download(
     message: str,
 ) -> None:
     tarball = tmp_path / "init.tar.gz"
-    tarball.write_bytes(b"complete tarball")
+    _ = tarball.write_bytes(b"complete tarball")
     pinned = object()
     server = _TarballServer()
     server.requests.extend(prior)
@@ -887,7 +887,7 @@ def test_matching_image_aborts_on_foreign_version(tmp_path: Path) -> None:
         ),
     )
     with pytest.raises(Abort, match="neither"):
-        faults._matching_image(ctx)
+        _ = faults._matching_image(ctx)
 
 
 def test_cli_registers_the_procedure() -> None:
@@ -1048,7 +1048,7 @@ def test_prepare_flash_frees_widget_memory_and_sweeps_uploads_before_the_gate(
                 quiesced_pin=quiesced_pin,
             ),
         )
-        faults._prepare_flash(ctx, image)
+        _ = faults._prepare_flash(ctx, image)
         if quiesced_pin is None:
             assert calls.index("stop_compositor") < calls.index("ensure_memory")
         else:

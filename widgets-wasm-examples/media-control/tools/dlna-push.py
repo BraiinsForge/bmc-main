@@ -432,7 +432,7 @@ class _UPnPHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'text/xml; charset="utf-8"')
         self.send_header('Content-Length', str(len(resp)))
         self.end_headers()
-        self.wfile.write(resp)
+        _ = self.wfile.write(resp)
 
     def _handle_av_transport(self, action: str, body: str, rs: RendererState) -> bytes:
         if action == 'SetAVTransportURI':
@@ -520,7 +520,7 @@ class _UPnPHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/xml')
             self.send_header('Content-Length', str(len(desc)))
             self.end_headers()
-            self.wfile.write(desc)
+            _ = self.wfile.write(desc)
         else:
             self.send_error(404)
 
@@ -557,7 +557,7 @@ def _ssdp_listener(local_ip: str, port: int, stop_event: threading.Event) -> Non
                 data, addr = cast('tuple[bytes, tuple[str, int]]', sock.recvfrom(2048))
                 msg = data.decode(errors='replace')
                 if 'M-SEARCH' in msg and ('ssdp:all' in msg or 'MediaRenderer' in msg):
-                    sock.sendto(response, addr)
+                    _ = sock.sendto(response, addr)
             except TimeoutError:
                 continue
             except OSError:
@@ -593,7 +593,7 @@ def _ssdp_announce(
         # Send immediately, then every 30s
         while True:
             try:
-                sock.sendto(notify, (SSDP_ADDR, SSDP_PORT))
+                _ = sock.sendto(notify, (SSDP_ADDR, SSDP_PORT))
             except OSError:
                 pass
             if stop_event.wait(30):
@@ -670,33 +670,33 @@ def main() -> NoReturn | None:
               2: Mozart — Overture, The Magic Flute (classical, public domain)
         """),
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         'target',
         nargs='?',
         help='host:port of the renderer (not needed with --spawn)',
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         'media_url',
         nargs='?',
         help='media URI to push to the renderer',
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         '--port',
         type=int,
         default=Args.port,
         help=f'port for spawned renderer (default: {Args.port})',
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         '--name',
         default=Args.name,
         help=f'friendly name for spawned renderer (default: "{Args.name}")',
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         '--status',
         action='store_true',
         help='query and display current renderer state',
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         '--example',
         type=int,
         choices=range(len(EXAMPLE_TRACKS)),
@@ -756,10 +756,10 @@ def main() -> NoReturn | None:
             print(f'Album:    {track_meta["album"]}')
 
         print(f'URI:      {args.media_url}')
-        client.set_uri(args.media_url, metadata)
+        _ = client.set_uri(args.media_url, metadata)
 
         print('Playing...')
-        client.play()
+        _ = client.play()
         print('Done. Renderer should be playing.')
 
     if stop_event:

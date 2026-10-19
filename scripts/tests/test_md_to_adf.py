@@ -162,9 +162,9 @@ def test_an_empty_table_cell_survives():
 def test_an_unmapped_construct_raises_rather_than_dropping_content():
     """A ticket that silently loses content is worse than one that fails to upload."""
     with pytest.raises(md_to_adf.Unmapped):
-        convert('![alt](https://example.test/x.png)')
+        _ = convert('![alt](https://example.test/x.png)')
 
 
 def test_a_link_with_no_text_raises_rather_than_dropping_its_href():
     with pytest.raises(md_to_adf.Unmapped):
-        convert('[](https://example.test)')
+        _ = convert('[](https://example.test)')

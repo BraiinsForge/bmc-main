@@ -124,15 +124,15 @@ bm.verts.ensure_lookup_table()
 
 # 8 triangular faces — winding order for outward normals
 # Upper hemisphere (+Z)
-bm.faces.new([verts[0], verts[2], verts[4]])  # +X +Y +Z
-bm.faces.new([verts[2], verts[1], verts[4]])  # -X +Y +Z
-bm.faces.new([verts[1], verts[3], verts[4]])  # -X -Y +Z
-bm.faces.new([verts[3], verts[0], verts[4]])  # +X -Y +Z
+_ = bm.faces.new([verts[0], verts[2], verts[4]])  # +X +Y +Z
+_ = bm.faces.new([verts[2], verts[1], verts[4]])  # -X +Y +Z
+_ = bm.faces.new([verts[1], verts[3], verts[4]])  # -X -Y +Z
+_ = bm.faces.new([verts[3], verts[0], verts[4]])  # +X -Y +Z
 # Lower hemisphere (-Z)
-bm.faces.new([verts[2], verts[0], verts[5]])  # +X +Y -Z
-bm.faces.new([verts[1], verts[2], verts[5]])  # -X +Y -Z
-bm.faces.new([verts[3], verts[1], verts[5]])  # -X -Y -Z
-bm.faces.new([verts[0], verts[3], verts[5]])  # +X -Y -Z
+_ = bm.faces.new([verts[2], verts[0], verts[5]])  # +X +Y -Z
+_ = bm.faces.new([verts[1], verts[2], verts[5]])  # -X +Y -Z
+_ = bm.faces.new([verts[3], verts[1], verts[5]])  # -X -Y -Z
+_ = bm.faces.new([verts[0], verts[3], verts[5]])  # +X -Y -Z
 
 bm.faces.ensure_lookup_table()
 bm.to_mesh(mesh)

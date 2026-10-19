@@ -69,7 +69,7 @@ class _Cleanup:
 
     def run(self, label: str, action: Callable[[], object]) -> bool:
         try:
-            action()
+            _ = action()
         except Exception as error:
             self.failures.append(f"{label}: {error}")
             return False
@@ -123,9 +123,9 @@ def _outcome_error(outcome: catalog.StreamOutcome, diagnostic: str) -> Abort | N
 
 def _same_boot_is_known(dev: Device, cycle: catalog.FirmwareCycle) -> bool:
     try:
-        catalog.verify_device_identity(dev, cycle)
+        _ = catalog.verify_device_identity(dev, cycle)
         boot_id = dev.read("cat /proc/sys/kernel/random/boot_id")
-        catalog.scan_bmc_pids(dev)
+        _ = catalog.scan_bmc_pids(dev)
     except Exception:
         return False
     return boot_id == cycle.boot_id_before
@@ -212,7 +212,7 @@ def _resolve_boot(  # noqa: PLR0912, PLR0913
                 if changed:
                     catalog.pin_device_address(dev, cycle)
                     reboot_dev = _pinned_device(dev, cycle, make_device)
-                    catalog.verify_device_identity(reboot_dev, cycle)
+                    _ = catalog.verify_device_identity(reboot_dev, cycle)
                     confirmed = catalog.poll_boot_id_change(
                         reboot_dev,
                         cycle,
@@ -328,20 +328,20 @@ def _restore_failure(
         if snap is None:
             cleanup.failures.append(f"{name}: snapshot is missing")
         else:
-            cleanup.run(name, lambda: catalog.restore_remote_file(dev, snap))
+            _ = cleanup.run(name, lambda: catalog.restore_remote_file(dev, snap))
 
     before = len(cleanup.failures)
-    cleanup.run("restore servers.json", lambda: catalog.restore_servers_config(dev, cycle))
+    _ = cleanup.run("restore servers.json", lambda: catalog.restore_servers_config(dev, cycle))
     restore_file("restore nix.conf", cycle.nix_conf_snapshot)
     restore_file("restore bos_version", cycle.bos_version_snapshot)
     opkg_keys = cycle.opkg_keys_snapshot
     if opkg_keys is None:
         cleanup.failures.append("restore opkg keys: snapshot is missing")
     else:
-        cleanup.run("restore opkg keys", lambda: catalog.restore_remote_dir(dev, opkg_keys))
+        _ = cleanup.run("restore opkg keys", lambda: catalog.restore_remote_dir(dev, opkg_keys))
     restore_file("restore service script", cycle.init_script_snapshot)
     if cycle.upload_present:
-        cleanup.run(
+        _ = cleanup.run(
             "remove uploaded firmware",
             lambda: catalog.remove_uploaded_image(dev, image, cycle),
         )
@@ -350,7 +350,7 @@ def _restore_failure(
 
     if not cleanup.run("start stock bmc", lambda: dev.run("service bmc-compositor start")):
         return False
-    cleanup.run("verify stock bmc", lambda: catalog.verify_stock_service(dev))
+    _ = cleanup.run("verify stock bmc", lambda: catalog.verify_stock_service(dev))
     return not cleanup.failures
 
 
@@ -361,9 +361,9 @@ def _stop_hosts(
     index_started: bool,
 ) -> bool:
     if packages.server is not None:
-        cleanup.run("stop package server", lambda: catalog.stop_upgrade_server_group(packages))
+        _ = cleanup.run("stop package server", lambda: catalog.stop_upgrade_server_group(packages))
     if index is not None and index_started:
-        cleanup.run("stop firmware index", lambda: index.__exit__(None, None, None))
+        _ = cleanup.run("stop firmware index", lambda: index.__exit__(None, None, None))
     return not cleanup.failures
 
 
@@ -451,7 +451,7 @@ class E2eGrpcSysupgrade:
             catalog.pin_device_address(dev, cycle)
             mutation_dev = self._pinned(dev, cycle, device_factory)
             cleanup_dev = mutation_dev
-            catalog.verify_device_identity(mutation_dev, cycle)
+            _ = catalog.verify_device_identity(mutation_dev, cycle)
             if not self.allow_empty_plan:
                 catalog.require_fresh_firmware_staging(mutation_dev, image)
             catalog.snapshot_upgrade_config(mutation_dev, cycle)
@@ -497,7 +497,7 @@ class E2eGrpcSysupgrade:
             if running is None:
                 msg = "BUG: versions were not resolved before index construction"
                 raise RuntimeError(msg)
-            (serve_root / fw_index.INDEX_NAME).write_text(
+            _ = (serve_root / fw_index.INDEX_NAME).write_text(
                 fw_index.index_document(
                     running=running,
                     image=offered,
@@ -507,7 +507,7 @@ class E2eGrpcSysupgrade:
                     image_size=image.size,
                 )
             )
-            index.__enter__()
+            _ = index.__enter__()
             index_started = True
 
             catalog.point_bmc_at_index(mutation_dev, cycle)
@@ -587,7 +587,7 @@ class E2eGrpcSysupgrade:
             restored = True
             if resolution.restore in {"failure", "success"}:
                 try:
-                    catalog.verify_device_identity(cleanup_dev, cycle)
+                    _ = catalog.verify_device_identity(cleanup_dev, cycle)
                 except catalog.DeviceIdentityError as identity_error:
                     if index is None:
                         cleanup.failures.append(
@@ -631,7 +631,7 @@ class E2eGrpcSysupgrade:
                     index_started,
                 )
                 if hosts_stopped:
-                    cleanup.run(
+                    _ = cleanup.run(
                         "remove snapshot directory",
                         lambda: shutil.rmtree(snapshot_dir),
                     )

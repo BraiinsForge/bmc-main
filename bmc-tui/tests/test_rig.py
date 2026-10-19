@@ -45,13 +45,13 @@ def _variant(tmp_path: Path, version: str, store_paths: list[str]) -> rig.Varian
     packages = [
         {"name": f"pkg{i}", "version": "1.0", "store_path": p} for i, p in enumerate(store_paths)
     ]
-    (index / rig.INDEX_NAME).write_text(
+    _ = (index / rig.INDEX_NAME).write_text(
         json.dumps({"version": 1, "indexes": [], "caches": [], "packages": packages})
     )
     tarball_dir = tmp_path / f"tarball-{version}"
     tarball_dir.mkdir()
     tarball = tarball_dir / f"nix-{version}.tar.gz"
-    tarball.write_bytes(b"tar-bytes-" + version.encode())
+    _ = tarball.write_bytes(b"tar-bytes-" + version.encode())
     return rig.Variant(bos_version=version, profile_path=_PROFILE, index=index, tarball=tarball)
 
 
@@ -139,7 +139,7 @@ class _FakeCacheNix:
         self.copied: list[tuple[list[StorePath], Path, Path]] = []
 
     def generate_cache_key(self, name: str, secret: Path) -> str:
-        secret.write_text("sk")
+        _ = secret.write_text("sk")
         return f"{name}:PUB"
 
     def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
@@ -216,7 +216,7 @@ def test_rig_server_404s_unknown_paths_and_directories(tmp_path: Path) -> None:
         base = f"http://127.0.0.1:{server.port}"
         for path in ("/nope.json", "/tarballs/"):
             with pytest.raises(urllib.error.HTTPError) as caught:
-                _get(f"{base}{path}")
+                _ = _get(f"{base}{path}")
             assert caught.value.status == 404
 
 
@@ -256,7 +256,7 @@ def test_fault_refuse_drops_connections_and_none_restores(tmp_path: Path) -> Non
         base = f"http://127.0.0.1:{server.port}"
         server.set_fault(rig.FaultMode.REFUSE)
         with pytest.raises(OSError):
-            _get(f"{base}/{rig.FEED_NAME}")
+            _ = _get(f"{base}/{rig.FEED_NAME}")
         server.set_fault(rig.FaultMode.NONE)
         assert json.loads(_get(f"{base}/{rig.FEED_NAME}"))["entries"]
 
@@ -276,9 +276,9 @@ def test_fault_stall_retains_a_resumable_tarball_prefix(tmp_path: Path) -> None:
                 assert response.headers["Content-Length"] == str(a.tarball.stat().st_size)
                 assert response.read(len(prefix)) == prefix
                 with pytest.raises(TimeoutError):
-                    response.read(1)
+                    _ = response.read(1)
                 with pytest.raises((ConnectionError, urllib.error.URLError)) as dropped:
-                    web.open_url(url, timeout=1)
+                    _ = web.open_url(url, timeout=1)
                 if isinstance(dropped.value, urllib.error.URLError):
                     assert not isinstance(dropped.value, urllib.error.HTTPError)
                     assert not isinstance(dropped.value.reason, TimeoutError)
@@ -317,7 +317,7 @@ def test_fault_stall_is_path_selective_feed_survives(tmp_path: Path) -> None:
             with web.open_url(f"{base}/tarballs/nix-va.tar.gz", timeout=1) as response:
                 assert response.read(len(prefix)) == prefix
                 with pytest.raises(TimeoutError):
-                    response.read(1)
+                    _ = response.read(1)
             assert json.loads(_get(f"{base}/{rig.FEED_NAME}"))["entries"]
         finally:
             server.set_fault(rig.FaultMode.NONE)
@@ -375,7 +375,7 @@ def test_corrupt_index_serves_malformed_json(tmp_path: Path) -> None:
 def test_cache_swap_is_reversible_and_restore_is_idempotent(tmp_path: Path) -> None:
     cache = tmp_path / "cache"
     cache.mkdir()
-    (cache / "x.narinfo").write_text("n")
+    _ = (cache / "x.narinfo").write_text("n")
     rig.swap_cache_away(cache)
     assert not cache.exists()
     rig.restore_cache(cache)
@@ -390,7 +390,7 @@ def test_corrupt_tarball_names_an_empty_artifact(tmp_path: Path) -> None:
     v, root = _signed_pair(tmp_path)
     served = root / "tarballs" / v.tarball.name
     served.unlink()
-    served.write_bytes(b"")
+    _ = served.write_bytes(b"")
     with pytest.raises(Abort, match="empty"):
         rig.corrupt_tarball(root, v.tarball.name)
 

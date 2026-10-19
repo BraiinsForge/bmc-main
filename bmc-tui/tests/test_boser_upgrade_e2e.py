@@ -145,17 +145,17 @@ def test_firmware_offer_follows_anchor_with_real_integrity(tmp_path: Path) -> No
 @pytest.mark.parametrize("board", ["stm32mp15_ii3-emmc", "stm32mp15_ii2-sd"])
 def test_non_bmm101_emmc_image_is_rejected(tmp_path: Path, board: str) -> None:
     with pytest.raises(Abort):
-        _document(_image(tmp_path, board=board))
+        _ = _document(_image(tmp_path, board=board))
 
 
 def test_same_release_with_different_hash_is_not_a_firmware_upgrade(tmp_path: Path) -> None:
     with pytest.raises(Abort, match="later BOS release"):
-        _document(_image(tmp_path, version="2026-08-02-0-ffffffff-26.08-plus"))
+        _ = _document(_image(tmp_path, version="2026-08-02-0-ffffffff-26.08-plus"))
 
 
 def _package_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **extra: object) -> Path:
     path = tmp_path / "packages.json"
-    path.write_text(
+    _ = path.write_text(
         json.dumps(
             {
                 "version": 1,
@@ -199,7 +199,7 @@ def test_child_indexes_cannot_escape_to_production(
 
 def test_missing_store_path_fails_before_download(tmp_path: Path) -> None:
     path = tmp_path / "packages.json"
-    path.write_text(
+    _ = path.write_text(
         json.dumps(
             {"version": 1, "packages": [{"store_path": "/nix/store/bdk-787-missing-fixture"}]}
         )
@@ -210,7 +210,7 @@ def test_missing_store_path_fails_before_download(tmp_path: Path) -> None:
 
 def test_actual_http_server_serves_v2_and_exact_image(tmp_path: Path) -> None:
     image = _image(tmp_path)
-    (tmp_path / boser_index.INDEX_NAME).write_text(json.dumps(_document(image)))
+    _ = (tmp_path / boser_index.INDEX_NAME).write_text(json.dumps(_document(image)))
     with FwIndexServer(tmp_path, port=0, bind_ip="127.0.0.1") as server:
         for name in [boser_index.INDEX_NAME, "firmware.tar"]:
             with web.open_url(f"http://127.0.0.1:{server.port}/{name}") as response:
@@ -379,7 +379,7 @@ def test_host_startup_failure_stops_the_rig_before_touching_the_device(
     path = _package_index(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     events: list[str] = []
-    _rig(monkeypatch, events, fail_start=True)
+    _ = _rig(monkeypatch, events, fail_start=True)
     script = Script()
     with BoserStub(script) as stub:
         runner = BoserUpgradeE2e(stub.address, path, RUNNING, "127.0.0.1", "dev")
@@ -405,7 +405,7 @@ def test_nothing_starts_without_an_offer_and_a_yes(
 ) -> None:
     path = _package_index(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
-    _rig(monkeypatch, [])
+    _ = _rig(monkeypatch, [])
     with BoserStub(script) as stub:
         BoserUpgradeE2e(stub.address, path, RUNNING, "127.0.0.1", "dev").run(ask=_answers(*replies))
     assert ("/api/v1/upgrade/start" in [p for _m, p, _t, _b in script.requests]) is started
@@ -417,7 +417,7 @@ def test_failed_run_aborts_with_the_device_reason(
     path = _package_index(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     events: list[str] = []
-    _rig(monkeypatch, events)
+    _ = _rig(monkeypatch, events)
     script = Script(events=[boser_stub.RUNNING, boser_stub.FAILED])
     with BoserStub(script) as stub:
         runner = BoserUpgradeE2e(stub.address, path, RUNNING, "127.0.0.1", "dev")
@@ -433,7 +433,7 @@ def test_rebooting_run_waits_for_the_new_boot_and_checks_the_firmware(
 ) -> None:
     path = _package_index(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
-    _rig(monkeypatch, [])
+    _ = _rig(monkeypatch, [])
     device = _DeviceScript()
     clock = _Clock()
     script = Script(
@@ -547,7 +547,7 @@ def test_a_terminal_state_the_device_does_not_back_up_fails_the_run(
 ) -> None:
     path = _package_index(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
-    _rig(monkeypatch, [])
+    _ = _rig(monkeypatch, [])
     device = _DeviceScript()
     clock = _Clock()
     script.before_terminal = lambda: play(device)
@@ -567,7 +567,7 @@ def test_the_runner_waits_through_a_device_that_is_down_while_it_reboots(
 ) -> None:
     path = _package_index(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
-    _rig(monkeypatch, [])
+    _ = _rig(monkeypatch, [])
     device = _DeviceScript()
     clock = _Clock()
     script = Script(
@@ -604,7 +604,7 @@ def test_a_shared_reboot_deadline_bounds_the_ssh_and_boser_waits_together(
 ) -> None:
     path = _package_index(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
-    _rig(monkeypatch, [])
+    _ = _rig(monkeypatch, [])
     device = _DeviceScript()
     clock = _Clock()
     script = Script(check=boser_stub.CHECK_FIRMWARE.copy(), events=[boser_stub.REBOOTING])
@@ -639,7 +639,7 @@ def test_a_firmware_only_offer_must_leave_the_profile_alone(
 ) -> None:
     path = _package_index(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
-    _rig(monkeypatch, [])
+    _ = _rig(monkeypatch, [])
     device = _DeviceScript()
     clock = _Clock()
     script = Script(check=CHECK_FIRMWARE_ONLY.copy(), events=[boser_stub.REBOOTING])
@@ -660,7 +660,7 @@ def test_a_firmware_only_offer_must_leave_the_profile_alone(
 def test_cli_requires_the_ssh_address() -> None:
     with pytest.raises(SystemExit):
         # tyro's overloads take a `TypeForm[OutT]`, which basedpyright leaves unsolved.
-        tyro.cli(  # pyright: ignore[reportAny]
+        _ = tyro.cli(  # pyright: ignore[reportAny]
             BoserUpgradeE2e,
             args=[
                 "--device",

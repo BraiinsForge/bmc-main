@@ -90,7 +90,7 @@ def best_effort(action: Callable[[], object]) -> None:
     """Run a cleanup `action`, swallowing any failure — cleanup in a `finally`
     must not mask the error that triggered it."""
     try:
-        action()
+        _ = action()
     except Exception as e:
         console.warn(f"cleanup failed: {e}")
 
@@ -151,7 +151,7 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
     readable rich traceback rather than a raw dump. Call-sites stay bare
     top-to-bottom statements.
     """
-    install_rich_traceback(show_locals=True, width=120)
+    _ = install_rich_traceback(show_locals=True, width=120)
     threading.excepthook = _thread_excepthook
     params = list(inspect.signature(main).parameters.values())
     args_type = cast("type[object]", get_type_hints(main)[params[0].name]) if params else None

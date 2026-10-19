@@ -59,10 +59,10 @@ def cmd_sent(command: Cmd, **data: object) -> None:
         return
     # For other commands: `$ service.restart name="d-bmc-virt-relay"`
     line = Text("$ ", style="dim")
-    line.append_text(_c.styled_name(command))
+    _ = line.append_text(_c.styled_name(command))
     if data:
-        line.append(" ")
-        line.append_text(_c.styled_data(data))
+        _ = line.append(" ")
+        _ = line.append_text(_c.styled_data(data))
     _c.line(line)
 
 

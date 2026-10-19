@@ -59,10 +59,10 @@ with VM.connect(timeout=30) as vm:
     # ── Execute shell commands via event daemon ────────────────────────────────
 
     ui.header("shell.exec via event daemon")
-    vm.exec("echo hello from the daemon", verbose=True)
-    vm.exec("ls /root/", verbose=True)
-    vm.exec("free -m", verbose=True)
-    vm.exec("false", verbose=True)
+    _ = vm.exec("echo hello from the daemon", verbose=True)
+    _ = vm.exec("ls /root/", verbose=True)
+    _ = vm.exec("free -m", verbose=True)
+    _ = vm.exec("false", verbose=True)
 
     # ── File transfer ──────────────────────────────────────────────────────────
 
@@ -79,7 +79,7 @@ with VM.connect(timeout=30) as vm:
     # ── Service restart ────────────────────────────────────────────────────────
 
     ui.header("service.restart")
-    vm.service("d-bmc-virt-relay").restart(timeout=30, verbose=True)
+    _ = vm.service("d-bmc-virt-relay").restart(timeout=30, verbose=True)
 
     ui.kv("waiting for relay to re-bind", "...")
     evt = vm.wait_next(Event.RELAY_LISTENING, timeout=30)
@@ -96,13 +96,13 @@ with VM.connect(timeout=30) as vm:
     ui.header("Metrics collection")
 
     m = vm.metrics.start("Showcase metrics")
-    m.capture("baseline")
+    _ = m.capture("baseline")
 
-    vm.exec("dd if=/dev/urandom of=/dev/null bs=1M count=10", timeout=10)
-    m.capture("after CPU load")
+    _ = vm.exec("dd if=/dev/urandom of=/dev/null bs=1M count=10", timeout=10)
+    _ = m.capture("after CPU load")
 
     sleep(2)
-    m.capture("after cooldown")
+    _ = m.capture("after cooldown")
 
     m.report()
     chart_path = m.chart("/tmp/bmc-virt-metrics.png")

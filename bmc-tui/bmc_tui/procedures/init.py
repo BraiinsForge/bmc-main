@@ -44,7 +44,7 @@ class Init:
 
     def run(self, dev: Device | None = None, backend: Nix | None = None) -> None:
         if self.dry_run:
-            dry_run.set(True)
+            _ = dry_run.set(True)
         dev = dev or Device(self.device)
         backend = backend or nix.real()
         plan = catalog.Provisioning()

@@ -110,7 +110,7 @@ class FrameData:
         else:
             png_data = _encode_png(self.width, self.height, rgba_rows)
 
-        path.write_bytes(png_data)
+        _ = path.write_bytes(png_data)
         return path
 
     def _to_rgba_rows(self) -> list[bytes]:

@@ -79,7 +79,7 @@ def test_short_is_the_release_name_with_its_suffixes(text: str, short: str) -> N
 )
 def test_invalid_versions_are_rejected(text: str) -> None:
     with pytest.raises(ValueError):
-        parse_bos_version(text)
+        _ = parse_bos_version(text)
 
 
 @pytest.mark.parametrize(
@@ -91,7 +91,7 @@ def test_invalid_versions_are_rejected(text: str) -> None:
 )
 def test_version_name_rejection_keeps_the_specific_reason(text: str, reason: str) -> None:
     with pytest.raises(ValueError, match=re.escape(reason)):
-        parse_bos_version(text)
+        _ = parse_bos_version(text)
 
 
 def test_version_name_ordering() -> None:

@@ -62,7 +62,7 @@ def test_mapping_view_is_served_as_json() -> None:
 
 def test_file_view_infers_content_type_from_suffix(tmp_path: Path) -> None:
     png = tmp_path / "pixel.png"
-    png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    _ = png.write_bytes(b"\x89PNG\r\n\x1a\n")
     with server({"/pixel.png": png}) as handle:
         _, body, ctype = _get(handle.url("/pixel.png"))
     assert body == b"\x89PNG\r\n\x1a\n"
@@ -75,7 +75,7 @@ def test_file_view_streams_rather_than_buffering(
     """The package rig serves firmware tarballs and a store closure through here."""
     blob = tmp_path / "big.bin"
     payload = b"x" * (512 * 1024)
-    blob.write_bytes(payload)
+    _ = blob.write_bytes(payload)
 
     def explode(_self: Path) -> bytes:
         raise AssertionError("a file response must stream, not buffer via read_bytes()")
@@ -106,14 +106,14 @@ def test_self_returning_view_fails_rather_than_hanging() -> None:
         return forever
 
     with server({"/loop": forever}) as handle, pytest.raises(urllib.error.HTTPError) as caught:  # pyright: ignore[reportArgumentType]
-        _get(handle.url("/loop"))
+        _ = _get(handle.url("/loop"))
     assert caught.value.status == 500
 
 
 def test_view_can_force_status_and_content_type() -> None:
     views = {"/teapot": View(response="short and stout", status=418)}
     with server(views) as handle, pytest.raises(urllib.error.HTTPError) as caught:
-        _get(handle.url("/teapot"))
+        _ = _get(handle.url("/teapot"))
     assert caught.value.status == 418
 
 
@@ -148,13 +148,13 @@ def test_callable_view_may_answer_with_a_view() -> None:
 
 def test_unlisted_path_is_404() -> None:
     with server({"/known": b"x"}) as handle, pytest.raises(urllib.error.HTTPError) as caught:
-        _get(handle.url("/missing"))
+        _ = _get(handle.url("/missing"))
     assert caught.value.status == 404
 
 
 def test_directory_view_mounts_the_tree(tmp_path: Path) -> None:
     (tmp_path / "nested").mkdir()
-    (tmp_path / "nested" / "asset.txt").write_text("mounted")
+    _ = (tmp_path / "nested" / "asset.txt").write_text("mounted")
     with server({"/files": tmp_path}) as handle:
         _, body, _ = _get(handle.url("/files/nested/asset.txt"))
     assert body == b"mounted"
@@ -164,7 +164,7 @@ def test_directory_view_follows_symlinks_out_of_the_tree(tmp_path: Path) -> None
     """The package rig symlinks store artifacts in rather than copying them."""
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "artifact.bin").write_bytes(b"linked")
+    _ = (outside / "artifact.bin").write_bytes(b"linked")
     root = tmp_path / "root"
     (root / "nested").mkdir(parents=True)
     (root / "nested" / "artifact.bin").symlink_to(outside / "artifact.bin")
@@ -175,10 +175,10 @@ def test_directory_view_follows_symlinks_out_of_the_tree(tmp_path: Path) -> None
 
 def test_directory_view_refuses_traversal(tmp_path: Path) -> None:
     (tmp_path / "root").mkdir()
-    (tmp_path / "secret.txt").write_text("nope")
+    _ = (tmp_path / "secret.txt").write_text("nope")
     views = {"/files": tmp_path / "root"}
     with server(views) as handle, pytest.raises(urllib.error.HTTPError) as caught:
-        _get(handle.url("/files/../secret.txt"))
+        _ = _get(handle.url("/files/../secret.txt"))
     assert caught.value.status == 404
 
 
@@ -207,7 +207,7 @@ def test_bind_conflict_reaches_the_caller() -> None:
         taken.listen(1)
         _host, port = cast("tuple[str, int]", taken.getsockname())
         with pytest.raises(OSError):
-            server({"/x": b"x"}, port=port)
+            _ = server({"/x": b"x"}, port=port)
 
 
 def test_never_accepting_server_raises_and_leaves_no_thread(
@@ -223,7 +223,7 @@ def test_never_accepting_server_raises_and_leaves_no_thread(
 
     before = {thread.ident for thread in threading.enumerate()}
     with pytest.raises(RuntimeError, match="never accepted"):
-        server({"/x": b"x"})
+        _ = server({"/x": b"x"})
     spawned = [thread for thread in threading.enumerate() if thread.ident not in before]
     assert not any(thread.is_alive() for thread in spawned)
 
@@ -235,7 +235,7 @@ def test_an_idle_client_cannot_wedge_stop(monkeypatch: pytest.MonkeyPatch) -> No
     host, port = handle.binds[0].removeprefix("http://").split(":")
     with socket.create_connection((host, int(port))) as idle:
         idle.sendall(b"GET /x HTTP/1.1\r\nHost: x\r\n\r\n")
-        idle.recv(64)  # response read; the connection now sits open and silent
+        _ = idle.recv(64)  # response read; the connection now sits open and silent
         started = time.monotonic()
         handle.stop()
         assert time.monotonic() - started < 5, "stop() waited on an idle connection"
@@ -259,7 +259,7 @@ def test_default_serve_ip_uses_the_route_towards_the_device() -> None:
 def test_file_view_answers_a_ranged_request(tmp_path: Path) -> None:
     """The harness samples a header rather than pulling a whole fixture."""
     blob = tmp_path / "asset.bin"
-    blob.write_bytes(bytes(range(256)))
+    _ = blob.write_bytes(bytes(range(256)))
     with server({"/asset.bin": blob}) as handle:
         request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=0-15"})
         with web.open_url(request) as response:
@@ -282,7 +282,7 @@ def test_large_file_range_is_written_in_bounded_chunks() -> None:
     writer = Writer()
     handler = bmc_server._Handler.__new__(bmc_server._Handler)
     handler.wfile = writer  # pyright: ignore[reportAttributeAccessIssue]
-    handler._stream(io.BytesIO(payload), (0, len(payload) - 1))
+    _ = handler._stream(io.BytesIO(payload), (0, len(payload) - 1))
     assert b"".join(writer.parts) == payload
 
 
@@ -290,17 +290,17 @@ def test_short_file_range_closes_without_looping() -> None:
     handler = bmc_server._Handler.__new__(bmc_server._Handler)
     handler.wfile = io.BytesIO()
     with pytest.raises(OSError, match="file ended while serving a range"):
-        handler._stream(io.BytesIO(b"short"), (0, 15))
+        _ = handler._stream(io.BytesIO(b"short"), (0, 15))
 
 
 def test_failed_file_stream_does_not_append_an_error_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     blob = tmp_path / "asset.bin"
-    blob.write_bytes(b"x" * 16)
+    _ = blob.write_bytes(b"x" * 16)
 
     def fail_after_prefix(handler: bmc_server._Handler, _handle: object, _span: object) -> None:
-        handler.wfile.write(b"abc")
+        _ = handler.wfile.write(b"abc")
         raise TimeoutError("simulated interrupted response")
 
     monkeypatch.setattr(bmc_server._Handler, "_stream", fail_after_prefix)
@@ -311,7 +311,7 @@ def test_failed_file_stream_does_not_append_an_error_response(
             pytest.raises(http.client.IncompleteRead) as error,
         ):
             assert response.status == 206
-            response.read()
+            _ = response.read()
     assert error.value.partial == b"abc"
 
 
@@ -321,7 +321,7 @@ def test_missing_file_view_returns_an_error_response(tmp_path: Path) -> None:
         server({"/asset.bin": missing}) as handle,
         pytest.raises(urllib.error.HTTPError) as error,
     ):
-        web.open_url(handle.url("/asset.bin"))
+        _ = web.open_url(handle.url("/asset.bin"))
     assert error.value.code == 500
 
 
@@ -350,13 +350,13 @@ def test_unsatisfiable_range_is_answered_with_416(tmp_path: Path) -> None:
     """A device whose retained partial is already complete asks from its end;
     416 tells it to verify what it has rather than download everything again."""
     blob = tmp_path / "asset.bin"
-    blob.write_bytes(b"abcd")
+    _ = blob.write_bytes(b"abcd")
     with (
         server({"/asset.bin": blob}) as handle,
         pytest.raises(urllib.error.HTTPError) as error,
     ):
         request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=4-"})
-        web.open_url(request)
+        _ = web.open_url(request)
     assert error.value.code == 416
     assert error.value.headers["Content-Range"] == "bytes */4"
 
@@ -369,24 +369,24 @@ def test_observe_sees_each_reply_status_and_length() -> None:
 
     with server({"/asset.bin": bytes(range(256))}, observe=observe) as handle:
         with web.open_url(handle.url("/asset.bin")) as response:
-            response.read()
+            _ = response.read()
         request = urllib.request.Request(handle.url("/asset.bin"), headers={"Range": "bytes=16-"})
         with web.open_url(request) as response:
-            response.read()
+            _ = response.read()
     assert seen == [("/asset.bin", 200, 256), ("/asset.bin", 206, 240)]
 
 
 def test_a_reply_the_client_abandons_is_not_observed(tmp_path: Path) -> None:
     """The rig counts observed bytes as served; a hung-up transfer must not count."""
     blob = tmp_path / "big.bin"
-    blob.write_bytes(b"x" * (4 * 1024 * 1024))
+    _ = blob.write_bytes(b"x" * (4 * 1024 * 1024))
     seen: list[int] = []
     with server({"/big.bin": blob}, observe=lambda _h, _s, sent: seen.append(sent)) as handle:
         host, port = handle.binds[0].removeprefix("http://").split(":")
         with socket.create_connection((host, int(port))) as rude:
             rude.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
             rude.sendall(b"GET /big.bin HTTP/1.1\r\nHost: x\r\n\r\n")
-            rude.recv(64)
+            _ = rude.recv(64)
         time.sleep(0.5)
         assert handle.drops, "the disconnect should have been recorded"
         assert seen == []
@@ -399,13 +399,13 @@ def test_a_client_that_hangs_up_is_recorded_not_printed(
 ) -> None:
     """Workers must not print: a spinner owns stdout and would render doubled."""
     blob = tmp_path / "big.bin"
-    blob.write_bytes(b"x" * (4 * 1024 * 1024))
+    _ = blob.write_bytes(b"x" * (4 * 1024 * 1024))
     with server({"/big.bin": blob}) as handle:
         host, port = handle.binds[0].removeprefix("http://").split(":")
         with socket.create_connection((host, int(port))) as rude:
             rude.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
             rude.sendall(b"GET /big.bin HTTP/1.1\r\nHost: x\r\n\r\n")
-            rude.recv(64)
+            _ = rude.recv(64)
         time.sleep(0.5)
         assert handle.drops, "the disconnect should have been recorded"
         assert handle.drops[0].path == "/big.bin"

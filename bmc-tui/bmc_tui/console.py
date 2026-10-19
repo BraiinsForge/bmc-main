@@ -157,9 +157,9 @@ def styled_name(dotted: str) -> Text:
     namespace, _, leaf = dotted.rpartition(".")
 
     if namespace:
-        result.append(namespace, style="bright")
-        result.append(".", style="dim")
-    result.append(leaf, style="bold cyan")
+        _ = result.append(namespace, style="bright")
+        _ = result.append(".", style="dim")
+    _ = result.append(leaf, style="bold cyan")
 
     return result
 
@@ -169,17 +169,17 @@ def styled_data(data: Mapping[str, object]) -> Text:
     result = Text()
     for i, (k, v) in enumerate(data.items()):
         if i > 0:
-            result.append(" ", style="dim")
-        result.append(f"{k}", style="dim italic")
-        result.append("=", style="dim")
+            _ = result.append(" ", style="dim")
+        _ = result.append(f"{k}", style="dim italic")
+        _ = result.append("=", style="dim")
         if isinstance(v, str):
-            result.append(f'"{v}"', style="green")
+            _ = result.append(f'"{v}"', style="green")
         elif isinstance(v, bool):
-            result.append(str(v).lower(), style="magenta")
+            _ = result.append(str(v).lower(), style="magenta")
         elif isinstance(v, int | float):
-            result.append(str(v), style="yellow")
+            _ = result.append(str(v), style="yellow")
         else:
-            result.append(str(v), style="white")
+            _ = result.append(str(v), style="white")
     return result
 
 
@@ -435,19 +435,19 @@ def instruct_user(
         raise RuntimeError(msg)
 
     if metrics is not None:
-        metrics.capture(f">{message}")
+        _ = metrics.capture(f">{message}")
 
     body = Text()
-    body.append(message, style="bold")
-    body.append("\n\n")
-    body.append(INSTRUCT_HINT, style="dim")
+    _ = body.append(message, style="bold")
+    _ = body.append("\n\n")
+    _ = body.append(INSTRUCT_HINT, style="dim")
     out.print(Panel(body, border_style="yellow", padding=(1, 2)))
 
-    input()
+    _ = input()
     acked_at = datetime.now().astimezone()
 
     if metrics is not None:
-        metrics.capture(f"<{message}")
+        _ = metrics.capture(f"<{message}")
 
     return acked_at
 
@@ -459,7 +459,7 @@ _run_started: ContextVar[float | None] = ContextVar("run_started", default=None)
 
 def mark_run_start() -> None:
     """Stamp the run's start time; `alert` uses it to stay quiet on quick runs."""
-    _run_started.set(time.monotonic())
+    _ = _run_started.set(time.monotonic())
 
 
 def notify(summary: str, *, body: str | None = None, level: Level = "info") -> None:
@@ -544,4 +544,4 @@ def desktop_notify(summary: str, *, body: str | None = None, level: Level = "inf
         cmd = ["osascript", "-e", f'display notification "{message}" with title "{title}"']
     else:
         return
-    subprocess.run(cmd, check=False, capture_output=True)
+    _ = subprocess.run(cmd, check=False, capture_output=True)

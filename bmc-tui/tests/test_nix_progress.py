@@ -174,7 +174,7 @@ def test_stream_flash_frames_errors_and_points_at_the_log(
     dev = Device("h", backend=_Exec(lines, code=1))
 
     with pytest.raises(Abort) as exc:
-        nix_progress.stream_flash(dev, "sysupgrade x")
+        _ = nix_progress.stream_flash(dev, "sysupgrade x")
 
     log = _log_path(tmp_path)
     # The @bmc line drove the display yet is still in the log.
@@ -204,7 +204,7 @@ def test_the_error_tail_is_bounded_while_it_is_collected(
     dev = Device("h", backend=_Exec(noise, code=1))
 
     with pytest.raises(Abort):
-        nix_progress.stream_flash(dev, "sysupgrade x")
+        _ = nix_progress.stream_flash(dev, "sysupgrade x")
 
     (retained,) = handed_over
     assert len(retained) == nix_progress.ERROR_TAIL

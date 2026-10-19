@@ -78,11 +78,11 @@ def deploy_scene(vm: VM) -> None:
     ui.header("Deploy wasm scene")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(SCENE_CONFIG, indent=2) + "\n")
+    _ = CONFIG_PATH.write_text(json.dumps(SCENE_CONFIG, indent=2) + "\n")
 
-    vm.exec("mkdir -p /var/log/bmc")
-    vm.exec(f': > "{BMC_LOG}"')
-    vm.exec(f': > "{REMOTE_WASM_LOG}"')
+    _ = vm.exec("mkdir -p /var/log/bmc")
+    _ = vm.exec(f': > "{BMC_LOG}"')
+    _ = vm.exec(f': > "{REMOTE_WASM_LOG}"')
 
     vm.push(src=CONFIG_PATH, dst=BMC_CONFIG)
     ui.ok(f"Deployed config to {BMC_CONFIG}")
@@ -97,12 +97,12 @@ def restart_app(vm: VM) -> None:
         raise SystemExit(ack.error or "b-bmc-openwrt restart failed")
 
     with ui.spinner("waiting for app restart..."):
-        vm.wait_for(
+        _ = vm.wait_for(
             Event.APP_STARTED,
             timeout=60,
             where=lambda evt: evt.ts.astimezone(UTC) >= restart_started_at,
         )
-        vm.wait_for(
+        _ = vm.wait_for(
             Event.APP_READY,
             timeout=60,
             where=lambda evt: evt.ts.astimezone(UTC) >= restart_started_at,
@@ -133,7 +133,7 @@ def main() -> None:
 
     with VM.connect(timeout=60) as vm:
         ui.ok("Connected to VM")
-        vm.wait_for(Event.APP_READY, timeout=60)
+        _ = vm.wait_for(Event.APP_READY, timeout=60)
         ui.ok("VM app already ready")
 
         deploy_scene(vm)

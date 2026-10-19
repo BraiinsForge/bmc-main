@@ -139,10 +139,10 @@ def record(
         f'--perf-frames={perf_frames}',
         *extra_args,
     ]
-    subprocess.run(cmd, check=True)
+    _ = subprocess.run(cmd, check=True)
 
     print('Symbolicating profile...')
-    subprocess.run(
+    _ = subprocess.run(
         [
             sys.executable,
             'tools/perf_symbolicate.py',
@@ -153,7 +153,7 @@ def record(
     )
 
     print('Combining into final profile...')
-    subprocess.run(
+    _ = subprocess.run(
         [sys.executable, 'tools/perf_finalize.py', str(report_dir)],
         check=True,
     )

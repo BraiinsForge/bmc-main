@@ -157,12 +157,12 @@ class _FakeNix:
         return [StorePath(str(self._outs[attr])) for attr in attrs]
 
     def generate_cache_key(self, name: str, secret: Path) -> str:
-        secret.write_text("sk")
+        _ = secret.write_text("sk")
         return f"{name}:PUBLICKEY"
 
     def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
         cache.mkdir(parents=True, exist_ok=True)
-        (cache / "fake.narinfo").write_text("StorePath: /nix/store/fake\n")
+        _ = (cache / "fake.narinfo").write_text("StorePath: /nix/store/fake\n")
 
     def copy(self, store_paths: list[StorePath], dest: str) -> None:
         return None
@@ -171,7 +171,7 @@ class _FakeNix:
 def _cli_out(tmp_path: Path) -> Path:
     out = tmp_path / "cli-out"
     (out / "bin").mkdir(parents=True, exist_ok=True)
-    (out / "bin" / "bmc-nix-cli").write_bytes(b"elf")
+    _ = (out / "bin" / "bmc-nix-cli").write_bytes(b"elf")
     return out
 
 
@@ -179,7 +179,7 @@ def _stub_host_cli(tmp_path: Path) -> Path:
     out = tmp_path / "host-cli"
     (out / "bin").mkdir(parents=True)
     cli = out / "bin" / "bmc-nix-cli"
-    cli.write_text("#!/bin/sh\necho 'sysupgrade-e2e-1:STUBSIG'\n")
+    _ = cli.write_text("#!/bin/sh\necho 'sysupgrade-e2e-1:STUBSIG'\n")
     cli.chmod(0o755)
     return out
 
@@ -205,9 +205,9 @@ def _tarball_out(
         **(overrides or {}),
     }
     if meta:
-        (out / "metadata.json").write_text(json.dumps(payload))
+        _ = (out / "metadata.json").write_text(json.dumps(payload))
     if write_archive and "/" not in payload["tarball_name"]:
-        (out / payload["tarball_name"]).write_bytes(b"tarball-bytes")
+        _ = (out / payload["tarball_name"]).write_bytes(b"tarball-bytes")
     return out
 
 
@@ -980,7 +980,7 @@ def test_register_default_servers_requires_exactly_one_source(
 ) -> None:
     registry = parsed_registry(_DEFAULT_REGISTRY)
     entry = registry_servers(registry)[0]
-    entry.pop("feed_url")
+    _ = entry.pop("feed_url")
     entry.update(sources)
     backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
     with pytest.raises(Abort, match=message):
@@ -1876,7 +1876,7 @@ def test_stream_events_decodes_back_to_back_messages() -> None:
 def test_stream_events_aborts_on_stream_failure() -> None:
     script = "import sys; sys.stderr.write('boom'); sys.exit(1)"
     with pytest.raises(Abort, match="boom"):
-        catalog._stream_events([sys.executable, "-c", script])
+        _ = catalog._stream_events([sys.executable, "-c", script])
 
 
 # ── install e2e parsers ───────────────────────────────────────────────────────
@@ -2057,14 +2057,14 @@ def test_verify_widget_installed_fails_when_bmc_never_serves_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with pytest.raises(Abort, match="did not serve again"):
-        _verify_against(monkeypatch, instances=[None])
+        _ = _verify_against(monkeypatch, instances=[None])
 
 
 def test_verify_widget_installed_fails_when_the_orchestrator_never_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with pytest.raises(Abort, match="did not disappear"):
-        _verify_against(monkeypatch, orchestrator_polls=10_000, instances=["instance-after"])
+        _ = _verify_against(monkeypatch, orchestrator_polls=10_000, instances=["instance-after"])
 
 
 @pytest.mark.parametrize("listed", ["", "Command failed: Request timed out"])
@@ -2079,7 +2079,9 @@ def test_verify_widget_installed_fails_when_the_registry_never_exposes_the_widge
 ) -> None:
     """Waiting out a restart must not mask a broken post-install refresh."""
     with pytest.raises(Abort, match="not exposed by the registry"):
-        _verify_against(monkeypatch, instances=["instance-after"], widgets=["some-other-widget"])
+        _ = _verify_against(
+            monkeypatch, instances=["instance-after"], widgets=["some-other-widget"]
+        )
 
 
 # ── sysupgrade e2e ────────────────────────────────────────────────────────────
@@ -2095,7 +2097,7 @@ def _index_out(tmp_path: Path, version: str, packages: list[tuple[str, str]]) ->
     out = tmp_path / f"index-{version}"
     out.mkdir(parents=True, exist_ok=True)
     entries = [{"name": n, "version": "1.0", "store_path": p} for n, p in packages]
-    (out / rig.INDEX_NAME).write_text(
+    _ = (out / rig.INDEX_NAME).write_text(
         json.dumps({"version": 1, "indexes": [], "caches": [], "packages": entries})
     )
     return out
@@ -2775,7 +2777,7 @@ def test_release_data_partition_aborts_when_a_mount_remains_on_the_device() -> N
 def _debugfs_out(tmp_path: Path) -> Path:
     out = tmp_path / "debugfs-out"
     (out / "sbin").mkdir(parents=True, exist_ok=True)
-    (out / "sbin" / "debugfs").write_bytes(b"elf")
+    _ = (out / "sbin" / "debugfs").write_bytes(b"elf")
     return out
 
 
@@ -3564,7 +3566,7 @@ def test_anchored_version_decrements_image_release() -> None:
     assert patched.version == VersionName(26, 7, None)
 
     with pytest.raises(ValueError, match=r"0\.01"):
-        catalog.anchored_version(running, replace(running, version=VersionName(0, 1, None)))
+        _ = catalog.anchored_version(running, replace(running, version=VersionName(0, 1, None)))
 
 
 def test_ensure_anchor_version_noop_when_running_is_older(tmp_path: Path) -> None:
@@ -3689,7 +3691,7 @@ def test_snapshot_remote_dir_is_byte_exact_and_removes_temp(tmp_path: Path) -> N
 def test_snapshot_remote_dir_truncation_aborts_and_removes_temp(tmp_path: Path) -> None:
     backend = _dir_snapshot_backend(b"short", reported=b"expected complete tar")
     with pytest.raises(Abort, match="snapshot"):
-        catalog.snapshot_remote_dir(
+        _ = catalog.snapshot_remote_dir(
             Device("h", backend=backend), "/etc/opkg/keys", tmp_path / "keys.tar"
         )
     assert any(argv[-1].startswith("rm -f /tmp/bmc-e2e-opkg-keys") for argv in backend.runs)
@@ -3697,7 +3699,7 @@ def test_snapshot_remote_dir_truncation_aborts_and_removes_temp(tmp_path: Path) 
 
 def test_restore_remote_dir_deletes_then_recreates_or_leaves_absent(tmp_path: Path) -> None:
     archive = tmp_path / "keys.tar"
-    archive.write_bytes(b"archive")
+    _ = archive.write_bytes(b"archive")
     backend = _Exec(_routes({}))
     dev = Device("h", backend=backend)
     catalog.restore_remote_dir(dev, catalog.DirSnapshot("/etc/opkg/keys", archive))
@@ -3778,7 +3780,7 @@ def _pointed_cycle(tmp_path: Path, script: str) -> catalog.FirmwareCycle:
     cycle = _firmware_cycle(tmp_path)
     cycle.host = "192.0.2.5"
     local = tmp_path / "bmc-compositor.init"
-    local.write_text(script)
+    _ = local.write_text(script)
     cycle.init_script_snapshot = catalog.FileSnapshot("/etc/init.d/bmc-compositor", local)
     return cycle
 
@@ -3912,7 +3914,7 @@ def test_strip_index_override_removes_token_and_flags_foreign(tmp_path: Path) ->
 
     foreign = _INIT_SCRIPT_BODY.replace('"PATH=', '"BMC_INDEX_URL=http://other" "PATH=')
     with pytest.raises(Abort, match="unexpected BMC_INDEX_URL"):
-        catalog.strip_index_override(
+        _ = catalog.strip_index_override(
             Device("h", backend=_Exec(_routes({"cat /etc/init.d/bmc-compositor": foreign}))),
             cycle,
         )
@@ -4036,7 +4038,7 @@ def test_fresh_firmware_staging_allows_absent_or_other_version_marker(
     image, _ = _checked_firmware_cycle(tmp_path)
     marker = tmp_path / "bos-nix-profile-prepared"
     if prepared is not None:
-        marker.write_text(prepared + "\n")
+        _ = marker.write_text(prepared + "\n")
 
     def run_probe(argv: list[str]) -> subprocess.CompletedProcess[str]:
         assert "/dev/shm/bos-nix-profile-prepared" in argv[-1], "probe must check COMMAND's marker"
@@ -4083,7 +4085,7 @@ def test_check_for_firmware_upgrade_rejects_invalid_offer(
 ) -> None:
     image, cycle = _checked_firmware_cycle(tmp_path)
     response = _firmware_offer(image, cycle)
-    change(response)
+    _ = change(response)
     monkeypatch.setattr(catalog, "_grpcurl", stubs.returning(response))
     with pytest.raises(Abort, match=hint):
         catalog.check_for_firmware_upgrade(
@@ -4174,7 +4176,7 @@ def test_run_firmware_stream_resets_flag_when_spawn_fails(
 
     monkeypatch.setattr(subprocess, "Popen", popen)
     with pytest.raises(OSError, match="missing grpcurl"):
-        catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
+        _ = catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
     assert cycle.started_upgrade is False
 
 
@@ -4339,7 +4341,7 @@ def test_verify_device_identity_rejects_a_different_device(tmp_path: Path) -> No
         backend=_Exec(_routes({"cat /tmp/wifi_mac": "aa:bb:cc:dd:ee:ff\n"})),
     )
     with pytest.raises(Abort, match="device identity changed"):
-        catalog.verify_device_identity(dev, cycle)
+        _ = catalog.verify_device_identity(dev, cycle)
 
 
 def test_poll_boot_id_change_tolerates_ssh_failure_until_new_boot(tmp_path: Path) -> None:
@@ -4414,7 +4416,7 @@ def test_read_flashed_version_parses_raw_version_canonically() -> None:
 def test_read_flashed_version_propagates_parse_error() -> None:
     dev = Device("h", backend=_Exec(_routes({"cat /etc/bos_version": "garbage"})))
     with pytest.raises(ValueError):
-        catalog.read_flashed_version(dev)
+        _ = catalog.read_flashed_version(dev)
 
 
 def test_verify_stock_service_accepts_running_and_rejects_stopped() -> None:
@@ -4437,9 +4439,9 @@ def _restorable_cycle(tmp_path: Path) -> catalog.FirmwareCycle:
     servers = tmp_path / "servers.json"
     nix_conf = tmp_path / "nix.conf"
     opkg_keys = tmp_path / "opkg-keys.tar"
-    servers.write_text("servers")
-    nix_conf.write_text("nix-conf")
-    opkg_keys.write_text("keys")
+    _ = servers.write_text("servers")
+    _ = nix_conf.write_text("nix-conf")
+    _ = opkg_keys.write_text("keys")
     cycle.servers_snapshot = catalog.FileSnapshot(catalog.SERVERS_JSON, servers)
     cycle.nix_conf_snapshot = catalog.FileSnapshot(catalog._NIX_CONF, nix_conf)
     cycle.opkg_keys_snapshot = catalog.DirSnapshot("/etc/opkg/keys", opkg_keys)
@@ -4528,7 +4530,7 @@ def test_store_available_kib_aborts_on_a_non_numeric_available_field() -> None:
     malformed = f"filesystem 100 0 unknown 0% {catalog._DATA_MOUNT}"
     backend = _Exec(_routes({f"df -k {catalog._DATA_MOUNT}": malformed}))
     with pytest.raises(Abort, match="unparseable df output"):
-        catalog._store_available_kib(Device("h", backend=backend))
+        _ = catalog._store_available_kib(Device("h", backend=backend))
 
 
 def test_fill_store_filesystem_reopens_the_margin_only_after_hitting_zero() -> None:

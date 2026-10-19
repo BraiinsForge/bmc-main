@@ -70,7 +70,7 @@ def test_wrong_password_is_a_readable_abort() -> None:
 def test_unauthenticated_calls_are_refused_before_reaching_the_device_logic() -> None:
     script = Script()
     with BoserStub(script) as stub, pytest.raises(Abort, match="HTTP 401 UNAUTHORIZED"):
-        _client(stub).check([])
+        _ = _client(stub).check([])
     assert [path for _m, path, _t, _b in script.requests] == ["/api/v1/upgrade/check"]
 
 
@@ -95,7 +95,7 @@ def test_stream_ending_without_a_terminal_state_aborts() -> None:
         client = _client(stub)
         client.login()
         with pytest.raises(Abort, match="ended before a terminal state"):
-            list(client.events(deadline=float("inf")))
+            _ = list(client.events(deadline=float("inf")))
 
 
 def test_stream_stops_at_the_first_terminal_state() -> None:
@@ -127,7 +127,7 @@ def test_deadline_is_enforced_between_events() -> None:
         client = _client(stub)
         client.login()
         with pytest.raises(Abort, match="no terminal state within the deadline"):
-            list(client.events(deadline=5.0, clock=lambda: next(ticks)))
+            _ = list(client.events(deadline=5.0, clock=lambda: next(ticks)))
 
 
 def test_a_device_that_accepts_the_connection_but_never_answers_is_a_readable_abort() -> None:

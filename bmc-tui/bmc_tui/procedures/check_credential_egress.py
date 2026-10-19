@@ -400,7 +400,7 @@ def _push(
     _push_json(dev, {"version": 1, "accounts": stored}, SECRETS)
     # The store writes its own file at 0600; a pushed one would otherwise
     # sit world-readable and misrepresent what the device does.
-    dev.run(f"chmod 600 {SECRETS}")
+    _ = dev.run(f"chmod 600 {SECRETS}")
     console.ok(f"{len(CASES)} scenes and {len(stored)} accounts written")
 
 
@@ -416,11 +416,11 @@ def _push_json(dev: Device, document: Mapping[str, object], remote: RemotePath) 
 
 
 def _backup(dev: Device) -> None:
-    dev.run(f"[ -f {CONFIG_BACKUP} ] || cp {CONFIG} {CONFIG_BACKUP}")
+    _ = dev.run(f"[ -f {CONFIG_BACKUP} ] || cp {CONFIG} {CONFIG_BACKUP}")
     # A device that never saved an account has no store, and that absence is
     # itself state to put back. Tested rather than tolerated: swallowing a
     # failed copy would leave the restore deleting accounts it never saved.
-    dev.run(f"[ -f {SECRETS_BACKUP} ] || [ ! -f {SECRETS} ] || cp {SECRETS} {SECRETS_BACKUP}")
+    _ = dev.run(f"[ -f {SECRETS_BACKUP} ] || [ ! -f {SECRETS} ] || cp {SECRETS} {SECRETS_BACKUP}")
     console.kv("backup", f"{CONFIG_BACKUP}, {SECRETS_BACKUP}")
 
 
@@ -428,10 +428,10 @@ def _restore(dev: Device) -> None:
     if dev.read(f"[ -f {CONFIG_BACKUP} ] && echo yes || echo no").strip() != "yes":
         console.warn(f"no backup at {CONFIG_BACKUP} — leaving the device alone")
         return
-    dev.run(f"cp {CONFIG_BACKUP} {CONFIG} && rm -f {CONFIG_BACKUP}")
+    _ = dev.run(f"cp {CONFIG_BACKUP} {CONFIG} && rm -f {CONFIG_BACKUP}")
     # A device with no accounts before the run must have none after it,
     # so a missing backup means remove rather than keep.
-    dev.run(
+    _ = dev.run(
         f"if [ -f {SECRETS_BACKUP} ]; then cp {SECRETS_BACKUP} {SECRETS} && "
         f"rm -f {SECRETS_BACKUP}; else rm -f {SECRETS}; fi"
     )

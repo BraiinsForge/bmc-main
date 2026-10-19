@@ -83,7 +83,7 @@ def _wait_for_requests(server: FwIndexServer, count: int) -> None:
 
 def test_index_document_matches_minimal_golden_shape(tmp_path: Path) -> None:
     firmware = tmp_path / "firmware.tar"
-    firmware.write_bytes(_FIRMWARE_BYTES)
+    _ = firmware.write_bytes(_FIRMWARE_BYTES)
     running, image = _versions()
     checksum = hashlib.sha256(_FIRMWARE_BYTES).hexdigest()
 
@@ -131,14 +131,14 @@ def test_index_document_matches_minimal_golden_shape(tmp_path: Path) -> None:
 
 def test_index_document_is_byte_deterministic(tmp_path: Path) -> None:
     firmware = tmp_path / "firmware.tar"
-    firmware.write_bytes(_FIRMWARE_BYTES)
+    _ = firmware.write_bytes(_FIRMWARE_BYTES)
 
     assert _document(firmware) == _document(firmware)
 
 
 def test_parse_releases_round_trips_the_generated_document(tmp_path: Path) -> None:
     firmware = tmp_path / "firmware.tar"
-    firmware.write_bytes(_FIRMWARE_BYTES)
+    _ = firmware.write_bytes(_FIRMWARE_BYTES)
     running, image = _versions()
 
     releases = parse_releases(_document(firmware))
@@ -260,26 +260,26 @@ def test_parse_releases_rejects_a_malformed_platform_asset() -> None:
     )
 
     with pytest.raises(ValueError, match=r"malformed .* asset"):
-        parse_releases(document)
+        _ = parse_releases(document)
 
 
 def test_parse_releases_rejects_another_schema_version() -> None:
     with pytest.raises(ValueError, match="not a v1 document"):
-        parse_releases(json.dumps({"version": "v2", "releases": []}))
+        _ = parse_releases(json.dumps({"version": "v2", "releases": []}))
 
 
 def test_parse_releases_rejects_non_json() -> None:
     with pytest.raises(ValueError, match="not JSON"):
-        parse_releases("<html>")
+        _ = parse_releases("<html>")
 
 
 def test_server_records_completed_index_and_firmware_fetches(tmp_path: Path) -> None:
     root = tmp_path / "serve"
     root.mkdir()
     firmware = root / "firmware.tar"
-    firmware.write_bytes(_FIRMWARE_BYTES)
+    _ = firmware.write_bytes(_FIRMWARE_BYTES)
     body = _document(firmware).encode()
-    (root / INDEX_NAME).write_bytes(body)
+    _ = (root / INDEX_NAME).write_bytes(body)
 
     with FwIndexServer(root, port=0, bind_ip="127.0.0.1") as server:
         base_url = f"http://127.0.0.1:{server.port}"
@@ -309,9 +309,9 @@ def test_keepalive_connection_records_bytes_per_request(
     root = tmp_path / "serve"
     root.mkdir()
     firmware = root / "firmware.tar"
-    firmware.write_bytes(_FIRMWARE_BYTES)
+    _ = firmware.write_bytes(_FIRMWARE_BYTES)
     body = _document(firmware).encode()
-    (root / INDEX_NAME).write_bytes(body)
+    _ = (root / INDEX_NAME).write_bytes(body)
     monkeypatch.setattr(bmc_tui.fw_index._RecordingHandler, "protocol_version", "HTTP/1.1")
 
     with FwIndexServer(root, port=0, bind_ip="127.0.0.1") as server:
@@ -343,7 +343,7 @@ def test_fully_served_404_is_not_provenance(tmp_path: Path) -> None:
     with FwIndexServer(root, port=0, bind_ip="127.0.0.1") as server:
         path = "/missing.tar"
         with pytest.raises(urllib.error.HTTPError) as caught:
-            web.open_url(f"http://127.0.0.1:{server.port}{path}")
+            _ = web.open_url(f"http://127.0.0.1:{server.port}{path}")
         with caught.value as response:
             assert response.read()
 
@@ -359,7 +359,7 @@ def test_aborted_transfer_is_not_complete(tmp_path: Path) -> None:
     root = tmp_path / "serve"
     root.mkdir()
     body = b"x" * (8 * 1_024 * 1_024)
-    (root / "firmware.tar").write_bytes(body)
+    _ = (root / "firmware.tar").write_bytes(body)
 
     with FwIndexServer(root, port=0, bind_ip="127.0.0.1") as server:
         client = socket.create_connection(("127.0.0.1", server.port))
@@ -386,13 +386,13 @@ def test_server_reports_active_transfer_until_handler_finishes(
 ) -> None:
     root = tmp_path / "serve"
     root.mkdir()
-    (root / "firmware.tar").write_bytes(_FIRMWARE_BYTES)
+    _ = (root / "firmware.tar").write_bytes(_FIRMWARE_BYTES)
     release = threading.Event()
     write = bmc_tui.fw_index._RecordingWriter.write
 
     def blocked_write(writer: bmc_tui.fw_index._RecordingWriter, data: bytes) -> int:
         if data == _FIRMWARE_BYTES:
-            release.wait(timeout=5)
+            _ = release.wait(timeout=5)
         return write(writer, data)
 
     monkeypatch.setattr(bmc_tui.fw_index._RecordingWriter, "write", blocked_write)

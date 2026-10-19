@@ -82,8 +82,8 @@ class EventDaemon:
 
     def run(self) -> None:
         """Main entry point — blocks until SIGTERM/SIGINT."""
-        signal.signal(signal.SIGTERM, self._handle_signal)
-        signal.signal(signal.SIGINT, self._handle_signal)
+        _ = signal.signal(signal.SIGTERM, self._handle_signal)
+        _ = signal.signal(signal.SIGINT, self._handle_signal)
 
         # Start poller and unix socket threads
         threading.Thread(target=self._poller_loop, daemon=True, name="poller").start()
@@ -341,7 +341,7 @@ class EventDaemon:
             # and the poller never sees the service go down.
             self._state.reset_service(name)
 
-            subprocess.run(
+            _ = subprocess.run(
                 ["service", name, "restart"],
                 capture_output=True,
                 text=True,
@@ -392,9 +392,9 @@ class EventDaemon:
             return
 
         # Kill any running bmc-openwrt (procd or direct)
-        subprocess.run(["killall", "bmc-openwrt"], capture_output=True, timeout=5, check=False)
+        _ = subprocess.run(["killall", "bmc-openwrt"], capture_output=True, timeout=5, check=False)
         # Also kill a leftover rr process from a previous recording
-        subprocess.run(["killall", "rr"], capture_output=True, timeout=5, check=False)
+        _ = subprocess.run(["killall", "rr"], capture_output=True, timeout=5, check=False)
         time.sleep(1)
 
         # Reset poller so it re-emits APP_STARTED when the rr-wrapped process comes up
@@ -403,7 +403,7 @@ class EventDaemon:
 
         # Clear old trace — rr creates --output-trace-dir itself and
         # refuses if it already exists.
-        subprocess.run(
+        _ = subprocess.run(
             ["rm", "-rf", str(RR_TRACE_DIR)],
             capture_output=True,
             timeout=5,

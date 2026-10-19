@@ -147,7 +147,7 @@ def main() -> None:
     }
     with open(base_path + '.msdf.json', 'w') as f:
         json.dump(sidecar, f, indent=2)
-        f.write('\n')
+        _ = f.write('\n')
     print(f'Wrote {base_path}.msdf.png + {base_path}.msdf.json')
 
 

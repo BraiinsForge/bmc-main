@@ -91,16 +91,16 @@ def collect_logs(vm: VM, scenario: str, scene_config: Mapping[str, object]) -> P
     # Push config
     config_path = OUTPUT_DIR / f"{scenario}-config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(scene_config, indent=2))
+    _ = config_path.write_text(json.dumps(scene_config, indent=2))
     vm.push(src=config_path, dst=BMC_CONFIG)
     ui.ok("Config deployed")
 
     # Truncate the compositor log before the restart so we only capture this
     # scenario. The file is re-created with `>>` by the init script on start.
-    vm.exec(f': > "{BMC_LOG}"')
+    _ = vm.exec(f': > "{BMC_LOG}"')
 
     # Enable trace-level logging for compositor module
-    vm.exec(
+    _ = vm.exec(
         "sed -i 's/RUST_LOG=debug/RUST_LOG=debug,bmc_openwrt::compositor=trace/' "
         "/etc/init.d/b-bmc-openwrt"
     )
@@ -114,8 +114,8 @@ def collect_logs(vm: VM, scenario: str, scene_config: Mapping[str, object]) -> P
 
     # Wait for app to come up and widgets to connect
     with ui.spinner("waiting for app ready..."):
-        vm.wait_next(Event.APP_STARTED, timeout=60)
-        vm.wait_next(Event.APP_READY, timeout=60)
+        _ = vm.wait_next(Event.APP_STARTED, timeout=60)
+        _ = vm.wait_next(Event.APP_READY, timeout=60)
     ui.ok("App ready")
 
     # Let it run and accumulate log data
@@ -138,11 +138,11 @@ def main() -> None:
     with VM.connect(timeout=60) as vm:
         ui.ok("Connected")
 
-        vm.wait_for(Event.APP_READY, timeout=60)
+        _ = vm.wait_for(Event.APP_READY, timeout=60)
         ui.ok("Initial app ready")
 
         for scenario, scene_config in SCENARIOS:
-            collect_logs(vm, scenario, scene_config)
+            _ = collect_logs(vm, scenario, scene_config)
 
 
 main()

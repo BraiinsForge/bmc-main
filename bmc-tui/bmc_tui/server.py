@@ -352,7 +352,7 @@ class _Handler(BaseHTTPRequestHandler):
             # that stops reading at its own cap trips it before that cap is hit.
             view = memoryview(body)
             for start in range(0, len(view), CHUNK_BYTES):
-                self.wfile.write(view[start : start + CHUNK_BYTES])
+                _ = self.wfile.write(view[start : start + CHUNK_BYTES])
             sent = len(body)
         self._observed(status, sent)
 
@@ -385,7 +385,7 @@ class _Handler(BaseHTTPRequestHandler):
             sent = 0
             if not head and not isinstance(span, _Unsatisfiable):
                 if span is not None:
-                    handle.seek(span[0])
+                    _ = handle.seek(span[0])
                 sent = self._stream(handle, span)
         self._observed(status, sent)
 
@@ -394,7 +394,7 @@ class _Handler(BaseHTTPRequestHandler):
         if span is None:
             sent = 0
             while chunk := handle.read(CHUNK_BYTES):
-                self.wfile.write(chunk)
+                _ = self.wfile.write(chunk)
                 sent += len(chunk)
             return sent
         remaining = span[1] - span[0] + 1
@@ -402,7 +402,7 @@ class _Handler(BaseHTTPRequestHandler):
             chunk = handle.read(min(CHUNK_BYTES, remaining))
             if not chunk:
                 raise OSError("file ended while serving a range")
-            self.wfile.write(chunk)
+            _ = self.wfile.write(chunk)
             remaining -= len(chunk)
         return span[1] - span[0] + 1
 
@@ -519,7 +519,7 @@ class ServerHandle:
 
     def stop(self) -> None:
         """Shut down and join the thread. Idempotent."""
-        self._finalizer()
+        _ = self._finalizer()
 
     def __enter__(self) -> Self:
         return self

@@ -144,7 +144,7 @@ class BoserRest:
         self.token = self._json("POST", "/api/v1/auth/login", body, reply=Login)["token"]
 
     def set_auto_upgrade(self, *, enabled: bool) -> None:
-        self._send("PATCH", "/api/v1/upgrade/auto-upgrade", {"enabled": enabled})
+        _ = self._send("PATCH", "/api/v1/upgrade/auto-upgrade", {"enabled": enabled})
 
     def check(self, packages: list[str]) -> CheckUpgradeResponse:
         path = "/api/v1/upgrade/check"
@@ -155,7 +155,7 @@ class BoserRest:
         return self._json("GET", path, reply=InstallablePackages)["packages"]
 
     def start(self, offer_id: str) -> None:
-        self._send("POST", "/api/v1/upgrade/start", {"offer_id": offer_id})
+        _ = self._send("POST", "/api/v1/upgrade/start", {"offer_id": offer_id})
 
     def state(self) -> UpgradeState:
         return self._json("GET", "/api/v1/upgrade/state", reply=UpgradeState)

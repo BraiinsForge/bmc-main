@@ -110,7 +110,7 @@ class Ssh:
         local = Path(local)
         local.parent.mkdir(parents=True, exist_ok=True)
         src = f"{self._user}@{self._host}:{remote}"
-        subprocess.run(
+        _ = subprocess.run(
             self._scp_cmd(src, str(local), recursive=True),
             check=True,
             capture_output=True,
@@ -120,9 +120,9 @@ class Ssh:
     def push(self, *, local: str | Path, remote: str) -> None:
         """Copy a file or directory from the host to the VM."""
         # scp cannot create the remote parent directory; ensure it exists first
-        self.run(f'mkdir -p "$(dirname {shlex.quote(remote)})"')
+        _ = self.run(f'mkdir -p "$(dirname {shlex.quote(remote)})"')
         dst = f"{self._user}@{self._host}:{remote}"
-        subprocess.run(
+        _ = subprocess.run(
             self._scp_cmd(str(local), dst, recursive=True),
             check=True,
             capture_output=True,

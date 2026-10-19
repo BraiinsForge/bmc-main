@@ -44,7 +44,7 @@ _EXPECTED_ERRORS = (
 try:
     from rich.traceback import install as _install_rich_traceback
 
-    _install_rich_traceback(show_locals=True, width=120)
+    _ = _install_rich_traceback(show_locals=True, width=120)
     _rich_hook = sys.excepthook
 except ImportError:
     _rich_hook = sys.__excepthook__
@@ -61,7 +61,7 @@ def _excepthook(
     if isinstance(exc_value, _EXPECTED_ERRORS):
         ui.error(str(exc_value))
         sys.exit(1)
-    _rich_hook(exc_type, exc_value, exc_tb)
+    _ = _rich_hook(exc_type, exc_value, exc_tb)
 
 
 sys.excepthook = _excepthook

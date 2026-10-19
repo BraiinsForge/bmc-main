@@ -89,7 +89,7 @@ def test_no_sysupgrade_dir_for_unrelated_tar(tmp_path: Path) -> None:
 
 def test_members_empty_for_non_tar(tmp_path: Path) -> None:
     junk = tmp_path / "junk.tar"
-    junk.write_bytes(b"not a tar at all")
+    _ = junk.write_bytes(b"not a tar at all")
     assert Image(junk).members() == []
     assert Image(junk).is_sysupgrade is False
 

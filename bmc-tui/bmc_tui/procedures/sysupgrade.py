@@ -51,7 +51,7 @@ class Sysupgrade:
 
     def run(self) -> None:
         if self.dry_run:
-            dry_run.set(True)
+            _ = dry_run.set(True)
         dev = Device(self.device)
 
         console.header("Firmware update")
