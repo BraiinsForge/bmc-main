@@ -54,8 +54,7 @@ output = ".tmp/coverage/python/coverage.xml"
 [tool.coverage.html]
 directory = ".tmp/coverage/python/html"
 
-# Every rule on; what the code already trips is grandfathered in `.basedpyright/baseline.json`.
-# Each run drops the entries fixed since, and only `just python-baseline` adds new ones.
+# Every rule on, nothing grandfathered: any diagnostic fails `just python` and the `python-lint` check.
 [tool.basedpyright]
 typeCheckingMode = "all"
 pythonVersion = "3.13"

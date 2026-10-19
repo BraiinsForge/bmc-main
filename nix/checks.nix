@@ -394,7 +394,6 @@ in
             (lib.fileset.fileFilter (f: f.hasExt "py") ../.)
             ../ruff.toml
             ../pyproject.toml
-            ../.basedpyright/baseline.json
           ])
           # subprojects with their own nix dev shell, deps, and lint setup
           (lib.fileset.unions [
@@ -405,8 +404,7 @@ in
           ]);
       };
     } ''
-    # basedpyright rewrites its baseline once entries drop, and exits 3 when it cannot;
-    # the members filtered out above always drop theirs, so it needs a writable tree.
+    # Writable, so the workspace venv can be linked into it below.
     cp -r $src src
     chmod -R +w src
     cd src

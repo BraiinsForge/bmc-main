@@ -114,14 +114,6 @@ python:
     mkdir -p .tmp/coverage/python
     {{ NIX_DEV }} uv run pytest
 
-# Rewrite the basedpyright baseline to what the Python workspace trips today.
-python-baseline:
-    {{ NIX_DEV }} uv sync
-    # The writing run still reports the hits it just recorded and exits 1,
-    # so the run after it, against the new baseline, is the verdict.
-    -{{ NIX_DEV }} basedpyright --writebaseline
-    {{ NIX_DEV }} basedpyright
-
 # Run nextest for a single crate (auto-enters nix shell).
 test crate *FEATURES="--all-features":
     {{ NIX_DEV }} just nextest -p {{ crate }} {{ FEATURES }}
