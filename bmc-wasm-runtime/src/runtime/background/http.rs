@@ -20,6 +20,7 @@
 
 //! Background HTTP listener helpers for the WASM runtime.
 
+use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 use crate::host_api::{HttpInboundRequest, HttpListenerResponse};
@@ -55,8 +56,10 @@ pub(in crate::runtime) fn http_listener_thread(
     tracing::info!("HTTP listener started on port {actual_port}");
 
     loop {
-        if stop_rx.try_recv().is_ok() {
-            break;
+        // A dropped sender stops the thread too: the host no longer holds the listener.
+        match stop_rx.try_recv() {
+            Ok(()) | Err(TryRecvError::Disconnected) => break,
+            Err(TryRecvError::Empty) => {}
         }
         match listener.accept() {
             Ok((mut stream, addr)) => {
@@ -145,4 +148,37 @@ pub(in crate::runtime) fn http_listener_thread(
         }
     }
     tracing::info!("HTTP listener stopped on port {actual_port}");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use super::http_listener_thread;
+
+    #[test]
+    fn a_listener_stops_once_its_stop_sender_is_gone() {
+        let (request_tx, _request_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let (port_tx, port_rx) = mpsc::channel();
+        let listener = std::thread::spawn(move || {
+            http_listener_thread(0, request_tx, stop_rx, port_tx);
+        });
+        let port = port_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("BUG: an ephemeral port must bind");
+        assert_ne!(port, 0);
+
+        drop(stop_tx);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !listener.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            listener.is_finished(),
+            "the listener thread must exit after its stop sender is dropped",
+        );
+    }
 }

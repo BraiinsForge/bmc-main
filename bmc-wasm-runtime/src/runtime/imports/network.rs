@@ -937,8 +937,6 @@ fn register_http_listener_imports(linker: &mut Linker<HostState>) -> Result<()> 
             if state.refuse_live_io("http-listen", &format!("port {port}")) {
                 return 0;
             }
-            let listener_id = HttpListenerId::alloc(&mut state.next_http_listener_id);
-
             let (request_tx, request_rx) = std::sync::mpsc::channel::<HttpInboundRequest>();
             let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
             let (port_tx, port_rx) = std::sync::mpsc::channel::<u16>();
@@ -947,7 +945,13 @@ fn register_http_listener_imports(linker: &mut Linker<HostState>) -> Result<()> 
                 http_listener_thread(port, request_tx, stop_rx, port_tx);
             });
 
-            let actual_port = port_rx.recv_timeout(Duration::from_secs(2)).unwrap_or(port);
+            // The thread sends the bound port, or 0 for a failed bind,
+            // and drops the sender on every exit, so the wait always ends.
+            let actual_port = match port_rx.recv() {
+                Ok(0) | Err(_) => return 0,
+                Ok(bound) => bound,
+            };
+            let listener_id = HttpListenerId::alloc(&mut state.next_http_listener_id);
 
             state.http_listeners.insert(
                 listener_id,
