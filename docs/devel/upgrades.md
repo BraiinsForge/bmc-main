@@ -68,6 +68,15 @@ break older development builds; the client does not track compatibility or requi
 without this selection behavior still need exact entries. Publisher tooling must support creating shared entries before
 firmware rebuilds can use them.
 
+### The packages version
+
+Core carries the packages version as its `bmcVersion` build argument and ships it as `/etc/bmc_version` and as
+`metadata.bmc_version` in its index entry. `GetMetadata.packages_version` reports the installed file, and the upgrade
+preview reports the offered core's metadata. bmc-main defaults it to `<yyyy.mm.dd>-<rev8>-dev` (with `-dirty` for a
+dirty tree, and none without a git revision); bmc-pkg overrides it with
+`deck-packages.core.override { bmcVersion = "<id>[-<version>]"; }`. The version file is joined on top of the unstamped
+core, so a release that only moves the version restarts no service.
+
 ## Resolution Algorithm
 
 `bmc-nix` merges all enabled indexes into a single view keyed by package name, then resolves each package the manifest
