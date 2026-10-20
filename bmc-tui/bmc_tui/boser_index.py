@@ -28,7 +28,7 @@ import msgspec
 
 from bmc_tui import catalog
 from bmc_tui.bos_version import BosVersion, parse_bos_version
-from bmc_tui.fw_index import release_uuid
+from bmc_tui.fw_index import AssetObject, release_uuid
 from bmc_tui.image import Image
 from bmc_tui.stage import Abort, require
 
@@ -58,6 +58,29 @@ _ASSET_KEYS = (
 )
 
 
+class ReleaseMetadata(TypedDict):
+    bos_version: str
+    is_major: bool
+    is_silent: bool
+    release_date: str
+    description: str
+    assets: dict[str, AssetObject | None]
+
+
+class ReleaseDocument(TypedDict):
+    uuid: str
+    metadata_version: str
+    metadata: ReleaseMetadata
+
+
+class IndexDocument(TypedDict):
+    type: str
+    status: str
+    title: str
+    version: str
+    releases: list[ReleaseDocument]
+
+
 def index_document(*, running: BosVersion, base_url: str, image: Image | None) -> str:
     releases = [_release(running, _BMM101_EMMC_ASSET, {"url": f"{base_url}/anchor.tar"})]
     if image is not None:
@@ -78,20 +101,18 @@ def index_document(*, running: BosVersion, base_url: str, image: Image | None) -
                 },
             )
         )
-    return json.dumps(
-        {
-            "type": "bos",
-            "status": "Active",
-            "title": "BDK-787 BMM101 upgrade test",
-            "version": "v2",
-            "releases": releases,
-        },
-        indent=2,
-    )
+    document: IndexDocument = {
+        "type": "bos",
+        "status": "Active",
+        "title": "BDK-787 BMM101 upgrade test",
+        "version": "v2",
+        "releases": releases,
+    }
+    return json.dumps(document, indent=2)
 
 
-def _release(version: BosVersion, key: str, asset: dict[str, object]) -> dict[str, object]:
-    assets: dict[str, object] = {asset_key: None for asset_key in _ASSET_KEYS}
+def _release(version: BosVersion, key: str, asset: AssetObject) -> ReleaseDocument:
+    assets: dict[str, AssetObject | None] = {asset_key: None for asset_key in _ASSET_KEYS}
     assets[key] = asset
     return {
         "uuid": release_uuid(version.canonical),

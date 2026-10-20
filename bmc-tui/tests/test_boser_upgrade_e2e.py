@@ -27,7 +27,7 @@ import subprocess
 import tarfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import NotRequired, TypedDict, final
+from typing import final
 
 import msgspec
 import pytest
@@ -72,44 +72,14 @@ def _image(tmp_path: Path, *, board: str = "stm32mp15_ii2-emmc", version: str = 
     return Image(path)
 
 
-class _Integrity(TypedDict):
-    checksum: str
-    size_bytes: int
-
-
-class _Asset(TypedDict):
-    url: str
-    integrity: NotRequired[_Integrity]
-
-
-class _Metadata(TypedDict):
-    bos_version: str
-    is_major: bool
-    is_silent: bool
-    release_date: str
-    assets: dict[str, _Asset | None]
-
-
-class _Release(TypedDict):
-    metadata_version: str
-    metadata: _Metadata
-
-
-class _Document(TypedDict):
-    type: str
-    version: str
-    status: str
-    releases: list[_Release]
-
-
-def _document(image: Image | None = None) -> _Document:
+def _document(image: Image | None = None) -> boser_index.IndexDocument:
     return msgspec.json.decode(
         boser_index.index_document(
             running=parse_bos_version(RUNNING),
             base_url="http://127.0.0.1:8082",
             image=image,
         ),
-        type=_Document,
+        type=boser_index.IndexDocument,
     )
 
 
