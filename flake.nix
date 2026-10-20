@@ -103,6 +103,7 @@
           inherit (workspace.bmc) profiles crates;
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
           inherit (workspace) wasmWrapperTestPackages;
+          inherit (workspace) mkInitArtifacts;
         };
         wasmRegression = import ./nix/wasm-regression.nix {
           inherit pkgs capture;

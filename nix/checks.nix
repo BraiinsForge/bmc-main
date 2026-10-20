@@ -31,6 +31,7 @@
 , wasmWidgetsBundle
 , wasmStackSize
 , wasmWrapperTestPackages
+, mkInitArtifacts
 ,
 }:
 
@@ -462,6 +463,24 @@ in
     pkgs.runCommand "core-version-stamp" { } ''
       test "$(cat ${stamped.pkg}/special/copy/etc/bmc_version)" = 2026.09.18-39e9db98-26.10
       test ! -e ${bare.pkg}/special/copy/etc/bmc_version
+      touch $out
+    '';
+
+  # The init index must describe the core the tarball installs; a stale
+  # bosVersion stamp there would show the firmware as the packages version.
+  init-artifacts-version =
+    let
+      stamp = "2026.09.18-39e9db98-26.10";
+      stamped = (mkInitArtifacts { bmcVersion = stamp; }).init-index-armv7;
+      plain = (mkInitArtifacts { }).init-index-armv7;
+      stampedCore = (deckPackages.core.override { bmcVersion = stamp; }).pkg;
+      defaultStamp = deckPackages.core.metadata.bmc_version or "none";
+    in
+    pkgs.runCommand "init-artifacts-version" { nativeBuildInputs = [ pkgs.jq ]; } ''
+      core() { jq -ce '.packages[] | select(.name == "core")' "$1/nix-package-index.v1.json"; }
+      test "$(core ${stamped} | jq -r .metadata.bmc_version)" = '${stamp}'
+      test "$(core ${stamped} | jq -r .store_path)" = '${stampedCore}'
+      test "$(core ${plain} | jq -r '.metadata.bmc_version // "none"')" = '${defaultStamp}'
       touch $out
     '';
 }
