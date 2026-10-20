@@ -261,6 +261,13 @@ widget-autoinstall:
   script:
     - nix build -L .#checks.x86_64-linux.widget-autoinstall
 
+core-version-stamp:
+  stage: check
+  needs:
+    - workspace-deps-armv7
+  script:
+    - nix build -L .#checks.x86_64-linux.core-version-stamp
+
 test-wasm-widgets:
   stage: check
   needs:

@@ -439,4 +439,29 @@ in
       test -e ${deckPackages.core.pkg.tests.widget-autoinstall-join}
       touch $out
     '';
+
+  # A stamp must reach the file and the metadata while every path core links
+  # to stays the same: the device then restarts nothing for a version bump.
+  core-version-stamp =
+    let
+      core = deckPackages.core;
+      stamped = core.override { bmcVersion = "2026.09.18-39e9db98-26.10"; };
+      otherStamp = core.override { bmcVersion = "2026.09.18-39e9db98"; };
+      bare = core.override { bmcVersion = null; };
+      defaultStamp = core.metadata.bmc_version or null;
+      defaultShape = "[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9a-f]{8}-dev(-dirty)?";
+    in
+    assert defaultStamp == null || builtins.match defaultShape defaultStamp != null;
+    assert (lib.functionArgs core.override) ? bmcVersion;
+    assert stamped.metadata == { bmc_version = "2026.09.18-39e9db98-26.10"; };
+    assert !(bare ? metadata);
+    assert stamped.pkg.unstamped.drvPath == bare.pkg.unstamped.drvPath;
+    assert otherStamp.pkg.unstamped.drvPath == bare.pkg.unstamped.drvPath;
+    assert rejects (core.override { bmcVersion = ""; }).pkg.drvPath;
+    assert rejects (core.override { bmcVersion = " \n"; }).pkg.drvPath;
+    pkgs.runCommand "core-version-stamp" { } ''
+      test "$(cat ${stamped.pkg}/special/copy/etc/bmc_version)" = 2026.09.18-39e9db98-26.10
+      test ! -e ${bare.pkg}/special/copy/etc/bmc_version
+      touch $out
+    '';
 }
