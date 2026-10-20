@@ -24,8 +24,6 @@
 //! and hot-reloads. The host manages file I/O; WASM widgets just call
 //! `set` / `get` / `delete`.
 //!
-//! Off-target there is no host to persist the store, so the calls panic.
-//!
 //! # Example
 //!
 //! ```ignore
@@ -44,27 +42,32 @@
 //! ```
 
 /// Store a value for a key. Overwrites any existing value.
+#[cfg(target_arch = "wasm32")]
 pub fn set(key: &str, value: &[u8]) {
     Platform::set(key, value);
 }
 
 /// Retrieve the value for a key. Returns `None` if not found.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn get(key: &str) -> Option<Vec<u8>> {
     Platform::get(key)
 }
 
 /// Retrieve a string value for a key. Returns `None` if not found or not valid UTF-8.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn get_string(key: &str) -> Option<String> {
     get(key).and_then(|b| String::from_utf8(b).ok())
 }
 
 /// Delete a key and its value.
+#[cfg(target_arch = "wasm32")]
 pub fn delete(key: &str) {
     Platform::delete(key);
 }
 
+#[cfg(target_arch = "wasm32")]
 trait KvStore {
     fn set(key: &str, value: &[u8]);
     fn get(key: &str) -> Option<Vec<u8>>;
@@ -117,27 +120,5 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    pub(super) struct Host;
-
-    impl super::KvStore for Host {
-        fn set(_: &str, _: &[u8]) {
-            panic!("BUG: kv::set() called off-target — no host persists the store")
-        }
-
-        fn get(_: &str) -> Option<Vec<u8>> {
-            panic!("BUG: kv::get() called off-target — no host persists the store")
-        }
-
-        fn delete(_: &str) {
-            panic!("BUG: kv::delete() called off-target — no host persists the store")
-        }
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;

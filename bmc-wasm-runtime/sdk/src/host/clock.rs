@@ -27,6 +27,7 @@ use bmc_wasm_protocol::time::LocalDateTime;
 /// the clock and project the instant into a time zone.
 /// An extension trait, since the type is `bmc-ui`'s and calls no host.
 pub trait HostClock: Sized {
+    #[cfg(target_arch = "wasm32")]
     #[must_use]
     fn now() -> Self;
 
@@ -40,6 +41,7 @@ pub trait HostClock: Sized {
 }
 
 impl HostClock for SystemTime {
+    #[cfg(target_arch = "wasm32")]
     fn now() -> Self {
         Self {
             unix_secs: Platform::unix_secs(),
@@ -81,6 +83,7 @@ fn decompose(unix_secs: i64) -> LocalDateTime {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 trait ClockProvider {
     fn unix_secs() -> i64;
 }
@@ -103,21 +106,5 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    pub(super) struct Host;
-
-    impl super::ClockProvider for Host {
-        fn unix_secs() -> i64 {
-            panic!(
-                "BUG: SystemTime::now() called off-target — no host keeps the time; supply it explicitly"
-            )
-        }
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;

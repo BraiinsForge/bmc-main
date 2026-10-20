@@ -31,8 +31,6 @@
 //! The browse callback borrows the browse its event belongs to;
 //! to stop the browse from there, take the stored handle.
 //!
-//! Off-target there is no host mDNS daemon, so browsing or registering panics.
-//!
 //! # Example
 //!
 //! ```ignore
@@ -64,6 +62,7 @@ use std::mem::ManuallyDrop;
 
 use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
 
+#[cfg(target_arch = "wasm32")]
 use crate::fmt;
 
 /// Callback type: `fn(browse, event)`.
@@ -83,6 +82,7 @@ impl MdnsBrowse {
 impl Drop for MdnsBrowse {
     fn drop(&mut self) {
         BROWSES.with_borrow_mut(|browses| browses.remove(&self.0));
+        #[cfg(target_arch = "wasm32")]
         Platform::stop(self.0);
     }
 }
@@ -100,6 +100,7 @@ impl MdnsRegistration {
 
 impl Drop for MdnsRegistration {
     fn drop(&mut self) {
+        #[cfg(target_arch = "wasm32")]
         Platform::unregister(self.0);
     }
 }
@@ -119,6 +120,7 @@ thread_local! {
     static BROWSES: RefCell<HashMap<MdnsBrowseId, usize>> = RefCell::new(HashMap::new());
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn register_callback(cb: BrowseCallback) -> usize {
     CALLBACKS.with(|cbs| {
         let mut cbs = cbs.borrow_mut();
@@ -140,6 +142,7 @@ fn register_callback(cb: BrowseCallback) -> usize {
 ///
 /// Returns `None` if the host refuses the browse before it is queued.
 #[must_use = "dropping the returned MdnsBrowse stops it"]
+#[cfg(target_arch = "wasm32")]
 pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> Option<MdnsBrowse> {
     let joined = service_types.join("\n");
     let browse_id = Platform::browse(&joined)?;
@@ -154,6 +157,7 @@ pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> Option<M
 ///
 /// Returns `None` if the host refuses the registration.
 #[must_use = "dropping the returned MdnsRegistration unregisters the service"]
+#[cfg(target_arch = "wasm32")]
 pub fn mdns_register(
     service_type: &str,
     name: &str,
@@ -184,6 +188,7 @@ fn deliver(browse_id: MdnsBrowseId, event: &MdnsEvent<'_>) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 trait MdnsDaemon {
     fn browse(service_types: &str) -> Option<MdnsBrowseId>;
     fn stop(browse_id: MdnsBrowseId);
@@ -281,34 +286,8 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
-
-    pub(super) struct Host;
-
-    impl super::MdnsDaemon for Host {
-        fn browse(_: &str) -> Option<MdnsBrowseId> {
-            panic!("BUG: mdns_browse() called off-target — no host runs an mDNS daemon")
-        }
-
-        /// Only a test holds a handle off-target, and there is no host browse to stop.
-        fn stop(_: MdnsBrowseId) {}
-
-        fn register(_: &str, _: &str, _: u16, _: &str) -> Option<MdnsRegId> {
-            panic!("BUG: mdns_register() called off-target — no host runs an mDNS daemon")
-        }
-
-        /// Only a test holds a handle off-target, and there is no host advertisement to end.
-        fn unregister(_: MdnsRegId) {}
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {

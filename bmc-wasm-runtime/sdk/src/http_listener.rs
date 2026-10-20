@@ -33,9 +33,6 @@
 //! The callback borrows the listener its request arrived on;
 //! to close the listener from there, take the stored handle.
 //!
-//! Off-target there is no host to listen with,
-//! so listening, reading the port or responding panics.
-//!
 //! # Example
 //!
 //! ```ignore
@@ -86,6 +83,7 @@ impl HttpListener {
     /// Returns 0 once the listener is closed,
     /// such as on a callback's argument after the callback closed the stored handle.
     #[must_use]
+    #[cfg(target_arch = "wasm32")]
     pub fn port(&self) -> u16 {
         Platform::port(self.0)
     }
@@ -99,6 +97,7 @@ impl HttpListener {
 impl Drop for HttpListener {
     fn drop(&mut self) {
         LISTENERS.with_borrow_mut(|listeners| listeners.remove(&self.0));
+        #[cfg(target_arch = "wasm32")]
         Platform::close(self.0);
     }
 }
@@ -117,6 +116,7 @@ impl HttpRequest {
     /// Send an HTTP response for this request.
     ///
     /// Headers should be newline-delimited `"Key: Value"` pairs.
+    #[cfg(target_arch = "wasm32")]
     pub fn respond(&self, status: u16, headers: &str, body: &[u8]) {
         Platform::respond(self.request_id, status, headers, body);
     }
@@ -127,6 +127,7 @@ thread_local! {
     static LISTENERS: RefCell<HashMap<HttpListenerId, usize>> = RefCell::new(HashMap::new());
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn register_callback(cb: RequestCallback) -> usize {
     CALLBACKS.with(|cbs| {
         let mut cbs = cbs.borrow_mut();
@@ -148,6 +149,7 @@ fn register_callback(cb: RequestCallback) -> usize {
 ///
 /// Returns `None` if the host refuses the listener or cannot bind it.
 #[must_use = "dropping the returned HttpListener closes it"]
+#[cfg(target_arch = "wasm32")]
 pub fn http_listen(port: u16, callback: RequestCallback) -> Option<HttpListener> {
     let listener_id = Platform::listen(port)?;
     let cb_idx = register_callback(callback);
@@ -171,6 +173,7 @@ fn deliver(listener_id: HttpListenerId, req: &HttpRequest) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 trait HttpServer {
     fn listen(port: u16) -> Option<HttpListenerId>;
     fn port(listener_id: HttpListenerId) -> u16;
@@ -292,35 +295,8 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
-
-    pub(super) struct Host;
-
-    impl super::HttpServer for Host {
-        fn listen(_: u16) -> Option<HttpListenerId> {
-            panic!("BUG: http_listen() called off-target — no host to listen with")
-        }
-
-        fn port(_: HttpListenerId) -> u16 {
-            panic!("BUG: HttpListener::port() called off-target — no host to listen with")
-        }
-
-        /// Only a test holds a handle off-target, and there is no host listener to close.
-        fn close(_: HttpListenerId) {}
-
-        fn respond(_: HttpRequestId, _: u16, _: &str, _: &[u8]) {
-            panic!("BUG: HttpRequest::respond() called off-target — no host to listen with")
-        }
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {

@@ -24,8 +24,6 @@
 //! the actual network I/O in the background and delivers responses by calling
 //! the `__on_fetch_response` export.
 //!
-//! Off-target there is no host to fetch with, so the calls panic.
-//!
 //! # Example
 //!
 //! ```ignore
@@ -49,7 +47,9 @@
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use bmc_wasm_protocol::{FetchOutcome, FetchRequestId, MediaTypePart};
+#[cfg(target_arch = "wasm32")]
+use bmc_wasm_protocol::MediaTypePart;
+use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
 use crate::json::JsonDoc;
 
@@ -122,6 +122,7 @@ impl FetchResponse {
     ///
     /// Readable only while this response's own callback runs.
     #[must_use]
+    #[cfg(target_arch = "wasm32")]
     pub fn header(&self, name: &str) -> Option<String> {
         Platform::header(self.request_id, name)
     }
@@ -131,6 +132,7 @@ impl FetchResponse {
     ///
     /// [`media_type`]: FetchResponse::media_type
     #[must_use]
+    #[cfg(target_arch = "wasm32")]
     pub fn content_type(&self) -> Option<String> {
         self.header("content-type")
     }
@@ -138,6 +140,7 @@ impl FetchResponse {
     /// One piece of the `Content-Type`, parsed host-side. Absent when the
     /// header is missing, unparsable, or carries no such piece.
     #[must_use]
+    #[cfg(target_arch = "wasm32")]
     pub fn media_type(&self, part: MediaTypePart) -> Option<String> {
         Platform::media_type(self.request_id, part)
     }
@@ -193,11 +196,16 @@ impl FetchResponse {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 type Callback = fn(&FetchResponse);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResponseBodyDelivery {
     Guest,
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), not(test)),
+        expect(dead_code, reason = "off-target no request reaches the host")
+    )]
     Host,
 }
 
@@ -206,6 +214,7 @@ enum ResponseBodyDelivery {
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) -> Option<FetchRequestId> {
     FetchRequest::get(url).headers_opt(headers).send(callback)
 }
@@ -215,6 +224,7 @@ pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) -> Option<Fet
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn fetch_after(
     delay_ms: u32,
     url: &str,
@@ -233,12 +243,17 @@ pub fn fetch_after(
 /// `false`: it is already away and cannot be stopped — its callback still
 /// runs, once, with [`FetchOutcome::Aborted`] rather than with data.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn cancel(request_id: FetchRequestId) -> bool {
     Platform::cancel(request_id)
 }
 
 /// Builder for HTTP fetch requests with method, headers, and optional body.
 #[derive(Debug)]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(dead_code, reason = "off-target no request reaches the host")
+)]
 pub struct FetchRequest<'a> {
     method: &'a str,
     url: &'a str,
@@ -324,6 +339,10 @@ impl<'a> FetchRequest<'a> {
 
     /// Keep the response body in host memory and expose a callback-scoped reference.
     #[must_use]
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), not(test)),
+        expect(dead_code, reason = "off-target no request reaches the host")
+    )]
     pub(crate) fn host_body(mut self) -> Self {
         self.body_delivery = ResponseBodyDelivery::Host;
         self
@@ -341,6 +360,7 @@ impl<'a> FetchRequest<'a> {
     /// request before it is queued, for example because the runtime hit its
     /// resource limit.
     #[must_use]
+    #[cfg(target_arch = "wasm32")]
     pub fn send(self, callback: Callback) -> Option<FetchRequestId> {
         Platform::fetch(&self, callback)
     }
@@ -349,11 +369,13 @@ impl<'a> FetchRequest<'a> {
     ///
     /// Returns `None` if the host rejects the request before it is queued.
     #[must_use]
+    #[cfg(target_arch = "wasm32")]
     pub fn send_after(self, delay_ms: u32, callback: Callback) -> Option<FetchRequestId> {
         Platform::fetch_after(delay_ms, &self, callback)
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 trait Fetcher {
     fn fetch(request: &FetchRequest<'_>, callback: Callback) -> Option<FetchRequestId>;
     fn fetch_after(
@@ -655,48 +677,8 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use bmc_wasm_protocol::{FetchRequestId, MediaTypePart};
-
-    use super::{Callback, FetchRequest};
-
-    pub(super) struct Host;
-
-    impl super::Fetcher for Host {
-        fn fetch(request: &FetchRequest<'_>, _: Callback) -> Option<FetchRequestId> {
-            panic!(
-                "BUG: {} {} sent off-target — no host to fetch with",
-                request.method, request.url
-            )
-        }
-
-        fn fetch_after(_: u32, request: &FetchRequest<'_>, _: Callback) -> Option<FetchRequestId> {
-            panic!(
-                "BUG: {} {} sent off-target — no host to fetch with",
-                request.method, request.url
-            )
-        }
-
-        fn cancel(_: FetchRequestId) -> bool {
-            panic!("BUG: net::cancel() called off-target — no host to fetch with")
-        }
-
-        fn header(_: FetchRequestId, _: &str) -> Option<String> {
-            panic!("BUG: FetchResponse::header() called off-target — no host to fetch with")
-        }
-
-        fn media_type(_: FetchRequestId, _: MediaTypePart) -> Option<String> {
-            panic!("BUG: FetchResponse::media_type() called off-target — no host to fetch with")
-        }
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;
 
 #[cfg(test)]
 impl FetchResponse {

@@ -24,6 +24,7 @@ pub use bmc_ui::tree::TouchHit;
 ///
 /// Returns `None` if the canvas was not clicked this frame.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn get_touch_click(key: &str) -> Option<TouchHit> {
     Platform::click(key)
 }
@@ -32,10 +33,12 @@ pub fn get_touch_click(key: &str) -> Option<TouchHit> {
 ///
 /// Returns `None` if the canvas is not being dragged this frame.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn get_touch_drag(key: &str) -> Option<TouchHit> {
     Platform::drag(key)
 }
 
+#[cfg(target_arch = "wasm32")]
 trait TouchInputProvider {
     fn click(key: &str) -> Option<TouchHit>;
     fn drag(key: &str) -> Option<TouchHit>;
@@ -89,25 +92,5 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use super::TouchHit;
-
-    pub(super) struct Host;
-
-    impl super::TouchInputProvider for Host {
-        fn click(_: &str) -> Option<TouchHit> {
-            panic!("BUG: get_touch_click() called off-target — no host reports touches")
-        }
-
-        fn drag(_: &str) -> Option<TouchHit> {
-            panic!("BUG: get_touch_drag() called off-target — no host reports touches")
-        }
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;

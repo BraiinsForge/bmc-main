@@ -18,24 +18,29 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+#[cfg(target_arch = "wasm32")]
 use bmc_ui::ButtonStyle;
 
 /// Fill a rectangle with a solid color.
+#[cfg(target_arch = "wasm32")]
 pub fn fill_rect(x: i32, y: i32, w: u32, h: u32, color: u32) {
     Platform::fill_rect(x, y, w, h, color);
 }
 
 /// Draw text at position.
+#[cfg(target_arch = "wasm32")]
 pub fn draw_text(text: &[u8], x: i32, y: i32, size: u32, color: u32) {
     Platform::draw_text(text, x, y, size, color);
 }
 
 /// Request next frame immediately.
+#[cfg(target_arch = "wasm32")]
 pub fn request_frame() {
     Platform::request_frame();
 }
 
 /// Request next frame after delay.
+#[cfg(target_arch = "wasm32")]
 pub fn request_frame_after(delay_ms: u32) {
     Platform::request_frame_after(delay_ms);
 }
@@ -43,6 +48,7 @@ pub fn request_frame_after(delay_ms: u32) {
 /// Draw a styled button with label and check for click.
 /// Returns `true` the frame the button was clicked.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn button(
     key: &[u8],
     label: &[u8],
@@ -56,10 +62,12 @@ pub fn button(
 }
 
 /// Submit a serialized tree for host-side layout and rendering.
+#[cfg(target_arch = "wasm32")]
 pub fn submit_tree(data: &[u8], width: u32, height: u32) {
     Platform::submit_tree(data, width, height);
 }
 
+#[cfg(target_arch = "wasm32")]
 trait RenderSink {
     fn fill_rect(x: i32, y: i32, w: u32, h: u32, color: u32);
     fn draw_text(text: &[u8], x: i32, y: i32, size: u32, color: u32);
@@ -150,41 +158,5 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use bmc_ui::ButtonStyle;
-
-    pub(super) struct Host;
-
-    impl super::RenderSink for Host {
-        fn fill_rect(_: i32, _: i32, _: u32, _: u32, _: u32) {
-            panic!("BUG: fill_rect() called off-target — no host renders frames")
-        }
-
-        fn draw_text(_: &[u8], _: i32, _: i32, _: u32, _: u32) {
-            panic!("BUG: draw_text() called off-target — no host renders frames")
-        }
-
-        fn request_frame() {
-            panic!("BUG: request_frame() called off-target — no host renders frames")
-        }
-
-        fn request_frame_after(_: u32) {
-            panic!("BUG: request_frame_after() called off-target — no host renders frames")
-        }
-
-        fn button(_: &[u8], _: &[u8], _: i32, _: i32, _: u32, _: u32, _: ButtonStyle) -> bool {
-            panic!("BUG: button() called off-target — no host renders frames")
-        }
-
-        fn submit_tree(_: &[u8], _: u32, _: u32) {
-            panic!("BUG: submit_tree() called off-target — no host renders frames")
-        }
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;

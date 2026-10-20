@@ -24,8 +24,6 @@
 //! that takes an optional duration (endless when `None`, temporary
 //! when `Some`). `stop()` cancels every outstanding LED request from
 //! this widget — it is also the only way to turn the strip off.
-//!
-//! Off-target there is no host to drive the LEDs, so the calls panic.
 
 pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope};
 pub use bmc_ui::Color;
@@ -35,6 +33,7 @@ pub use bmc_ui::Color;
 /// `duration_ms = None` runs the effect until superseded or stopped;
 /// `Some(n)` runs for `n` ms (including `Some(0)` — a zero-duration
 /// temporary that the host fires and immediately expires).
+#[cfg(target_arch = "wasm32")]
 pub fn set_effect(effect: LedEffect, color: Color, period_ms: u32, duration_ms: Option<u32>) {
     set_effect_scoped(effect, color, period_ms, duration_ms, LedScope::Local);
 }
@@ -43,6 +42,7 @@ pub fn set_effect(effect: LedEffect, color: Color, period_ms: u32, duration_ms: 
 ///
 /// The global tier runs when no scene-local effect is active on the strip.
 /// See `set_effect` for parameter semantics.
+#[cfg(target_arch = "wasm32")]
 pub fn set_effect_global(
     effect: LedEffect,
     color: Color,
@@ -52,6 +52,7 @@ pub fn set_effect_global(
     set_effect_scoped(effect, color, period_ms, duration_ms, LedScope::Global);
 }
 
+#[cfg(target_arch = "wasm32")]
 fn set_effect_scoped(
     effect: LedEffect,
     color: Color,
@@ -66,10 +67,12 @@ fn set_effect_scoped(
 }
 
 /// Cancel every LED request this widget has outstanding.
+#[cfg(target_arch = "wasm32")]
 pub fn stop() {
     Platform::stop();
 }
 
+#[cfg(target_arch = "wasm32")]
 trait LedSink {
     fn set_endless(effect: LedEffect, color: Color, period_ms: u32, scope: LedScope);
     fn set_temporary(
@@ -128,29 +131,5 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use super::{Color, LedEffect, LedScope};
-
-    pub(super) struct Host;
-
-    impl super::LedSink for Host {
-        fn set_endless(_: LedEffect, _: Color, _: u32, _: LedScope) {
-            panic!("BUG: an LED effect was set off-target — no host drives the LEDs")
-        }
-
-        fn set_temporary(_: LedEffect, _: Color, _: u32, _: u32, _: LedScope) {
-            panic!("BUG: an LED effect was set off-target — no host drives the LEDs")
-        }
-
-        fn stop() {
-            panic!("BUG: led::stop() called off-target — no host drives the LEDs")
-        }
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;

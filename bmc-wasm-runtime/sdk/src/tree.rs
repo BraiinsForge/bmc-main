@@ -25,16 +25,19 @@
 
 use std::cell::RefCell;
 
+#[cfg(target_arch = "wasm32")]
+use bmc_ui::encode_into;
 pub use bmc_ui::tree::*;
 use bmc_ui::{
     Bitmap, Color, Mesh, MeshView, NinePatchAsset, RED_50, Svg, TextAlign, TextStyle,
-    VerticalAlign, encode, encode_into,
+    VerticalAlign, encode,
 };
 
 use crate::assets::{
     ensure_bitmap_registered, ensure_mesh_registered, ensure_nine_patch_registered,
     ensure_registered,
 };
+#[cfg(target_arch = "wasm32")]
 use crate::host;
 
 /// The draws that take an asset: each registers it with the host
@@ -245,6 +248,7 @@ pub fn begin_tree() {
 }
 
 /// Submit the encoded tree to the host and clear the buffer.
+#[cfg(target_arch = "wasm32")]
 pub fn submit_and_clear(width: u32, height: u32) {
     TREE_BUFFER.with(|buf| host::submit_tree(&buf.borrow(), width, height));
 }
@@ -262,6 +266,7 @@ pub fn serialize_node_to_bytes(node: &Node) -> Vec<u8> {
     clippy::needless_pass_by_value,
     reason = "the widget hands its frame's tree over; nothing reuses one"
 )]
+#[cfg(target_arch = "wasm32")]
 pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     let keys = interaction_keys(&root);
 

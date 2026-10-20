@@ -379,6 +379,7 @@ pub mod network;
 pub mod params;
 pub mod poll;
 pub mod profile;
+#[cfg(target_arch = "wasm32")]
 pub mod slot;
 pub mod switcher;
 pub mod system;
@@ -413,14 +414,16 @@ pub use json_str::JsonStr;
 pub use led::LedEffect;
 pub use net::*;
 pub use network::NetworkInfo;
-pub use poll::{
-    Config as PollConfig, FetchSpec, Handle as PollHandle, Method as FetchMethod,
-    register as register_poll,
-};
+#[cfg(any(target_arch = "wasm32", test))]
+pub use poll::register as register_poll;
+pub use poll::{Config as PollConfig, FetchSpec, Handle as PollHandle, Method as FetchMethod};
+#[cfg(target_arch = "wasm32")]
 pub use slot::*;
 pub use tz::Tz;
 pub use ufmt;
-pub use ws::{Ws, WsEvent, ws_connect};
+#[cfg(target_arch = "wasm32")]
+pub use ws::ws_connect;
+pub use ws::{Ws, WsEvent};
 pub use xml::XmlDoc;
 
 // `bmc_ui` and the protocol both have `ids` and `time` modules; the root presents

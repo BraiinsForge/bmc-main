@@ -30,8 +30,6 @@
 //! The callback borrows the search its event belongs to;
 //! to stop the search from there, take the stored handle.
 //!
-//! Off-target there is no host to search with, so starting a search panics.
-//!
 //! # Example
 //!
 //! ```ignore
@@ -80,6 +78,7 @@ impl SsdpSearch {
 impl Drop for SsdpSearch {
     fn drop(&mut self) {
         SEARCHES.with_borrow_mut(|searches| searches.remove(&self.0));
+        #[cfg(target_arch = "wasm32")]
         Platform::stop(self.0);
     }
 }
@@ -100,6 +99,7 @@ thread_local! {
     static SEARCHES: RefCell<HashMap<SsdpSearchId, usize>> = RefCell::new(HashMap::new());
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn register_callback(cb: SearchCallback) -> usize {
     CALLBACKS.with(|cbs| {
         let mut cbs = cbs.borrow_mut();
@@ -124,6 +124,7 @@ fn register_callback(cb: SearchCallback) -> usize {
 ///
 /// Returns `None` if the host refuses the search before it is queued.
 #[must_use = "dropping the returned SsdpSearch stops it"]
+#[cfg(target_arch = "wasm32")]
 pub fn ssdp_search(
     search_target: &str,
     timeout_secs: u32,
@@ -151,6 +152,7 @@ fn deliver(search_id: SsdpSearchId, event: &SsdpEvent<'_>) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 trait Searcher {
     fn start(search_target: &str, timeout_secs: u32) -> Option<SsdpSearchId>;
     fn stop(search_id: SsdpSearchId);
@@ -222,27 +224,8 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use bmc_wasm_protocol::SsdpSearchId;
-
-    pub(super) struct Host;
-
-    impl super::Searcher for Host {
-        fn start(_: &str, _: u32) -> Option<SsdpSearchId> {
-            panic!("BUG: ssdp_search() called off-target — no host searches the network")
-        }
-
-        /// Only a test holds a handle off-target, and there is no host search to stop.
-        fn stop(_: SsdpSearchId) {}
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {

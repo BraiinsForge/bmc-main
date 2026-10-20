@@ -33,8 +33,6 @@
 //! When the peer closes the connection, the callback gets [`SocketEvent::Closed`]
 //! and the stored handle reaches nothing, so clear or replace it there.
 //!
-//! Off-target there is no host to connect through, so connecting or writing panics.
-//!
 //! # Example
 //!
 //! ```ignore
@@ -87,6 +85,7 @@ impl Socket {
     ///
     /// Does nothing once the connection has closed,
     /// such as on a callback's argument after the callback closed the stored handle.
+    #[cfg(target_arch = "wasm32")]
     pub fn write(&self, data: &[u8]) {
         Platform::write(self.0, data);
     }
@@ -100,6 +99,7 @@ impl Socket {
 impl Drop for Socket {
     fn drop(&mut self) {
         CONNECTIONS.with_borrow_mut(|connections| connections.remove(&self.0));
+        #[cfg(target_arch = "wasm32")]
         Platform::close(self.0);
     }
 }
@@ -122,6 +122,7 @@ thread_local! {
     static CONNECTIONS: RefCell<HashMap<SocketId, usize>> = RefCell::new(HashMap::new());
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn register_callback(cb: Callback) -> usize {
     CALLBACKS.with(|cbs| {
         let mut cbs = cbs.borrow_mut();
@@ -142,6 +143,7 @@ fn register_callback(cb: Callback) -> usize {
 ///
 /// Returns `None` if the host refuses the connection before it is queued.
 #[must_use = "dropping the returned Socket closes it"]
+#[cfg(target_arch = "wasm32")]
 pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let socket_id = Platform::tls_connect(host, port)?;
     let cb_idx = register_callback(callback);
@@ -156,6 +158,7 @@ pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> 
 ///
 /// Returns `None` if the host refuses the connection before it is queued.
 #[must_use = "dropping the returned Socket closes it"]
+#[cfg(target_arch = "wasm32")]
 pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let socket_id = Platform::tls_connect_insecure(host, port)?;
     let cb_idx = register_callback(callback);
@@ -169,6 +172,7 @@ pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option
 ///
 /// Returns `None` if the host refuses the connection before it is queued.
 #[must_use = "dropping the returned Socket closes it"]
+#[cfg(target_arch = "wasm32")]
 pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let socket_id = Platform::tcp_connect(host, port)?;
     let cb_idx = register_callback(callback);
@@ -202,6 +206,7 @@ fn deliver(socket_id: SocketId, event: &SocketEvent<'_>) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 trait SocketTransport {
     fn tls_connect(host: &str, port: u16) -> Option<SocketId>;
     fn tls_connect_insecure(host: &str, port: u16) -> Option<SocketId>;
@@ -309,39 +314,8 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use bmc_wasm_protocol::SocketId;
-
-    pub(super) struct Host;
-
-    impl super::SocketTransport for Host {
-        fn tls_connect(_: &str, _: u16) -> Option<SocketId> {
-            panic!("BUG: tls_connect() called off-target — no host to connect through")
-        }
-
-        fn tls_connect_insecure(_: &str, _: u16) -> Option<SocketId> {
-            panic!("BUG: tls_connect_insecure() called off-target — no host to connect through")
-        }
-
-        fn tcp_connect(_: &str, _: u16) -> Option<SocketId> {
-            panic!("BUG: tcp_connect() called off-target — no host to connect through")
-        }
-
-        fn write(_: SocketId, _: &[u8]) {
-            panic!("BUG: Socket::write() called off-target — no host to connect through")
-        }
-
-        /// Only a test holds a handle off-target, and there is no host connection to close.
-        fn close(_: SocketId) {}
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;
 
 #[cfg(test)]
 mod tests {

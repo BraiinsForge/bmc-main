@@ -43,9 +43,8 @@
 //! `BitmapSlot::new("album_art")` and `BitmapSlot::new("album_art_thumb")`
 //! coexist safely — eviction respects segment boundaries (`:`).
 //!
-//! Off-target there is no host to hold the slots, so the calls panic.
-//! The gallery has no use for them: its static assets register
-//! through `Bitmap`, `Svg`, `Mesh` and `Audio`.
+//! Slots exist on wasm32 only; the gallery has no use for them,
+//! as its static assets register through `Bitmap`, `Svg`, `Mesh` and `Audio`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

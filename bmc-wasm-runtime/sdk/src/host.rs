@@ -19,34 +19,40 @@
 // the grant above.
 
 //! Host function bindings and types.
-//!
-//! Off-target, where there is no host to call, the bindings panic.
 
 pub use bmc_ui::{ButtonSize, ButtonStyle};
 
 mod assets;
+pub use assets::RetainedImageDimensions;
+#[cfg(target_arch = "wasm32")]
 pub use assets::{
-    RetainedImageDimensions, decode_image, evict_all, evict_prefix, image_dimensions,
-    image_dimensions_ref, max_image_pixels, register_audio, register_audio_package,
-    register_bitmap, register_bitmap_fit, register_bitmap_fit_ref, register_bitmap_from_cache,
-    register_bitmap_nearest, register_bitmap_nearest_package, register_bitmap_package,
-    register_mesh, register_mesh_package, register_svg, register_svg_package,
+    decode_image, evict_all, evict_prefix, image_dimensions, image_dimensions_ref,
+    max_image_pixels, register_audio, register_audio_package, register_bitmap, register_bitmap_fit,
+    register_bitmap_fit_ref, register_bitmap_from_cache, register_bitmap_nearest,
+    register_bitmap_nearest_package, register_bitmap_package, register_mesh, register_mesh_package,
+    register_svg, register_svg_package,
 };
 
 mod audio;
-pub use audio::{Volume, audio_play, audio_stop};
+pub use audio::Volume;
+#[cfg(target_arch = "wasm32")]
+pub use audio::{audio_play, audio_stop};
 
 mod clock;
 pub use clock::{HostClock, SystemTime};
 
 mod random;
+#[cfg(target_arch = "wasm32")]
 pub use random::random_u32;
 
 mod render;
+#[cfg(target_arch = "wasm32")]
 pub use render::{button, draw_text, fill_rect, request_frame, request_frame_after, submit_tree};
 
 mod touch;
-pub use touch::{TouchHit, get_touch_click, get_touch_drag};
+pub use touch::TouchHit;
+#[cfg(target_arch = "wasm32")]
+pub use touch::{get_touch_click, get_touch_drag};
 
 mod viewport;
 pub use viewport::{

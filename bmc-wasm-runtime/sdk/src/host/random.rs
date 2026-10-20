@@ -21,10 +21,12 @@
 /// Get a random `u32` from the host: seeded from the clock on the device,
 /// while tools such as capture and the test host may pin the seed.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn random_u32() -> u32 {
     Platform::random_u32()
 }
 
+#[cfg(target_arch = "wasm32")]
 trait RandomProvider {
     fn random_u32() -> u32;
 }
@@ -45,19 +47,5 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    pub(super) struct Host;
-
-    impl super::RandomProvider for Host {
-        fn random_u32() -> u32 {
-            panic!("BUG: random_u32() called off-target — no host seeds randomness")
-        }
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
-
-#[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;
