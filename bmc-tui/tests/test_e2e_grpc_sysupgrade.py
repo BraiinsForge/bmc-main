@@ -223,8 +223,8 @@ def harness(  # noqa: PLR0915
 
     monkeypatch.setattr(catalog, "preflight_versions", versions)
 
-    def manifest_packages(_dev: object) -> dict[str, dict[str, str]]:
-        return {"core": {"store_path": state.core_store_path}}
+    def manifest_packages(_dev: object) -> dict[str, catalog.ManifestPackage]:
+        return {"core": {"version": "1.0.0", "store_path": state.core_store_path}}
 
     monkeypatch.setattr(catalog, "read_manifest_packages", manifest_packages)
 

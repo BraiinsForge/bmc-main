@@ -261,6 +261,19 @@ def test_memory_aborts_when_insufficient() -> None:
         catalog.ensure_memory(dev, 200_000_000)
 
 
+def test_installed_versions_reads_the_manifest() -> None:
+    manifest = {"packages": {"core": {"version": "1.0.0", "store_path": "/nix/store/core"}}}
+    dev = Device("h", backend=_Exec(_routes({"current/manifest": json.dumps(manifest)})))
+    assert catalog.installed_versions(dev) == {"core": "1.0.0"}
+
+
+def test_a_manifest_entry_without_a_store_path_is_not_a_package_manifest() -> None:
+    manifest = {"packages": {"core": {"version": "1.0.0"}}}
+    dev = Device("h", backend=_Exec(_routes({"current/manifest": json.dumps(manifest)})))
+    with pytest.raises(Abort, match=r"not a package manifest.*store_path"):
+        _ = catalog.read_manifest_packages(dev)
+
+
 def test_memory_shortfall_without_stale_firmware_reports_memory_error() -> None:
     def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
         cmd = argv[-1]

@@ -3308,7 +3308,7 @@ def verify_profile_advanced(dev: Device, plan: Deployment, cycle: UpgradeCycle) 
         if planner_keeps_installed(installed[b.name], b.version):
             continue
         entry = entries.get(b.name)
-        got = entry.get("store_path") if entry is not None else None
+        got = entry["store_path"] if entry is not None else None
         if got != b.store_path:
             mismatched.append(f"{b.name} (want {b.store_path}, got {got or 'absent'})")
     require(
@@ -3329,21 +3329,15 @@ def current_generation(dev: Device) -> int:
 
 
 def installed_versions(dev: Device) -> dict[str, str]:
-    versions: dict[str, str] = {}
-    for name, entry in read_manifest_packages(dev).items():
-        version = entry.get("version")
-        if version is None:
-            raise Abort(f"the current manifest has no version for {name}")
-        versions[name] = version
-    return versions
+    return {name: entry["version"] for name, entry in read_manifest_packages(dev).items()}
 
 
-class ManifestPackage(TypedDict, total=False):
+class ManifestPackage(TypedDict):
     version: str
     store_path: str
 
 
-class _Manifest(TypedDict):
+class Manifest(TypedDict):
     packages: dict[str, ManifestPackage]
 
 
@@ -3352,7 +3346,7 @@ def read_manifest_packages(dev: Device) -> dict[str, ManifestPackage]:
 
     raw = dev.read(f"cat {_PROFILE_DIR}/current/manifest")
     try:
-        return msgspec.json.decode(raw, type=_Manifest)["packages"]
+        return msgspec.json.decode(raw, type=Manifest)["packages"]
     except msgspec.DecodeError as e:
         raise Abort(f"the current manifest is not a package manifest: {e}") from None
 

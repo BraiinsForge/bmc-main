@@ -251,6 +251,10 @@ def _rig(
 PROFILE = "/nix/var/nix/gcroots/profiles/bmc"
 
 
+def manifest_entry(name: str, version: str) -> catalog.ManifestPackage:
+    return {"version": version, "store_path": f"/nix/store/{name}-{version}"}
+
+
 @final
 class _DeviceScript:
     """Scripted SSH answers for the verification: tests mutate the fields to play the device."""
@@ -258,9 +262,7 @@ class _DeviceScript:
     def __init__(self) -> None:
         self.boot_id = "boot-1"
         self.generation = 1
-        self.manifest: dict[str, dict[str, dict[str, str]]] = {
-            "packages": {"core": {"version": "1.0.0"}}
-        }
+        self.manifest: catalog.Manifest = {"packages": {"core": manifest_entry("core", "1.0.0")}}
         self.bos_version = RUNNING
         self.reachable = True
         self.commands: list[str] = []
@@ -290,7 +292,7 @@ class _DeviceScript:
 
     def install_weather(self) -> None:
         self.generation += 2  # leftover generations make the new number skip ahead
-        self.manifest["packages"]["weather"] = {"version": "1.2.0"}
+        self.manifest["packages"]["weather"] = manifest_entry("weather", "1.2.0")
 
     def flash(self) -> None:
         self.boot_id = "boot-2"
@@ -460,12 +462,12 @@ def test_rebooting_run_waits_for_the_new_boot_and_checks_the_firmware(
 
 
 def _completed_with_wrong_generation(device: _DeviceScript) -> None:
-    device.manifest["packages"]["weather"] = {"version": "1.2.0"}
+    device.manifest["packages"]["weather"] = manifest_entry("weather", "1.2.0")
 
 
 def _completed_with_wrong_version(device: _DeviceScript) -> None:
     device.generation += 1
-    device.manifest["packages"]["weather"] = {"version": "1.1.0"}
+    device.manifest["packages"]["weather"] = manifest_entry("weather", "1.1.0")
 
 
 def _completed_but_rebooted(device: _DeviceScript) -> None:
