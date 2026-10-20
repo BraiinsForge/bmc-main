@@ -67,8 +67,13 @@ let
     , packageBump ? null
     , initPackageNames ? defaultInitPackageNames
     , profilePath ? defaultProfilePath
+    , bmcVersion ? null
     }:
     let
+      stampedPackages =
+        if bmcVersion == null then packages
+        else packages // { core = packages.core.override { inherit bmcVersion; }; };
+
       bump = p:
         if packageBump == null || p.name != packageBump.name then p
         else p // {
@@ -85,8 +90,7 @@ let
 
       # Select init packages and convert to the list format mkIndex/mkTarball expect
       initPackages = map
-        (name: bump (packages.${name} // { inherit name; }
-          // lib.optionalAttrs (name == "core") { metadata = { bmc_version = bosVersion; }; }))
+        (name: bump (stampedPackages.${name} // { inherit name; }))
         initPackageNames;
     in
     {
