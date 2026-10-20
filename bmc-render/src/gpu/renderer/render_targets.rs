@@ -72,6 +72,7 @@ impl FemtoVgRenderer {
         height: u32,
         dpi_scale: f32,
     ) {
+        super::debug_assert_fringe_within_a_pixel(dpi_scale);
         self.width = width as f32;
         self.height = height as f32;
         self.dpi_scale = dpi_scale;

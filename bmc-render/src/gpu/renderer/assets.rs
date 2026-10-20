@@ -27,6 +27,7 @@ use super::MeshReservations;
 use super::SphereRendererState;
 use crate::gpu::mesh::{MeshDrawArgs, MeshRenderer};
 use crate::gpu::sphere::SphereRenderer;
+use crate::renderer::SvgContent;
 use crate::renderer::prelude::*;
 use crate::renderer::{AssetSuspendResult, AssetTagState};
 use bmc_wasm_protocol::colors::Color;
@@ -49,6 +50,12 @@ impl RenderAssets for FemtoVgRenderer {
 
     fn svg_tag_state(&self, tag: &str) -> AssetTagState<SvgId> {
         self.icon_registry.tag_state(tag)
+    }
+
+    fn svg_content(&self, icon_id: SvgId) -> Option<SvgContent> {
+        self.icon_registry
+            .get(icon_id)
+            .and_then(|icon| icon.content)
     }
 
     fn draw_svg(

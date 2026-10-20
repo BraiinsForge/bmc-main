@@ -42,9 +42,10 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use crate::components::draw::{extract_draw_values, get_draw_bounds};
 use crate::interaction::Rect;
+use crate::renderer::SvgContent;
 use crate::tree::DrawCommand;
 use crate::{TransitionState, TransitionStateKey};
-use bmc_wasm_protocol::{AnimProperty, Easing};
+use bmc_wasm_protocol::{AnimProperty, Easing, SvgId};
 
 /// The accumulated transform range between the canvas and a leaf draw.
 ///
@@ -60,16 +61,17 @@ struct Transform {
     /// [`Transform::set_layout`] for why it is not folded into the ranges above.
     layout_x: f32,
     layout_y: f32,
-    /// Largest scale factor reachable, as the product of every factor that can
-    /// enlarge the draw. Magnitudes below 1 shrink the box and so stay inside
-    /// it, which is why they contribute nothing.
-    scale_max: f32,
+    /// Every factor reachable, signed, as the product of every scale's range.
+    /// A shrink keeps the draw inside its box,
+    /// but pulls a region painted within it towards the box centre.
+    scale_range: (f32, f32),
     /// `None` until something can rotate this draw, kept distinct from a zero
     /// range so a still draw skips the sweep: its polar round-trip costs a pixel
     /// of precision, which is slack worth paying only when something moves.
     rotation: Option<(f32, f32)>,
-    /// Extra reach on every side, for a stroke that is thicker somewhere in the
-    /// transition than in the tree the leaf box was read from.
+    /// Extra reach on every side, for a stroke the leaf box leaves out:
+    /// an icon's, or an arc's that is thicker somewhere in its transition
+    /// than in the tree the leaf box was read from.
     margin: f32,
 }
 
@@ -91,7 +93,7 @@ impl Transform {
         translate_y: (0.0, 0.0),
         layout_x: 0.0,
         layout_y: 0.0,
-        scale_max: 1.0,
+        scale_range: (1.0, 1.0),
         rotation: None,
         margin: 0.0,
     };
@@ -128,18 +130,29 @@ impl Transform {
         self
     }
 
-    /// Compose a reachable scale factor onto the accumulated one.
+    /// Compose the reachable scale factors `lo..=hi` onto the accumulated ones.
     ///
     /// Multiplicative, because the renderer composes simultaneous scales that
     /// way: two 1 → 2 scales on one draw reach 4x, and taking the larger would
-    /// leave everything past 2x unrepainted. A magnitude below 1 only shrinks
-    /// the box, so it is clamped away rather than narrowing the bound.
-    ///
-    /// By magnitude, because the renderer multiplies the extent by the signed
-    /// factor: -2 mirrors the draw across the ground 2 covers.
-    fn compose_scale(mut self, factor: f32) -> Self {
-        self.scale_max *= factor.abs().max(1.0);
+    /// leave everything past 2x unrepainted. Independent ranges multiply to
+    /// the range of their ends' products, sign included: the renderer
+    /// multiplies the extent by the signed factor, so -2 mirrors the draw
+    /// across the ground 2 covers.
+    fn compose_scale(mut self, (lo, hi): (f32, f32)) -> Self {
+        let (a, b) = self.scale_range;
+        let products = [a * lo, a * hi, b * lo, b * hi];
+        self.scale_range = (
+            products.into_iter().fold(f32::INFINITY, f32::min),
+            products.into_iter().fold(f32::NEG_INFINITY, f32::max),
+        );
         self
+    }
+
+    /// The most any reachable factor grows the draw by.
+    /// A shrink keeps it inside its box, so nothing below 1 counts.
+    fn scale_reach(self) -> f32 {
+        let (lo, hi) = self.scale_range;
+        lo.abs().max(hi.abs()).max(1.0)
     }
 
     fn widen_by(mut self, margin: f32) -> Self {
@@ -152,14 +165,60 @@ impl Transform {
         self.apply_anchored(leaf, canvas_w, canvas_h, ScaleAnchor::Centre)
     }
 
+    /// [`Self::apply`] for a leaf that paints only `painted`, a region inside it.
+    ///
+    /// The renderer scales the leaf about its centre,
+    /// which moves `painted` rather than growing it in place.
+    /// Under a factor that cannot turn negative,
+    /// each point only slides along its ray from the centre,
+    /// so the region at both ends of the range covers every frame between.
+    /// One that can turn negative flips it across the centre,
+    /// so the region is mirrored there to cover every factor in `-1..=1`,
+    /// and `apply` scales that out to the rest.
+    fn apply_within(self, leaf: Rect, painted: Rect, canvas_w: f32, canvas_h: f32) -> Rect {
+        let (lo, hi) = self.scale_range;
+        if (lo - 1.0).abs() + (hi - 1.0).abs() == 0.0 {
+            return self.apply(painted, canvas_w, canvas_h);
+        }
+        let (cx, cy) = (leaf.x + leaf.w / 2.0, leaf.y + leaf.h / 2.0);
+        if lo >= 0.0 {
+            let about_centre = |factor: f32| {
+                Rect::new(
+                    cx + (painted.x - cx) * factor,
+                    cy + (painted.y - cy) * factor,
+                    painted.w * factor,
+                    painted.h * factor,
+                )
+            };
+            let mut reached = about_centre(lo);
+            reached.union(about_centre(hi));
+            // The scale is spent on `reached`; only the stroke it widens is left.
+            let placed = Self {
+                scale_range: (1.0, 1.0),
+                margin: self.margin * self.scale_reach(),
+                ..self
+            };
+            return placed.apply(reached, canvas_w, canvas_h);
+        }
+        let half_w = (painted.x - cx)
+            .abs()
+            .max((painted.x + painted.w - cx).abs());
+        let half_h = (painted.y - cy)
+            .abs()
+            .max((painted.y + painted.h - cy).abs());
+        let mirrored = Rect::new(cx - half_w, cy - half_h, 2.0 * half_w, 2.0 * half_h);
+        self.apply(mirrored, canvas_w, canvas_h)
+    }
+
     /// [`Self::apply`] for a leaf whose scaling grows it about `anchor`.
     fn apply_anchored(self, leaf: Rect, canvas_w: f32, canvas_h: f32, anchor: ScaleAnchor) -> Rect {
-        let grow_w = leaf.w * (self.scale_max - 1.0);
-        let grow_h = leaf.h * (self.scale_max - 1.0);
+        let reach = self.scale_reach();
+        let grow_w = leaf.w * (reach - 1.0);
+        let grow_h = leaf.h * (reach - 1.0);
         // The margin is an unscaled stroke delta, and the renderer scales
         // the stroke along with the box (`ew = width * scale`),
         // so the reach it stands for grows too.
-        let margin = self.margin * self.scale_max;
+        let margin = self.margin * reach;
         let scaled = match anchor {
             ScaleAnchor::Centre => Rect::new(
                 leaf.x - grow_w / 2.0 - margin,
@@ -265,6 +324,25 @@ fn sin_range(start: f32, end: f32) -> (f32, f32) {
 /// every other frame, and a cached frame never paints it back — a trailing line.
 const FRINGE_SLACK: f32 = 1.0;
 
+/// How far from the canvas origin, in logical pixels, f32 still resolves an eighth of a pixel: 2²⁰.
+const PRECISE_EXTENT: f32 = 1_048_576.0;
+
+/// Upper bound on femtovg's fringe width in logical pixels.
+///
+/// It sets `1 / dpi` physical pixels, so `1 / dpi²` logical:
+/// within one while the dpi scale is at least 1,
+/// which every `FemtoVgRenderer` frame debug-asserts on the way in.
+const FEMTOVG_FRINGE: f32 = 1.0;
+
+/// The scale femtovg's `PathCache::calculate_joins` caps a join's extrusion at,
+/// so no join, stroked or filled, reaches past `√600` widths.
+const FEMTOVG_EXTRUSION_SCALE_CAP: f32 = 600.0;
+
+/// How many fringe widths past its join `PathCache::expand_fill` puts the outer
+/// edge of a fill's fringe: a whole fringe beyond the half it insets the fill by,
+/// on whichever side the path's winding puts it.
+const FEMTOVG_FILL_FRINGE_OFFSET: f32 = 1.5;
+
 /// What one dynamic canvas draw asks a repaint to cover.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum DrawDamage {
@@ -299,16 +377,25 @@ pub(crate) fn canvas_draw_damage(
     canvas: Rect,
     transitions: &HashMap<TransitionStateKey, TransitionState>,
     canvas_index: u16,
+    svg_content: &dyn Fn(SvgId) -> Option<SvgContent>,
 ) -> DrawDamage {
-    let Some(local) = bounded(draw, Transform::IDENTITY, canvas, transitions, canvas_index) else {
+    let scope = Scope {
+        canvas,
+        transitions,
+        canvas_index,
+        svg_content,
+    };
+    let Some(local) = bounded(draw, Transform::IDENTITY, &scope) else {
         return DrawDamage::WholeCanvas;
     };
     // Fail open. `f32::min`/`max` ignore NaN, so a NaN sweep leaves `+INF`
     // against `-INF` and inverts the comparison below: the draw would report
     // *nothing* while still painting. The deserializer rejects these, so this
     // is the second line, and over-damaging is the harmless direction.
-    if !local.x.is_finite() || !local.y.is_finite() || !local.w.is_finite() || !local.h.is_finite()
-    {
+    // Past `PRECISE_EXTENT` the sums below lose sub-pixel precision and can cancel,
+    // collapsing the rect of an icon whose points reach far off its box.
+    let precise = |v: f32| v.abs() <= PRECISE_EXTENT;
+    if !(precise(local.x) && precise(local.y) && precise(local.w) && precise(local.h)) {
         return DrawDamage::WholeCanvas;
     }
     let x = (canvas.x + local.x - FRINGE_SLACK).floor().max(canvas.x);
@@ -328,33 +415,27 @@ pub(crate) fn canvas_draw_damage(
     }
 }
 
-fn bounded(
-    draw: &DrawCommand,
-    transform: Transform,
+/// What every level of [`bounded`] reads but none changes.
+struct Scope<'a> {
     canvas: Rect,
-    transitions: &HashMap<TransitionStateKey, TransitionState>,
+    transitions: &'a HashMap<TransitionStateKey, TransitionState>,
     canvas_index: u16,
-) -> Option<Rect> {
+    /// [`crate::renderer::RenderAssets::svg_content`].
+    svg_content: &'a dyn Fn(SvgId) -> Option<SvgContent>,
+}
+
+fn bounded(draw: &DrawCommand, transform: Transform, scope: &Scope<'_>) -> Option<Rect> {
+    let canvas = scope.canvas;
     match draw {
-        DrawCommand::Rotated { angle, inner } => bounded(
-            inner,
-            transform.add_rotation((*angle, *angle)),
-            canvas,
-            transitions,
-            canvas_index,
-        ),
+        DrawCommand::Rotated { angle, inner } => {
+            bounded(inner, transform.add_rotation((*angle, *angle)), scope)
+        }
 
         DrawCommand::Centered { inner } => {
             let (iw, ih) = get_draw_bounds(inner);
             let dx = (canvas.w - iw) / 2.0;
             let dy = (canvas.h - ih) / 2.0;
-            bounded(
-                inner,
-                transform.set_layout(dx, dy),
-                canvas,
-                transitions,
-                canvas_index,
-            )
+            bounded(inner, transform.set_layout(dx, dy), scope)
         }
 
         // A moving orbit angle would trace an arc of `radius` around the canvas
@@ -368,13 +449,7 @@ fn bounded(
             let (iw, ih) = get_draw_bounds(inner);
             let dx = canvas.w / 2.0 + radius * angle.cos() - iw / 2.0;
             let dy = canvas.h / 2.0 + radius * angle.sin() - ih / 2.0;
-            bounded(
-                inner,
-                transform.set_layout(dx, dy),
-                canvas,
-                transitions,
-                canvas_index,
-            )
+            bounded(inner, transform.set_layout(dx, dy), scope)
         }
 
         DrawCommand::Modified {
@@ -388,18 +463,30 @@ fn bounded(
                 animations,
                 transition.as_ref(),
                 inner,
-                transitions,
-                canvas_index,
+                scope.transitions,
+                scope.canvas_index,
             )?;
-            bounded(inner, transform, canvas, transitions, canvas_index)
+            bounded(inner, transform, scope)
         }
 
         // The shadow renders its inner draw into a canvas-sized layer and
         // composites the whole of it, so its reach is the canvas either way.
         DrawCommand::Shadow { .. } => None,
 
+        DrawCommand::Svg {
+            x,
+            y,
+            w,
+            h,
+            icon_id,
+            ..
+        } => Some(svg_bound(
+            Rect::new(*x, *y, *w, *h),
+            *icon_id,
+            transform,
+            scope,
+        )),
         DrawCommand::Rect { x, y, w, h, .. }
-        | DrawCommand::Svg { x, y, w, h, .. }
         | DrawCommand::Bitmap { x, y, w, h, .. }
         | DrawCommand::Sphere { x, y, w, h, .. }
         | DrawCommand::Mesh { x, y, w, h, .. }
@@ -452,6 +539,44 @@ fn bounded(
     }
 }
 
+/// Bound an icon drawn into `leaf` by what its paths paint.
+///
+/// usvg folds a letterboxed viewBox into the paths,
+/// so an icon may paint a sliver of its box: a clock hand is 4 units wide in 398.
+fn svg_bound(leaf: Rect, icon_id: Option<SvgId>, transform: Transform, scope: &Scope<'_>) -> Rect {
+    let (canvas_w, canvas_h) = (scope.canvas.w, scope.canvas.h);
+    let Some(content) = icon_id.and_then(scope.svg_content) else {
+        return transform.apply(leaf, canvas_w, canvas_h);
+    };
+    let (sx, sy) = (leaf.w / content.viewbox_w, leaf.h / content.viewbox_h);
+    let painted = Rect::new(
+        leaf.x + content.bounds.x * sx,
+        leaf.y + content.bounds.y * sy,
+        content.bounds.w * sx,
+        content.bounds.h * sy,
+    );
+    // Any join may extrude as far as femtovg's cap lets it.
+    let cap = FEMTOVG_EXTRUSION_SCALE_CAP.sqrt();
+    let stroke_reach = content.stroke.map_or(0.0, |stroke| {
+        // femtovg strokes in screen space: one width for both axes,
+        // scaled by the mean of its matrix's row norms,
+        // floored at the fringe and widened by half of it before the joins extrude.
+        // A rotation by θ mixes `sx` and `sy` into rows whose norms average
+        // at most `|cos θ| + |sin θ|` times theirs, the factor by which
+        // the rotated margin's bounding box already outreaches the margin.
+        let half_width = stroke.half_width * (sx + sy) / 2.0;
+        (half_width.max(FEMTOVG_FRINGE / 2.0) + FEMTOVG_FRINGE / 2.0) * cap
+    });
+    let fill_reach = if content.fills {
+        FEMTOVG_FILL_FRINGE_OFFSET * FEMTOVG_FRINGE * cap
+    } else {
+        0.0
+    };
+    transform
+        .widen_by(stroke_reach.max(fill_reach))
+        .apply_within(leaf, painted, canvas_w, canvas_h)
+}
+
 /// The transform range a `Modified` wrapper adds, or `None` when one of its
 /// payloads moves the draw in a way this module cannot bound.
 fn modified_transform(
@@ -469,10 +594,7 @@ fn modified_transform(
             AnimProperty::Rotate => transform.add_rotation((lo, hi)),
             AnimProperty::TranslateX => transform.add_translate((lo, hi), (0.0, 0.0)),
             AnimProperty::TranslateY => transform.add_translate((0.0, 0.0), (lo, hi)),
-            // The reachable ends are ordered, not ranked by reach.
-            // A -2 → 1 scale mirrors past twice the box on its way,
-            // so the bound follows the widest magnitude, not the upper end.
-            AnimProperty::Scale => transform.compose_scale(lo.abs().max(hi.abs())),
+            AnimProperty::Scale => transform.compose_scale((lo, hi)),
             // An orbit angle sweeps the inner draw around a radius this level
             // cannot see.
             AnimProperty::OrbitAngle => return None,
@@ -523,8 +645,7 @@ fn modified_transform(
         // Width interpolates the same way, so the reachable scale applies
         // the delta's factor about the target rather than the raw ratio.
         let ratio_delta = from.w / target.w - 1.0;
-        let (lo, hi) = (1.0 + ratio_delta * near, 1.0 + ratio_delta * far);
-        transform = transform.compose_scale(lo.abs().max(hi.abs()));
+        transform = transform.compose_scale((1.0 + ratio_delta * near, 1.0 + ratio_delta * far));
     }
     Some(transform)
 }

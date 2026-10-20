@@ -35,7 +35,8 @@ use bmc_wasm_protocol::{
 use femtovg::{FillRule, Paint, Path};
 
 use super::text::to_femtovg_color;
-use crate::renderer::{AssetSuspendResult, AssetTagState};
+use crate::interaction::Rect;
+use crate::renderer::{AssetSuspendResult, AssetTagState, StrokeReach, SvgContent};
 
 /// A single parsed path from an SVG icon.
 // Path doesn't impl Debug, so manual impl would be noisy — skip it.
@@ -61,6 +62,9 @@ pub struct RegisteredSvg {
     pub paths_by_id: HashMap<String, usize>,
     pub viewbox_w: f32,
     pub viewbox_h: f32,
+    /// `None` when nothing paints, the viewBox is empty or a value is NaN,
+    /// which leaves the declared box as the only bound.
+    pub content: Option<SvgContent>,
 }
 
 /// Registry mapping tag reservations and opaque IDs to parsed FemtoVG icon data.
@@ -348,8 +352,9 @@ fn parse_svg(data: &[u8]) -> anyhow::Result<RegisteredSvg> {
 
     let mut paths = Vec::with_capacity(path_count as usize);
     let mut paths_by_id = HashMap::new();
+    let mut content = ContentBuilder::default();
     for idx in 0..path_count {
-        let (path, id) = read_icon_path(&mut r)?;
+        let (path, id) = read_icon_path(&mut r, &mut content)?;
         if let Some(id) = id {
             paths_by_id.insert(id, idx as usize);
         }
@@ -361,10 +366,98 @@ fn parse_svg(data: &[u8]) -> anyhow::Result<RegisteredSvg> {
         paths_by_id,
         viewbox_w,
         viewbox_h,
+        content: content.finish(viewbox_w, viewbox_h),
     })
 }
 
-fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<(IconPath, Option<String>)> {
+/// Bounding box of path points.
+#[derive(Clone, Copy, Default)]
+enum PointBounds {
+    #[default]
+    Empty,
+    Bounded(Rect),
+    /// A NaN point, which `f32::min` would drop rather than bound.
+    Poisoned,
+}
+
+impl PointBounds {
+    fn include(&mut self, x: f32, y: f32) {
+        let point = if x.is_nan() || y.is_nan() {
+            Self::Poisoned
+        } else {
+            Self::Bounded(Rect::new(x, y, 0.0, 0.0))
+        };
+        self.union(point);
+    }
+
+    fn union(&mut self, other: PointBounds) {
+        *self = match (*self, other) {
+            (Self::Poisoned, _) | (_, Self::Poisoned) => Self::Poisoned,
+            (Self::Empty, bounds) | (bounds, Self::Empty) => bounds,
+            (Self::Bounded(mut rect), Self::Bounded(more)) => {
+                rect.union(more);
+                Self::Bounded(rect)
+            }
+        };
+    }
+}
+
+/// [`SvgContent`] accumulated over the paths that paint.
+#[derive(Default)]
+struct ContentBuilder {
+    points: PointBounds,
+    /// Set by a NaN stroke width, which leaves the stroke's reach unbounded.
+    poisoned: bool,
+    stroke: Option<StrokeReach>,
+    fills: bool,
+}
+
+impl ContentBuilder {
+    /// Grow by one path: its points, and how its paint reaches past them.
+    fn add_path(&mut self, points: PointBounds, fill: bool, stroke_width: Option<f32>) {
+        if fill || stroke_width.is_some() {
+            self.points.union(points);
+        }
+        self.fills |= fill;
+        if let Some(width) = stroke_width {
+            self.poisoned |= width.is_nan();
+            let reach = StrokeReach {
+                half_width: width.abs() / 2.0,
+            };
+            self.stroke = Some(self.stroke.map_or(reach, |widest| widest.widen(reach)));
+        }
+    }
+
+    fn finish(self, viewbox_w: f32, viewbox_h: f32) -> Option<SvgContent> {
+        let PointBounds::Bounded(bounds) = self.points else {
+            return None;
+        };
+        if self.poisoned || !(viewbox_w > 0.0 && viewbox_h > 0.0) {
+            return None;
+        }
+        Some(SvgContent {
+            bounds,
+            viewbox_w,
+            viewbox_h,
+            stroke: self.stroke,
+            fills: self.fills,
+        })
+    }
+}
+
+impl StrokeReach {
+    fn widen(self, other: Self) -> Self {
+        Self {
+            half_width: self.half_width.max(other.half_width),
+        }
+    }
+}
+
+/// Parse one path, growing `content` by the region it paints.
+fn read_icon_path(
+    r: &mut IconReader<'_>,
+    content: &mut ContentBuilder,
+) -> anyhow::Result<(IconPath, Option<String>)> {
     let flags = r.read_u8()?;
     let has_fill = flags & SVG_FLAG_HAS_FILL != 0;
     let has_stroke = flags & SVG_FLAG_HAS_STROKE != 0;
@@ -395,44 +488,8 @@ fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<(IconPath, Option<St
         None
     };
 
-    let op_count = r.read_u16()?;
-    let mut path = Path::new();
-
-    for _ in 0..op_count {
-        let op = r.read_u8()?;
-        match op {
-            SVG_OP_MOVE_TO => {
-                let x = r.read_f32()?;
-                let y = r.read_f32()?;
-                path.move_to(x, y);
-            }
-            SVG_OP_LINE_TO => {
-                let x = r.read_f32()?;
-                let y = r.read_f32()?;
-                path.line_to(x, y);
-            }
-            SVG_OP_QUAD_TO => {
-                let cx = r.read_f32()?;
-                let cy = r.read_f32()?;
-                let x = r.read_f32()?;
-                let y = r.read_f32()?;
-                path.quad_to(cx, cy, x, y);
-            }
-            SVG_OP_CUBIC_TO => {
-                let cx1 = r.read_f32()?;
-                let cy1 = r.read_f32()?;
-                let cx2 = r.read_f32()?;
-                let cy2 = r.read_f32()?;
-                let x = r.read_f32()?;
-                let y = r.read_f32()?;
-                path.bezier_to(cx1, cy1, cx2, cy2, x, y);
-            }
-            SVG_OP_CLOSE => {
-                path.close();
-            }
-            _ => anyhow::bail!("unknown icon path op: 0x{op:02x}"),
-        }
-    }
+    let (path, points) = read_path_ops(r)?;
+    content.add_path(points, has_fill, has_stroke.then_some(stroke_width));
 
     Ok((
         IconPath {
@@ -444,6 +501,60 @@ fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<(IconPath, Option<St
         },
         id,
     ))
+}
+
+/// Parse a path's ops into femtovg's path and the bounds of their points.
+///
+/// Control points count too: a Bézier never leaves the hull of its own.
+fn read_path_ops(r: &mut IconReader<'_>) -> anyhow::Result<(Path, PointBounds)> {
+    let op_count = r.read_u16()?;
+    let mut path = Path::new();
+    let mut points = PointBounds::default();
+
+    for _ in 0..op_count {
+        let op = r.read_u8()?;
+        match op {
+            SVG_OP_MOVE_TO => {
+                let x = r.read_f32()?;
+                let y = r.read_f32()?;
+                points.include(x, y);
+                path.move_to(x, y);
+            }
+            SVG_OP_LINE_TO => {
+                let x = r.read_f32()?;
+                let y = r.read_f32()?;
+                points.include(x, y);
+                path.line_to(x, y);
+            }
+            SVG_OP_QUAD_TO => {
+                let cx = r.read_f32()?;
+                let cy = r.read_f32()?;
+                let x = r.read_f32()?;
+                let y = r.read_f32()?;
+                points.include(cx, cy);
+                points.include(x, y);
+                path.quad_to(cx, cy, x, y);
+            }
+            SVG_OP_CUBIC_TO => {
+                let cx1 = r.read_f32()?;
+                let cy1 = r.read_f32()?;
+                let cx2 = r.read_f32()?;
+                let cy2 = r.read_f32()?;
+                let x = r.read_f32()?;
+                let y = r.read_f32()?;
+                points.include(cx1, cy1);
+                points.include(cx2, cy2);
+                points.include(x, y);
+                path.bezier_to(cx1, cy1, cx2, cy2, x, y);
+            }
+            SVG_OP_CLOSE => {
+                path.close();
+            }
+            _ => anyhow::bail!("unknown icon path op: 0x{op:02x}"),
+        }
+    }
+
+    Ok((path, points))
 }
 
 struct IconReader<'a> {
@@ -724,5 +835,115 @@ mod tests {
         let user = SvgId::from_wire(SVG_RESERVED_MIN - 1).expect("BUG: user ID must be nonzero");
 
         reg.register_with_id(user, &minimal_icon());
+    }
+
+    /// An icon of one path through `points`, painted as `paint` asks.
+    fn polyline_icon(viewbox: (f32, f32), paint: PathPaint, points: &[(f32, f32)]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&viewbox.0.to_le_bytes());
+        buf.extend_from_slice(&viewbox.1.to_le_bytes());
+        buf.extend_from_slice(&1_u16.to_le_bytes());
+        match paint {
+            PathPaint::Nothing => buf.push(0),
+            PathPaint::Fill => {
+                buf.push(SVG_FLAG_HAS_FILL);
+                buf.extend_from_slice(&0xFFFF_FFFF_u32.to_le_bytes());
+            }
+            PathPaint::Stroke(width) => {
+                buf.push(SVG_FLAG_HAS_STROKE);
+                buf.extend_from_slice(&0xFFFF_FFFF_u32.to_le_bytes());
+                buf.extend_from_slice(&width.to_le_bytes());
+            }
+        }
+        let op_count = u16::try_from(points.len()).expect("BUG: fixture fits a u16 op count");
+        buf.extend_from_slice(&op_count.to_le_bytes());
+        for (i, (x, y)) in points.iter().enumerate() {
+            buf.push(if i == 0 {
+                SVG_OP_MOVE_TO
+            } else {
+                SVG_OP_LINE_TO
+            });
+            buf.extend_from_slice(&x.to_le_bytes());
+            buf.extend_from_slice(&y.to_le_bytes());
+        }
+        buf
+    }
+
+    #[derive(Clone, Copy)]
+    enum PathPaint {
+        Nothing,
+        Fill,
+        Stroke(f32),
+    }
+
+    fn content(data: &[u8]) -> Option<SvgContent> {
+        parse_svg(data).expect("BUG: fixture icon parses").content
+    }
+
+    #[test]
+    fn a_letterboxed_icon_reports_the_sliver_its_paths_cover() {
+        let data = polyline_icon(
+            (398.0, 398.0),
+            PathPaint::Fill,
+            &[(197.0, 0.0), (201.0, 0.0), (201.0, 199.0), (197.0, 199.0)],
+        );
+        let content = content(&data).expect("BUG: a filled path paints");
+        let b = content.bounds;
+        assert_eq!((b.x, b.y, b.w, b.h), (197.0, 0.0, 4.0, 199.0));
+        assert!(
+            content.fills && content.stroke.is_none(),
+            "it fills and nothing strokes"
+        );
+    }
+
+    #[test]
+    fn a_stroke_records_its_half_width() {
+        let data = polyline_icon(
+            (100.0, 100.0),
+            PathPaint::Stroke(2.0),
+            &[(50.0, 10.0), (50.0, 90.0)],
+        );
+        let stroke = content(&data)
+            .expect("BUG: a stroked path paints")
+            .stroke
+            .expect("BUG: the fixture strokes");
+        assert!(
+            (stroke.half_width - 1.0).abs() < f32::EPSILON,
+            "got {}",
+            stroke.half_width
+        );
+    }
+
+    #[test]
+    fn an_icon_painting_nothing_has_no_content() {
+        assert!(content(&minimal_icon()).is_none());
+        let unpainted = polyline_icon(
+            (100.0, 100.0),
+            PathPaint::Nothing,
+            &[(0.0, 0.0), (1.0, 1.0)],
+        );
+        assert!(content(&unpainted).is_none());
+    }
+
+    #[test]
+    fn a_nan_point_or_stroke_width_drops_the_content() {
+        let point = polyline_icon(
+            (100.0, 100.0),
+            PathPaint::Fill,
+            &[(10.0, 10.0), (f32::NAN, 20.0), (20.0, 20.0)],
+        );
+        assert!(content(&point).is_none());
+        let width = polyline_icon(
+            (100.0, 100.0),
+            PathPaint::Stroke(f32::NAN),
+            &[(10.0, 10.0), (20.0, 20.0)],
+        );
+        assert!(content(&width).is_none());
+    }
+
+    #[test]
+    fn an_empty_viewbox_has_no_content() {
+        let data = polyline_icon((0.0, 100.0), PathPaint::Fill, &[(0.0, 0.0), (0.0, 1.0)]);
+        assert!(content(&data).is_none());
     }
 }

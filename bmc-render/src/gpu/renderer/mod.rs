@@ -606,6 +606,7 @@ impl RenderFrame for FemtoVgRenderer {
         dpi_scale: f32,
         clear: FrameClear,
     ) {
+        debug_assert_fringe_within_a_pixel(dpi_scale);
         self.width = width as f32;
         self.height = height as f32;
         self.dpi_scale = dpi_scale;
@@ -873,6 +874,14 @@ impl RenderShapes for FemtoVgRenderer {
         );
         self.canvas.fill_path(&path, &paint);
     }
+}
+
+/// Damage bounds femtovg's fringe, `1 / dpi` physical pixels, at one logical pixel.
+fn debug_assert_fringe_within_a_pixel(dpi_scale: f32) {
+    debug_assert!(
+        dpi_scale >= 1.0,
+        "BUG: damage bounds femtovg's fringe at one logical pixel, which needs a dpi scale of at least 1, got {dpi_scale}"
+    );
 }
 
 #[cfg(test)]

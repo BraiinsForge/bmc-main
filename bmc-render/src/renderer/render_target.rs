@@ -25,6 +25,7 @@ use super::AssetTagState;
 use super::FrameClear;
 use super::GlyphCacheCounters;
 use super::RendererAssetResolver;
+use super::SvgContent;
 use super::TextLayoutCounters;
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::Rect;
@@ -336,6 +337,10 @@ impl RenderAssets for RenderTarget<'_, '_, '_> {
 
     fn svg_tag_state(&self, tag: &str) -> AssetTagState<SvgId> {
         self.renderer.svg_tag_state(tag)
+    }
+
+    fn svg_content(&self, icon_id: SvgId) -> Option<SvgContent> {
+        self.renderer.svg_content(icon_id)
     }
 
     fn draw_svg(

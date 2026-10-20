@@ -349,6 +349,7 @@ fn render_taffy_node_body(
                     node_rect,
                     anim_ctx.transition_states,
                     canvas_index,
+                    &|icon_id| renderer.svg_content(icon_id),
                 ) {
                     crate::damage::DrawDamage::Region(rect) => {
                         Rect::union_bounds(&mut damaged, rect);

@@ -42,6 +42,8 @@ bmc-svg-compiler = { path = "../bmc-wasm-runtime/svg-compiler" }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 
 [dev-dependencies]
+# Damage tests compile real SVG icons, as widgets ship them.
+bmc-svg-compiler = { path = "../bmc-wasm-runtime/svg-compiler" }
 rqrr.workspace = true
 # `tracing::subscriber::with_default` is std-gated, and the workspace pins
 # tracing with default features off; the glyph cache's rate-limited

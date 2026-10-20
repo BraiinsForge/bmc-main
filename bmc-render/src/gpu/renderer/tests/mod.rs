@@ -26,6 +26,8 @@ use super::text_draw::femtovg_baseline;
 use super::*;
 
 mod brightness;
+#[cfg(target_os = "linux")]
+mod svg_damage;
 mod svg_tint;
 
 #[cfg(target_os = "linux")]

@@ -93,6 +93,26 @@ pub enum AssetTagState<Id> {
     Unknown,
 }
 
+/// What a registered icon's paths can paint, in its viewBox units.
+#[derive(Debug, Clone, Copy)]
+pub struct SvgContent {
+    /// Every point of the paths that fill or stroke, before stroking.
+    pub bounds: Rect,
+    pub viewbox_w: f32,
+    pub viewbox_h: f32,
+    /// `None` when nothing strokes.
+    pub stroke: Option<StrokeReach>,
+    /// Whether any path fills.
+    pub fills: bool,
+}
+
+/// How far an icon's strokes reach past their points.
+#[derive(Debug, Clone, Copy)]
+pub struct StrokeReach {
+    /// Half the widest stroke, in viewBox units.
+    pub half_width: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetSuspendResult<Id> {
     Suspended(Id),
@@ -408,6 +428,13 @@ pub trait RenderAssets {
     /// The default does not inspect backend state and returns [`AssetTagState::Unknown`].
     fn svg_tag_state(&self, _tag: &str) -> AssetTagState<SvgId> {
         AssetTagState::Unknown
+    }
+
+    /// What a resident icon's paths can paint.
+    ///
+    /// `None` when unknown, which bounds the draw by its whole box.
+    fn svg_content(&self, _icon_id: SvgId) -> Option<SvgContent> {
+        None
     }
 
     /// Draw a registered SVG at the given position and size.

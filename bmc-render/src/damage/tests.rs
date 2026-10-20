@@ -41,8 +41,12 @@ fn square(x: f32, y: f32, side: f32) -> DrawCommand {
     }
 }
 
+fn no_icons(_: SvgId) -> Option<SvgContent> {
+    None
+}
+
 fn damage(draw: &DrawCommand) -> Option<Rect> {
-    canvas_draw_damage(draw, canvas(), &HashMap::new(), 0).region()
+    canvas_draw_damage(draw, canvas(), &HashMap::new(), 0, &no_icons).region()
 }
 
 #[test]
@@ -64,7 +68,7 @@ fn a_quarter_turn_sweeps_the_corner_arc_not_the_whole_disc() {
         inner: Box::new(square(0.0, 0.0, 100.0)),
     };
     let square_canvas = Rect::new(0.0, 0.0, 400.0, 400.0);
-    let rect = canvas_draw_damage(&draw, square_canvas, &HashMap::new(), 0)
+    let rect = canvas_draw_damage(&draw, square_canvas, &HashMap::new(), 0, &no_icons)
         .region()
         .expect("BUG: a rotation of a rect is bounded");
     assert!(rect.x >= 190.0, "left edge stays right of centre: {rect:?}");
@@ -93,7 +97,7 @@ fn a_full_turn_covers_the_disc_through_the_pivot() {
         inner: Box::new(draw),
     };
     let square_canvas = Rect::new(0.0, 0.0, 400.0, 400.0);
-    let rect = canvas_draw_damage(&draw, square_canvas, &HashMap::new(), 0)
+    let rect = canvas_draw_damage(&draw, square_canvas, &HashMap::new(), 0, &no_icons)
         .region()
         .expect("BUG: a rotate animation is bounded");
     assert_eq!(
@@ -318,7 +322,7 @@ fn damage_uses_the_active_transition_easing_after_the_definition_changes() {
         color_space: ColorSpace::default(),
         inner: Box::new(inner),
     };
-    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0)
+    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0, &no_icons)
         .region()
         .expect("BUG: a transition with recorded state is bounded");
 
@@ -406,7 +410,7 @@ fn a_scaled_arc_transition_scales_its_stroke_margin_too() {
         inner: Box::new(inner),
     };
     let square_canvas = Rect::new(0.0, 0.0, 640.0, 640.0);
-    let rect = canvas_draw_damage(&draw, square_canvas, &transitions, 0)
+    let rect = canvas_draw_damage(&draw, square_canvas, &transitions, 0, &no_icons)
         .region()
         .expect("BUG: an arc transition is bounded");
 
@@ -444,7 +448,7 @@ fn a_transition_covers_the_span_between_its_recorded_ends() {
         color_space: ColorSpace::default(),
         inner: Box::new(inner),
     };
-    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0)
+    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0, &no_icons)
         .region()
         .expect("BUG: a transition with recorded state is bounded");
     assert_eq!(
@@ -497,7 +501,7 @@ fn a_thinning_arc_stroke_keeps_the_reach_of_its_thicker_end() {
     let mut from = extract_draw_values(&inner);
     from.arc_width = 24.0;
     let (draw, transitions) = transitioning(inner, from);
-    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0)
+    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0, &no_icons)
         .region()
         .expect("BUG: an arc transition is bounded");
     assert_eq!(
@@ -526,7 +530,7 @@ fn a_sphere_transition_falls_back_to_the_whole_canvas() {
     let (draw, transitions) = transitioning(inner, from);
     assert!(
         matches!(
-            canvas_draw_damage(&draw, canvas(), &transitions, 0),
+            canvas_draw_damage(&draw, canvas(), &transitions, 0, &no_icons),
             DrawDamage::WholeCanvas
         ),
         "a 3D scale and position project outside the declared box"
@@ -589,7 +593,13 @@ fn damage_is_clipped_to_the_canvas() {
 #[test]
 fn a_draw_entirely_outside_the_canvas_damages_nothing() {
     assert!(matches!(
-        canvas_draw_damage(&square(-100.0, -100.0, 10.0), canvas(), &HashMap::new(), 0),
+        canvas_draw_damage(
+            &square(-100.0, -100.0, 10.0),
+            canvas(),
+            &HashMap::new(),
+            0,
+            &no_icons
+        ),
         DrawDamage::Nothing
     ));
 }
@@ -633,7 +643,7 @@ fn a_clock_hand_costs_a_quarter_of_a_deck_screen() {
         color_space: ColorSpace::default(),
         inner: Box::new(rotated),
     };
-    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0)
+    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0, &no_icons)
         .region()
         .expect("BUG: a hand is bounded");
     let share = rect.w * rect.h / (1280.0 * 480.0);
@@ -641,4 +651,217 @@ fn a_clock_hand_costs_a_quarter_of_a_deck_screen() {
         (0.20..0.30).contains(&share),
         "a hand should damage roughly a quarter of the screen, got {share} from {rect:?}"
     );
+}
+
+fn icon(x: f32, y: f32, w: f32, h: f32) -> DrawCommand {
+    DrawCommand::Svg {
+        x,
+        y,
+        w,
+        h,
+        color: Color::from_rgb(1, 2, 3),
+        icon_id: Some(SvgId::from_wire(1).expect("BUG: fixture SVG ID must be non-zero")),
+        anti_alias: true,
+        fills: Vec::new(),
+    }
+}
+
+/// Content of an icon with a 100×100 viewBox that fills and never strokes.
+fn filled(bounds: Rect) -> SvgContent {
+    SvgContent {
+        bounds,
+        viewbox_w: 100.0,
+        viewbox_h: 100.0,
+        stroke: None,
+        fills: true,
+    }
+}
+
+/// The top-right tenth of the viewBox on each axis.
+const TOP_RIGHT_SLIVER: Rect = Rect {
+    x: 90.0,
+    y: 0.0,
+    w: 10.0,
+    h: 10.0,
+};
+
+fn icon_damage(draw: &DrawCommand, content: SvgContent) -> Rect {
+    canvas_draw_damage(draw, canvas(), &HashMap::new(), 0, &|_| Some(content))
+        .region()
+        .expect("BUG: an icon is bounded")
+}
+
+fn scaled_sliver(from: f32, to: f32) -> Rect {
+    let draw = DrawCommand::Modified {
+        animations: vec![scaling(from, to)],
+        transition: None,
+        color_space: ColorSpace::default(),
+        inner: Box::new(icon(100.0, 100.0, 100.0, 100.0)),
+    };
+    icon_damage(&draw, filled(TOP_RIGHT_SLIVER))
+}
+
+fn covers(rect: Rect, x: (f32, f32), y: (f32, f32)) -> bool {
+    rect.x <= x.0 && rect.x + rect.w >= x.1 && rect.y <= y.0 && rect.y + rect.h >= y.1
+}
+
+#[test]
+fn a_still_icon_damages_only_what_its_paths_paint() {
+    let rect = icon_damage(&icon(100.0, 100.0, 100.0, 100.0), filled(TOP_RIGHT_SLIVER));
+    // The sliver covers x 190..200, y 100..110, widened by a fill's fringe
+    // at femtovg's extrusion cap: 1.5 × √600 ≈ 36.7 px.
+    assert_eq!((rect.x, rect.y, rect.w, rect.h), (152.0, 62.0, 86.0, 86.0));
+}
+
+#[test]
+fn an_icon_without_content_damages_its_box() {
+    let rect = canvas_draw_damage(
+        &icon(100.0, 100.0, 100.0, 100.0),
+        canvas(),
+        &HashMap::new(),
+        0,
+        &no_icons,
+    )
+    .region()
+    .expect("BUG: an icon is bounded");
+    assert_eq!((rect.x, rect.y, rect.w, rect.h), (99.0, 99.0, 102.0, 102.0));
+}
+
+/// The renderer scales the icon about its box centre, (150, 150) here,
+/// which moves the sliver rather than growing it in place.
+#[test]
+fn a_shrinking_icon_covers_its_content_pulled_towards_the_box_centre() {
+    let rect = scaled_sliver(1.0, 0.5);
+    assert!(
+        covers(rect, (170.0, 200.0), (100.0, 130.0)),
+        "the sliver sits at x 170..175, y 125..130 at 0.5x: {rect:?}"
+    );
+}
+
+/// A factor that cannot turn negative only slides the sliver along its ray
+/// from the centre, so the bound need not reach the mirrored side.
+#[test]
+fn a_shrinking_icon_stays_on_its_own_side_of_the_box_centre() {
+    let rect = scaled_sliver(1.0, 0.5);
+    assert!(
+        rect.x > 120.0 && rect.y + rect.h < 180.0,
+        "the sliver never crosses x 170 or y 130 at 0.5x..1x, nor its margin x 120 or y 180: {rect:?}"
+    );
+}
+
+#[test]
+fn a_growing_icon_covers_its_content_pushed_away_from_the_box_centre() {
+    let rect = scaled_sliver(1.0, 2.0);
+    assert!(
+        covers(rect, (190.0, 250.0), (50.0, 110.0)),
+        "the sliver sits at x 230..250, y 50..70 at 2x: {rect:?}"
+    );
+}
+
+#[test]
+fn a_mirroring_icon_covers_its_content_across_the_box_centre() {
+    let rect = scaled_sliver(-1.0, 1.0);
+    assert!(
+        covers(rect, (100.0, 200.0), (100.0, 200.0)),
+        "the sliver sits at x 100..110, y 190..200 at -1x: {rect:?}"
+    );
+}
+
+#[test]
+fn a_width_transition_scales_the_content_about_the_box_centre() {
+    let inner = icon(100.0, 100.0, 100.0, 100.0);
+    let mut from = extract_draw_values(&inner);
+    from.w = 200.0;
+    let (draw, transitions) = transitioning(inner, from);
+    let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0, &|_| {
+        Some(filled(TOP_RIGHT_SLIVER))
+    })
+    .region()
+    .expect("BUG: a width transition is bounded");
+    assert!(
+        covers(rect, (190.0, 250.0), (50.0, 110.0)),
+        "starting at twice the width puts the sliver at x 230..250, y 50..70: {rect:?}"
+    );
+}
+
+/// The clock's second hand, compiled and registered as the widget ships it:
+/// a 4-unit sliver of its 398-unit square viewBox,
+/// pivoting 198 units down and ticking 6° about the centre of a 638×480 canvas.
+#[test]
+fn a_letterboxed_clock_hand_damages_its_sweep_not_its_square() {
+    let canvas = Rect::new(0.0, 0.0, 638.0, 480.0);
+    let mut registry = crate::gpu::svg::SvgRegistry::new();
+    let svg = include_str!("../../../widgets-wasm/clock/assets/analog/hand-second.svg");
+    let id = registry
+        .register("hand-second", &bmc_svg_compiler::compile_svg(svg))
+        .expect("BUG: the second hand registers");
+    let hand = registry
+        .get(id)
+        .and_then(|icon| icon.content)
+        .expect("BUG: the second hand paints");
+    assert_eq!(
+        (hand.viewbox_w, hand.viewbox_h),
+        (398.0, 398.0),
+        "the placement below assumes the hand's 398-unit square"
+    );
+    let rotated = DrawCommand::Rotated {
+        angle: 0.0,
+        inner: Box::new(icon(319.0 - 199.0, 240.0 - 198.0, 398.0, 398.0)),
+    };
+    let mut from = extract_draw_values(&rotated);
+    from.rotation = -6.0_f32.to_radians();
+    let (draw, transitions) = transitioning(rotated, from);
+
+    let tight = canvas_draw_damage(&draw, canvas, &transitions, 0, &|_| Some(hand))
+        .region()
+        .expect("BUG: a hand is bounded");
+    let boxed = canvas_draw_damage(&draw, canvas, &transitions, 0, &no_icons)
+        .region()
+        .expect("BUG: a hand is bounded");
+
+    assert!(
+        tight.x <= 317.0 && tight.x + tight.w >= 321.0 && tight.y <= 42.0,
+        "covers the hand at rest: {tight:?}"
+    );
+    assert!(
+        tight.w * tight.h < boxed.w * boxed.h * 0.2,
+        "the sweep must cost a fraction of the square's: {tight:?} vs {boxed:?}"
+    );
+}
+
+/// Past 2²⁰ px the rect's sums lose sub-pixel precision and can cancel.
+#[test]
+fn an_icon_reaching_far_off_its_box_damages_the_whole_canvas() {
+    let far = filled(Rect::new(0.0, 0.0, 1e9, 1e9));
+    let damage = canvas_draw_damage(
+        &icon(100.0, 100.0, 100.0, 100.0),
+        canvas(),
+        &HashMap::new(),
+        0,
+        &|_| Some(far),
+    );
+    assert!(matches!(damage, DrawDamage::WholeCanvas), "got {damage:?}");
+}
+
+/// A shrink cancels a growth composed onto it, so the draw never leaves its box.
+#[test]
+fn a_shrink_and_a_growth_that_cancel_leave_the_box_unscaled() {
+    let half = HostAnimationDef {
+        from: 0.5,
+        to: 0.5,
+        ..scaling(1.0, 1.0)
+    };
+    let double = HostAnimationDef {
+        from: 2.0,
+        to: 2.0,
+        ..scaling(1.0, 1.0)
+    };
+    let draw = DrawCommand::Modified {
+        animations: vec![half, double],
+        transition: None,
+        color_space: ColorSpace::default(),
+        inner: Box::new(square(100.0, 100.0, 20.0)),
+    };
+    let rect = damage(&draw).expect("BUG: scale animations are bounded");
+    assert_eq!((rect.x, rect.y, rect.w, rect.h), (99.0, 99.0, 22.0, 22.0));
 }
