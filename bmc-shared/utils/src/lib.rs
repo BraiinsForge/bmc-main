@@ -20,6 +20,7 @@
 // the grant above.
 
 pub mod asset;
+pub mod language;
 pub mod number_format;
 pub mod process_supervisor;
 pub mod temperature;
