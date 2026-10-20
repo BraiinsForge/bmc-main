@@ -42,6 +42,10 @@ const SETTINGS: Svg = include_svg!("assets/settings.svg");
 const CHECKMARK: Svg = include_svg!("assets/checkmark.svg");
 const WARNING: Svg = include_svg!("assets/warning.svg");
 const SEARCH: Svg = include_svg!("assets/search.svg");
+const HEXAGON: Svg = include_svg!("assets/hexagon.svg");
+/// [`HEXAGON`] with a near-zero segment before the close,
+/// which femtovg keeps and whose joins reach past the shape.
+const HEXAGON_RESIDUE: Svg = include_svg!("assets/hexagon-residue.svg");
 
 thread_local! {
     static COUNTS: RefCell<[u32; 4]> = const { RefCell::new([0; 4]) };
@@ -167,7 +171,14 @@ fn animations_section(time: &SystemTime) -> Node {
         [
             text("Animations", style!(size: 20, color: GRAY_10)),
             text("Pulse + Spin + Color", style!(size: 14, color: GRAY_40)),
-            pulse_canvas(64.0),
+            row(
+                props!(gap: 8.0),
+                [
+                    pulse_canvas(64.0),
+                    pulse_svg_canvas(64.0, &HEXAGON),
+                    pulse_svg_canvas(64.0, &HEXAGON_RESIDUE),
+                ],
+            ),
             text("Clock", style!(size: 14, color: GRAY_40)),
             clock_canvas(128.0, hour_angle, minute_angle, second_angle),
         ],
@@ -175,11 +186,21 @@ fn animations_section(time: &SystemTime) -> Node {
 }
 
 fn pulse_canvas(size: f32) -> Node {
+    pulse(size, Draw::rect(0.0, 0.0, size * 0.5, size * 0.5, RED_50))
+}
+
+fn pulse_svg_canvas(size: f32, svg: &Svg) -> Node {
+    pulse(
+        size,
+        Draw::svg(0.0, 0.0, size * 0.5, size * 0.5, svg, RED_50),
+    )
+}
+
+fn pulse(size: f32, draw: Draw) -> Node {
     canvas(
         props!(width: size, height: size),
         [Draw::centered(
-            Draw::rect(0.0, 0.0, size * 0.5, size * 0.5, RED_50)
-                .animate(Rotate, 0.0, TAU, 4_000, Linear, Forever)
+            draw.animate(Rotate, 0.0, TAU, 4_000, Linear, Forever)
                 .animate(Scale, 0.5, 1.0, 1_000, EaseInOut, PingPong)
                 .animate_color(RED_50, GREEN_50, 3_000, EaseInOut, PingPong),
         )],
