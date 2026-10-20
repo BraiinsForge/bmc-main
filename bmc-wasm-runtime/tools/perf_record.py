@@ -1,4 +1,5 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env nix
+#!nix shell ../..#python-tools --command python3
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -168,8 +169,8 @@ def print_summary(report_dir: Path) -> None:
     # Absolute paths so the hints work regardless of the caller's cwd.
     combined = (report_dir / 'combined.json.gz').resolve()
     print(f'\nView:    samply load {combined}')
-    print(f'Analyze: uv run tools/perf_analyze.py {combined}')
-    print('Compare: uv run tools/perf_compare.py reports/*/')
+    print(f'Analyze: tools/perf_analyze.py {combined}')
+    print('Compare: tools/perf_compare.py reports/*/')
 
 
 @dataclass(frozen=True)

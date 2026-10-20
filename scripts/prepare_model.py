@@ -1,4 +1,5 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env nix
+#!nix shell ..#python-tools --command python3
 # Copyright (C) 2026  Braiins Forge s.r.o.
 #
 # This program is free software: you can redistribute it and/or modify
