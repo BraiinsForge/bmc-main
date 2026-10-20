@@ -34,6 +34,7 @@
 , wasmWidgetCatalog
 , profile
 , openwrtFeatures ? [ ]
+, bmcVersion ? null
 }:
 let
   inherit (bmc.lib) mkWidgetPackage;
@@ -94,8 +95,8 @@ let
     shippableCatalog;
 in
 wasmWidgetPackages // {
-  core = import ./pkgs/core {
-    inherit bmc armv7Pkgs deps profile openwrtFeatures wasmLauncher;
+  core = armv7Pkgs.callPackage ./pkgs/core {
+    inherit bmc armv7Pkgs deps profile openwrtFeatures wasmLauncher bmcVersion;
     wasmHost = host;
     widgets = wasmWidgetPackages;
   };

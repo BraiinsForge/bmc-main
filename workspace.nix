@@ -664,11 +664,22 @@ let
     profile = bmc.profiles.armv7-glibc-release;
   };
 
+  # See docs/devel/upgrades.md for the stamp grammar.
+  defaultBmcVersion =
+    let
+      rev = self.rev or self.dirtyRev or null;
+      date = self.lastModifiedDate;
+      day = "${lib.substring 0 4 date}.${lib.substring 4 2 date}.${lib.substring 6 2 date}";
+    in
+    if rev == null then null
+    else "${day}-${lib.substring 0 8 rev}-dev${lib.optionalString (self ? dirtyRev) "-dirty"}";
+
   armv7PackageDefs = import ./nix/packages.nix {
     inherit bmc armv7Pkgs deps;
     inherit wasmWidgetCatalog;
     profile = bmc.profiles.armv7-glibc-release;
     openwrtFeatures = [ ];
+    bmcVersion = defaultBmcVersion;
     inherit (wasmWidgetsModule) wasmWidgets thin host wasmLauncher mkWasmWidget;
   };
 
@@ -683,6 +694,7 @@ let
     inherit wasmWidgetCatalog;
     profile = bmc.profiles.armv7-glibc-debug;
     openwrtFeatures = [ "profiling" ];
+    bmcVersion = defaultBmcVersion;
     inherit (wasmWidgetsModuleDebug) wasmWidgets thin host wasmLauncher mkWasmWidget;
   };
 

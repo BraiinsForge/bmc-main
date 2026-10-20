@@ -23,7 +23,10 @@
 # `profile` and `openwrtFeatures` are supplied by the caller so a debug build
 # can flip on the compositor's `profiling` feature (ii-stopwatch timing + the
 # mesh::profile observability channel) without forking this file.
-{ bmc, armv7Pkgs, deps, profile, wasmLauncher, wasmHost, widgets, openwrtFeatures ? [ ] }:
+{ bmc, armv7Pkgs, deps, profile, wasmLauncher, wasmHost, widgets, openwrtFeatures ? [ ], bmcVersion ? null }:
+assert armv7Pkgs.lib.assertMsg
+  (bmcVersion == null || builtins.match "[[:space:]]*" bmcVersion == null)
+  "core: bmcVersion must not be blank, an empty /etc/bmc_version reads as no version";
 let
   inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
     mkOpenWrtService mkOpenWrtDaemon;
@@ -318,10 +321,22 @@ let
     inherit (corePackage) name;
     paths = [ corePackage autoinstall ];
   };
-  package =
+  unstamped =
     if widgetAutoinstall.pkg == null
     then corePackage
     else joinWidgetAutoinstall widgetAutoinstall.pkg;
+
+  # Joined on top rather than listed in copyFiles, so a different version
+  # moves only this farm and every path core links to stays the same.
+  versionFile = armv7Pkgs.writeTextDir "special/copy/etc/bmc_version" "${bmcVersion}\n";
+  package =
+    if bmcVersion == null
+    then unstamped
+    else
+      armv7Pkgs.symlinkJoin {
+        inherit (corePackage) name;
+        paths = [ unstamped versionFile ];
+      };
 
   widgetAutoinstallJoinTest =
     let
@@ -365,7 +380,7 @@ let
 
   packageWithTests = package.overrideAttrs (old: {
     passthru = (old.passthru or { }) // {
-      inherit bmcSystemConfig wasmHost wasmLauncher widgetAutoinstall;
+      inherit bmcSystemConfig wasmHost wasmLauncher widgetAutoinstall unstamped;
       tests.activation = nixConfActivationTest;
       tests.activator = nixActivatorTest;
       tests.compositor-service = bmcCompositorServiceTest;
@@ -383,4 +398,6 @@ in
   description = "Core system package (bmc-openwrt + activation/hooks)";
   upgrade_strategy = null;
   install_strategy = null;
+} // armv7Pkgs.lib.optionalAttrs (bmcVersion != null) {
+  metadata = { bmc_version = bmcVersion; };
 }
