@@ -103,6 +103,12 @@ terminal shutdown, and the scene lifecycle events delivered over Wayland.
 Why the frontend and backend treat changes to their shared gRPC schema as one atomic product change, without preserving
 obsolete RPCs and fields, compatibility shims, or protobuf reservations solely for older frontend builds.
 
+### [User-Facing Copy](../../.ai/skills/bmc-ui-copy/SKILL.md)
+
+How every sentence a person reads is declared and translated: `format_message!` or `formatMessage` at the use site, a
+lazy `bmc_intl_message::Message` in a crate with no formatter, the ICU traps the gates refuse, and the
+`just intl::extract` / `verify` / `untranslated` round trip.
+
 ### [Scene Management gRPC](grpc/scene-management.md)
 
 Frontend-facing API contract for scene and widget management. Covers `SceneManagementService` RPCs, full-update
