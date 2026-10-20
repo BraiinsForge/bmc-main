@@ -93,6 +93,29 @@ class Index(TypedDict):
     releases: NotRequired[list[Entry]]
 
 
+# What `index_document` writes: every field the schema requires, unlike the lax reading side.
+class ReleaseMetadata(TypedDict):
+    bmc_version: str
+    is_major: bool
+    release_date: str
+    description: str
+    assets: dict[str, Asset]
+
+
+class ReleaseDocument(TypedDict):
+    uuid: str
+    metadata_version: str
+    metadata: ReleaseMetadata
+
+
+class IndexDocument(TypedDict):
+    type: str
+    status: str
+    title: str
+    version: str
+    releases: list[ReleaseDocument]
+
+
 def parse_releases(document: str, *, asset_key: str = PLATFORM_ASSET_KEY) -> list[Release]:
     """The releases in an index document that ship an `asset_key` asset,
     in the document's own order.
@@ -164,19 +187,17 @@ def index_document(  # noqa: PLR0913
             },
         },
     )
-    return json.dumps(
-        {
-            "type": "bmc",
-            "status": "Active",
-            "title": "BDK-609 e2e firmware releases",
-            "version": "v1",
-            "releases": [running_release, image_release],
-        },
-        indent=2,
-    )
+    document: IndexDocument = {
+        "type": "bmc",
+        "status": "Active",
+        "title": "BDK-609 e2e firmware releases",
+        "version": INDEX_VERSION,
+        "releases": [running_release, image_release],
+    }
+    return json.dumps(document, indent=2)
 
 
-def _release_document(version: BosVersion, asset: str | dict[str, object]) -> dict[str, object]:
+def _release_document(version: BosVersion, asset: Asset) -> ReleaseDocument:
     return {
         "uuid": release_uuid(version.canonical),
         "metadata_version": "v1",
