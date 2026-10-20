@@ -108,7 +108,7 @@ impl bmc::BmcManager for Manager {
     type SessionManager = MockSessionManager;
 
     async fn version(&self) -> Option<BosVersion> {
-        Some(BosVersion::new(&25, &7))
+        Some(BosVersion::new(&"2026-05-21-0-e05df053-26.05-plus", &""))
     }
 
     async fn packages_version(&self) -> Option<String> {
