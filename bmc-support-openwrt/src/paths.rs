@@ -38,3 +38,16 @@ pub const BMC_FS_PATHS: &[&str] = &[
     BMC_CONFIG_DIR,
     "/etc/nix-upgrade",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::BMC_FS_PATHS;
+
+    #[test]
+    fn the_archive_collects_the_installed_packages_version() {
+        assert!(
+            BMC_FS_PATHS.contains(&"/etc/bmc_version"),
+            "support triage needs the packages version the device ran"
+        );
+    }
+}
