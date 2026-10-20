@@ -231,3 +231,8 @@ position) before flashing or before the reboot that loads the new firmware.
 To exercise a widget's dormant/wake path (e.g. the image cache's RAM reclaim), the config needs **≥4 enabled scenes**:
 the compositor keeps the active scene `Visible` and both cycle neighbours `Prepared`, so only a non-neighbour scene
 reaches `Dormant`. With 2–3 enabled scenes nothing ever goes dormant, and the evict/restore path never fires.
+
+### Measuring the widget host before and after a change
+
+Comparing `bmc-wasm-host` memory or startup against master follows the procedure and scripts in
+[`.ai/skills/bmc-deck-host-measurement/`](../.ai/skills/bmc-deck-host-measurement/SKILL.md).
