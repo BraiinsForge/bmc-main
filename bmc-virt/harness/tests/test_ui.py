@@ -114,7 +114,10 @@ def test_raises_before_capturing_when_not_a_tty(monkeypatch: pytest.MonkeyPatch)
 def test_panel_is_rendered_to_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
     """Smoke test: the instruction message reaches the user-visible console."""
     buffer = io.StringIO()
-    monkeypatch.setattr(ui.out, "file", buffer)
+    # `_file`, not `file`: the property's getter resolves `sys.stdout` now,
+    # and restoring that value would pin the shared console
+    # to this test's capture for every later test.
+    monkeypatch.setattr(ui.out, "_file", buffer)
 
     _ = ui.instruct_user("Tap +D20")
 
