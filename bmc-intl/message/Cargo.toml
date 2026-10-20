@@ -1,0 +1,12 @@
+[package]
+name = "bmc-intl-message"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A message declared where its data is and formatted later, by whichever formatter knows the language"
+
+[dependencies]
+formatjs_intl_macros.workspace = true
+
+[lints]
+workspace = true

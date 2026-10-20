@@ -63,6 +63,21 @@ skip = [
     { crate = "hashbrown@0.15" },
     { crate = "hashbrown@0.16" },
 
+    # formatjs_intl_macros (proc-macro, build host only) hashes message ids
+    # with the sha2 0.11 line, while the workspace's sha1/sha2 stay on 0.10.
+    # Remove once the workspace digests move to 0.11.
+    { crate = "sha2@0.11" },
+    { crate = "digest@0.11" },
+    { crate = "block-buffer@0.12" },
+    { crate = "crypto-common@0.2" },
+    { crate = "cpufeatures@0.3" },
+
+    # formatjs_intl_macros and the ICU4X 2 derives (zerovec-derive, yoke-derive)
+    # parse with syn 3 and synstructure 0.14; every other derive is still on syn 2.
+    # Remove once they move.
+    { crate = "syn@3" },
+    { crate = "synstructure@0.14" },
+
     # Wayland/Smithay ecosystem splits
     { crate = "calloop@0.13" },
 

@@ -15,6 +15,7 @@ members = [
     "bmc-gpio",
     "bmc-gpu-render-lock",
     "bmc-grpc",
+    "bmc-intl/*",
     "bmc-ipc",
     "bmc-kobject",
     "bmc-led",
@@ -224,6 +225,8 @@ bmc-field-schema = { path = "bmc-field-schema" }
 bmc-gpio = { path = "bmc-gpio" }
 bmc-gpu-render-lock = { path = "bmc-gpu-render-lock" }
 bmc-grpc = { path = "bmc-grpc", default-features = false }
+bmc-intl = { path = "bmc-intl/core" }
+bmc-intl-message = { path = "bmc-intl/message" }
 bmc-ipc = { path = "bmc-ipc" }
 bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led", default-features = false }
@@ -316,6 +319,10 @@ flate2 = { version = "1.0.30", default-features = false }
 flume = { version = "0.12.0", default-features = false }
 foldhash = { version = "0.2", default-features = false }
 form_urlencoded = { version = "1.2", default-features = false, features = ["alloc"] }
+formatjs_icu_messageformat = { version = "=0.3.1", default-features = false }
+formatjs_icu_messageformat_parser = { version = "=1.1.1", default-features = false }
+formatjs_intl = "=2.2.1"
+formatjs_intl_macros = "=1.1.1"
 formato = "0.3.0"
 fs-err = { version = "3.1.0", features = ["tokio"] }
 futures = "0.3.31"
@@ -343,6 +350,7 @@ humantime-serde = "1.1.1"
 hyper = "1.6.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
 iana-time-zone = "0.1.63"
+icu_locale_core = { version = "2.3.0", default-features = false }
 ii-stopwatch = { path = "bmc-shared/stopwatch" }
 # `default-formats` minus
 #  - avif (pulls the heavy ravif/rav1e stack)
