@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
-# Fonts embedded via include_bytes! from the top-level assets tree, this crate's
-# own icon/bitmap/mesh assets (build.rs and its scenes), plus the few cross-crate
-# assets those `*.scene.rs` reference. The nix source filter keeps only
-# rust/toml/lock unless a crate opts extra files here.
+# Fonts read at compile time by `face!` from the top-level assets tree,
+# this crate's own icon/bitmap/mesh assets (build.rs and its scenes),
+# plus the few cross-crate assets those `*.scene.rs` reference.
+#
+# The nix source filter keeps only rust/toml/lock unless
+# a crate opts extra files here.
 [package.metadata.nix]
 include = [
     "../assets/fonts/*",
@@ -33,6 +35,7 @@ hashbrown.workspace = true
 image.workspace = true
 imgref.workspace = true
 jpeg-decoder.workspace = true
+memmap2.workspace = true
 qrcodegen.workspace = true
 rgb.workspace = true
 taffy.workspace = true
@@ -45,6 +48,7 @@ bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 # Damage tests compile real SVG icons, as widgets ship them.
 bmc-svg-compiler = { path = "../bmc-wasm-runtime/svg-compiler" }
 rqrr.workspace = true
+tempfile.workspace = true
 # `tracing::subscriber::with_default` is std-gated, and the workspace pins
 # tracing with default features off; the glyph cache's rate-limited
 # diagnostics can only be counted by attaching a subscriber in-test.

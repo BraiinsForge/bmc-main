@@ -27,6 +27,7 @@
 #
 # Commands:
 #   compositor [device-ip]        - deploy bmc-openwrt binary
+#   host [device-ip]              - deploy bmc-wasm-host binary and its font store path
 #   widget <name> [device-ip]     - deploy a widget by name (e.g. flip-clock)
 #
 # Examples:
@@ -44,8 +45,10 @@ set -euo pipefail
 
 profile="/run/current-profile"
 deploy_dir="/mnt/data/tmp/cargo-deploy"
+# Store paths the binary reads at runtime, copied along with its linker and libraries.
+store_paths=()
 
-cmd="${1:?Usage: nix-cargo-deploy.sh <compositor|widget> ...}"
+cmd="${1:?Usage: nix-cargo-deploy.sh <compositor|host|widget> ...}"
 shift
 label="$cmd"
 
@@ -61,6 +64,19 @@ compositor)
     bin_name="bmc-openwrt"
     profile_path="${profile}/bin/bmc-openwrt"
     ;;
+host)
+    device="${1:-${DEVICE_IP:?Set DEVICE_IP or pass as argument}}"
+    # The host maps its fonts from this path at start; a checkout path does not exist on the device.
+    if [[ ${BMC_FONTS_DIR:-} != /nix/store/* ]]; then
+        echo "Error: BMC_FONTS_DIR must be the font store path, got '${BMC_FONTS_DIR:-}'."
+        echo "Run this from an armv7 dev shell, such as .#armv7-glibc-release."
+        exit 1
+    fi
+    local_bin="${bin_dir}/bmc-wasm-host"
+    bin_name="bmc-wasm-host"
+    profile_path="${profile}/bin/bmc-wasm-host"
+    store_paths=("$BMC_FONTS_DIR")
+    ;;
 widget)
     name="${1:?Usage: nix-cargo-deploy.sh widget <name> [device-ip]}"
     shift
@@ -72,7 +88,7 @@ widget)
     ;;
 *)
     echo "Unknown command: ${cmd}"
-    echo "Usage: nix-cargo-deploy.sh <compositor|widget> ..."
+    echo "Usage: nix-cargo-deploy.sh <compositor|host|widget> ..."
     exit 1
     ;;
 esac
@@ -114,7 +130,7 @@ interp=$(patchelf --print-interpreter "$local_bin")
 rpath=$(patchelf --print-rpath "$local_bin" | tr ':' '\n' | grep '^/nix/store/' | tr '\n' ' ')
 # shellcheck disable=SC2086 # Intentional word splitting on space-separated store paths
 nix copy --to "ssh://root@${device}?remote-program=/run/current-profile/bin/nix-store" \
-    "$interp" $rpath
+    "$interp" $rpath "${store_paths[@]}"
 
 # Back up the original binary (only on first deploy)
 # shellcheck disable=SC2029 # Intentional client-side expansion

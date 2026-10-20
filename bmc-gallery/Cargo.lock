@@ -861,6 +861,7 @@ dependencies = [
  "image",
  "imgref",
  "jpeg-decoder",
+ "memmap2",
  "qrcodegen",
  "rgb",
  "taffy",

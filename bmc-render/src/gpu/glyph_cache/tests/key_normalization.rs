@@ -23,11 +23,12 @@ use super::*;
 const SANS: &str = "Braiins Sans";
 const DECK_SANS: &str = "Braiins Deck Sans";
 
-/// Shape through the embedded faces, exactly as the draw path does,
+/// Shape through the shipped faces, exactly as the draw path does,
 /// and take the first glyph's physical key — so `font_id`, `font_weight`
 /// and flags are the ones production really produces.
 fn shape_one_glyph(text: &str, font_size: f32, family: &str) -> cosmic_text::CacheKey {
-    let mut font_system = crate::gpu::renderer::build_font_system();
+    let mut font_system =
+        crate::gpu::renderer::build_font_system(crate::gpu::renderer::Fonts::shared());
     let mut buffer = cosmic_text::Buffer::new(
         &mut font_system,
         cosmic_text::Metrics::new(font_size, font_size),

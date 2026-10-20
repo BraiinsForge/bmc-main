@@ -25,6 +25,7 @@
 , crates
 , deckPackages
 , frontend
+, fonts
 , protoPlugins
 , frontendNodeModules
 , wasmExamples
@@ -144,6 +145,11 @@ in
   deck-runtime-closure = pkgs.runCommand "deck-runtime-closure" { } ''
     if grep -E "/[0-9a-z]{32}-(${forbiddenDeckRuntimePattern})(-|$)" ${deckRuntimeClosure}/store-paths; then
       echo "forbidden package entered the active Deck runtime closure (bos-avahi excluded)" >&2
+      exit 1
+    fi
+    # Only the host's baked BMC_FONTS_DIR brings the faces along.
+    if ! grep -qFx '${fonts}' ${deckRuntimeClosure}/store-paths; then
+      echo "the font store path is missing from the Deck runtime closure" >&2
       exit 1
     fi
     if [ -n "$(find -L ${frontend} -type f -name '*.map' -print -quit)" ]; then

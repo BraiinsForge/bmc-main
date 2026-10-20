@@ -159,7 +159,7 @@ fn cutoff_is_continuous_under_rotation() {
     let cached = DIRECT_PATH_CUTOFF_PX;
     let direct = DIRECT_PATH_CUTOFF_PX + 1.0;
 
-    let mut probe = super::build_font_system();
+    let mut probe = super::build_font_system(super::Fonts::shared());
     let kerning = divergent_kerning_pair(&mut probe, direct);
     drop(probe);
 

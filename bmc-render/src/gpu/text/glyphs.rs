@@ -26,6 +26,7 @@ use super::shaping::PositionedGlyphInfo;
 use crate::gpu::glyph_cache::{
     GlyphCache, GlyphLookup, GlyphQuad, PageBackend, PageCreateFailed, PageFaultKind, RasterGlyph,
 };
+use crate::gpu::renderer::FACES;
 use crate::tree::TextStyle;
 use cosmic_text::FontSystem;
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
@@ -91,19 +92,6 @@ pub(crate) const DIRECT_PATH_CUTOFF_PX: f32 = 92.0;
 /// no shipped face has a true italic.
 pub(super) const FAKE_ITALIC_SKEW_DEGREES: f32 = 14.0;
 
-/// The embedded faces in load order, as `(post_script_name, weight)`.
-/// [`build_font_table`] zips this order with femtovg's, so a divergence here
-/// would map every glyph to the wrong face.
-const EMBEDDED_FACES: [(&str, u16); 7] = [
-    ("BraiinsSans", 400),
-    ("BraiinsSans-SemiBold", 600),
-    ("BraiinsSans-Bold", 700),
-    ("BraiinsDeckSans-Regular", 400),
-    ("BraiinsDeckSans-SemiBold", 600),
-    ("BraiinsDeckSans-Bold", 700),
-    ("NotoSans-Regular", 400),
-];
-
 /// cosmic-text's per-glyph face choice,
 /// translated into femtovg's handle for the same font binary.
 pub(crate) struct FontTable {
@@ -115,33 +103,29 @@ impl FontTable {
         self.pairs
             .iter()
             .find_map(|&(face, font)| (face == id).then_some(font))
-            .expect("BUG: a glyph came from a face outside the embedded font set")
+            .expect("BUG: a glyph came from a face outside the loaded font set")
     }
 }
 
 /// Pair each cosmic-text face, positionally,
-/// with the femtovg font registered from the same bytes.
+/// with the femtovg font registered from the same mapping.
 ///
 /// femtovg's [`FontId`] is opaque, so no pair can be *queried* for correctness —
-/// it holds by construction, both libraries being fed the same seven byte arrays
-/// in the same order. The check against [`EMBEDDED_FACES`] is unconditional:
+/// it holds by construction, both libraries being fed the same seven mappings
+/// in the same order. The check against [`FACES`] is unconditional:
 /// `faces()` iterates fontdb's private slot map, and a release build whose order
 /// had silently diverged would map glyphs to the wrong fonts forever after.
 /// Seven faces once at init cost nothing.
 pub(crate) fn build_font_table(
     font_system: &FontSystem,
-    femtovg_ids: &[FontId; EMBEDDED_FACES.len()],
+    femtovg_ids: &[FontId; FACES.len()],
 ) -> FontTable {
     let faces: Vec<_> = font_system.db().faces().collect();
-    assert_eq!(
-        faces.len(),
-        EMBEDDED_FACES.len(),
-        "BUG: font table order diverged"
-    );
-    for (face, expected) in faces.iter().zip(EMBEDDED_FACES) {
+    assert_eq!(faces.len(), FACES.len(), "BUG: font table order diverged");
+    for (face, expected) in faces.iter().zip(&FACES) {
         assert_eq!(
             (face.post_script_name.as_str(), face.weight.0),
-            expected,
+            (expected.post_script_name, expected.weight),
             "BUG: font table order diverged"
         );
     }

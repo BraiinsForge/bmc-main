@@ -34,9 +34,6 @@ use super::{
 };
 use crate::gpu::glyph_cache::{GlyphCache, GlyphKey, test_support::MockBackend};
 
-const SANS: &[u8] = include_bytes!("../../../../../assets/fonts/BraiinsSans-Regular.otf");
-const DECK_SANS: &[u8] = include_bytes!("../../../../../assets/fonts/BraiinsDeckSans-Regular.otf");
-
 /// Fractional on both axes and in both directions,
 /// so a rule that rounded x or truncated y would show.
 const ORIGIN_X: f32 = 10.7;
@@ -219,23 +216,10 @@ fn italic_delegation_composes_with_outer_transform() {
 /// `fill_glyph_run` takes one font for the whole run.
 #[test]
 fn oversized_runs_chunk_per_font_and_break_at_fake_italic() {
-    // Fonts live in femtovg's text context, not on the canvas,
-    // so real `FontId`s cost no GL context here.
-    let fonts = femtovg::TextContext::default();
-    let sans = fonts
-        .add_font_mem(SANS)
-        .expect("BUG: font registration failed");
-    let deck = fonts
-        .add_font_mem(DECK_SANS)
-        .expect("BUG: font registration failed");
-
     let mut font_system = font_system();
-    let font_table = FontTable {
-        pairs: vec![
-            (face_id(&font_system, "BraiinsSans"), sans),
-            (face_id(&font_system, "BraiinsDeckSans-Regular"), deck),
-        ],
-    };
+    let (_fonts, font_table) = loaded_font_table(&font_system);
+    let sans = font_table.femtovg_font(face_id(&font_system, "BraiinsSans"));
+    let deck = font_table.femtovg_font(face_id(&font_system, "BraiinsDeckSans-Regular"));
     let size = DIRECT_PATH_CUTOFF_PX + 1.0;
     let mut buffer = Buffer::new(&mut font_system, Metrics::new(size, size));
     buffer.set_rich_text(
@@ -461,23 +445,8 @@ fn cached_quads_sit_at_the_snapped_origin() {
 
 // ── Boundary goldens ────────────────────────────────────────────
 
-/// The seven faces `build_font_system` loads, in its order.
-/// [`build_font_table`] pairs the two libraries positionally,
-/// so a fallback glyph resolves only when the whole set is registered.
-///
-/// [`build_font_table`]: super::build_font_table
-const EMBEDDED_FONTS: [&[u8]; 7] = [
-    SANS,
-    include_bytes!("../../../../../assets/fonts/BraiinsSans-SemiBold.otf"),
-    include_bytes!("../../../../../assets/fonts/BraiinsSans-Bold.otf"),
-    DECK_SANS,
-    include_bytes!("../../../../../assets/fonts/BraiinsDeckSans-SemiBold.otf"),
-    include_bytes!("../../../../../assets/fonts/BraiinsDeckSans-Bold.otf"),
-    include_bytes!("../../../../../assets/fonts/NotoSans-Regular.ttf"),
-];
-
 /// Greek variant letters no Braiins face carries —
-/// verified against the embedded cmaps, every one of them shapes to Noto.
+/// verified against the shipped cmaps, every one of them shapes to Noto.
 /// Plain Greek would not do: the Braiins faces cover it,
 /// and a string that never leaves the primary face
 /// proves nothing about the fallback.
@@ -487,18 +456,16 @@ const GREEK_FALLBACK: &str = "ϖϑϰϱϵ";
 /// without its canvas: fonts live in the text context, so real `FontId`s
 /// cost no GL context here. The context is returned because the ids index
 /// into it.
-fn embedded_font_table(font_system: &FontSystem) -> (femtovg::TextContext, FontTable) {
+fn loaded_font_table(font_system: &FontSystem) -> (femtovg::TextContext, FontTable) {
     let fonts = femtovg::TextContext::default();
-    let ids = EMBEDDED_FONTS.map(|data| {
-        fonts
-            .add_font_mem(data)
-            .expect("BUG: font registration failed")
-    });
+    let ids = crate::gpu::renderer::Fonts::shared()
+        .register_femtovg(&fonts)
+        .expect("BUG: font registration failed");
     let table = super::build_font_table(font_system, &ids);
     (fonts, table)
 }
 
-/// The one visual line `text` shapes to through the embedded faces.
+/// The one visual line `text` shapes to through the shipped faces.
 fn shape_line(
     font_system: &mut FontSystem,
     text: &str,
@@ -717,7 +684,7 @@ fn all_baselines_place_against_cosmic_metrics() {
 fn cutoff_is_continuous() {
     let mut font_system = font_system();
     let mut swash = SwashCache::new();
-    let (_fonts, font_table) = embedded_font_table(&font_system);
+    let (_fonts, font_table) = loaded_font_table(&font_system);
     let cached_size = DIRECT_PATH_CUTOFF_PX;
     let direct_size = DIRECT_PATH_CUTOFF_PX + 1.0;
 
@@ -785,7 +752,7 @@ fn cutoff_is_continuous() {
 fn delegated_runs_carry_cosmic_kerning() {
     let size = DIRECT_PATH_CUTOFF_PX + 1.0;
     let mut font_system = font_system();
-    let (_, font_table) = embedded_font_table(&font_system);
+    let (_, font_table) = loaded_font_table(&font_system);
     let divergent = super::divergent_kerning_pair(&mut font_system, size);
 
     let line = shape_line(&mut font_system, divergent, size, false);
@@ -837,7 +804,7 @@ fn face_id(font_system: &FontSystem, post_script_name: &str) -> cosmic_text::fon
         .db()
         .faces()
         .find(|face| face.post_script_name == post_script_name)
-        .expect("BUG: the embedded set has no such face")
+        .expect("BUG: the shipped set has no such face")
         .id
 }
 

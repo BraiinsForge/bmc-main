@@ -183,7 +183,7 @@ fn line_attrs(style: LineStyle) -> Attrs<'static> {
         .family(Family::Name(family_name))
         .weight(Weight(u16::from(style.weight)));
 
-    // Every embedded face is upright, so `Style::Italic` is what makes cosmic-text
+    // Every shipped face is upright, so `Style::Italic` is what makes cosmic-text
     // flag the glyphs `FAKE_ITALIC` and the rasterizer skew them.
     if style.italic {
         attrs.style(Style::Italic)

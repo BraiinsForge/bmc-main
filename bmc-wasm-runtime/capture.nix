@@ -22,7 +22,7 @@
 #
 # Source-filtered to avoid recompilation when unrelated workspace crates change.
 # Wrapped with runtime deps (odiff, ffmpeg, mesa llvmpipe) for headless CI use.
-{ pkgs, commonDeps, profiles, wasmExamples, wasmWidgetsBundle, wasmStackSize }:
+{ pkgs, commonDeps, profiles, wasmExamples, wasmWidgetsBundle, wasmStackSize, fonts }:
 let
   lib = pkgs.lib;
   inherit (pkgs) ii;
@@ -35,6 +35,8 @@ let
 
   unwrapped = profiles.ci.buildCrate crate {
     features = [ "capture" ];
+    # The checkout is gone by the time a capture runs.
+    env.BMC_FONTS_DIR = "${fonts}";
   };
 
   # Shell wrapper that bundles runtime dependencies and forces software

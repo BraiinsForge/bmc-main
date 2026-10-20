@@ -32,7 +32,7 @@ use bmc_wasm_protocol::{
 };
 
 use crate::gpu::mesh::MeshDrawArgs;
-use crate::gpu::renderer::{build_font_system, sans_line_style};
+use crate::gpu::renderer::{Fonts, build_font_system, sans_line_style};
 use crate::gpu::text::ParagraphLayoutCache;
 use crate::renderer::prelude::*;
 use crate::tree::{AutoFit, SpanData, TextStyle};
@@ -100,7 +100,7 @@ impl ShapingRecorder {
             rects: Vec::new(),
             rounded_rects: Vec::new(),
             strokes: Vec::new(),
-            font_system: build_font_system(),
+            font_system: build_font_system(Fonts::shared()),
             layouts: ParagraphLayoutCache::new(),
             width,
             height,

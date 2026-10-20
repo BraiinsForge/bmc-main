@@ -26,6 +26,7 @@ use super::text_draw::femtovg_baseline;
 use super::*;
 
 mod brightness;
+mod fonts;
 #[cfg(target_os = "linux")]
 mod outline_stroke;
 #[cfg(target_os = "linux")]

@@ -64,7 +64,7 @@ fn corpus(font_system: &mut FontSystem) -> Vec<(fontdb::ID, fontdb::Weight, u16)
 
 #[test]
 fn corpus_rasterizes_within_page_bounds() {
-    let mut font_system = crate::gpu::renderer::build_font_system();
+    let mut font_system = super::font_system();
     let mut swash = cosmic_text::SwashCache::new();
 
     let mut rasterized = 0_usize;
@@ -105,7 +105,7 @@ fn corpus_rasterizes_within_page_bounds() {
 
 #[test]
 fn fake_italic_key_produces_skewed_coverage() {
-    let mut font_system = crate::gpu::renderer::build_font_system();
+    let mut font_system = super::font_system();
     let mut swash = cosmic_text::SwashCache::new();
 
     let (id, weight, _) = corpus(&mut font_system)

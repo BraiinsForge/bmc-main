@@ -47,11 +47,7 @@ mod assets;
 mod fonts;
 mod geometry;
 mod render_targets;
-pub(crate) use fonts::build_font_system;
-use fonts::{
-    FONT_BOLD, FONT_DECK_BOLD, FONT_DECK_REGULAR, FONT_DECK_SEMIBOLD, FONT_FALLBACK, FONT_REGULAR,
-    FONT_SEMIBOLD,
-};
+pub(crate) use fonts::{FACES, Fonts, build_font_system};
 use geometry::{
     ARC_CHUNK_MAX, ARC_SEAM_EPS, arc_color_at, arc_point, arc_spans, arc_to_femtovg_angle,
     build_femtovg_path, chunk_span, paint_for_fill, sweep_fraction,
@@ -345,9 +341,14 @@ impl FemtoVgRenderer {
     /// The `fbo_id` is the OpenGL framebuffer object that FemtoVG should render to.
     /// This is typically the staging FBO from the EGL two-FBO pipeline.
     ///
-    /// Loads BraiinsSans fonts into both FemtoVG (for GPU glyph rendering) and
-    /// cosmic-text (for paragraph shaping/layout). The cosmic-text `FontSystem`
-    /// uses an empty DB with only the embedded fonts — no system font discovery.
+    /// Maps the font faces once and hands the mappings to both FemtoVG
+    /// (for glyphs above the cutoff) and cosmic-text (for shaping and the glyph cache).
+    /// The cosmic-text `FontSystem` holds only those faces — no system font discovery.
+    ///
+    /// # Errors
+    ///
+    /// Fails when GL setup fails, or when a font face cannot be mapped, holds another face
+    /// than its file is named for, or is refused by femtovg; a font error names the file.
     ///
     /// # Safety
     /// `load_fn` must return valid OpenGL function pointers for the current GL context.
@@ -380,22 +381,13 @@ impl FemtoVgRenderer {
             tracing::info!("FBO id is 0, using default screen target");
         }
 
-        let mut canvas = Canvas::new(gl_renderer)?;
+        let fonts = Fonts::load()?;
+        let text_context = femtovg::TextContext::default();
+        let femtovg_fonts = fonts.register_femtovg(&text_context)?;
+        let mut canvas = Canvas::new_with_text_context(gl_renderer, text_context)?;
         canvas.set_size(width, height, 1.0);
 
-        // Load fonts into FemtoVG for the delegated path above the cutoff,
-        // in the order `build_font_table` pairs them with cosmic-text's faces.
-        let femtovg_fonts = [
-            canvas.add_font_mem(FONT_REGULAR)?,
-            canvas.add_font_mem(FONT_SEMIBOLD)?,
-            canvas.add_font_mem(FONT_BOLD)?,
-            canvas.add_font_mem(FONT_DECK_REGULAR)?,
-            canvas.add_font_mem(FONT_DECK_SEMIBOLD)?,
-            canvas.add_font_mem(FONT_DECK_BOLD)?,
-            canvas.add_font_mem(FONT_FALLBACK)?,
-        ];
-
-        let font_system = build_font_system();
+        let font_system = build_font_system(&fonts);
         let font_table = build_font_table(&font_system, &femtovg_fonts);
 
         let mut icon_registry = SvgRegistry::new();

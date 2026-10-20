@@ -229,7 +229,7 @@ const CACHED_SIZE_PX: f32 = 92.0;
 /// Small enough that the whole corpus fits in a handful of pages, which is
 /// what lets the entry cap — rather than page space — be the binding limit.
 const CHURN_SIZES_PX: [f32; 5] = [6.0, 5.0, 4.0, 3.0, 2.0];
-/// Latin, Greek, Cyrillic, digits and punctuation: everything the embedded
+/// Latin, Greek, Cyrillic, digits and punctuation: everything the shipped
 /// faces cover plus the variant letters that force the Noto fallback.
 const MULTI_SCRIPT: &str = "Wij. AV 0123 Привет Γειά ϖϑϰϱϵ";
 

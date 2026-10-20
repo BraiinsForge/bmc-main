@@ -18,20 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use cosmic_text::{FontSystem, fontdb::Database};
+use cosmic_text::FontSystem;
 
-use super::ParagraphLayoutCache;
+use super::{ParagraphLayoutCache, font_system};
 use crate::tree::{SpanData, TextStyle};
-
-/// The renderer's own regular face — cosmic-text panics when shaping
-/// against an empty database, and these tests only need *some* font.
-fn font_system() -> FontSystem {
-    let mut db = Database::new();
-    db.load_font_data(
-        include_bytes!("../../../../../assets/fonts/BraiinsSans-Regular.otf").to_vec(),
-    );
-    FontSystem::new_with_locale_and_db("en-US".into(), db)
-}
 
 fn span(text: &str) -> [SpanData; 1] {
     [SpanData {

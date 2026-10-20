@@ -406,11 +406,23 @@ let
     filter = path: type: type == "directory" || pkgs.lib.hasSuffix ".mp3" path;
   };
 
+  # The renderer's font faces, which bmc-wasm-host maps at start from BMC_FONTS_DIR.
+  # Filtered to the faces and their licenses, so the store path changes only with them.
+  fonts = builtins.path {
+    name = "bmc-fonts";
+    path = ./assets/fonts;
+    filter = path: type:
+      type == "directory"
+      || pkgs.lib.hasSuffix ".otf" path
+      || pkgs.lib.hasSuffix ".ttf" path
+      || pkgs.lib.hasPrefix "LICENSE-" (baseNameOf path);
+  };
+
   # Runtime deps for dlopen'd libraries, split by widget type.
   # Functions accepting pkgs — resolved at the point of use.
   deps = {
     frontend = frontend.build;
-    inherit sounds;
+    inherit sounds fonts;
     widgetRuntimeDeps = {
       # The custom Mesa provides EGL directly; upstream Mesa needs libGL's GLVND loader.
       native = pkgs: with pkgs; [
@@ -628,7 +640,7 @@ let
     };
     crates = bmc.crates;
     autopatchelfBinaries = bmc.lib.autopatchelfBinaries;
-    inherit (deps) widgetRuntimeDeps;
+    inherit (deps) widgetRuntimeDeps fonts;
   };
 
   wasmWidgetsModule = wasmWidgetsFor bmc.profiles.armv7-glibc-release [ ];
@@ -761,15 +773,20 @@ in
 
     frontend = frontend.build;
     frontendNodeModules = frontend.nodeModules;
-    inherit sounds;
+    inherit sounds fonts;
   };
   devShells =
     let
       # ARM glibc RUSTFLAGS for dev shells only — patchelf handles builds.
       # Use all runtime deps (compositor is superset of widget deps).
-      armv7GlibcShellEnv = makeRustflagsEnv {
-        runtimePackages = deps.compositorRuntimeDeps armv7Pkgs;
-        rustCrossTarget = "armv7-unknown-linux-gnueabihf";
+      armv7GlibcShellEnv = makeRustflagsEnv
+        {
+          runtimePackages = deps.compositorRuntimeDeps armv7Pkgs;
+          rustCrossTarget = "armv7-unknown-linux-gnueabihf";
+        } // {
+        # A cargo-built host bakes the store path `nix-cargo-deploy.sh host` ships,
+        # not the checkout, which does not exist on the device.
+        BMC_FONTS_DIR = "${fonts}";
       };
       shells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) bmc.profiles;
     in

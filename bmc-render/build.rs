@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Build script — compiles built-in SVG icons into binary blobs.
+//! Build script — compiles built-in SVG icons into binary blobs
+//! and resolves the font directory the renderer maps its faces from.
 
 use std::fmt::Write;
 use std::fs;
@@ -49,7 +50,36 @@ const BUILTIN_ICON_MAP: &[(&str, &str)] = &[
     ("unlink", "ICON_DEV_UNLINK"),
 ];
 
+/// The font store path in builds Nix makes,
+/// the checkout's own `assets/fonts` in everything cargo builds from it.
+/// Handed on as a compile-time env var, because `include_bytes!` takes only a literal path.
+#[expect(
+    clippy::unnecessary_debug_formatting,
+    reason = "Debug escapes the bytes that are not UTF-8; Display would replace them"
+)]
+fn emit_fonts_dir() {
+    println!("cargo:rerun-if-env-changed=BMC_FONTS_DIR");
+    let dir = std::env::var_os("BMC_FONTS_DIR").map_or_else(
+        || {
+            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+                .expect("BUG: cargo sets CARGO_MANIFEST_DIR for build scripts");
+            format!("{manifest_dir}/../assets/fonts")
+        },
+        |dir| {
+            dir.into_string()
+                .unwrap_or_else(|dir| panic!("BMC_FONTS_DIR is not valid UTF-8: {dir:?}"))
+        },
+    );
+    assert!(
+        Path::new(&dir).is_absolute(),
+        "BMC_FONTS_DIR must be absolute, or the build checks other files than the host opens: {dir}"
+    );
+    println!("cargo:rustc-env=BMC_RENDER_FONTS_DIR={dir}");
+}
+
 fn main() {
+    emit_fonts_dir();
+
     let out_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| panic!("OUT_DIR not set"));
     let out_path = Path::new(&out_dir);
 

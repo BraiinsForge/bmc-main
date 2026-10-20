@@ -92,12 +92,13 @@
           inherit pkgs commonDeps;
           inherit (workspace.bmc) profiles;
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
+          inherit (workspace.deps) fonts;
         };
         checks = import ./nix/checks.nix {
           inherit pkgs python-lint-venv;
           armv7Pkgs = workspace.bmc.armv7-nixpkgs;
           deckPackages = workspace.legacyPackages.deck-packages;
-          frontend = workspace.deps.frontend;
+          inherit (workspace.deps) frontend fonts;
           protoPlugins = proto-plugins;
           inherit (workspace.packages) frontendNodeModules;
           inherit (workspace.bmc) profiles crates;

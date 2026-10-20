@@ -26,7 +26,7 @@ use super::{
 };
 use crate::tree::{SpanData, TextStyle};
 
-/// An RTL script the embedded faces do not cover,
+/// An RTL script the shipped faces do not cover,
 /// so its glyphs come back as boxes —
 /// the bidi reordering under test is the shaper's, not the font's,
 /// and holds either way.
@@ -46,7 +46,7 @@ fn span(text: &str, underline: bool) -> SpanData {
 
 fn only_line(spans: &[SpanData]) -> LineGlyphs {
     let normalized = normalize_carriage_returns(spans);
-    let mut font_system = crate::gpu::renderer::build_font_system();
+    let mut font_system = super::font_system();
     let (buffer, _, _) = shape_paragraph(
         &mut font_system,
         &TextStyle::default(),

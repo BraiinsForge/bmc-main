@@ -80,12 +80,11 @@ pub(crate) fn divergent_kerning_pair(
     const MIN_DIVERGENCE_PX: f32 = 0.5;
 
     let fonts = femtovg::TextContext::default();
+    let [regular, ..] = crate::gpu::renderer::Fonts::shared()
+        .register_femtovg(&fonts)
+        .expect("BUG: font registration failed");
     let mut paint = femtovg::Paint::color(femtovg::Color::white());
-    paint.set_font(&[fonts
-        .add_font_mem(include_bytes!(
-            "../../../../assets/fonts/BraiinsSans-Regular.otf"
-        ))
-        .expect("BUG: font registration failed")]);
+    paint.set_font(&[regular]);
     paint.set_font_size(size);
 
     let mut layout = ParagraphLayoutCache::new();

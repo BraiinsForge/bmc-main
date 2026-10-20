@@ -46,7 +46,7 @@ fn span(text: &str) -> SpanData {
 /// one whose glyphs `draw` would resolve.
 fn shape(spans: &[SpanData], max_width: f32) -> Buffer {
     let normalized = normalize_carriage_returns(spans);
-    let mut font_system = crate::gpu::renderer::build_font_system();
+    let mut font_system = super::font_system();
     let style = TextStyle::default();
     let (buffer, _, _) = shape_paragraph(&mut font_system, &style, &normalized, Some(max_width));
     buffer

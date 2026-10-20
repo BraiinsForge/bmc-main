@@ -42,7 +42,7 @@ mod glyph_draw;
 mod retention;
 
 fn font_system() -> FontSystem {
-    crate::gpu::renderer::build_font_system()
+    crate::gpu::renderer::build_font_system(crate::gpu::renderer::Fonts::shared())
 }
 
 fn line_style(size: f32, italic: bool) -> LineStyle {

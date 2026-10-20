@@ -282,7 +282,7 @@ fn fractional_sizes_get_distinct_entries() {
     );
 }
 
-/// Every embedded face is upright, so an italic single-line style renders
+/// Every shipped face is upright, so an italic single-line style renders
 /// as italic only if cosmic-text flags its glyphs `FAKE_ITALIC`
 /// and the rasterizer skews them.
 #[test]

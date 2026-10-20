@@ -47,6 +47,7 @@
 , crates                 # bmc.crates
 , autopatchelfBinaries   # bmc.lib.autopatchelfBinaries
 , widgetRuntimeDeps      # deps.widgetRuntimeDeps (expects .native fn)
+, fonts                  # deps.fonts, baked into the host as BMC_FONTS_DIR
 , widgetCatalog          # workspace.nix:wasmWidgetCatalog (name → entry)
 , wasmAssets             # native bmc-wasm-assets extractor
 , hostFeatures ? [ ]     # cargo features for the bmc-wasm-host build
@@ -140,6 +141,7 @@ let
   host = autopatchelfBinaries {
     drv = profile.buildCrate crates.wasm-host {
       features = hostFeatures;
+      env.BMC_FONTS_DIR = "${fonts}";
     };
     # widgetRuntimeDeps.native is a function; call with the profile's
     # target pkgs (armv7Pkgs for glibc arm profiles) — same convention

@@ -113,8 +113,8 @@ Copies a locally cargo-built native binary directly to the device for fast devel
 to `/mnt/data/tmp/cargo-deploy/`, and the existing profile entry under `/run/current-profile/` is repointed to that
 staged binary via symlink. Dynamic linker and rpath dependencies are copied over with `nix copy`.
 
-This script handles only native binaries (compositor and native widgets). **Wasm widgets are never deployed through this
-script** — use `deck deploy` for wasm widgets.
+This script handles only native binaries (compositor, wasm host and native widgets). **Wasm widgets are never deployed
+through this script** — use `deck deploy` for wasm widgets.
 
 This is not suitable for deploying a brand new widget package directly. It only redeploys targets that already exist in
 the profile. Deploy the widget package first via `deck deploy`, then iterate with `nix-cargo-deploy.sh`.
@@ -126,6 +126,9 @@ The device must already have the packages deployed via `deck deploy` (so the tar
 
 # Deploy the compositor (bmc-openwrt, built for armv7-unknown-linux-gnueabihf)
 ./scripts/nix-cargo-deploy.sh compositor 192.168.1.2
+
+# Deploy the wasm host (bmc-wasm-host) along with its font store path
+./scripts/nix-cargo-deploy.sh host 192.168.1.2
 
 # Deploy a native widget by name (built for armv7-unknown-linux-gnueabihf)
 ./scripts/nix-cargo-deploy.sh widget flip-clock 192.168.1.2
@@ -140,6 +143,7 @@ With default settings, binaries are expected at these standard cross-compilation
 | Command         | Local binary path                                                |
 | --------------- | ---------------------------------------------------------------- |
 | `compositor`    | `target/armv7-unknown-linux-gnueabihf/release/bmc-openwrt`       |
+| `host`          | `target/armv7-unknown-linux-gnueabihf/release/bmc-wasm-host`     |
 | `widget <name>` | `target/armv7-unknown-linux-gnueabihf/release/bmc-widget-<name>` |
 
 The script will build these binaries itself through `cargo build`. The script assumes you're in a dev shell, such as
@@ -155,6 +159,13 @@ The compositor binary (`bmc-openwrt`) has `/run/current-profile/www/bmc` baked i
 The dev-only `.#deck-packages.bmc-frontend` package wraps the frontend build so that its contents end up under
 `<profile>/www/bmc/`. It is marked `category = "dev"` and is NOT included in the init tarball. Use `deck deploy` for
 deployment.
+
+### Font faces for the widget host
+
+`bmc-wasm-host` maps its font faces at start from the `bmc-fonts` store path, baked in as `BMC_FONTS_DIR` at build time.
+`deck deploy` ships that path with the host. The armv7 dev shells export `BMC_FONTS_DIR` as the same store path, so a
+cargo-built host bakes it too, and `nix-cargo-deploy.sh host` copies it to the device with the binary. The native shell
+leaves it unset: its builds read the checkout's `assets/fonts`, which only exists on the build machine.
 
 ## Example: Running bmc-openwrt on the device
 
