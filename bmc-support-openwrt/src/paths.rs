@@ -30,6 +30,7 @@ pub const OPENWRT_FS_PATHS: &[&str] = &["/overlay/.sysupgrade.log"];
 pub const BMC_FS_PATHS: &[&str] = &[
     // files
     BMC_CONFIG_LEGACY,
+    "/etc/bmc_version",
     "/etc/factory-default",
     "/etc/setup-pending",
     "/etc/nix/nix.conf",
