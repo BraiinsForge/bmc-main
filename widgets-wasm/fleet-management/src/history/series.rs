@@ -236,13 +236,13 @@ mod tests {
 
     use super::*;
 
-    const SPAN: ChartSpan = ChartSpan::FifteenMinutes;
+    const SPAN: ChartSpan = ChartSpan::OneHour;
 
     fn datum(at: i64, value: Option<f32>) -> HistoryDatum {
         HistoryDatum { at, value }
     }
 
-    /// A 15-min series holding exactly `samples`, as a restore would leave it.
+    /// A 1-h series holding exactly `samples`, as a restore would leave it.
     fn holding(samples: &[(i64, Option<f32>)]) -> Series {
         Series::restored(
             SPAN,
@@ -257,65 +257,65 @@ mod tests {
     fn a_sample_in_the_open_slot_refreshes_its_bucket_with_its_value_and_time() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(4.0));
-        s.record(14, Some(9.0));
-        assert_eq!(s.samples(), vec![datum(14, Some(9.0))]);
+        s.record(56, Some(9.0));
+        assert_eq!(s.samples(), vec![datum(56, Some(9.0))]);
     }
 
     #[test]
     fn a_cut_drops_a_bucket_whose_value_was_read_after_it() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(1.0));
-        s.record(14, Some(2.0));
-        s.record(15, Some(3.0));
-        s.drop_after(10);
-        s.record(10, Some(4.0));
+        s.record(56, Some(2.0));
+        s.record(60, Some(3.0));
+        s.drop_after(40);
+        s.record(40, Some(4.0));
         assert_eq!(
             s.samples(),
-            vec![datum(10, Some(4.0))],
-            "the slot's value from 14 s goes with the cut, so the slot records again from 10 s"
+            vec![datum(40, Some(4.0))],
+            "the slot's value from 56 s goes with the cut, so the slot records again from 40 s"
         );
     }
 
     #[test]
     fn a_sample_older_than_the_newest_bucket_is_dropped() {
         let mut s = Series::new(SPAN);
-        s.record(20, Some(1.0));
-        s.record(10, Some(2.0));
-        assert_eq!(s.samples(), vec![datum(20, Some(1.0))]);
+        s.record(80, Some(1.0));
+        s.record(40, Some(2.0));
+        assert_eq!(s.samples(), vec![datum(80, Some(1.0))]);
     }
 
     #[test]
     fn a_sample_in_a_later_slot_opens_a_bucket() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(4.0));
-        s.record(15, Some(9.0));
-        assert_eq!(s.samples(), vec![datum(0, Some(4.0)), datum(15, Some(9.0))]);
+        s.record(60, Some(9.0));
+        assert_eq!(s.samples(), vec![datum(0, Some(4.0)), datum(60, Some(9.0))]);
     }
 
     #[test]
     fn a_live_sample_never_changes_a_restored_bucket() {
         let mut s = holding(&[(0, Some(4.0))]);
-        s.record(5, None);
+        s.record(20, None);
         assert_eq!(
             s.samples(),
             vec![datum(0, Some(4.0))],
             "a sample in the restored bucket's slot is dropped"
         );
-        s.record(15, Some(9.0));
+        s.record(60, Some(9.0));
         assert_eq!(
             s.samples(),
-            vec![datum(0, Some(4.0)), datum(15, Some(9.0))],
+            vec![datum(0, Some(4.0)), datum(60, Some(9.0))],
             "the next slot opens a bucket, so a restart costs no extra one"
         );
     }
 
     #[test]
     fn dropping_the_buckets_after_a_time_keeps_the_newest_slot_sampled() {
-        let mut s = holding(&[(0, Some(1.0)), (15, Some(2.0)), (30, Some(3.0))]);
-        s.drop_after(20);
-        assert_eq!(s.samples(), vec![datum(0, Some(1.0)), datum(15, Some(2.0))]);
+        let mut s = holding(&[(0, Some(1.0)), (60, Some(2.0)), (120, Some(3.0))]);
+        s.drop_after(80);
+        assert_eq!(s.samples(), vec![datum(0, Some(1.0)), datum(60, Some(2.0))]);
         assert!(
-            s.has_sampled_slot_of(20),
+            s.has_sampled_slot_of(80),
             "the newest bucket's slot still counts as sampled"
         );
     }
@@ -323,22 +323,25 @@ mod tests {
     #[test]
     fn an_older_blob_goes_before_the_buckets_after_the_cut() {
         let mut s = Series::new(SPAN);
-        s.record(50, Some(1.0));
-        s.record(1_010, Some(2.0));
-        s.merge_older(vec![datum(900, Some(3.0)), datum(1_000, Some(4.0))], 1_000);
+        s.record(200, Some(1.0));
+        s.record(4_040, Some(2.0));
+        s.merge_older(
+            vec![datum(3_600, Some(3.0)), datum(4_000, Some(4.0))],
+            4_000,
+        );
         assert_eq!(
             s.samples(),
             vec![
-                datum(900, Some(3.0)),
-                datum(1_000, Some(4.0)),
-                datum(1_010, Some(2.0))
+                datum(3_600, Some(3.0)),
+                datum(4_000, Some(4.0)),
+                datum(4_040, Some(2.0))
             ],
-            "the bucket at 50 s was stamped by a clock behind the blob"
+            "the bucket at 200 s was stamped by a clock behind the blob"
         );
-        s.record(1_011, Some(5.0));
+        s.record(4_044, Some(5.0));
         assert_eq!(
             s.samples().last(),
-            Some(&datum(1_011, Some(5.0))),
+            Some(&datum(4_044, Some(5.0))),
             "the live bucket stays open"
         );
     }
@@ -346,32 +349,32 @@ mod tests {
     #[test]
     fn a_live_bucket_in_the_slot_of_the_cut_is_dropped() {
         let mut s = Series::new(SPAN);
-        s.record(910, Some(1.0));
-        s.merge_older(vec![datum(900, Some(3.0))], 900);
+        s.record(3_640, Some(1.0));
+        s.merge_older(vec![datum(3_600, Some(3.0))], 3_600);
         assert_eq!(
             s.samples(),
-            vec![datum(900, Some(3.0))],
-            "900 and 910 share a 15 s slot"
+            vec![datum(3_600, Some(3.0))],
+            "3 600 and 3 640 share a 60 s slot"
         );
         assert!(
-            s.has_sampled_slot_of(910),
+            s.has_sampled_slot_of(3_640),
             "the blob's bucket takes the slot"
         );
-        s.record(912, Some(9.0));
+        s.record(3_648, Some(9.0));
         assert_eq!(
             s.samples(),
-            vec![datum(900, Some(3.0))],
+            vec![datum(3_600, Some(3.0))],
             "the blob's bucket stays closed to live samples in its slot"
         );
     }
 
     #[test]
     fn a_restored_break_is_never_refreshed() {
-        let mut s = holding(&[(0, Some(4.0)), (15, None)]);
-        s.record(20, Some(9.0));
+        let mut s = holding(&[(0, Some(4.0)), (60, None)]);
+        s.record(80, Some(9.0));
         assert_eq!(
             s.samples(),
-            vec![datum(0, Some(4.0)), datum(15, None)],
+            vec![datum(0, Some(4.0)), datum(60, None)],
             "a restart break saved by an earlier build stays, like any restored bucket"
         );
     }
@@ -379,8 +382,8 @@ mod tests {
     #[test]
     fn of_two_restored_buckets_in_one_slot_the_newer_is_kept() {
         assert_eq!(
-            holding(&[(0, Some(1.0)), (5, Some(2.0)), (15, Some(3.0))]).samples(),
-            vec![datum(5, Some(2.0)), datum(15, Some(3.0))],
+            holding(&[(0, Some(1.0)), (20, Some(2.0)), (60, Some(3.0))]).samples(),
+            vec![datum(20, Some(2.0)), datum(60, Some(3.0))],
             "a blob from an earlier build can hold a restored bucket and a live one in one slot"
         );
     }
@@ -388,8 +391,8 @@ mod tests {
     #[test]
     fn a_restored_restart_break_in_its_last_value_slot_does_not_hide_the_value() {
         assert_eq!(
-            holding(&[(0, Some(1.0)), (5, None), (15, Some(3.0))]).samples(),
-            vec![datum(0, Some(1.0)), datum(15, Some(3.0))],
+            holding(&[(0, Some(1.0)), (20, None), (60, Some(3.0))]).samples(),
+            vec![datum(0, Some(1.0)), datum(60, Some(3.0))],
             "an earlier build stamped its restart break at the save, in the slot of the last value"
         );
     }
@@ -398,49 +401,49 @@ mod tests {
     fn the_oldest_bucket_is_evicted_at_capacity() {
         let mut s = Series::new(SPAN);
         for i in 0..=POINTS {
-            let at = i64::try_from(i).expect("BUG: loop index fits i64") * 15;
+            let at = i64::try_from(i).expect("BUG: loop index fits i64") * 60;
             s.record(at, Some(1.0));
         }
         let samples = s.samples();
         assert_eq!(samples.len(), POINTS);
-        assert_eq!(samples[0].at, 15, "the bucket at 0 was evicted");
+        assert_eq!(samples[0].at, 60, "the bucket at 0 was evicted");
     }
 
     #[test]
     fn a_cut_closes_the_newest_bucket() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(1.0));
-        s.record(15, None);
-        s.record(30, Some(3.0));
-        s.drop_after(20);
-        s.record(20, Some(2.0));
+        s.record(60, None);
+        s.record(120, Some(3.0));
+        s.drop_after(80);
+        s.record(80, Some(2.0));
         assert_eq!(
             s.samples(),
-            vec![datum(0, Some(1.0)), datum(15, None)],
-            "the sample at 20 s shares the closed bucket's slot, so it is dropped"
+            vec![datum(0, Some(1.0)), datum(60, None)],
+            "the sample at 80 s shares the closed bucket's slot, so it is dropped"
         );
-        s.record(30, Some(3.0));
+        s.record(120, Some(3.0));
         assert_eq!(
             s.samples(),
-            vec![datum(0, Some(1.0)), datum(15, None), datum(30, Some(3.0))],
+            vec![datum(0, Some(1.0)), datum(60, None), datum(120, Some(3.0))],
             "the next slot opens a bucket"
         );
     }
 
     #[test]
     fn a_restored_series_out_of_time_order_is_sorted() {
-        let s = holding(&[(30, Some(3.0)), (0, Some(1.0)), (15, Some(2.0))]);
+        let s = holding(&[(120, Some(3.0)), (0, Some(1.0)), (60, Some(2.0))]);
         assert_eq!(
             s.samples(),
             vec![
                 datum(0, Some(1.0)),
-                datum(15, Some(2.0)),
-                datum(30, Some(3.0))
+                datum(60, Some(2.0)),
+                datum(120, Some(3.0))
             ],
             "an earlier build saved buckets as a stepping clock stamped them"
         );
         assert!(
-            s.has_sampled_slot_of(30),
+            s.has_sampled_slot_of(120),
             "the newest bucket is the one whose slot counts as sampled"
         );
     }
@@ -450,7 +453,7 @@ mod tests {
         let over: Vec<HistoryDatum> = (0..POINTS + 10)
             .map(|i| {
                 datum(
-                    i64::try_from(i).expect("BUG: loop index fits i64") * 15,
+                    i64::try_from(i).expect("BUG: loop index fits i64") * 60,
                     None,
                 )
             })
@@ -458,7 +461,7 @@ mod tests {
         let samples = Series::restored(SPAN, over).samples();
         assert_eq!(samples.len(), POINTS, "cut to capacity");
         assert_eq!(
-            samples[0].at, 150,
+            samples[0].at, 600,
             "the oldest ten were dropped, not the newest"
         );
     }
@@ -468,14 +471,14 @@ mod tests {
         let mut s = Series::new(SPAN);
         assert!(!s.has_sampled_slot_of(0), "nothing recorded yet");
         s.record(0, Some(4.0));
-        assert!(s.has_sampled_slot_of(14));
-        assert!(!s.has_sampled_slot_of(15), "the next slot");
+        assert!(s.has_sampled_slot_of(56));
+        assert!(!s.has_sampled_slot_of(60), "the next slot");
         assert!(
-            holding(&[(0, Some(4.0))]).has_sampled_slot_of(14),
+            holding(&[(0, Some(4.0))]).has_sampled_slot_of(56),
             "a restored series counts its newest bucket's slot as sampled"
         );
         assert!(
-            holding(&[(0, None)]).has_sampled_slot_of(14),
+            holding(&[(0, None)]).has_sampled_slot_of(56),
             "a restored break's slot too"
         );
     }
@@ -523,7 +526,9 @@ mod tests {
     fn record_matches_a_slot_map_over_generated_sequences() {
         let mut rng = Lcg(0x5EED);
         for case in 0..2_000 {
-            let span = ChartSpan::ALL[usize::try_from(rng.below(4)).expect("BUG: below 4")];
+            let spans = u64::try_from(ChartSpan::ALL.len()).expect("BUG: the span count fits u64");
+            let span = ChartSpan::ALL
+                [usize::try_from(rng.below(spans)).expect("BUG: an index below the span count")];
             let interval = span.interval_secs();
             let step = u64::try_from(interval).expect("BUG: an interval is positive");
             let restored: Vec<HistoryDatum> = (0..rng.below(4))
@@ -586,61 +591,64 @@ mod tests {
         plot.iter().flatten().map(|p| p.at).collect()
     }
 
-    /// The 15-min chart's window over the first 15 minutes.
+    /// The 1-h chart's window over the first hour.
     const WINDOW: ChartWindow = ChartWindow {
-        end: 900,
-        span_secs: 900,
+        end: 3_600,
+        span_secs: 3_600,
     };
 
-    /// The 15-min chart's window over the second 15 minutes.
+    /// The 1-h chart's window over the second hour.
     const LATER_WINDOW: ChartWindow = ChartWindow {
-        end: 1_800,
-        span_secs: 900,
+        end: 7_200,
+        span_secs: 3_600,
     };
 
     #[test]
     fn polls_up_to_two_intervals_apart_plot_one_run() {
-        // A device polled every 25 s leaves one empty 15 s slot between some of its buckets.
-        let s = present(&[0, 25, 50, 75, 100, 125, 150, 175]);
+        // A device polled every 100 s leaves one empty 60 s slot between some of its buckets.
+        let s = present(&[0, 100, 200, 300, 400, 500, 600, 700]);
         assert_eq!(breaks(&s.plot(WINDOW)), 0);
     }
 
     #[test]
     fn one_empty_slot_between_buckets_joins_the_line() {
-        assert_eq!(breaks(&present(&[0, 30]).plot(WINDOW)), 0);
+        assert_eq!(breaks(&present(&[0, 120]).plot(WINDOW)), 0);
     }
 
     #[test]
     fn two_empty_slots_between_buckets_break_the_line() {
-        assert_eq!(breaks(&present(&[0, 45]).plot(WINDOW)), 1);
+        assert_eq!(breaks(&present(&[0, 180]).plot(WINDOW)), 1);
     }
 
     #[test]
     fn a_jump_over_two_intervals_breaks_the_plot() {
-        let s = present(&[0, 15, 30, 45, 60, 180, 195, 210]);
+        let s = present(&[0, 60, 120, 180, 240, 720, 780, 840]);
         assert_eq!(
             breaks(&s.plot(WINDOW)),
             1,
-            "two minutes without a sample read as downtime"
+            "eight minutes without a sample read as downtime"
         );
     }
 
     #[test]
     fn samples_sparser_than_the_chart_break_between_most_buckets() {
-        // A device polled every 40 s on the 15 s chart leaves two empty slots
+        // A device polled every 160 s leaves two empty 60 s slots
         // between most of its buckets, and the chart shows them as missing.
-        let s = present(&[0, 40, 80, 120]);
+        let s = present(&[0, 160, 320, 480]);
         assert_eq!(breaks(&s.plot(WINDOW)), 2);
     }
 
     #[test]
     fn a_bucket_without_a_value_breaks_the_plot() {
-        let s = holding(&[(0, Some(1.0)), (15, None), (30, Some(2.0))]);
+        let s = holding(&[(0, Some(1.0)), (60, None), (120, Some(2.0))]);
         assert_eq!(
             s.plot(WINDOW),
             vec![
                 vec![ChartPoint { at: 0, value: 1.0 }],
-                vec![ChartPoint { at: 30, value: 2.0 }],
+                vec![ChartPoint {
+                    at: 120,
+                    value: 2.0
+                }],
             ]
         );
     }
@@ -649,10 +657,10 @@ mod tests {
     fn an_empty_bucket_and_the_downtime_after_it_leave_no_empty_run() {
         let s = holding(&[
             (0, Some(1.0)),
-            (15, Some(1.0)),
-            (30, Some(1.0)),
-            (45, None),
-            (600, Some(2.0)),
+            (60, Some(1.0)),
+            (120, Some(1.0)),
+            (180, None),
+            (2_400, Some(2.0)),
         ]);
         assert_eq!(
             breaks(&s.plot(WINDOW)),
@@ -665,24 +673,24 @@ mod tests {
     fn a_bucket_without_a_value_before_the_first_point_leaves_no_empty_run() {
         let one = |at| vec![vec![ChartPoint { at, value: 1.0 }]];
         assert_eq!(
-            holding(&[(0, None), (15, Some(1.0))]).plot(WINDOW),
-            one(15),
+            holding(&[(0, None), (60, Some(1.0))]).plot(WINDOW),
+            one(60),
             "a bucket without a value leaves no break before the first point"
         );
         assert_eq!(
-            holding(&[(885, None), (900, Some(1.0))]).plot(LATER_WINDOW),
-            one(900),
+            holding(&[(3_540, None), (3_600, Some(1.0))]).plot(LATER_WINDOW),
+            one(3_600),
             "nor does an entering bucket without a value"
         );
     }
 
     #[test]
     fn the_newest_bucket_before_the_window_draws_the_line_in_from_the_edge() {
-        let s = present(&[870, 885, 900, 915]);
+        let s = present(&[3_480, 3_540, 3_600, 3_660]);
         assert_eq!(
             ats(&s.plot(LATER_WINDOW)),
-            vec![885, 900, 915],
-            "the bucket at 885 enters the window, the one at 870 is never drawn"
+            vec![3_540, 3_600, 3_660],
+            "the bucket at 3 540 enters the window, the one at 3 480 is never drawn"
         );
     }
 
@@ -690,55 +698,55 @@ mod tests {
     fn the_open_bucket_is_not_drawn_while_its_slot_runs() {
         let mut s = Series::new(SPAN);
         s.record(0, Some(1.0));
-        s.record(15, Some(2.0));
+        s.record(60, Some(2.0));
         let at = |end| {
             ats(&s.plot(ChartWindow {
                 end,
-                span_secs: 900,
+                span_secs: 3_600,
             }))
         };
-        assert_eq!(at(29), vec![0], "every reading in its slot still moves it");
+        assert_eq!(at(119), vec![0], "every reading in its slot still moves it");
         assert_eq!(
-            at(30),
-            vec![0, 15],
+            at(120),
+            vec![0, 60],
             "its slot has ended, so its value is final"
         );
     }
 
     #[test]
     fn a_closed_newest_bucket_is_drawn_in_its_slot() {
-        let s = present(&[0, 15]);
+        let s = present(&[0, 60]);
         let window = ChartWindow {
-            end: 20,
-            span_secs: 900,
+            end: 80,
+            span_secs: 3_600,
         };
         assert_eq!(
             ats(&s.plot(window)),
-            vec![0, 15],
+            vec![0, 60],
             "a restored bucket never takes another reading"
         );
     }
 
     #[test]
     fn buckets_stamped_after_the_window_end_are_not_drawn() {
-        let s = present(&[0, 15, 30, 45]);
+        let s = present(&[0, 60, 120, 180]);
         let window = ChartWindow {
-            end: 20,
-            span_secs: 900,
+            end: 80,
+            span_secs: 3_600,
         };
         assert_eq!(
             ats(&s.plot(window)),
-            vec![0, 15],
+            vec![0, 60],
             "a clock set back draws only up to now"
         );
     }
 
     #[test]
     fn a_full_history_draws_its_line_in_from_the_left_edge() {
-        for into_slot in 0..15 {
-            let now = 1_800 + into_slot;
+        for into_slot in 0..60 {
+            let now = 7_200 + into_slot;
             let mut s = Series::new(SPAN);
-            for at in (0..=now).step_by(5) {
+            for at in (0..=now).step_by(20) {
                 s.record(at, Some(1.0));
             }
             let window = ChartWindow {
@@ -755,25 +763,25 @@ mod tests {
 
     #[test]
     fn a_bucket_before_the_window_cut_off_by_a_gap_is_not_plotted() {
-        let s = present(&[600, 960, 975]);
+        let s = present(&[2_400, 3_840, 3_900]);
         assert_eq!(s.plot(LATER_WINDOW), {
             let p = |at| ChartPoint { at, value: 1.0 };
-            vec![vec![p(960), p(975)]]
+            vec![vec![p(3_840), p(3_900)]]
         });
     }
 
     #[test]
     fn a_series_that_ended_before_the_window_plots_nothing() {
-        assert!(present(&[600, 615]).plot(LATER_WINDOW).is_empty());
+        assert!(present(&[2_400, 2_460]).plot(LATER_WINDOW).is_empty());
     }
 
     #[test]
     fn a_bucket_before_the_window_followed_by_a_break_is_not_plotted() {
-        let s = holding(&[(885, Some(1.0)), (900, None), (915, Some(1.0))]);
+        let s = holding(&[(3_540, Some(1.0)), (3_600, None), (3_660, Some(1.0))]);
         assert_eq!(
             s.plot(LATER_WINDOW),
             vec![vec![ChartPoint {
-                at: 915,
+                at: 3_660,
                 value: 1.0
             }]]
         );
@@ -787,14 +795,14 @@ mod tests {
             let samples: Vec<(i64, Option<f32>)> = (0..rng.below(61))
                 .map(|_| {
                     // Up to four slots apart, so lines both join and break.
-                    at += 1 + rng.below(60);
+                    at += 1 + rng.below(240);
                     (at, (rng.below(4) != 0).then_some(1.0))
                 })
                 .collect();
             // Mostly after the newest sample, sometimes before it, as after a clock set back.
             let window = ChartWindow {
-                end: at - 100 + rng.below(700),
-                span_secs: 900,
+                end: at - 400 + rng.below(2_800),
+                span_secs: 3_600,
             };
             let start = window.end - window.span_secs;
             let series = holding(&samples);

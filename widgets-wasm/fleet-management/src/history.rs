@@ -19,7 +19,7 @@
 // the grant above.
 
 //! Rolling hashrate history for the dashboard chart and per-model sparklines.
-//! Each chart range (15 min … 24 h) is a consolidation tier of [`POINTS`] buckets,
+//! Each chart range (1 h … 24 h) is a consolidation tier of [`POINTS`] buckets,
 //! one per range/POINTS slot, for the fleet total, each model and each device.
 //! Picking a range just reads the matching tier through [`HistoryView`] — nothing rebuilds.
 //! Each sample carries its timestamp and a nullable value, so an unreachable device draws
@@ -51,7 +51,6 @@ const POINTS: usize = 60;
 /// the `From` impl below is the one checked crossing between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChartSpan {
-    FifteenMinutes,
     OneHour,
     SixHours,
     TwentyFourHours,
@@ -59,17 +58,11 @@ pub(crate) enum ChartSpan {
 
 impl ChartSpan {
     /// Every span, in tier order — one tier is built per entry.
-    pub(crate) const ALL: [Self; 4] = [
-        Self::FifteenMinutes,
-        Self::OneHour,
-        Self::SixHours,
-        Self::TwentyFourHours,
-    ];
+    pub(crate) const ALL: [Self; 3] = [Self::OneHour, Self::SixHours, Self::TwentyFourHours];
 
     /// The range this span covers.
     pub(crate) const fn minutes(self) -> i32 {
         match self {
-            Self::FifteenMinutes => 15,
             Self::OneHour => 60,
             Self::SixHours => 360,
             Self::TwentyFourHours => 1_440,
@@ -79,10 +72,9 @@ impl ChartSpan {
     /// This span's index into [`Self::ALL`], and so into the tier array.
     const fn tier(self) -> usize {
         match self {
-            Self::FifteenMinutes => 0,
-            Self::OneHour => 1,
-            Self::SixHours => 2,
-            Self::TwentyFourHours => 3,
+            Self::OneHour => 0,
+            Self::SixHours => 1,
+            Self::TwentyFourHours => 2,
         }
     }
 
@@ -116,7 +108,6 @@ impl From<crate::manifest_params::ChartSpanMinutes> for ChartSpan {
     fn from(span: crate::manifest_params::ChartSpanMinutes) -> Self {
         use crate::manifest_params::ChartSpanMinutes;
         match span {
-            ChartSpanMinutes::_15Minutes => Self::FifteenMinutes,
             ChartSpanMinutes::_1Hour => Self::OneHour,
             ChartSpanMinutes::_6Hours => Self::SixHours,
             ChartSpanMinutes::_24Hours => Self::TwentyFourHours,
@@ -409,7 +400,7 @@ enum Flash {
 /// Blob header: a magic byte and a format version. A mismatch on read means a
 /// stale or foreign blob, so it's dropped rather than decoded.
 const SNAPSHOT_MAGIC: u8 = 0xF1;
-const SNAPSHOT_VERSION: u8 = 2;
+const SNAPSHOT_VERSION: u8 = 3;
 
 /// Flash cache tag for the persisted history blob. Only the wasm build reads or
 /// writes the cache; the snapshot codec itself is exercised natively in tests.
@@ -655,18 +646,19 @@ mod tests {
 
     #[test]
     fn records_one_bucket_per_tier_interval() {
-        // The 15-min tier holds one bucket per 15 s; a second reading inside the
-        // same interval refreshes that bucket in place, a new interval opens one.
+        // The 1-h tier holds one bucket per 60 s.
+        // A second reading in the bucket's interval refreshes it in place,
+        // and a reading in a new interval opens one.
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
-        h.record_fleet(14, &summary(99.0, 99.0).hashrate()); // same bucket — refreshes
-        h.record_fleet(15, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(56, &summary(99.0, 99.0).hashrate()); // same bucket — refreshes
+        h.record_fleet(60, &summary(12.0, 5.0).hashrate());
         assert_eq!(
-            vals(&total(&h, ChartSpan::FifteenMinutes)),
+            vals(&total(&h, ChartSpan::OneHour)),
             vec![Some(99.0), Some(12.0)]
         );
         assert_eq!(
-            vals(&model(&h, ChartSpan::FifteenMinutes, "BOS BMM")),
+            vals(&model(&h, ChartSpan::OneHour, "BOS BMM")),
             vec![Some(99.0), Some(5.0)]
         );
     }
@@ -675,11 +667,11 @@ mod tests {
     fn the_open_bucket_takes_the_time_of_its_newest_reading() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
-        h.record_fleet(14, &summary(99.0, 4.0).hashrate());
-        let series = total(&h, ChartSpan::FifteenMinutes);
+        h.record_fleet(56, &summary(99.0, 4.0).hashrate());
+        let series = total(&h, ChartSpan::OneHour);
         assert_eq!(series.len(), 1, "still one bucket");
         assert_eq!(
-            series[0].at, 14,
+            series[0].at, 56,
             "stamped when its value was read, so a clock step cuts it exactly"
         );
         assert_eq!(series[0].value, Some(99.0), "value is the latest reading");
@@ -688,26 +680,23 @@ mod tests {
     #[test]
     fn samples_carry_their_timestamp() {
         let mut h = HashrateHistory::default();
-        h.record_fleet(100, &summary(10.0, 4.0).hashrate());
-        h.record_fleet(115, &summary(12.0, 5.0).hashrate());
-        let ats: Vec<i64> = total(&h, ChartSpan::FifteenMinutes)
-            .iter()
-            .map(|s| s.at)
-            .collect();
-        assert_eq!(ats, vec![100, 115]);
+        h.record_fleet(400, &summary(10.0, 4.0).hashrate());
+        h.record_fleet(460, &summary(12.0, 5.0).hashrate());
+        let ats: Vec<i64> = total(&h, ChartSpan::OneHour).iter().map(|s| s.at).collect();
+        assert_eq!(ats, vec![400, 460]);
     }
 
     #[test]
     fn each_tier_samples_at_its_own_rate() {
-        // Over 60 s the 15-min tier (15 s) takes 5 points; the 1-h tier (60 s) 2.
+        // Over 6 min the 1-h tier (60 s) takes 7 points; the 6-h tier (6 min) 2.
         let mut h = HashrateHistory::default();
         let mut now = 0_i64;
-        while now <= 60 {
+        while now <= 360 {
             h.record_fleet(now, &summary(1.0, 1.0).hashrate());
             now += 1;
         }
-        assert_eq!(total(&h, ChartSpan::FifteenMinutes).len(), 5); // 0, 15, 30, 45, 60
-        assert_eq!(total(&h, ChartSpan::OneHour).len(), 2); // 0, 60
+        assert_eq!(total(&h, ChartSpan::OneHour).len(), 7); // 0, 60, 120, … 360
+        assert_eq!(total(&h, ChartSpan::SixHours).len(), 2); // 0, 360
     }
 
     #[test]
@@ -718,7 +707,7 @@ mod tests {
             groups: vec![],
         };
         h.record_fleet(0, &empty.hashrate());
-        assert!(total(&h, ChartSpan::FifteenMinutes).is_empty());
+        assert!(total(&h, ChartSpan::OneHour).is_empty());
         assert!(h.take_snapshot(0).is_none(), "nothing to save");
     }
 
@@ -729,10 +718,10 @@ mod tests {
         let mut value = 0.0_f64;
         for _ in 0..(POINTS + 5) {
             h.record_fleet(now, &summary(value, 0.0).hashrate());
-            now += 15; // one sample per 15-min-tier interval
+            now += 60; // one sample per 1-h-tier interval
             value += 1.0;
         }
-        let series = total(&h, ChartSpan::FifteenMinutes);
+        let series = total(&h, ChartSpan::OneHour);
         assert_eq!(series.len(), POINTS);
         assert_eq!(series[0].value, Some(5.0), "the oldest five were dropped");
     }
@@ -740,7 +729,7 @@ mod tests {
     #[test]
     fn an_unknown_model_has_an_empty_series() {
         let h = HashrateHistory::default();
-        assert!(model(&h, ChartSpan::FifteenMinutes, "nope").is_empty());
+        assert!(model(&h, ChartSpan::OneHour, "nope").is_empty());
     }
 
     fn devices(specs: &[(&str, f32, bool)]) -> DeviceList {
@@ -784,9 +773,9 @@ mod tests {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
         poll_all(&mut h, 0, &devices(&[("bos/a", 3.0, true)]));
-        poll_all(&mut h, 15, &devices(&[("bos/a", 4.0, true)]));
+        poll_all(&mut h, 60, &devices(&[("bos/a", 4.0, true)]));
         assert_eq!(
-            vals(&device(&h, ChartSpan::FifteenMinutes, &a)),
+            vals(&device(&h, ChartSpan::OneHour, &a)),
             vec![Some(3.0), Some(4.0)]
         );
     }
@@ -796,14 +785,14 @@ mod tests {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
         poll_all(&mut h, 0, &devices(&[("bos/a", 3.0, true)]));
-        poll_all(&mut h, 10, &devices(&[("bos/a", 4.0, true)]));
-        let series = device(&h, ChartSpan::FifteenMinutes, &a);
+        poll_all(&mut h, 40, &devices(&[("bos/a", 4.0, true)]));
+        let series = device(&h, ChartSpan::OneHour, &a);
         assert_eq!(
             vals(&series),
             vec![Some(4.0)],
-            "one 15 s bucket, newest value"
+            "one 60 s bucket, newest value"
         );
-        assert_eq!(series[0].at, 10, "the bucket takes the second poll's time");
+        assert_eq!(series[0].at, 40, "the bucket takes the second poll's time");
     }
 
     #[test]
@@ -811,18 +800,18 @@ mod tests {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
         let list = devices(&[("bos/a", 3.0, true)]);
-        for now in 0..=60 {
+        for now in 0..=360 {
             poll_all(&mut h, now, &list);
         }
         assert_eq!(
-            device(&h, ChartSpan::FifteenMinutes, &a).len(),
-            5,
-            "the 15-min tier opens a bucket every 15 s: 0, 15, 30, 45, 60"
+            device(&h, ChartSpan::OneHour, &a).len(),
+            7,
+            "the 1-h tier opens a bucket every 60 s: 0, 60, 120, … 360"
         );
         assert_eq!(
-            device(&h, ChartSpan::OneHour, &a).len(),
+            device(&h, ChartSpan::SixHours, &a).len(),
             2,
-            "the 1-h tier opens a bucket every 60 s: 0, 60"
+            "the 6-h tier opens a bucket every 6 min: 0, 360"
         );
     }
 
@@ -834,14 +823,11 @@ mod tests {
         s.groups[0].hashrate = None;
         h.record_fleet(0, &s.hashrate());
         assert_eq!(
-            vals(&total(&h, ChartSpan::FifteenMinutes)),
+            vals(&total(&h, ChartSpan::OneHour)),
             vec![None],
             "a summary with no hashrate is a gap, matching the device-series policy"
         );
-        assert_eq!(
-            vals(&model(&h, ChartSpan::FifteenMinutes, "BOS BMM")),
-            vec![None]
-        );
+        assert_eq!(vals(&model(&h, ChartSpan::OneHour, "BOS BMM")), vec![None]);
     }
 
     #[test]
@@ -854,7 +840,7 @@ mod tests {
             &devices(&[("bos/a", 3.0, true), ("bos/b", 9.0, false)]),
         );
         assert_eq!(
-            vals(&device(&h, ChartSpan::FifteenMinutes, &down)),
+            vals(&device(&h, ChartSpan::OneHour, &down)),
             vec![None],
             "unreachable is a gap, not a false zero"
         );
@@ -863,7 +849,7 @@ mod tests {
     #[test]
     fn an_unknown_device_has_an_empty_series() {
         let h = HashrateHistory::default();
-        assert!(device(&h, ChartSpan::FifteenMinutes, &DeviceId::new("bos/nope")).is_empty());
+        assert!(device(&h, ChartSpan::OneHour, &DeviceId::new("bos/nope")).is_empty());
     }
 
     #[test]
@@ -875,9 +861,9 @@ mod tests {
         list.remove(&reused);
         h.forget_devices(std::slice::from_ref(&reused));
         list_device(&mut list, "bos/a", 4.0, true);
-        poll_all(&mut h, 15, &list);
+        poll_all(&mut h, 60, &list);
         assert_eq!(
-            vals(&device(&h, ChartSpan::FifteenMinutes, &reused)),
+            vals(&device(&h, ChartSpan::OneHour, &reused)),
             vec![Some(4.0)],
             "the new miner does not inherit the points of the one that left"
         );
@@ -888,11 +874,8 @@ mod tests {
         let mut h = HashrateHistory::default();
         assert!(h.fleet_sample_due(0), "nothing sampled yet");
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
-        assert!(
-            !h.fleet_sample_due(14),
-            "still the 15-min tier's first slot"
-        );
-        assert!(h.fleet_sample_due(15), "the 15-min tier opened a new slot");
+        assert!(!h.fleet_sample_due(59), "still the 1-h tier's first slot");
+        assert!(h.fleet_sample_due(60), "the 1-h tier opened a new slot");
     }
 
     #[test]
@@ -901,14 +884,14 @@ mod tests {
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
         let mut restored = HashrateHistory::default();
-        assert!(restored.restore(&blob, 0, 5), "restored within range");
+        assert!(restored.restore(&blob, 0, 20), "restored within range");
         assert!(
-            !restored.fleet_sample_due(5),
+            !restored.fleet_sample_due(20),
             "the restored bucket's slot counts as sampled"
         );
         assert!(
-            restored.fleet_sample_due(15),
-            "the 15-min tier opened a new slot"
+            restored.fleet_sample_due(60),
+            "the 1-h tier opened a new slot"
         );
     }
 
@@ -945,13 +928,13 @@ mod tests {
     fn a_model_returning_inside_an_open_slot_opens_its_own_bucket() {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &bmm_and_bfm(4.0, 7.0).hashrate());
-        h.record_fleet(15, &bfm_alone(7.0).hashrate());
-        h.record_fleet(30, &bfm_alone(7.0).hashrate());
-        h.record_fleet(31, &bmm_and_bfm(9.0, 7.0).hashrate());
+        h.record_fleet(60, &bfm_alone(7.0).hashrate());
+        h.record_fleet(120, &bfm_alone(7.0).hashrate());
+        h.record_fleet(124, &bmm_and_bfm(9.0, 7.0).hashrate());
         assert_eq!(
-            bmm_buckets(&h, ChartSpan::FifteenMinutes),
-            vec![(0, Some(4.0)), (31, Some(9.0))],
-            "BFM opened the slot at 30, but BMM's own last bucket is the one at 0"
+            bmm_buckets(&h, ChartSpan::OneHour),
+            vec![(0, Some(4.0)), (124, Some(9.0))],
+            "BFM opened the slot at 120, but BMM's own last bucket is the one at 0"
         );
     }
 
@@ -961,14 +944,14 @@ mod tests {
         h.record_fleet(0, &bmm_and_bfm(4.0, 7.0).hashrate());
         let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
         let mut restored = HashrateHistory::default();
-        assert!(restored.restore(&blob, 0, 3), "restored within range");
+        assert!(restored.restore(&blob, 0, 12), "restored within range");
         // Discovery finds BFM first, opening the next slot, and BMM a moment later in it.
-        restored.record_fleet(16, &bfm_alone(7.0).hashrate());
-        restored.record_fleet(20, &bmm_and_bfm(9.0, 7.0).hashrate());
+        restored.record_fleet(64, &bfm_alone(7.0).hashrate());
+        restored.record_fleet(80, &bmm_and_bfm(9.0, 7.0).hashrate());
         assert_eq!(
-            bmm_buckets(&restored, ChartSpan::FifteenMinutes),
-            vec![(0, Some(4.0)), (20, Some(9.0))],
-            "BFM opened the slot at 15, but BMM's own last bucket is the restored one at 0"
+            bmm_buckets(&restored, ChartSpan::OneHour),
+            vec![(0, Some(4.0)), (80, Some(9.0))],
+            "BFM opened the slot at 60, but BMM's own last bucket is the restored one at 0"
         );
     }
 
@@ -980,21 +963,21 @@ mod tests {
             total: group("Total", 7.0),
             groups: vec![group("BOS BFM", 7.0)],
         };
-        h.record_fleet(15, &other.hashrate());
-        assert_eq!(
-            bmm(&h, ChartSpan::FifteenMinutes),
-            vec![Some(4.0)],
-            "gone from the reading, still inside the range"
-        );
-        h.record_fleet(15 * 60, &other.hashrate());
-        assert!(
-            bmm(&h, ChartSpan::FifteenMinutes).is_empty(),
-            "its newest sample has left the 15-min range"
-        );
+        h.record_fleet(60, &other.hashrate());
         assert_eq!(
             bmm(&h, ChartSpan::OneHour),
             vec![Some(4.0)],
-            "the 1-h range still draws it"
+            "gone from the reading, still inside the range"
+        );
+        h.record_fleet(60 * 60, &other.hashrate());
+        assert!(
+            bmm(&h, ChartSpan::OneHour).is_empty(),
+            "its newest sample has left the 1-h range"
+        );
+        assert_eq!(
+            bmm(&h, ChartSpan::SixHours),
+            vec![Some(4.0)],
+            "the 6-h range still draws it"
         );
     }
 
@@ -1010,24 +993,24 @@ mod tests {
             groups: vec![group("BOS BMM", 4.0), unknown],
         };
         h.record_fleet(0, &both.hashrate());
-        h.record_fleet(15, &both.hashrate());
+        h.record_fleet(60, &both.hashrate());
         assert_eq!(
-            h.fleet[ChartSpan::FifteenMinutes.tier()]
+            h.fleet[ChartSpan::OneHour.tier()]
                 .models
                 .get(&(None, UNKNOWN_GROUP.to_owned()))
                 .map(|series| series.samples().len()),
             Some(2),
             "the catch-all keeps its series while a reading holds it"
         );
-        h.record_fleet(30, &bfm_alone(7.0).hashrate());
+        h.record_fleet(120, &bfm_alone(7.0).hashrate());
         assert!(
-            !h.fleet[ChartSpan::FifteenMinutes.tier()]
+            !h.fleet[ChartSpan::OneHour.tier()]
                 .models
                 .contains_key(&(None, UNKNOWN_GROUP.to_owned())),
             "the catch-all holds whatever had no model yet, so its past means nothing"
         );
         assert_eq!(
-            bmm(&h, ChartSpan::FifteenMinutes),
+            bmm(&h, ChartSpan::OneHour),
             vec![Some(4.0), Some(4.0)],
             "a model that left keeps its series"
         );
@@ -1039,50 +1022,53 @@ mod tests {
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
         let mut restored = HashrateHistory::default();
-        assert!(restored.restore(&blob, 0, 60), "restored within range");
+        assert!(restored.restore(&blob, 0, 240), "restored within range");
 
         // The first sample after boot lands before discovery has found any miner.
         let empty = FleetSummary {
             total: group("Total", 0.0),
             groups: vec![],
         };
-        restored.record_fleet(65, &empty.hashrate());
+        restored.record_fleet(260, &empty.hashrate());
         assert_eq!(
-            bmm(&restored, ChartSpan::FifteenMinutes),
+            bmm(&restored, ChartSpan::OneHour),
             vec![Some(4.0)],
             "kept while discovery has not found the model yet"
         );
         assert!(
-            restored.take_snapshot(65).is_none(),
+            restored.take_snapshot(260).is_none(),
             "nothing was recorded, so flash keeps the restored blob"
         );
 
         // Discovery finds another model first.
-        restored.record_fleet(66, &bfm_alone(7.0).hashrate());
+        restored.record_fleet(264, &bfm_alone(7.0).hashrate());
         let resaved = restored
-            .take_snapshot(66)
+            .take_snapshot(264)
             .expect("BUG: the first snapshot after a restore fires");
         let mut again = HashrateHistory::default();
-        assert!(again.restore(&resaved, 66, 70), "restored within range");
+        assert!(again.restore(&resaved, 264, 280), "restored within range");
         assert_eq!(
-            bmm(&again, ChartSpan::FifteenMinutes),
+            bmm(&again, ChartSpan::OneHour),
             vec![Some(4.0)],
             "the snapshot taken after that sample still carries it"
         );
 
-        again.record_fleet(75, &summary(12.0, 5.0).hashrate());
+        again.record_fleet(300, &summary(12.0, 5.0).hashrate());
         // The next slot, so the live bucket's value is final.
         let window = ChartWindow {
-            end: 90,
-            span_secs: 900,
+            end: 360,
+            span_secs: 3_600,
         };
         assert_eq!(
             again
-                .view(ChartSpan::FifteenMinutes, window)
+                .view(ChartSpan::OneHour, window)
                 .model_series(Some(DeviceFamily::Bos), "BOS BMM"),
             vec![
                 vec![ChartPoint { at: 0, value: 4.0 }],
-                vec![ChartPoint { at: 75, value: 5.0 }],
+                vec![ChartPoint {
+                    at: 300,
+                    value: 5.0
+                }],
             ],
             "rediscovered, the model continues across the downtime's gap"
         );
@@ -1095,31 +1081,24 @@ mod tests {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         poll_all(&mut h, 0, &devices(&[("bos/a", 3.0, true)]));
-        h.record_fleet(15, &summary(12.0, 5.0).hashrate());
-        poll_all(&mut h, 15, &devices(&[("bos/a", 4.0, true)]));
+        h.record_fleet(60, &summary(12.0, 5.0).hashrate());
+        poll_all(&mut h, 60, &devices(&[("bos/a", 4.0, true)]));
         let blob = h
-            .take_snapshot(15)
+            .take_snapshot(60)
             .expect("BUG: first snapshot always fires");
 
         let mut restored = HashrateHistory::default();
-        assert!(restored.restore(&blob, 15, 20), "fresh blob restores");
+        assert!(restored.restore(&blob, 60, 80), "fresh blob restores");
         assert_eq!(
-            vals(&total(&restored, ChartSpan::FifteenMinutes)),
+            vals(&total(&restored, ChartSpan::OneHour)),
             vec![Some(10.0), Some(12.0)]
         );
         assert_eq!(
-            vals(&model(&restored, ChartSpan::FifteenMinutes, "BOS BMM")),
+            vals(&model(&restored, ChartSpan::OneHour, "BOS BMM")),
             vec![Some(4.0), Some(5.0)]
         );
         // Per-device series are RAM-only: never persisted.
-        assert!(
-            device(
-                &restored,
-                ChartSpan::FifteenMinutes,
-                &DeviceId::new("bos/a")
-            )
-            .is_empty()
-        );
+        assert!(device(&restored, ChartSpan::OneHour, &DeviceId::new("bos/a")).is_empty());
     }
 
     #[test]
@@ -1128,19 +1107,19 @@ mod tests {
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
         let mut restored = HashrateHistory::default();
-        // Downtime of 20 min: exceeds the 15-min tier's range (dropped) but not
-        // the 1-h tier's (kept).
+        // Downtime of 80 min: exceeds the 1-h tier's range (dropped)
+        // but not the 6-h tier's (kept).
         let saved_at = 0;
-        let now = 20 * 60;
+        let now = 80 * 60;
         restored.restore(&blob, saved_at, now);
         assert!(
-            total(&restored, ChartSpan::FifteenMinutes).is_empty(),
-            "15-min tier fully stale"
+            total(&restored, ChartSpan::OneHour).is_empty(),
+            "1-h tier fully stale"
         );
         assert_eq!(
-            vals(&total(&restored, ChartSpan::OneHour)),
+            vals(&total(&restored, ChartSpan::SixHours)),
             vec![Some(10.0)],
-            "1-h tier still in range"
+            "6-h tier still in range"
         );
     }
 
@@ -1226,11 +1205,11 @@ mod tests {
                 value: Some(10.0),
             },
             HistoryDatum {
-                at: 15,
+                at: 60,
                 value: None,
             },
             HistoryDatum {
-                at: 30,
+                at: 120,
                 value: Some(12.0),
             },
         ];
@@ -1247,19 +1226,17 @@ mod tests {
                 .expect("BUG: a snapshot encodes"),
         );
         let mut restored = HashrateHistory::default();
-        assert!(restored.restore(&blob, 30, 35), "restored within range");
+        assert!(restored.restore(&blob, 120, 140), "restored within range");
         let window = ChartWindow {
-            end: 35,
-            span_secs: 900,
+            end: 140,
+            span_secs: 3_600,
         };
         assert_eq!(
-            restored
-                .view(ChartSpan::FifteenMinutes, window)
-                .total_series(),
+            restored.view(ChartSpan::OneHour, window).total_series(),
             vec![
                 vec![ChartPoint { at: 0, value: 10.0 }],
                 vec![ChartPoint {
-                    at: 30,
+                    at: 120,
                     value: 12.0
                 }],
             ],
@@ -1279,10 +1256,31 @@ mod tests {
             !h.restore(&[SNAPSHOT_MAGIC, SNAPSHOT_VERSION, 0xFF, 0xFF], 0, 0),
             "garbage payload"
         );
-        assert!(
-            total(&h, ChartSpan::FifteenMinutes).is_empty(),
-            "nothing restored"
+        assert!(total(&h, ChartSpan::OneHour).is_empty(), "nothing restored");
+    }
+
+    #[test]
+    fn a_blob_with_another_number_of_tiers_is_rejected() {
+        let tiers: Vec<FleetTierSnapshot> = (0..=ChartSpan::ALL.len())
+            .map(|_| FleetTierSnapshot {
+                total: vec![HistoryDatum {
+                    at: 0,
+                    value: Some(10.0),
+                }],
+                models: vec![],
+            })
+            .collect();
+        let mut blob = vec![SNAPSHOT_MAGIC, SNAPSHOT_VERSION];
+        blob.extend(
+            bincode::encode_to_vec(&tiers, bincode::config::standard())
+                .expect("BUG: a snapshot encodes"),
         );
+        let mut h = HashrateHistory::default();
+        assert!(
+            !h.restore(&blob, 0, 0),
+            "its tiers would land on the wrong ranges"
+        );
+        assert!(total(&h, ChartSpan::OneHour).is_empty(), "nothing restored");
     }
 
     #[test]
@@ -1290,7 +1288,7 @@ mod tests {
         let mut h = HashrateHistory::default();
         h.record_fleet(0, &summary(10.0, 4.0).hashrate());
         assert!(h.take_snapshot(0).is_some(), "first snapshot fires");
-        h.record_fleet(15, &summary(11.0, 4.0).hashrate());
+        h.record_fleet(60, &summary(11.0, 4.0).hashrate());
         assert!(
             h.take_snapshot(SNAPSHOT_INTERVAL_SECS - 1).is_none(),
             "within the interval — skipped"
@@ -1329,7 +1327,7 @@ mod tests {
             total: group("Total", 0.0),
             groups: vec![],
         };
-        h.record_fleet(15, &empty.hashrate());
+        h.record_fleet(60, &empty.hashrate());
         let blob = h
             .take_snapshot(SNAPSHOT_INTERVAL_SECS)
             .expect("BUG: the pruned catch-all left the tiers, so flash is behind them");
@@ -1339,7 +1337,7 @@ mod tests {
             "restored within range"
         );
         assert!(
-            !restored.fleet[ChartSpan::FifteenMinutes.tier()]
+            !restored.fleet[ChartSpan::OneHour.tier()]
                 .models
                 .contains_key(&(None, UNKNOWN_GROUP.to_owned())),
             "the saved history no longer holds the catch-all"
@@ -1353,12 +1351,12 @@ mod tests {
         series.iter().map(|s| s.at).collect()
     }
 
-    /// A blob saved at 1 000 s, holding buckets at 900 and 1 000 s.
-    fn blob_saved_at_1000() -> Vec<u8> {
+    /// A blob saved at 4 000 s, holding buckets at 3 600 and 4 000 s.
+    fn blob_saved_at_4000() -> Vec<u8> {
         let mut h = HashrateHistory::default();
-        h.record_fleet(900, &summary(10.0, 4.0).hashrate());
-        h.record_fleet(1_000, &summary(11.0, 4.0).hashrate());
-        h.take_snapshot(1_000)
+        h.record_fleet(3_600, &summary(10.0, 4.0).hashrate());
+        h.record_fleet(4_000, &summary(11.0, 4.0).hashrate());
+        h.take_snapshot(4_000)
             .expect("BUG: the first snapshot fires")
     }
 
@@ -1367,25 +1365,25 @@ mod tests {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
         let list = devices(&[("bos/a", 3.0, true)]);
-        for now in [0, 15, 30, 45] {
+        for now in [0, 60, 120, 180] {
             h.record_fleet(now, &summary(10.0, 4.0).hashrate());
             poll_all(&mut h, now, &list);
         }
-        h.record_fleet(20, &summary(12.0, 5.0).hashrate());
-        let total = total(&h, ChartSpan::FifteenMinutes);
+        h.record_fleet(80, &summary(12.0, 5.0).hashrate());
+        let total = total(&h, ChartSpan::OneHour);
         assert_eq!(
             stamps(&total),
-            vec![0, 15],
-            "the buckets at 30 and 45 s were stamped by a clock that was ahead"
+            vec![0, 60],
+            "the buckets at 120 and 180 s were stamped by a clock that was ahead"
         );
         assert_eq!(
             vals(&total),
             vec![Some(10.0), Some(10.0)],
-            "the cut closes the bucket at 15 s, so the reading at 20 s in its slot is dropped"
+            "the cut closes the bucket at 60 s, so the reading at 80 s in its slot is dropped"
         );
         assert_eq!(
-            stamps(&device(&h, ChartSpan::FifteenMinutes, &a)),
-            vec![0, 15],
+            stamps(&device(&h, ChartSpan::OneHour, &a)),
+            vec![0, 60],
             "device series are cut too"
         );
     }
@@ -1393,43 +1391,37 @@ mod tests {
     #[test]
     fn a_clock_set_back_rewrites_flash_at_once() {
         let mut h = HashrateHistory::default();
-        for now in [0, 15, 30, 45] {
+        for now in [0, 60, 120, 180] {
             h.record_fleet(now, &summary(10.0, 4.0).hashrate());
         }
-        assert!(h.take_snapshot(45).is_some(), "the first snapshot fires");
-        h.record_fleet(20, &summary(12.0, 5.0).hashrate());
+        assert!(h.take_snapshot(180).is_some(), "the first snapshot fires");
+        h.record_fleet(80, &summary(12.0, 5.0).hashrate());
         let blob = h
-            .take_snapshot(20)
+            .take_snapshot(80)
             .expect("BUG: the step back lifts the rate limit, so flash loses the buckets after it");
         let mut restored = HashrateHistory::default();
-        assert!(restored.restore(&blob, 20, 25), "restored within range");
-        assert_eq!(
-            stamps(&total(&restored, ChartSpan::FifteenMinutes)),
-            vec![0, 15]
-        );
+        assert!(restored.restore(&blob, 80, 100), "restored within range");
+        assert_eq!(stamps(&total(&restored, ChartSpan::OneHour)), vec![0, 60]);
     }
 
     #[test]
     fn a_clock_set_back_on_an_empty_fleet_still_rewrites_flash() {
         let mut h = HashrateHistory::default();
-        for now in [0, 15, 30, 45] {
+        for now in [0, 60, 120, 180] {
             h.record_fleet(now, &summary(10.0, 4.0).hashrate());
         }
-        assert!(h.take_snapshot(45).is_some(), "the first snapshot fires");
+        assert!(h.take_snapshot(180).is_some(), "the first snapshot fires");
         let empty = FleetSummary {
             total: group("Total", 0.0),
             groups: vec![],
         };
-        h.record_fleet(20, &empty.hashrate());
+        h.record_fleet(80, &empty.hashrate());
         let blob = h
-            .take_snapshot(20)
+            .take_snapshot(80)
             .expect("BUG: flash holds the dropped buckets whatever the reading held");
         let mut restored = HashrateHistory::default();
-        assert!(restored.restore(&blob, 20, 25), "restored within range");
-        assert_eq!(
-            stamps(&total(&restored, ChartSpan::FifteenMinutes)),
-            vec![0, 15]
-        );
+        assert!(restored.restore(&blob, 80, 100), "restored within range");
+        assert_eq!(stamps(&total(&restored, ChartSpan::OneHour)), vec![0, 60]);
     }
 
     #[test]
@@ -1437,19 +1429,19 @@ mod tests {
         let mut h = HashrateHistory::default();
         let a = DeviceId::new("bos/a");
         let list = devices(&[("bos/a", 3.0, true)]);
-        for now in [0, 15, 30, 45] {
+        for now in [0, 60, 120, 180] {
             h.record_fleet(now, &summary(10.0, 4.0).hashrate());
             poll_all(&mut h, now, &list);
         }
-        poll_all(&mut h, 20, &list);
+        poll_all(&mut h, 80, &list);
         assert_eq!(
-            stamps(&device(&h, ChartSpan::FifteenMinutes, &a)),
-            vec![0, 15],
+            stamps(&device(&h, ChartSpan::OneHour, &a)),
+            vec![0, 60],
             "the poll follows the clock before it records"
         );
         assert_eq!(
-            stamps(&total(&h, ChartSpan::FifteenMinutes)),
-            vec![0, 15],
+            stamps(&total(&h, ChartSpan::OneHour)),
+            vec![0, 60],
             "the fleet series are cut by the same step"
         );
     }
@@ -1458,20 +1450,20 @@ mod tests {
     fn a_blob_newer_than_the_clock_waits_out_of_the_tiers() {
         let mut h = HashrateHistory::default();
         assert!(
-            h.restore(&blob_saved_at_1000(), 1_000, 50),
+            h.restore(&blob_saved_at_4000(), 4_000, 200),
             "a well-formed blob"
         );
         assert!(
-            total(&h, ChartSpan::FifteenMinutes).is_empty(),
+            total(&h, ChartSpan::OneHour).is_empty(),
             "a clock behind the blob cannot place it yet"
         );
-        h.record_fleet(50, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(200, &summary(12.0, 5.0).hashrate());
         assert!(
-            !total(&h, ChartSpan::FifteenMinutes).is_empty(),
+            !total(&h, ChartSpan::OneHour).is_empty(),
             "live readings record meanwhile"
         );
         assert!(
-            h.take_snapshot(50).is_none(),
+            h.take_snapshot(200).is_none(),
             "nothing overwrites the blob while it waits"
         );
     }
@@ -1480,23 +1472,23 @@ mod tests {
     fn a_waiting_blob_merges_once_the_clock_reaches_it() {
         let mut h = HashrateHistory::default();
         assert!(
-            h.restore(&blob_saved_at_1000(), 1_000, 50),
+            h.restore(&blob_saved_at_4000(), 4_000, 200),
             "a well-formed blob"
         );
-        h.record_fleet(50, &summary(12.0, 5.0).hashrate());
-        h.record_fleet(1_010, &summary(13.0, 5.0).hashrate());
+        h.record_fleet(200, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(4_040, &summary(13.0, 5.0).hashrate());
         assert_eq!(
-            stamps(&total(&h, ChartSpan::FifteenMinutes)),
-            vec![900, 1_000, 1_010],
-            "the blob, then live; the reading at 50 s was stamped by a clock behind it"
+            stamps(&total(&h, ChartSpan::OneHour)),
+            vec![3_600, 4_000, 4_040],
+            "the blob, then live; the reading at 200 s was stamped by a clock behind it"
         );
         assert_eq!(
-            vals(&model(&h, ChartSpan::FifteenMinutes, "BOS BMM")),
+            vals(&model(&h, ChartSpan::OneHour, "BOS BMM")),
             vec![Some(4.0), Some(4.0), Some(5.0)],
             "model series merge the same way"
         );
         assert!(
-            h.take_snapshot(1_010).is_some(),
+            h.take_snapshot(4_040).is_some(),
             "with the blob merged, flash is written again"
         );
     }
@@ -1505,20 +1497,20 @@ mod tests {
     fn a_waiting_blob_skips_the_tiers_its_downtime_left_behind() {
         let mut h = HashrateHistory::default();
         assert!(
-            h.restore(&blob_saved_at_1000(), 1_000, 50),
+            h.restore(&blob_saved_at_4000(), 4_000, 200),
             "a well-formed blob"
         );
-        let now = 1_000 + 20 * 60;
+        let now = 4_000 + 80 * 60;
         h.record_fleet(now, &summary(13.0, 5.0).hashrate());
         assert_eq!(
-            stamps(&total(&h, ChartSpan::FifteenMinutes)),
+            stamps(&total(&h, ChartSpan::OneHour)),
             vec![now],
-            "20 minutes after the save, the 15-min tier would draw none of it"
+            "80 minutes after the save, the 1-h tier would draw none of it"
         );
         assert_eq!(
-            stamps(&total(&h, ChartSpan::OneHour)),
-            vec![900, 1_000, now],
-            "the 1-h tier still draws it"
+            stamps(&total(&h, ChartSpan::SixHours)),
+            vec![3_600, 4_000, now],
+            "the 6-h tier still draws it"
         );
     }
 
@@ -1526,33 +1518,36 @@ mod tests {
     fn a_clock_set_back_cuts_a_waiting_blob() {
         let mut h = HashrateHistory::default();
         assert!(
-            h.restore(&blob_saved_at_1000(), 1_000, 950),
+            h.restore(&blob_saved_at_4000(), 4_000, 3_800),
             "a well-formed blob"
         );
-        h.record_fleet(960, &summary(12.0, 5.0).hashrate());
-        h.record_fleet(940, &summary(13.0, 5.0).hashrate());
+        h.record_fleet(3_840, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(3_760, &summary(13.0, 5.0).hashrate());
         assert_eq!(
-            stamps(&total(&h, ChartSpan::FifteenMinutes)),
-            vec![900, 940],
+            stamps(&total(&h, ChartSpan::OneHour)),
+            vec![3_600, 3_760],
             "a corrected clock keeps the blob's past and drops the rest, so the blob merges"
         );
-        assert!(h.take_snapshot(940).is_some(), "and flash is written again");
+        assert!(
+            h.take_snapshot(3_760).is_some(),
+            "and flash is written again"
+        );
     }
 
     #[test]
     fn a_clock_set_back_into_a_waiting_blob_keeps_one_bucket_per_slot() {
         let mut h = HashrateHistory::default();
         assert!(
-            h.restore(&blob_saved_at_1000(), 1_000, 905),
+            h.restore(&blob_saved_at_4000(), 4_000, 3_620),
             "a well-formed blob"
         );
-        h.record_fleet(910, &summary(12.0, 5.0).hashrate());
-        h.record_fleet(990, &summary(13.0, 5.0).hashrate());
-        h.record_fleet(950, &summary(14.0, 5.0).hashrate());
+        h.record_fleet(3_640, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(3_960, &summary(13.0, 5.0).hashrate());
+        h.record_fleet(3_800, &summary(14.0, 5.0).hashrate());
         assert_eq!(
-            stamps(&total(&h, ChartSpan::FifteenMinutes)),
-            vec![900, 950],
-            "the cut blob ends at 900, and the live bucket at 910 shares its slot"
+            stamps(&total(&h, ChartSpan::OneHour)),
+            vec![3_600, 3_800],
+            "the cut blob ends at 3 600, and the live bucket at 3 640 shares its slot"
         );
     }
 
@@ -1560,18 +1555,18 @@ mod tests {
     fn a_clock_set_back_before_a_waiting_blob_drops_it() {
         let mut h = HashrateHistory::default();
         assert!(
-            h.restore(&blob_saved_at_1000(), 1_000, 50),
+            h.restore(&blob_saved_at_4000(), 4_000, 200),
             "a well-formed blob"
         );
-        h.record_fleet(60, &summary(12.0, 5.0).hashrate());
-        h.record_fleet(40, &summary(13.0, 5.0).hashrate());
+        h.record_fleet(240, &summary(12.0, 5.0).hashrate());
+        h.record_fleet(160, &summary(13.0, 5.0).hashrate());
         assert_eq!(
-            stamps(&total(&h, ChartSpan::FifteenMinutes)),
-            vec![40],
+            stamps(&total(&h, ChartSpan::OneHour)),
+            vec![160],
             "every bucket of the blob is after the corrected clock"
         );
         assert!(
-            h.take_snapshot(40).is_some(),
+            h.take_snapshot(160).is_some(),
             "flash is written again, overwriting the blob"
         );
     }

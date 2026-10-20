@@ -80,16 +80,16 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 - The per-model and per-device rows carry a compact sparkline of the same history.
 - History is accumulated on-device from successive polls, so it is uniform across families whether or not a miner
   exposes a hashrate-history endpoint.
-- Each chart range is split into 60 slots: 15 seconds on the 15-minute range, 1 minute on 1 hour, 6 minutes on 6 hours
-  and 24 minutes on 24 hours. A chart keeps one point per slot. Its line joins points up to one empty slot apart and
-  breaks at two or more, so a stretch without data shows as a gap.
+- Each chart range is split into 60 slots: 1 minute on 1 hour, 6 minutes on 6 hours and 24 minutes on 24 hours. A chart
+  keeps one point per slot. Its line joins points up to one empty slot apart and breaks at two or more, so a stretch
+  without data shows as a gap.
 - A slot's point appears once the slot has ended, so the line stops up to one slot short of the chart's right edge. The
   hashrate shown with the chart is the current one.
 - A device's chart keeps the newest reading from each slot in which the device was polled. Its line may break once polls
-  of that device land more than 30 seconds apart on the 15-minute range (2 minutes on 1 hour), and always breaks at 45
-  seconds or more (3 minutes on 1 hour). A large fleet, or one with many unreachable miners, can make a polling pass
-  that slow, and its 15-minute device charts then show separate dots. The fleet-total and per-model charts take their
-  points on the widget's own timer and do not break this way.
+  of that device land more than 2 minutes apart on the 1-hour range, and always breaks at 3 minutes or more. A very
+  large fleet, or one with many unreachable miners, can make a polling pass that slow, and its 1-hour device charts then
+  show separate dots. The fleet-total and per-model charts take their points on the widget's own timer and do not break
+  this way.
 - A miner that answers counts at its latest reading, however long the pass took to reach it again. A miner that stops
   answering keeps its last reading until it flips to unreachable (see
   [Trust what the numbers say](#trust-what-the-numbers-say)), and from then on its line breaks and it drops out of the
@@ -138,8 +138,8 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 > As an operator, I want to widen or narrow the window the hashrate charts cover.
 
-- *Chart time range* sets the span the dashboard and device-detail hashrate charts cover — 15 minutes, 1 hour (the
-  default), 6 hours, or 24 hours. A fixed number of points spans the range, so a longer range samples less often.
+- *Chart time range* sets the span the dashboard and device-detail hashrate charts cover — 1 hour (the default), 6
+  hours, or 24 hours. A fixed number of points spans the range, so a longer range samples less often.
 
 ### Name my fleet
 
@@ -199,11 +199,11 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 All parameters are manifest-driven widget settings, configurable from the web UI.
 
-| Key                  | Name              | Type    | Default    | Purpose                                                          |
-| -------------------- | ----------------- | ------- | ---------- | ---------------------------------------------------------------- |
-| `fleet_name`         | Fleet name        | string  | `My Fleet` | Heading shown above the fleet overview.                          |
-| `axeos_enabled`      | Show AxeOS miners | boolean | `true`     | Include AxeOS miners in the view and keep polling them.          |
-| `chart_span_minutes` | Chart time range  | integer | `60`       | Minutes the hashrate charts cover: `15`, `60`, `360`, or `1440`. |
+| Key                  | Name              | Type    | Default    | Purpose                                                    |
+| -------------------- | ----------------- | ------- | ---------- | ---------------------------------------------------------- |
+| `fleet_name`         | Fleet name        | string  | `My Fleet` | Heading shown above the fleet overview.                    |
+| `axeos_enabled`      | Show AxeOS miners | boolean | `true`     | Include AxeOS miners in the view and keep polling them.    |
+| `chart_span_minutes` | Chart time range  | integer | `60`       | Minutes the hashrate charts cover: `60`, `360`, or `1440`. |
 
 ## Credentials
 

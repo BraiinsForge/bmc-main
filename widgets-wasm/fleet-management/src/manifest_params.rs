@@ -10,7 +10,6 @@ use bmc_wasm_sdk::params as snapshot;
 use bmc_wasm_sdk::params::typed::ParamRead;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChartSpanMinutes {
-    _15Minutes,
     _1Hour,
     _6Hours,
     _24Hours,
@@ -18,17 +17,11 @@ pub enum ChartSpanMinutes {
 impl ChartSpanMinutes {
     /// Every variant, in manifest-declaration order. Useful when a widget
     /// wants to render a "pick one" UI or audit the enum exhaustively.
-    pub const ALL: &'static [Self] = &[
-        Self::_15Minutes,
-        Self::_1Hour,
-        Self::_6Hours,
-        Self::_24Hours,
-    ];
+    pub const ALL: &'static [Self] = &[Self::_1Hour, Self::_6Hours, Self::_24Hours];
     /// Manifest wire value for this variant.
     #[must_use]
     pub fn as_manifest_value(self) -> i32 {
         match self {
-            Self::_15Minutes => 15,
             Self::_1Hour => 60,
             Self::_6Hours => 360,
             Self::_24Hours => 1440,
@@ -38,7 +31,6 @@ impl ChartSpanMinutes {
     #[must_use]
     pub fn as_manifest_label(self) -> &'static str {
         match self {
-            Self::_15Minutes => "15 minutes",
             Self::_1Hour => "1 hour",
             Self::_6Hours => "6 hours",
             Self::_24Hours => "24 hours",
@@ -47,7 +39,6 @@ impl ChartSpanMinutes {
     #[must_use]
     pub fn from_manifest_value(v: i32) -> Option<Self> {
         match v {
-            15 => Some(Self::_15Minutes),
             60 => Some(Self::_1Hour),
             360 => Some(Self::_6Hours),
             1440 => Some(Self::_24Hours),

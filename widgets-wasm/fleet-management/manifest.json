@@ -44,10 +44,6 @@
       "default_value": 60,
       "enum_values": [
         {
-          "value": 15,
-          "label": "15 minutes"
-        },
-        {
           "value": 60,
           "label": "1 hour"
         },
