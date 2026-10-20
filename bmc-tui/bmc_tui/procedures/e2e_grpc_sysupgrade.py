@@ -358,12 +358,11 @@ def _stop_hosts(
     cleanup: _Cleanup,
     packages: catalog.UpgradeCycle,
     index: fw_index.FwIndexServer | None,
-    index_started: bool,
 ) -> bool:
     if packages.server is not None:
         _ = cleanup.run("stop package server", lambda: catalog.stop_upgrade_server_group(packages))
-    if index is not None and index_started:
-        _ = cleanup.run("stop firmware index", lambda: index.__exit__(None, None, None))
+    if index is not None:
+        _ = cleanup.run("stop firmware index", index.close)
     return not cleanup.failures
 
 
@@ -428,7 +427,6 @@ class E2eGrpcSysupgrade:
             snapshot_dir=snapshot_dir,
         )
         index: fw_index.FwIndexServer | None = None
-        index_started = False
         resolution = _Resolution("none", None)
         cleanup = _Cleanup([])
         mutation_dev = dev
@@ -508,7 +506,6 @@ class E2eGrpcSysupgrade:
                 )
             )
             _ = index.__enter__()
-            index_started = True
 
             catalog.point_bmc_at_index(mutation_dev, cycle)
             catalog.await_bmc_ready(mutation_dev, cycle)
@@ -624,12 +621,7 @@ class E2eGrpcSysupgrade:
                     )
 
             if not resolution.retain and restored:
-                hosts_stopped = _stop_hosts(
-                    cleanup,
-                    packages,
-                    index,
-                    index_started,
-                )
+                hosts_stopped = _stop_hosts(cleanup, packages, index)
                 if hosts_stopped:
                     _ = cleanup.run(
                         "remove snapshot directory",

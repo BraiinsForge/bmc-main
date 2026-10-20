@@ -342,6 +342,7 @@ class FwIndexServer:
         self._thread: threading.Thread = threading.Thread(
             target=self._httpd.serve_forever, daemon=True
         )
+        self._closed: bool = False
 
     @property
     def port(self) -> int:
@@ -364,5 +365,14 @@ class FwIndexServer:
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        self._httpd.shutdown()
+        self.close()
+
+    def close(self) -> None:
+        """Stop serving if started, then release the socket; a repeated call does nothing."""
+        if self._closed:
+            return
+        self._closed = True
+        # `shutdown` waits for `serve_forever` to return, so it hangs on a server never entered.
+        if self._thread.is_alive():
+            self._httpd.shutdown()
         self._httpd.server_close()

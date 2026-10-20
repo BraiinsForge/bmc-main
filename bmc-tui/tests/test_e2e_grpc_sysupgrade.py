@@ -108,30 +108,20 @@ class IndexServer(fw_index.FwIndexServer):
         super().__init__(root, port=0, bind_ip="127.0.0.1")
         self.root: Path = root
         self.provenance: bool = provenance
-        self.entered: bool = False
         self.stopped: bool = False
         self.index_text: str | None = None
         self.transfers: int = 0
 
-    def release(self) -> None:
-        """Stop a server the run left serving, so its thread does not outlive the test,
-        and close one it never entered, so its socket does not either."""
-        if not self.entered:
-            self._httpd.server_close()
-        elif not self.stopped:
-            super().__exit__()
-
     @override
     def __enter__(self) -> "IndexServer":
         _ = super().__enter__()
-        self.entered = True
         index_path = next(self.root.rglob("index.v1.json"), None)
         self.index_text = index_path.read_text() if index_path is not None else None
         return self
 
     @override
-    def __exit__(self, *_exc: object) -> None:
-        super().__exit__()
+    def close(self) -> None:
+        super().close()
         self.stopped = True
 
     @override
@@ -397,7 +387,7 @@ def harness(  # noqa: PLR0915
         snapshot=snapshot,
         stream=run_stream,
     )
-    server.release()
+    server.close()
 
 
 def _run(

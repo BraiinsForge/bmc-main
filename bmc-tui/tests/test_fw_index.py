@@ -419,3 +419,26 @@ def test_server_reports_active_transfer_until_handler_finishes(
             time.sleep(0.01)
 
         assert server.active_transfers() == 0
+
+
+def port_is_free(port: int) -> bool:
+    with socket.socket() as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+        return True
+
+
+def test_closing_a_server_never_entered_releases_its_port(tmp_path: Path) -> None:
+    server = FwIndexServer(tmp_path, port=0, bind_ip="127.0.0.1")
+    assert not port_is_free(server.port), "the server binds on construction"
+    server.close()
+    assert port_is_free(server.port)
+
+
+def test_closing_after_the_context_exits_does_nothing(tmp_path: Path) -> None:
+    with FwIndexServer(tmp_path, port=0, bind_ip="127.0.0.1") as server:
+        port = server.port
+    server.close()
+    assert port_is_free(port)
