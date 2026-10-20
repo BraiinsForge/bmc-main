@@ -320,7 +320,7 @@ class View extends Component<Props, State> {
                 connected > 0 ? (
                     <Fragment>
                         <FormattedMessage
-                            defaultMessage="Deleting {name} will unbind it from <b>{count, plural, one {1 widget} other {# widgets}}</b>, which will stop using it."
+                            defaultMessage="Deleting {name} will unbind it from <b>{count, plural, one {{count} widget} other {{count} widgets}}</b>, which will stop using it."
                             values={{
                                 b: ch => <strong children={ch} />,
                                 name: <strong children={acc.name} />,

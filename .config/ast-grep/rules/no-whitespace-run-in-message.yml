@@ -1,0 +1,35 @@
+# `formatjs_intl_macros` collapses every run of whitespace in `default_message`
+# — newlines, tabs, doubled spaces — before hashing the id,
+# and emits the collapsed text as the runtime default.
+#
+# The extractor does the same, so extraction and runtime agree
+# while the source lies: `"one\ntwo"` renders as `one two`.
+#
+# Inside a macro's token tree the argument name is a bare identifier
+# before the string; the look-back stops at the previous string
+# so `description:` is not mistaken for it.
+
+id: no-whitespace-run-in-message
+language: rust
+severity: error
+
+message: "A newline, tab or doubled space in `default_message` is collapsed by the macro — pass a deliberate break as an argument (`{br}` with `\"\\n\"`)."
+
+files:
+  - "**/*.rs"
+ignores:
+  - "bmc-grpc/src/gen/**"
+
+rule:
+  any:
+    - kind: string_literal
+      regex: '\\[nt]|\n|\t| {2,}'
+    - kind: raw_string_literal
+      regex: '\n|\t| {2,}'
+  follows:
+    kind: identifier
+    regex: "^default_message$"
+    stopBy:
+      any:
+        - kind: string_literal
+        - kind: raw_string_literal

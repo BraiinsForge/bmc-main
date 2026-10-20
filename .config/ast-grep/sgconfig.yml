@@ -6,3 +6,9 @@
 
 ruleDirs:
   - rules
+
+# `.ts` files parse under the `tsx` grammar, so one web rule covers both.
+# Nothing in `frontend/src` uses the one construct that grammar rejects, the `<T>expr` cast.
+languageGlobs:
+  tsx:
+    - "*.ts"

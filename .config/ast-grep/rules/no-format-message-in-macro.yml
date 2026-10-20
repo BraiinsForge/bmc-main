@@ -1,0 +1,25 @@
+# The formatjs Rust extractor (`formatjs extract`) visits `format_message!` invocations with syn
+# and does not descend into the token tree of any other macro.
+# One nested in `vec![…]`, `assert!(…)` or another `format_message!` is absent from the extraction:
+# no translator entry, no catalog entry, English at runtime —
+# and `intl verify` compares against that same extraction, so nothing flags it.
+
+id: no-format-message-in-macro
+language: rust
+severity: error
+
+message: "`format_message!` inside another macro is invisible to the extractor — bind it to a local outside the macro and pass the local in."
+
+files:
+  - "**/*.rs"
+ignores:
+  - "bmc-grpc/src/gen/**"
+  # The `intl` extractor's tests feed it copy in the shapes it must find.
+  - "bmc-intl/tools/**"
+
+rule:
+  kind: identifier
+  regex: "^format_message$"
+  inside:
+    kind: token_tree
+    stopBy: end

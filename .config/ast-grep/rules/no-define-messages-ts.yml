@@ -1,0 +1,21 @@
+# The web twin of `no-message-descriptor`: a `defineMessages` table separates
+# each message from the call that formats it, its values and its context.
+# Copy declared where the data is stays inline too — a function that takes
+# `formatMessage` and calls it, the parameter keeping that name for the extractor.
+
+id: no-define-messages-ts
+language: tsx
+severity: error
+
+message: "`defineMessages` hoists copy out of its context — call `formatMessage({ defaultMessage })` where the text is used."
+
+files:
+  - "frontend/src/**/*.{ts,tsx}"
+ignores:
+  - "**/*.d.ts"
+  - "frontend/src/proto/gen/**"
+
+rule:
+  any:
+    - pattern: defineMessages($$$)
+    - pattern: defineMessage($$$)

@@ -1,0 +1,37 @@
+# `format_message!` checks placeholders against the English at compile time
+# only when its values are spelled out, `values: { name: value }`.
+# Any other expression (`values: map`, `values: &build()`) skips the check,
+# so a missing or extra placeholder surfaces only as a formatting failure at runtime.
+#
+# The macro's arguments are one flat token tree: the rule looks past the `:`
+# to the first identifier or comma for a `{ … }` group.
+
+id: no-unchecked-message-values
+language: rust
+severity: error
+
+message: "`values:` given as an expression skips the compile-time placeholder check — spell the values out as `values: { name: value }`."
+
+files:
+  - "**/*.rs"
+ignores:
+  - "bmc-grpc/src/gen/**"
+
+rule:
+  kind: identifier
+  regex: "^values$"
+  inside:
+    kind: token_tree
+    inside:
+      kind: macro_invocation
+      has:
+        field: macro
+        regex: "(^|::)format_message$"
+  not:
+    precedes:
+      kind: token_tree
+      regex: "^\\{"
+      stopBy:
+        any:
+          - kind: identifier
+          - regex: "^,$"

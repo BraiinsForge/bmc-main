@@ -176,7 +176,10 @@ class View extends Component<Props, State> {
                         isChangelogExpanded
                             ? intl.formatMessage({ defaultMessage: 'Hide Older Updates' })
                             : intl.formatMessage(
-                                  { defaultMessage: '{count, plural, one {+# Older Update} other {+# Older Updates}}' },
+                                  {
+                                      defaultMessage:
+                                          '{count, plural, one {+{count} Older Update} other {+{count} Older Updates}}',
+                                  },
                                   { count: previousReleases.length },
                               )
                     }
@@ -359,7 +362,7 @@ class View extends Component<Props, State> {
                             title={formatMessage(
                                 {
                                     defaultMessage:
-                                        '{count, plural, one {# package update available} other {# package updates available}}',
+                                        '{count, plural, one {{count} package update available} other {{count} package updates available}}',
                                 },
                                 { count: packages.changes.length },
                             )}

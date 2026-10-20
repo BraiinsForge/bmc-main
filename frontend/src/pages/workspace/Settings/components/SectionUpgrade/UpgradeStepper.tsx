@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { defineMessages, useIntl, type MessageDescriptor } from 'react-intl';
+import { useIntl, type IntlShape } from 'react-intl';
 import { CheckmarkOutline, Incomplete, CircleDash } from '@carbon/react/icons';
 
 import * as pb from '@/proto';
@@ -43,22 +43,12 @@ export interface UpgradeStepperProps {
     finalizing?: boolean;
 }
 
-const labels = defineMessages({
-    downloading: { defaultMessage: 'Downloading' },
-    downloadingFirmware: { defaultMessage: 'Downloading firmware' },
-    downloadingPackages: { defaultMessage: 'Downloading packages' },
-    verifying: { defaultMessage: 'Verifying' },
-    verifyingFirmware: { defaultMessage: 'Verifying firmware' },
-    verifyingPackages: { defaultMessage: 'Verifying packages' },
-    building: { defaultMessage: 'Building' },
-    buildingPackages: { defaultMessage: 'Building packages' },
-    activating: { defaultMessage: 'Activating' },
-    applying: { defaultMessage: 'Applying' },
-});
+type FormatMessage = IntlShape['formatMessage'];
 
 interface StepDef {
     id: string;
-    label: MessageDescriptor;
+    // The parameter keeps the name `formatMessage`: it is the call the extractor collects.
+    label: (formatMessage: FormatMessage) => string;
     isDownload: boolean;
 }
 
@@ -66,23 +56,55 @@ interface StepDef {
 // package ACTIVATING (it folds into the firmware reboot).
 const STEPS: Record<UpgradeShape, StepDef[]> = {
     firmware: [
-        { id: 'fw-download', label: labels.downloading, isDownload: true },
-        { id: 'fw-verify', label: labels.verifying, isDownload: false },
-        { id: 'fw-apply', label: labels.applying, isDownload: false },
+        {
+            id: 'fw-download',
+            label: formatMessage => formatMessage({ defaultMessage: 'Downloading' }),
+            isDownload: true,
+        },
+        { id: 'fw-verify', label: formatMessage => formatMessage({ defaultMessage: 'Verifying' }), isDownload: false },
+        { id: 'fw-apply', label: formatMessage => formatMessage({ defaultMessage: 'Applying' }), isDownload: false },
     ],
     package: [
-        { id: 'pkg-realize', label: labels.downloading, isDownload: true },
-        { id: 'pkg-verify', label: labels.verifying, isDownload: false },
-        { id: 'pkg-build', label: labels.building, isDownload: false },
-        { id: 'pkg-activate', label: labels.activating, isDownload: false },
+        {
+            id: 'pkg-realize',
+            label: formatMessage => formatMessage({ defaultMessage: 'Downloading' }),
+            isDownload: true,
+        },
+        { id: 'pkg-verify', label: formatMessage => formatMessage({ defaultMessage: 'Verifying' }), isDownload: false },
+        { id: 'pkg-build', label: formatMessage => formatMessage({ defaultMessage: 'Building' }), isDownload: false },
+        {
+            id: 'pkg-activate',
+            label: formatMessage => formatMessage({ defaultMessage: 'Activating' }),
+            isDownload: false,
+        },
     ],
     combined: [
-        { id: 'fw-download', label: labels.downloadingFirmware, isDownload: true },
-        { id: 'fw-verify', label: labels.verifyingFirmware, isDownload: false },
-        { id: 'pkg-realize', label: labels.downloadingPackages, isDownload: true },
-        { id: 'pkg-verify', label: labels.verifyingPackages, isDownload: false },
-        { id: 'pkg-build', label: labels.buildingPackages, isDownload: false },
-        { id: 'fw-apply', label: labels.applying, isDownload: false },
+        {
+            id: 'fw-download',
+            label: formatMessage => formatMessage({ defaultMessage: 'Downloading firmware' }),
+            isDownload: true,
+        },
+        {
+            id: 'fw-verify',
+            label: formatMessage => formatMessage({ defaultMessage: 'Verifying firmware' }),
+            isDownload: false,
+        },
+        {
+            id: 'pkg-realize',
+            label: formatMessage => formatMessage({ defaultMessage: 'Downloading packages' }),
+            isDownload: true,
+        },
+        {
+            id: 'pkg-verify',
+            label: formatMessage => formatMessage({ defaultMessage: 'Verifying packages' }),
+            isDownload: false,
+        },
+        {
+            id: 'pkg-build',
+            label: formatMessage => formatMessage({ defaultMessage: 'Building packages' }),
+            isDownload: false,
+        },
+        { id: 'fw-apply', label: formatMessage => formatMessage({ defaultMessage: 'Applying' }), isDownload: false },
     ],
 };
 
@@ -174,7 +196,7 @@ export function UpgradeStepper(props: UpgradeStepperProps) {
                                 />
                             </div>
                             <div className={css.body}>
-                                <span children={formatMessage(s.label)} />
+                                <span children={s.label(formatMessage)} />
                                 {state === 'active' ? (
                                     <div className={css.detail}>
                                         <ActiveDetail step={s} download={download} startTime={startTime} />

@@ -1,0 +1,20 @@
+# The web twin of `no-hash-in-plural`: `react-intl` groups `#` the same way,
+# and the device preference is just as absent from the browser.
+
+id: no-hash-in-plural-ts
+language: tsx
+severity: error
+
+message: "`#` in a plural branch is locale-grouped — write the argument by name (`{count}`) instead."
+
+files:
+  - "frontend/src/**/*.{ts,tsx}"
+ignores:
+  - "**/*.d.ts"
+  - "frontend/src/proto/gen/**"
+
+rule:
+  any:
+    - kind: string
+    - kind: template_string
+  regex: "(?s)(plural|selectordinal)\\s*,.*#"

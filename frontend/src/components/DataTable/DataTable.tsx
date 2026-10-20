@@ -310,14 +310,17 @@ export class View<ColumnID extends string> extends Component<Props<ColumnID>, St
 
         // `{n} item[s] selected`
         let selectedMessage: ReactNode = formatMessage(
-            { defaultMessage: '{selected, plural, =1 {# item} other {# items}} selected' },
+            { defaultMessage: '{selected, plural, =1 {{selected} item} other {{selected} items}} selected' },
             { selected },
         );
 
         // `All {n} available item[s] selected`
         if (selected === available) {
             selectedMessage = formatMessage(
-                { defaultMessage: 'All {selected, plural, =1 {# item} other {# items}} available items are selected' },
+                {
+                    defaultMessage:
+                        'All {selected, plural, =1 {{selected} item} other {{selected} items}} available items are selected',
+                },
                 { selected },
             );
         }
@@ -340,7 +343,7 @@ export class View<ColumnID extends string> extends Component<Props<ColumnID>, St
             selectedMessage = formatMessage(
                 {
                     defaultMessage:
-                        'All {selected, plural, =1 {# item} other {# items}} on this page are selected. <a>Select all {available, plural, =1 {# item} other {# items}}</a>',
+                        'All {selected, plural, =1 {{selected} item} other {{selected} items}} on this page are selected. <a>Select all {available, plural, =1 {{available} item} other {{available} items}}</a>',
                 },
                 {
                     a: ch => <a children={ch} {...ARIA.button(selectAll)} className={css.headerSelectAllLink} />,

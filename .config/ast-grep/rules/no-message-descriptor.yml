@@ -1,0 +1,28 @@
+# Where a formatter exists, copy is inline: `format_message!` at the call site,
+# `description` and `values` beside the English.
+# A hoisted `message_descriptor!` separates the message from its context and its arguments,
+# the two things the compile-time placeholder check and the translator's description exist for.
+#
+# Ignored: the lazy-message crate, which defines the macro.
+# A crate with no formatter (a schema, a wire protocol) declares its copy
+# as a lazy `bmc_intl_message::Message` for the edge to word,
+# and is listed here once it does.
+
+id: no-message-descriptor
+language: rust
+severity: error
+
+message: "`message_descriptor!` hoists copy out of its context — call `format_message!` where the text is used."
+
+files:
+  - "**/*.rs"
+ignores:
+  - "bmc-grpc/src/gen/**"
+  - "bmc-intl/message/**"
+  # The `intl` extractor's tests feed it copy in the shapes it must find.
+  - "bmc-intl/tools/**"
+
+rule:
+  any:
+    - pattern: message_descriptor!($$$)
+    - pattern: $P::message_descriptor!($$$)

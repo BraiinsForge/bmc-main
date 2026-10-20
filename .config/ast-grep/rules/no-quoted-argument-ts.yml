@@ -1,0 +1,24 @@
+# The web twin of `no-quoted-argument`.
+# The string node's text starts with its own delimiter,
+# so the apostrophe must have a character before it to count.
+
+id: no-quoted-argument-ts
+language: tsx
+severity: error
+
+message: "An apostrophe before `{` quotes the argument out of the message — reword or use a typographic quote."
+
+files:
+  - "frontend/src/**/*.{ts,tsx}"
+ignores:
+  - "**/*.d.ts"
+  - "frontend/src/proto/gen/**"
+
+rule:
+  any:
+    - kind: string
+    - kind: template_string
+  regex: ".'\\{"
+  inside:
+    has:
+      regex: "^defaultMessage$"

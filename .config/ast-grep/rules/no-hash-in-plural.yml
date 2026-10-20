@@ -1,0 +1,31 @@
+# `#` inside a plural or selectordinal branch is the count formatted by the locale's number formatter,
+# grouped ("1,234"), while a plain `{count}` argument renders as written.
+#
+# The device's own number preference reaches neither,
+# so the one that adds nothing of its own is the one to use.
+#
+# Any string with a plural and a `#` after it is a hit,
+# even a quoted `'#'` or one after the plural closes.
+# A plain string whole, as tree-sitter splits its content at every escape;
+# a raw string by its content, which has no escapes, as it closes with `"#`.
+
+id: no-hash-in-plural
+language: rust
+severity: error
+
+message: "`#` in a plural branch is locale-grouped — write the argument by name (`{count}`) instead."
+
+files:
+  - "**/*.rs"
+ignores:
+  - "bmc-grpc/src/gen/**"
+  # The `intl` checker's tests feed it the copy it refuses.
+  - "bmc-intl/tools/**"
+
+rule:
+  regex: "(?s)(plural|selectordinal)\\s*,.*#"
+  any:
+    - kind: string_literal
+    - kind: string_content
+      inside:
+        kind: raw_string_literal

@@ -1,0 +1,29 @@
+# In ICU MessageFormat an ASCII apostrophe right before `{` starts a quoted literal,
+# so `'{state}'` renders the braces as text and the argument goes unused.
+#
+# The Rust macro reports that as an unused value when nothing else uses the argument,
+# and stays silent when something does; the web never checks values against the message.
+
+id: no-quoted-argument
+language: rust
+severity: error
+
+message: "An apostrophe before `{` quotes the argument out of the message — reword or use a typographic quote."
+
+files:
+  - "**/*.rs"
+ignores:
+  - "bmc-grpc/src/gen/**"
+
+rule:
+  any:
+    - kind: string_literal
+    - kind: raw_string_literal
+  regex: "'\\{"
+  follows:
+    kind: identifier
+    regex: "^default_message$"
+    stopBy:
+      any:
+        - kind: string_literal
+        - kind: raw_string_literal

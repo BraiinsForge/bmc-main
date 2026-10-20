@@ -1,0 +1,29 @@
+# The web twin of `no-whitespace-run-in-message`:
+#
+# `@swc/plugin-formatjs` with `preserveWhitespace` unset
+# collapses runs of whitespace in `defaultMessage` the same way,
+# so the source shows a break the page never renders.
+#
+# The parent is either the `defaultMessage: …` pair
+# or the `defaultMessage="…"` JSX attribute.
+
+id: no-whitespace-run-in-message-ts
+language: tsx
+severity: error
+
+message: "A newline, tab or doubled space in `defaultMessage` is collapsed by the formatjs plugin — pass a deliberate break as a value."
+
+files:
+  - "frontend/src/**/*.{ts,tsx}"
+ignores:
+  - "**/*.d.ts"
+  - "frontend/src/proto/gen/**"
+
+rule:
+  any:
+    - kind: string
+    - kind: template_string
+  regex: '\\[nt]|\n|\t| {2,}'
+  inside:
+    has:
+      regex: "^defaultMessage$"
