@@ -21,7 +21,6 @@
 """Restore-state tests for the firmware gRPC upgrade procedure."""
 
 import io
-import json
 import os
 import signal
 import socket
@@ -43,7 +42,7 @@ from bmc_tui.image import Image
 from bmc_tui.json_value import Json
 from bmc_tui.procedures import e2e_grpc_sysupgrade
 from bmc_tui.stage import Abort
-from tests import stubs
+from tests import device_replies, stubs
 from tests.test_catalog import _Nix
 
 _classify_stream = catalog.classify_stream
@@ -52,7 +51,7 @@ _require_fresh_firmware_staging = catalog.require_fresh_firmware_staging
 
 
 _BOOT_ID = "cat /proc/sys/kernel/random/boot_id"
-_BOARD = json.dumps({"board_name": "deck", "release": {"target": "stm32mp15/ii3"}})
+_BOARD = device_replies.board("stm32mp15/ii3", name="deck")
 
 
 class DeviceExec:

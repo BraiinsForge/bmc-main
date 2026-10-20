@@ -21,7 +21,6 @@
 """Structure tests for the fault-injection suite."""
 
 import inspect
-import json
 import subprocess
 import types
 from collections.abc import Callable
@@ -36,7 +35,7 @@ from bmc_tui.image import Image
 from bmc_tui.procedures import e2e_sysupgrade_faults as faults
 from bmc_tui.procedures.e2e_sysupgrade_faults import E2eSysupgradeFaults
 from bmc_tui.stage import Abort, dry_run
-from tests import stubs
+from tests import device_replies, stubs
 from tests.test_catalog import (
     _TARGET,
     _cp,
@@ -484,7 +483,7 @@ def _dry_routes(sha_a: str) -> _Respond:
     """Read-only replies for the unsigned-feed dry-run: a valid board, ample
     RAM, a reachable rig (non-zero preflight bytes), the verified upload sha,
     and — via the empty default — an absent store and download artifact."""
-    board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
+    board = device_replies.board(_TARGET)
     outputs = {
         "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
         "if [ -e /etc/nix/nix.conf ]": "ABSENT",
@@ -538,7 +537,7 @@ def _staged_dry_routes(sha_a: str) -> _Respond:
     """Read-only replies for a same-version-reflash dry-run: as _dry_routes,
     plus an initialized store and a running image A so the scenario reaches
     require_staged_once (which unsigned-feed never does)."""
-    board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
+    board = device_replies.board(_TARGET)
     outputs = {
         "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
         "if [ -e /etc/nix/nix.conf ]": "ABSENT",
@@ -639,7 +638,7 @@ def _run_with_cleanup_stubs(  # noqa: PLR0913  each cleanup hook controls a dist
     monkeypatch.setitem(faults._DRIVERS, "unsigned-feed", driver)
     image_a = _e2e_image(tmp_path, name="a.tar", version="va")
     image_b = _e2e_image(tmp_path, name="b.tar", version="vb")
-    board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
+    board = device_replies.board(_TARGET)
 
     def respond(argv: list[str]):
         return _cp(argv, board if "ubus call system board" in argv[-1] else "")
@@ -785,7 +784,7 @@ def _b1_dry_routes(sha_a: str) -> _Respond:
     """Read-only replies for a blank-data-partition dry-run: as
     _staged_dry_routes, plus the mounted data partition the release stage
     resolves and its blkid identity."""
-    board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
+    board = device_replies.board(_TARGET)
     outputs = {
         "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
         "if [ -e /etc/nix/nix.conf ]": "ABSENT",

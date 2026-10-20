@@ -20,7 +20,6 @@
 
 """Unit tests for the SSH device transport."""
 
-import json
 import socket
 import subprocess
 import sys
@@ -32,6 +31,7 @@ import pytest
 
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.stage import Abort, dry_run
+from tests import device_replies
 
 
 @final
@@ -171,8 +171,8 @@ def test_reachable_false_on_ssh_error() -> None:
 
 
 def test_board_parses_board_name_and_caches() -> None:
-    board = {"board_name": "braiins,stm32mp157c-ii3-bmc1", "release": {"target": "stm32mp15/ii3"}}
-    backend = _FakeExec(stdout=json.dumps(board))
+    board = device_replies.board("stm32mp15/ii3", name="braiins,stm32mp157c-ii3-bmc1")
+    backend = _FakeExec(stdout=board)
     dev = Device("h", backend=backend)
     assert dev.board == "braiins,stm32mp157c-ii3-bmc1"
     assert dev.board == "braiins,stm32mp157c-ii3-bmc1"
@@ -199,11 +199,8 @@ def test_version_runs_even_under_dry_run() -> None:
 
 
 def test_target_parses_release_target_and_shares_board_cache() -> None:
-    backend = _FakeExec(
-        stdout=(
-            '{"board_name": "braiins,stm32mp157c-ii3-bmc1", "release": {"target": "stm32mp15/ii3"}}'
-        )
-    )
+    board = device_replies.board("stm32mp15/ii3", name="braiins,stm32mp157c-ii3-bmc1")
+    backend = _FakeExec(stdout=board)
     dev = Device("h", backend=backend)
     assert dev.target == "stm32mp15/ii3"
     assert dev.board == "braiins,stm32mp157c-ii3-bmc1"

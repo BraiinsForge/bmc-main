@@ -47,7 +47,7 @@ from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
 from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.sysupgrade import Sysupgrade
 from bmc_tui.stage import Abort, dry_run
-from tests import stubs
+from tests import device_replies, stubs
 
 _TARGET = "stm32mp15/ii3"
 _TOP = "sysupgrade-stm32mp15_ii3-emmc"
@@ -406,9 +406,7 @@ def test_sysupgrade_cleans_up_tmp_after_flash_failure(
     backend = _Exec(
         _routes(
             {
-                "ubus call system board": json.dumps(
-                    {"board_name": "b", "release": {"target": _TARGET}}
-                ),
+                "ubus call system board": device_replies.board(_TARGET),
                 "MemAvailable": "9999999",
                 "sha256sum": image.sha256,
                 "cat /etc/bos_version": "older-version",
@@ -3255,7 +3253,7 @@ def test_rc_name_strips_prefix_and_priority() -> None:
 
 
 def _e2e_full_routes(sha_a: str, sha_b: str) -> _Respond:
-    board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
+    board = device_replies.board(_TARGET)
     state = {"flashes": 0, "mounted": True, "marker": False}
 
     def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
