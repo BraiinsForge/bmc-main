@@ -94,9 +94,10 @@ thread_local! {
 const TICK_PERIOD_MS: u32 = 1_000;
 
 /// Cadence of the tick while dormant, where it only samples the fleet charts
-/// once per slot of the finest tier, so it must land in every slot.
+/// once per slot of the finest tier.
+/// It lands twice in every slot, so one late tick cannot cost the charts a slot.
 #[cfg(any(target_arch = "wasm32", test))]
-const DORMANT_TICK_PERIOD_MS: u32 = 5_000;
+const DORMANT_TICK_PERIOD_MS: u32 = 30_000;
 
 /// Whether the host has the widget awake or dormant.
 #[cfg(target_arch = "wasm32")]
