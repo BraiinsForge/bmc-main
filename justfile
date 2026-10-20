@@ -4,6 +4,8 @@ import 'common.justfile'
 mod fe 'frontend/justfile'
 # Gallery shows of components & other UI building blocks of UI
 mod gallery 'bmc-gallery/justfile'
+# Translator files: extract, verify, and list what waits for a translator.
+mod intl 'bmc-intl/tools/justfile'
 # Widget manifest schema generation and drift checks.
 mod manifest 'bmc-widget-manifest/justfile'
 # Simulated miner network for widget development.
@@ -14,13 +16,6 @@ mod virt 'bmc-virt/justfile'
 mod wasm 'bmc-wasm-runtime/justfile'
 # Per-widget dev recipes.
 mod widgets 'widgets-wasm'
-
-# Auto-enter the dev shell for recipes that link against system libs
-# (e.g. `cargo nextest` needs wayland-client to compile bmc).
-# `cargo check`/`clippy` skip linking, so they don't need this wrap.
-# No-op when already inside a `nix develop` shell (IN_NIX_SHELL set
-# by nix); otherwise wrap the command in `nix develop --command`.
-NIX_DEV := if env("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "" }
 
 # === Quick local validation (default; LLM-friendly) ===
 
@@ -42,6 +37,7 @@ validate: format clippy python
     just test bmc-netsim
     nix run ".#content-checks"
     nix run ".#ast-grep"
+    nix run ".#intl-verify"
 
     # Dependency policy, host and wasm.
     nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.cargo-deny"

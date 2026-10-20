@@ -88,6 +88,25 @@ ast-grep:
   script:
     - nix run .#ast-grep
 
+intl-verify:
+  stage: lint
+  needs: []
+  script:
+    - nix run .#intl-verify
+
+# The messages this branch adds or rewords without a translation.
+# A warning, not a gate: author and reviewer decide
+# whether the translations come now or later.
+intl-untranslated:
+  stage: lint
+  needs: []
+  allow_failure: true
+  variables:
+    # `git merge-base` needs to see master; default GitLab depth (50) is shallow.
+    GIT_DEPTH: 0
+  script:
+    - nix run .#intl-untranslated
+
 proto-bindings:
   stage: lint
   needs: []

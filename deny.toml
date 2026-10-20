@@ -78,6 +78,10 @@ skip = [
     { crate = "syn@3" },
     { crate = "synstructure@0.14" },
 
+    # tabled's `ansi` feature (bmc-intl-tools) reaches vte 0.14 through ansitok 0.3,
+    # while egui_sgr is on vte 0.15. Remove once ansitok moves.
+    { crate = "vte@0.14" },
+
     # Wayland/Smithay ecosystem splits
     { crate = "calloop@0.13" },
 

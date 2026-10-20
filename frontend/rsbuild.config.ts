@@ -27,6 +27,7 @@ import { pluginSass } from '@rsbuild/plugin-sass';
 import { pluginSvgr } from '@rsbuild/plugin-svgr';
 import { pluginTypedCSSModules } from '@rsbuild/plugin-typed-css-modules';
 
+import MESSAGE_ID from './message-id.json' with { type: 'json' };
 import SVGO_CONFIG from './svgo.config.js';
 import SVGR_TEMPLATE from './svgr.template.js';
 
@@ -144,7 +145,12 @@ export default defineConfig({
             jsc: {
                 experimental: {
                     plugins: [
-                        ['@swc/plugin-formatjs', { ast: true }],
+                        // The id pattern the Rust macros bake in,
+                        // so one translator pipeline and one id space serve both.
+                        [
+                            '@swc/plugin-formatjs',
+                            { ast: true, idInterpolationPattern: MESSAGE_ID.idInterpolationPattern },
+                        ],
                         ['@swc/plugin-emotion', {}],
                     ],
                 },

@@ -20,6 +20,7 @@
 // the grant above.
 
 import { defineConfig, type RstestConfig } from '@rstest/core';
+import MESSAGE_ID from './message-id.json' with { type: 'json' };
 import rsbuildConfig from './rsbuild.config';
 
 const { plugins, resolve } = rsbuildConfig;
@@ -45,7 +46,7 @@ export default defineConfig({
             jsc: {
                 experimental: {
                     plugins: [
-                        ['@swc/plugin-formatjs', {}],
+                        ['@swc/plugin-formatjs', { idInterpolationPattern: MESSAGE_ID.idInterpolationPattern }],
                         ['@swc/plugin-emotion', {}],
                     ],
                 },

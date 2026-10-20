@@ -41,7 +41,7 @@ let
     pname = "bmc-fe-" + builtins.hashFile "sha1" ../pnpm-lock.yaml;
     inherit src pnpm;
     fetcherVersion = 4;
-    hash = "sha256-ow4xQHZOVgAEi8gHWXysFD0oD8PauLsIXJj8VmKG46U=";
+    hash = "sha256-T1xPXGdRjktyqtYMxj6YkykouxgFQ9prcBxxsLRRljc=";
     # pnpm 12 leaves an empty `v11/links` on darwin and not on linux, the one difference
     # between the two stores; `rmdir` fails should it ever hold anything.
     preFixup = ''

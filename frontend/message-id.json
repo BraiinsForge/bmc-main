@@ -1,0 +1,4 @@
+{
+    "$comment": "How a message's id is hashed, as formatjs_intl_macros hard-codes it for Rust; the web build and `intl extract` hash by this.",
+    "idInterpolationPattern": "[sha512:contenthash:base64:10]"
+}

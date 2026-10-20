@@ -1,0 +1,20 @@
+# Translator files of the host and the web: extraction, sync by id, the gate over them
+# and what waits for a translator — the `intl` binary of `bmc-intl-tools`.
+# Each build compiles the files into its own catalog.
+
+import '../../common.justfile'
+
+# Extract messages and sync every `lang/<key>.json` translator file by id.
+extract *SURFACES: (intl "extract" SURFACES)
+
+# Fail on a surface whose translator files are stale or broken; an untranslated message fails nothing.
+verify *SURFACES: (intl "verify" SURFACES)
+
+# List the messages waiting for a translation; `--since <rev>` keeps those added or reworded after it.
+untranslated *ARGS: (intl "untranslated" ARGS)
+
+# From the repository root, where `nix develop` finds the flake without searching up for it.
+[private]
+[working-directory('../..')]
+intl COMMAND *ARGS:
+    {{ NIX_DEV }} cargo run --quiet --package bmc-intl-tools -- {{ COMMAND }} {{ ARGS }}

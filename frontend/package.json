@@ -64,7 +64,6 @@
         "@bufbuild/protoc-gen-es": "2.14.1",
         "@emotion/react": "11.14.0",
         "@emotion/styled": "11.14.1",
-        "@formatjs/cli": "6.16.23",
         "@rsbuild/core": "2.2.4",
         "@rsbuild/plugin-react": "2.1.0",
         "@rsbuild/plugin-sass": "2.0.1",

@@ -82,12 +82,6 @@ storybook-start: check-pnpm
         --exact-port \
         --disable-telemetry
 
-# === Codegen ===
-
-# Extract i18n strings from sources.
-intl-extract: check-pnpm
-    pnpm exec formatjs extract './src/**/*.{ts,tsx}' --ignore='**/*.d.ts' --out-file lang/en.json
-
 # === Image optimization ===
 
 # Minify SVG files under ./src using the installed svgo defaults.

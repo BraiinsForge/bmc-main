@@ -122,7 +122,13 @@ in
     allFeatures = true;
     # python3: the wasm capture/verify recipes — and the capture binary's
     # local-build wasm path — shell out to tools/widget_*.py.
-    nativeDeps = pkgs: with pkgs; [ util-linux python3 ];
+    # git and formatjs: the `intl` tool's tests run both.
+    nativeDeps = pkgs: with pkgs; [
+      util-linux
+      python3
+      git
+      (callPackage ./intl/formatjs-cli.nix { })
+    ];
     env = {
       # Force Mesa onto its software path.
       #

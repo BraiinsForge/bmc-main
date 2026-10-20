@@ -105,6 +105,7 @@
         };
         ast-grep-scan = import ./nix/ast-grep.nix { inherit pkgs; };
         proto-plugins = pkgs.callPackage ./nix/proto-plugins.nix { };
+        formatjs-cli = pkgs.callPackage ./nix/intl/formatjs-cli.nix { };
         # `checks.nix` directly, not `nixlib.braiinschk.<system>`: that output bakes
         # in nixlib's own `pkgs`, whose `just` predates the `default-list` setting.
         content-checks = import "${nixlib}/checks.nix" pkgs {
@@ -148,6 +149,10 @@
           bmc-wasm-runtime-tools = [ ];
         };
 
+        # The `intl` binary, behind the translator-file apps.
+        intl-tools = workspace.bmc.profiles.fast.buildCrate workspace.bmc.crates.bmc-intl-tools { };
+        intl-apps = pkgs.callPackage ./nix/intl/apps.nix { inherit formatjs-cli intl-tools; };
+
         # Local dev shell with Rust + frontend + GUI deps (native only).
         localDevShell = (bmc.profiles.fast.mkShell {
           name = "bmc-local-env";
@@ -155,6 +160,7 @@
             ++ [
             proto-plugins.protoc-gen-buffa
             proto-plugins.protoc-gen-connect-rust
+            formatjs-cli
           ]
             ++ (with pkgs; [
             basedpyright
@@ -315,6 +321,7 @@
         lib = { inherit (workspace) mkInitArtifacts; };
 
         packages = workspace.packages // {
+          inherit formatjs-cli;
           deck-runtime-closure = checks.deck-runtime-closure;
           wasm-capture = capture.package;
           wasm-stack-usage-report = capture.stackUsageReport;
@@ -388,6 +395,18 @@
         apps.ast-grep = {
           type = "app";
           program = pkgs.lib.getExe ast-grep-scan;
+        };
+
+        # `nix run .#intl-verify` — translator files current and well-formed.
+        apps.intl-verify = {
+          type = "app";
+          program = pkgs.lib.getExe intl-apps.verify;
+        };
+
+        # `nix run .#intl-untranslated` — what this branch leaves untranslated.
+        apps.intl-untranslated = {
+          type = "app";
+          program = pkgs.lib.getExe intl-apps.untranslated;
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)

@@ -55,6 +55,11 @@ wasmWidgetCrates // {
     packageName = "bmc-nix";
     binName = false;
   };
+  bmc-intl-tools = defineCrate {
+    path = "bmc-intl/tools";
+    packageName = "bmc-intl-tools";
+    binName = "intl";
+  };
   bmc-nix-cli = defineCrate {
     path = "bmc-nix";
     packageName = "bmc-nix";

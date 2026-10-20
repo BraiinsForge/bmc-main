@@ -5,6 +5,13 @@
 # A first recipe is often a `clean` or a `validate`; bare `just` lists instead.
 set default-list
 
+# Auto-enter the dev shell for recipes that link against system libs
+# (e.g. `cargo nextest` needs wayland-client to compile bmc).
+# `cargo check`/`clippy` skip linking, so they don't need this wrap.
+# No-op when already inside a `nix develop` shell (IN_NIX_SHELL set
+# by nix); otherwise wrap the command in `nix develop --command`.
+NIX_DEV := if env("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "" }
+
 # Never the dev shell's tree, or each toolchain rebuilds the other's.
 CARGO_TARGET_ROOT := env('CARGO_TARGET_DIR', source_directory() / ".tmp/cargo-target")
 export CARGO_TARGET_DIR := CARGO_TARGET_ROOT
