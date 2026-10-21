@@ -28,10 +28,11 @@ use std::cell::RefCell;
 
 use bmc_ui::components::switcher::switcher_with_ids;
 use bmc_ui::{
-    Bitmap, BitmapId, Color, Draw, Mesh, MeshId, MeshView, NinePatch, NinePatchAsset, Node,
-    PropsFieldValue, RED_50, Skin, SkinEntry, StaticAssetSource, Svg, SvgId, SwitcherTab,
-    TextAlign, TextStyle, VerticalAlign,
+    BitmapId, Color, Draw, EmbeddedSource, MeshId, MeshView, NinePatch, Node, PropsFieldValue,
+    RED_50, SkinEntry, SvgId, SwitcherTab, TextAlign, TextStyle, VerticalAlign,
 };
+
+use crate::ui::{Bitmap, Mesh, NinePatchAsset, Skin, Svg};
 
 #[doc(hidden)]
 pub mod __macros {
@@ -153,7 +154,7 @@ pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {
 }
 
 /// A skin bitmap, registered with nearest-neighbour filtering.
-fn register_skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+fn register_skin_bitmap(tag: &str, source: EmbeddedSource) -> Option<BitmapId> {
     with_host(|host| host.register_bitmap_nearest(tag, source.data()))
 }
 

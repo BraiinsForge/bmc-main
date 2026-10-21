@@ -28,8 +28,8 @@ id; one that needs the time takes a `SystemTime`. The SDK supplies both from the
 - `SystemTime`, the instant a tree anchors its host-driven time labels to
 - Skin, 9-patch and mesh-view data, and `Orientation`
 - Renderer resource ids (`SvgId`, `BitmapId`, `MeshId`, `AudioId`)
-- Package asset identity (`PackageAssetId`, `PackageAssetRef`, `StaticAssetSource`) and the `Svg`, `Bitmap` and `Audio`
-  descriptors
+- Package asset identity (`PackageAssetId`, `PackageAssetRef`), the `PackageSource` and `EmbeddedSource` an asset comes
+  from, and the `Svg`, `Bitmap` and `Audio` descriptors, generic over that source
 
 **IS NOT its responsibility:**
 

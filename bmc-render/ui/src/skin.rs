@@ -67,7 +67,6 @@
 
 use core::fmt::Write as _;
 
-use crate::assets::StaticAssetSource;
 use crate::colors::Color;
 use crate::ids::BitmapId;
 
@@ -81,8 +80,8 @@ use crate::ids::BitmapId;
 /// `.9.png` at build time and strips the 1px border. WASM builds load the inner
 /// bitmap from the widget package; native builds retain embedded bytes.
 #[derive(Debug)]
-pub struct NinePatchAsset {
-    pub source: StaticAssetSource,
+pub struct NinePatchAsset<S> {
+    pub source: S,
     /// Stable, unique-per-host registration tag (e.g. `"<crate>::<file_stem>"`).
     pub name: &'static str,
     pub left: u16,
@@ -131,9 +130,9 @@ impl NinePatch {
 /// Plain `.png` files become assets with zero insets (no stretching).
 /// `.9.png` files have their insets parsed at build time from the 1px border.
 #[derive(Debug)]
-pub struct SkinAsset {
+pub struct SkinAsset<S> {
     pub name: &'static str,
-    pub source: StaticAssetSource,
+    pub source: S,
     pub left: u16,
     pub top: u16,
     pub right: u16,
@@ -170,7 +169,7 @@ pub struct SkinAsset {
 /// color = "#080810"
 /// ```
 #[derive(Debug)]
-pub struct Skin {
+pub struct Skin<S: 'static> {
     /// Human-readable skin name (from `skin.toml`).
     pub name: &'static str,
     /// Short description of the skin (from `skin.toml`).
@@ -179,7 +178,7 @@ pub struct Skin {
     /// Widgets read keys they care about via [`get_color`](Self::get_color).
     pub palette: &'static [(&'static str, Color)],
     /// Image assets (9-patch or plain bitmaps).
-    pub assets: &'static [SkinAsset],
+    pub assets: &'static [SkinAsset<S>],
 }
 
 /// A resolved skin asset — registered 9-patch + metadata from `skin.toml`.
@@ -193,7 +192,7 @@ pub struct SkinEntry {
     pub color: Color,
 }
 
-impl Skin {
+impl<S> Skin<S> {
     /// Look up a palette color by name.
     ///
     /// Returns `None` only when the key is absent. A palette entry whose
@@ -215,7 +214,7 @@ impl Skin {
 
     /// The asset named `name`, if the skin ships one.
     #[must_use]
-    pub fn asset(&self, name: &str) -> Option<&'static SkinAsset> {
+    pub fn asset(&self, name: &str) -> Option<&'static SkinAsset<S>> {
         self.assets.iter().find(|a| a.name == name)
     }
 }

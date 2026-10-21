@@ -20,10 +20,13 @@
 
 use std::cell::RefCell;
 
-use bmc_ui::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
+use bmc_ui::{AudioId, BitmapId, EmbeddedSource, MeshId, SvgId};
 
 use super::{AssetIdProvider, Audio, Bitmap, Mesh, Svg};
 use crate::cache::CacheSource;
+
+/// A native build keeps every static asset's payload in the binary.
+pub(super) type Source = EmbeddedSource;
 
 /// What the runtime does with an asset's bytes, done here by the embedder.
 pub trait AssetHost {
@@ -118,7 +121,7 @@ impl AssetIdProvider for Host {
         panic!("ensure_audio_registered() is not available on native targets")
     }
 
-    fn skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+    fn skin_bitmap(tag: &str, source: Source) -> Option<BitmapId> {
         with_host(|host| host.register_bitmap_nearest(tag, source.data()))
     }
 }

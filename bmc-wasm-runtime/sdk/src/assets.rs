@@ -28,11 +28,7 @@
 //! cache; every call routes through the host, which returns the same ID for the
 //! same `name`.
 
-pub use bmc_ui::assets::{Audio, Bitmap, Svg};
-use bmc_ui::{
-    AudioId, BitmapId, Mesh, MeshId, NinePatch, NinePatchAsset, Skin, SkinEntry, StaticAssetSource,
-    SvgId,
-};
+use bmc_ui::{AudioId, BitmapId, MeshId, NinePatch, SkinEntry, SvgId};
 
 use crate::cache::CacheSource;
 
@@ -42,7 +38,7 @@ trait AssetIdProvider {
     fn image(source: CacheSource<'_>) -> Option<BitmapId>;
     fn mesh(mesh: &Mesh) -> Option<MeshId>;
     fn audio(audio: &Audio) -> Option<AudioId>;
-    fn skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId>;
+    fn skin_bitmap(tag: &str, source: Source) -> Option<BitmapId>;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -51,13 +47,21 @@ mod native;
 mod wasm;
 
 #[cfg(not(target_arch = "wasm32"))]
-use native::Host as Platform;
-#[cfg(not(target_arch = "wasm32"))]
 pub use native::{AssetHost, init_test_registrars, install_asset_host};
-#[cfg(target_arch = "wasm32")]
-use wasm::Host as Platform;
+#[cfg(not(target_arch = "wasm32"))]
+use native::{Host as Platform, Source};
 #[cfg(target_arch = "wasm32")]
 pub use wasm::init_test_registrars;
+#[cfg(target_arch = "wasm32")]
+use wasm::{Host as Platform, Source};
+
+pub type Svg = bmc_ui::Svg<Source>;
+pub type Bitmap = bmc_ui::Bitmap<Source>;
+pub type Audio = bmc_ui::Audio<Source>;
+pub type Mesh = bmc_ui::Mesh<Source>;
+pub type NinePatchAsset = bmc_ui::NinePatchAsset<Source>;
+pub type SkinAsset = bmc_ui::SkinAsset<Source>;
+pub type Skin = bmc_ui::Skin<Source>;
 
 // ── Svg ─────────────────────────────────────────────────────────────
 
@@ -76,7 +80,7 @@ pub fn ensure_bitmap_registered(bmp: &Bitmap) -> Option<BitmapId> {
 }
 
 /// A skin bitmap, registered with nearest-neighbour filtering.
-fn register_skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+fn register_skin_bitmap(tag: &str, source: Source) -> Option<BitmapId> {
     Platform::skin_bitmap(tag, source)
 }
 

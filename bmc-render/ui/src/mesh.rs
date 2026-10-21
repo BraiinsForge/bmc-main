@@ -23,7 +23,6 @@
 //! The format is produced by `include_mesh!` at compile time and consumed
 //! by the host-side `MeshRenderer` at runtime.
 
-use crate::assets::StaticAssetSource;
 use crate::orientation::Orientation;
 
 /// Magic bytes: "MDL2" in little-endian (V2 adds MSDF format + body/label
@@ -94,8 +93,8 @@ pub const VERTEX_SIZE_NO_UV: usize = 10;
 /// display face number (index 0 = face 1). Extracted from glTF `extras` at
 /// compile time. Empty if the model has no face normal metadata.
 #[derive(Debug)]
-pub struct Mesh {
-    pub source: StaticAssetSource,
+pub struct Mesh<S> {
+    pub source: S,
     pub face_normals: &'static [[f32; 3]],
     /// Stable, unique-per-host registration tag (e.g. `"crate::stem"`).
     pub name: &'static str,

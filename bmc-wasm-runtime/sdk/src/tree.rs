@@ -28,14 +28,11 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use bmc_ui::encode_into;
 pub use bmc_ui::tree::*;
-use bmc_ui::{
-    Bitmap, Color, Mesh, MeshView, NinePatchAsset, RED_50, Svg, TextAlign, TextStyle,
-    VerticalAlign, encode,
-};
+use bmc_ui::{Color, MeshView, RED_50, TextAlign, TextStyle, VerticalAlign, encode};
 
 use crate::assets::{
-    ensure_bitmap_registered, ensure_mesh_registered, ensure_nine_patch_registered,
-    ensure_registered,
+    Bitmap, Mesh, NinePatchAsset, Svg, ensure_bitmap_registered, ensure_mesh_registered,
+    ensure_nine_patch_registered, ensure_registered,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::host;
@@ -290,11 +287,11 @@ pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
 #[cfg(not(target_arch = "wasm32"))]
 mod failed_mesh_tests {
     use super::*;
-    use bmc_ui::StaticAssetSource;
+    use bmc_ui::EmbeddedSource;
 
     /// What `include_mesh!` leaves behind in a build that defers its errors.
     static FAILED: Mesh = Mesh {
-        source: StaticAssetSource::embedded(&[]),
+        source: EmbeddedSource::new(&[]),
         face_normals: &[],
         name: "failed-mesh-test",
         error: Some("include_mesh!(\"missing.glb\") failed: mesh file not found"),

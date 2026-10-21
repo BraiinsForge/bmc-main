@@ -146,12 +146,10 @@ fn static_asset_source(
                         #package_kind,
                         #root::PackageAssetId::from_bytes([#(#id_bytes),*]),
                     );
-                #root::StaticAssetSource::package(
-                    &_PACKAGE_ASSET_REF
-                )
+                #root::PackageSource::new(&_PACKAGE_ASSET_REF)
             }
             #[cfg(not(target_arch = "wasm32"))]
-            #root::StaticAssetSource::embedded(#native_data)
+            #root::EmbeddedSource::new(#native_data)
         }
     }
 }

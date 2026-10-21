@@ -432,6 +432,9 @@ pub use xml::XmlDoc;
 pub use bmc_ui::components::skeleton;
 pub use bmc_wasm_protocol::{ids, time};
 
+// The descriptors as this target registers them, over `bmc_ui`'s source-generic ones.
+pub use assets::{Audio, Bitmap, Mesh, NinePatchAsset, Skin, SkinAsset, Svg};
+
 pub use assets::*;
 pub use switcher::*;
 pub use tree::*;

@@ -18,11 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_ui::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
+use bmc_ui::{AudioId, BitmapId, MeshId, PackageSource, SvgId};
 
 use super::{AssetIdProvider, Audio, Bitmap, Mesh, Svg};
 use crate::cache::CacheSource;
 use crate::host;
+
+/// A widget package carries every static asset in its `bmc_assets_v1` section.
+pub(super) type Source = PackageSource;
 
 /// Nothing to install: on wasm the host registers assets, the test host included.
 pub fn init_test_registrars() {}
@@ -50,7 +53,7 @@ impl AssetIdProvider for Host {
         host::register_audio_package(audio.name, audio.source.package_ref())
     }
 
-    fn skin_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+    fn skin_bitmap(tag: &str, source: Source) -> Option<BitmapId> {
         host::register_bitmap_nearest_package(tag, source.package_ref())
     }
 }

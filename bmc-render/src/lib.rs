@@ -90,6 +90,15 @@ mod test_tracing;
 /// The shared UI vocabulary: tree, codec, design-system types.
 pub mod ui {
     pub use bmc_ui::*;
+
+    // The descriptors with the embedded source a native build registers.
+    pub type Svg = bmc_ui::Svg<EmbeddedSource>;
+    pub type Bitmap = bmc_ui::Bitmap<EmbeddedSource>;
+    pub type Audio = bmc_ui::Audio<EmbeddedSource>;
+    pub type Mesh = bmc_ui::Mesh<EmbeddedSource>;
+    pub type NinePatchAsset = bmc_ui::NinePatchAsset<EmbeddedSource>;
+    pub type SkinAsset = bmc_ui::SkinAsset<EmbeddedSource>;
+    pub type Skin = bmc_ui::Skin<EmbeddedSource>;
 }
 pub use tree::{
     ProcessContext, deserialize_tree, layout_and_render, layout_and_render_with_asset_resolver,

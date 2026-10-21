@@ -117,42 +117,38 @@ impl TryFrom<&[u8]> for PackageAssetRef {
     }
 }
 
-/// Where a static asset macro left the asset's bytes.
+/// A packaged wasm widget's asset: a reference into its `bmc_assets_v1` section.
 ///
-/// A packaged wasm widget carries only a reference into its `bmc_assets_v1`
-/// section; a native build keeps the processed payload itself.
-/// The macro picks the variant per target, so each target only ever meets its own.
+/// The asset descriptors are generic over their source,
+/// so each consumer names the one its target registers and a mismatch does not compile.
 #[derive(Clone, Copy, Debug)]
-pub enum StaticAssetSource {
-    Package(&'static PackageAssetRef),
-    Embedded(&'static [u8]),
-}
+pub struct PackageSource(&'static PackageAssetRef);
 
-impl StaticAssetSource {
+impl PackageSource {
     #[must_use]
-    pub const fn package(package_ref: &'static PackageAssetRef) -> Self {
-        Self::Package(package_ref)
-    }
-
-    #[must_use]
-    pub const fn embedded(data: &'static [u8]) -> Self {
-        Self::Embedded(data)
+    pub const fn new(package_ref: &'static PackageAssetRef) -> Self {
+        Self(package_ref)
     }
 
     #[must_use]
     pub const fn package_ref(self) -> &'static PackageAssetRef {
-        match self {
-            Self::Package(package_ref) => package_ref,
-            Self::Embedded(_) => panic!("BUG: embedded asset carries no package reference"),
-        }
+        self.0
+    }
+}
+
+/// An asset whose processed payload a native build keeps in the binary.
+#[derive(Clone, Copy, Debug)]
+pub struct EmbeddedSource(&'static [u8]);
+
+impl EmbeddedSource {
+    #[must_use]
+    pub const fn new(data: &'static [u8]) -> Self {
+        Self(data)
     }
 
     #[must_use]
     pub const fn data(self) -> &'static [u8] {
-        match self {
-            Self::Embedded(data) => data,
-            Self::Package(_) => panic!("BUG: packaged asset carries no embedded payload"),
-        }
+        self.0
     }
 }
 
@@ -161,13 +157,13 @@ impl StaticAssetSource {
 /// WASM builds keep the processed paths in the widget package; native builds
 /// retain embedded bytes for storybook rendering.
 #[derive(Debug)]
-pub struct Svg {
-    pub source: StaticAssetSource,
+pub struct Svg<S> {
+    pub source: S,
     pub name: &'static str,
     pub viewbox: (f32, f32),
 }
 
-impl Svg {
+impl<S> Svg<S> {
     /// The compiled-SVG viewBox `(width, height)`.
     /// The host scales X and Y independently, so a non-square glyph must be
     /// fitted by the caller or it comes out stretched.
@@ -182,8 +178,8 @@ impl Svg {
 /// WASM builds load the encoded image from the widget package; native builds
 /// retain embedded bytes for storybook rendering.
 #[derive(Debug)]
-pub struct Bitmap {
-    pub source: StaticAssetSource,
+pub struct Bitmap<S> {
+    pub source: S,
     pub name: &'static str,
 }
 
@@ -192,8 +188,8 @@ pub struct Bitmap {
 /// WASM builds load the sample from the widget package.
 /// `name` remains the stable host registration tag.
 #[derive(Debug)]
-pub struct Audio {
-    pub source: StaticAssetSource,
+pub struct Audio<S> {
+    pub source: S,
     pub name: &'static str,
 }
 

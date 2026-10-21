@@ -23,12 +23,20 @@ use bmc_render_macros::{
 };
 use bmc_ui::{Audio, Bitmap, Mesh, NinePatchAsset, Skin, Svg};
 
-const SVG: Svg = include_svg!(bmc_ui, "widgets-wasm/lib/remote-image/assets/renew.svg");
-const BITMAP: Bitmap = include_bitmap!(bmc_ui, "widgets-wasm/spacex-launch/assets/unknown.png");
-static MESH: Mesh = include_mesh!(bmc_ui, "widgets-wasm-examples/mesh-demo/assets/suzanne.glb");
-const NINE_PATCH: NinePatchAsset = include_nine_patch!(bmc_ui, "bmc-render/assets/panel.9.png");
-static SKIN: Skin = include_skin!(bmc_ui, "bmc-render/assets/skins/gallery_slider/");
-const AUDIO: Audio = include_audio!(
+#[cfg(target_arch = "wasm32")]
+type Source = bmc_ui::PackageSource;
+#[cfg(not(target_arch = "wasm32"))]
+type Source = bmc_ui::EmbeddedSource;
+
+const SVG: Svg<Source> = include_svg!(bmc_ui, "widgets-wasm/lib/remote-image/assets/renew.svg");
+const BITMAP: Bitmap<Source> =
+    include_bitmap!(bmc_ui, "widgets-wasm/spacex-launch/assets/unknown.png");
+static MESH: Mesh<Source> =
+    include_mesh!(bmc_ui, "widgets-wasm-examples/mesh-demo/assets/suzanne.glb");
+const NINE_PATCH: NinePatchAsset<Source> =
+    include_nine_patch!(bmc_ui, "bmc-render/assets/panel.9.png");
+static SKIN: Skin<Source> = include_skin!(bmc_ui, "bmc-render/assets/skins/gallery_slider/");
+const AUDIO: Audio<Source> = include_audio!(
     bmc_ui,
     "widgets-wasm-examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav"
 );
