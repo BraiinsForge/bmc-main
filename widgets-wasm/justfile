@@ -6,6 +6,8 @@ mod braiins-pool 'braiins-pool'
 mod bitcoin-mining-data 'bitcoin-mining-data'
 # Clock widget: gallery captures and fixture recording.
 mod clock 'clock'
+# Fleet Management widget: sim-backed dev, gallery captures and fixture recording.
+mod fleet-management 'fleet-management'
 # Formula 1 widget: sim-backed dev and fixture recording.
 mod formula-1 'formula-1'
 # Halving Countdown widget: sim-backed dev, gallery captures and fixture recording.
