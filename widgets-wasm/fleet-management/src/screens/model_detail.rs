@@ -31,15 +31,15 @@ use bmc_wasm_sdk::*;
 use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::icons;
 use crate::screens::parts::{
-    BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
-    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart,
-    back_button, breadcrumb, icon, pager, si_parts_or_dash, status_glyph,
+    BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
+    LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, back_button,
+    breadcrumb, icon, pager, row_tap, si_parts_or_dash, status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::view::{CrumbTarget, PagerScope, crumb_click_id};
 
 // Column widths within the table card.
-const COL_HOST: f32 = 260.0;
+const COL_HOST: f32 = 356.0;
 const COL_HASHRATE: f32 = 132.0;
 const COL_SPARK: f32 = 96.0;
 const SPARK_W: f32 = 80.0;
@@ -144,7 +144,6 @@ fn header_row() -> Node {
             temp_head("Avg"),
             temp_head("Min"),
             temp_head("Max"),
-            col(props!(flex: 1.0), Vec::<Node>::new()),
         ],
     )
 }
@@ -170,15 +169,13 @@ fn device_row(r: &DeviceRow, window: ChartWindow) -> Node {
     };
     let mut children = vec![host];
     children.extend(body);
-    children.push(detail_button(&r.click_id));
+    children.push(row_tap(&r.click_id));
     row(
         props!(height: DATA_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
         children,
     )
 }
 
-// The metric cells for a delivering device, ending in the flex slack that pushes
-// the Detail button to the right edge.
 fn metric_cells(r: &DeviceRow, window: ChartWindow) -> Vec<Node> {
     vec![
         cell(COL_HASHRATE, {
@@ -207,7 +204,6 @@ fn metric_cells(r: &DeviceRow, window: ChartWindow) -> Vec<Node> {
         cell(COL_TEMP, temp_cell(r.avg_temp)),
         cell(COL_TEMP, temp_cell(r.min_temp)),
         cell(COL_TEMP, temp_cell(r.max_temp)),
-        col(props!(flex: 1.0), Vec::<Node>::new()),
     ]
 }
 
@@ -262,19 +258,6 @@ fn temp_cell(temp: Option<Temperature>) -> Node {
     temp.map_or_else(
         || value(UNAVAILABLE, ""),
         |t| value(&t.format_value(0), "°C"),
-    )
-}
-
-fn detail_button(click_id: &str) -> Node {
-    touchable(
-        click_id,
-        props!(width: DETAIL_BUTTON_WIDTH, height: 48.0, background: GRAY_90),
-        vec![Draw::text(
-            DETAIL_BUTTON_WIDTH / 2.0,
-            24.0,
-            "Detail",
-            style!(size: LABEL_FONT, color: WHITE, align: TextAlign::Center, valign: VerticalAlign::Center),
-        )],
     )
 }
 

@@ -75,7 +75,6 @@ pub const FRAME_W: f32 = 1280.0;
 pub const FRAME_H: f32 = 480.0;
 pub const PAD: f32 = 24.0;
 pub const GAP: f32 = 8.0;
-pub const DETAIL_BUTTON_WIDTH: f32 = 96.0;
 pub const BACK_CHIP: f32 = 40.0;
 // Fixed width of the pager strip on the table's right. Roomy for the font-16
 // count with the 40px chevrons, and small enough to leave the table its columns.
@@ -91,6 +90,17 @@ pub const ROW_PAD: f32 = 20.0;
 // Overflow clamps the flex row up to min-content and shifts the pinned pager.
 pub const HEAD_H: f32 = 56.0;
 pub const DATA_H: f32 = 78.0;
+
+// Only a canvas takes taps, so a whole row is made tappable
+// by laying a transparent one over it (absolute via insets).
+#[must_use]
+pub fn row_tap(click_id: &str) -> Node {
+    touchable(
+        click_id,
+        props!(inset_top: 0.0, inset_right: 0.0, inset_bottom: 0.0, inset_left: 0.0),
+        Vec::<Draw>::new(),
+    )
+}
 
 // A tinted icon of `size`, on its own square canvas.
 #[must_use]
