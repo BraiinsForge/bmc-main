@@ -76,6 +76,45 @@ describe('ParamField password format', () => {
     });
 });
 
+describe('ParamField toggle description', () => {
+    const REQUIREMENT = 'Requires AxeOS v2.15.0 or newer.';
+    const axeosToggle = pb.create(pb.ManifestParamDefinitionSchema, {
+        key: 'axeos_enabled',
+        name: 'Show AxeOS miners',
+        description: REQUIREMENT,
+        kind: { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema) },
+    });
+    const renderToggle = (error?: string) =>
+        render(
+            <IntlProvider locale="en">
+                <ParamField
+                    id="f"
+                    definition={axeosToggle}
+                    value={true}
+                    error={error}
+                    onChange={() => {}}
+                    timezones={[]}
+                />
+            </IntlProvider>,
+        );
+
+    test('shows the description under the switch and describes the switch with it', () => {
+        const { getByRole } = renderToggle();
+        const describedBy = getByRole('switch', { name: 'Show AxeOS miners' }).getAttribute('aria-describedby');
+
+        expect(describedBy && document.getElementById(describedBy)?.textContent).toBe(REQUIREMENT);
+    });
+
+    test('an error takes the place of the description', () => {
+        const { getByRole, queryByText } = renderToggle('Value is required');
+        const toggle = getByRole('switch', { name: 'Show AxeOS miners' });
+
+        expect(errorOf(toggle)).toBe('Value is required');
+        expect(queryByText(REQUIREMENT)).toBeNull();
+        expect(toggle.getAttribute('aria-describedby')).toBeNull();
+    });
+});
+
 const radioGroup = (value: string | null) => (
     <BoundRadioGroup<string>
         id="mode"
