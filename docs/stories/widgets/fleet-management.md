@@ -219,6 +219,12 @@ how accounts are saved and bound.
 
 - The widget targets the Deck's full **1280×480** rectangular viewport only; the manifest declares no smaller sizes.
 - Font sizes are fixed for that layout.
+- BOS miners must run BOS 26.09 or newer, and AxeOS miners AxeOS v2.15.0 or newer. These are the first releases that
+  announce the miner over mDNS, the only way the widget finds miners; the APIs it then reads are older. The
+  configuration help and the matching account and setting descriptions state both minimums.
+- BOS announces itself by default only on Braiins Mini Miners. Other BOS miners are found once their *Advertise over
+  mDNS* advanced setting is turned on. The configuration help says so.
+- Devices install the widget automatically when it is missing. A removed widget comes back at the next reboot or update.
 - Every device across all families is polled on a single global round-robin, one device at a time. A pass aims to
   refresh the whole fleet roughly every 5 seconds, but starts at most one device every 150 ms, so above 33 miners it
   takes longer: at least 13.5 seconds for 90. This keeps the Deck from drowning in parallel requests. Each miner's
