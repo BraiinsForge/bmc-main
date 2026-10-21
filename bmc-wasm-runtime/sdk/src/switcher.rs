@@ -20,30 +20,17 @@
 
 //! View switcher (segmented control) builder, from icons the host registers.
 
-use bmc_ui::components::switcher::switcher_with_ids;
-use bmc_ui::tree::{Node, SwitcherTab};
+use bmc_ui::components::switcher::{IconTab, switcher_with_icons};
+use bmc_ui::tree::Node;
 
-use crate::assets::{Svg, ensure_registered};
+use crate::assets::{Source, ensure_registered};
 
 /// An icon tab and the click id it emits when tapped.
-#[derive(Clone, Copy, Debug)]
-pub struct Tab {
-    pub icon: &'static Svg,
-    pub click_id: &'static str,
-}
+pub type Tab = IconTab<Source>;
 
 /// A segmented view switcher: a rounded pill of icon tabs, `active` highlighted.
 /// A `disabled` switcher renders dimmed and registers no hit regions.
 #[must_use]
 pub fn switcher(active: usize, disabled: bool, tabs: &[Tab]) -> Node {
-    switcher_with_ids(
-        active,
-        disabled,
-        tabs.iter()
-            .map(|t| SwitcherTab {
-                icon: ensure_registered(t.icon),
-                click_id: t.click_id.to_owned(),
-            })
-            .collect(),
-    )
+    switcher_with_icons(active, disabled, tabs, ensure_registered)
 }

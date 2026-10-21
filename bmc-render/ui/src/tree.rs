@@ -28,7 +28,7 @@ use std::collections::HashMap;
 
 use crate::animation::{AnimProperty, ColorSpace, Easing, LoopMode};
 use crate::arc::{ArcCap, ArcFill, ArcSegments};
-use crate::colors::{BLACK, Color, WHITE};
+use crate::colors::{BLACK, Color, RED_50, WHITE};
 use crate::fill::{Dash, Fill, PathPaint};
 use crate::ids::{BitmapId, MeshId, SvgId};
 use crate::mesh::{MeshDrawArgs, MeshView};
@@ -37,7 +37,10 @@ use crate::progress::ProgressKind;
 use crate::relative_time::{RelTimeClamp, RelTimeFormat};
 use crate::skeleton::SkeletonKind;
 use crate::skin::{ButtonSkin, NinePatch, SliderSkin};
-use crate::text::{ArcAnchor, ArcTextFacing, AutoFit, FontWeight, PropsData, SpanFlags, TextStyle};
+use crate::text::{
+    ArcAnchor, ArcTextFacing, AutoFit, FontWeight, PropsData, SpanFlags, TextAlign, TextStyle,
+    VerticalAlign,
+};
 
 // ── Draw-time descriptors ───────────────────────────────────────────
 
@@ -659,6 +662,20 @@ impl Draw {
         }
     }
 
+    /// Svg from a registered id in a `size` square, its `viewbox` fitted inside and centred.
+    #[must_use]
+    pub fn svg_id_contain(
+        viewbox: (f32, f32),
+        size: f32,
+        icon_id: Option<SvgId>,
+        color: Color,
+    ) -> Self {
+        let (vw, vh) = viewbox;
+        let scale = (size / vw).min(size / vh);
+        let (w, h) = (vw * scale, vh * scale);
+        Self::svg_id((size - w) / 2.0, (size - h) / 2.0, w, h, icon_id, color)
+    }
+
     /// Draw a built-in icon in canvas (no registration needed).
     ///
     /// Use `ICON_CLOSE` or other `ICON_*` constants.
@@ -827,6 +844,18 @@ impl Draw {
             mesh_id,
             args: MeshDrawArgs::from(view),
         }
+    }
+
+    /// What a mesh `include_mesh!` could not pack draws in its place: the `error`, in red.
+    #[must_use]
+    pub fn mesh_error(x: f32, y: f32, w: f32, h: f32, error: &str) -> Self {
+        let style = TextStyle {
+            color: RED_50,
+            align: TextAlign::Center,
+            vertical_align: VerticalAlign::Center,
+            ..TextStyle::default()
+        };
+        Self::autofit_text(x, y, w, h, error, style)
     }
 
     /// Styled text at an explicit canvas position.
@@ -1649,5 +1678,33 @@ mod tests {
         };
         assert_eq!(mode, AutoFit::Shrink);
         assert_eq!((min_size, max_size), (0, 0));
+    }
+
+    #[test]
+    fn a_contained_icon_fits_its_longer_side_and_centres_the_shorter() {
+        let Draw::Svg { x, y, w, h, .. } = Draw::svg_id_contain((2.0, 1.0), 10.0, None, WHITE)
+        else {
+            panic!("svg_id_contain should produce Draw::Svg");
+        };
+        assert_eq!((x, y, w, h), (0.0, 2.5, 10.0, 5.0));
+    }
+
+    #[test]
+    fn a_mesh_error_draws_its_text_in_red_over_the_mesh_box() {
+        let Draw::AutofitText {
+            x,
+            y,
+            box_width,
+            box_height,
+            text,
+            style,
+            ..
+        } = Draw::mesh_error(1.0, 2.0, 30.0, 40.0, "mesh file not found")
+        else {
+            panic!("mesh_error should produce Draw::AutofitText");
+        };
+        assert_eq!((x, y, box_width, box_height), (1.0, 2.0, 30.0, 40.0));
+        assert_eq!(text, "mesh file not found");
+        assert_eq!(style.color, RED_50);
     }
 }

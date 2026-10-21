@@ -26,10 +26,10 @@
 
 use std::cell::RefCell;
 
-use bmc_ui::components::switcher::switcher_with_ids;
+use bmc_ui::components::switcher::{IconTab, switcher_with_icons};
 use bmc_ui::{
     BitmapId, Color, Draw, EmbeddedSource, MeshId, MeshView, NinePatch, Node, PropsFieldValue,
-    RED_50, SkinEntry, SvgId, SwitcherTab, TextAlign, TextStyle, VerticalAlign,
+    SkinEntry, SvgId,
 };
 
 use crate::ui::{Bitmap, Mesh, NinePatchAsset, Skin, Svg};
@@ -164,21 +164,13 @@ fn register_skin_bitmap(tag: &str, source: EmbeddedSource) -> Option<BitmapId> {
 /// cached `BitmapId` without re-decoding/re-uploading.
 #[must_use]
 pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
-    NinePatch {
-        bitmap_id: register_skin_bitmap(asset.name, asset.source),
-        left: asset.left,
-        top: asset.top,
-        right: asset.right,
-        bottom: asset.bottom,
-    }
+    asset.nine_patch(register_skin_bitmap(asset.name, asset.source))
 }
 
 /// A [`Skin`]'s image assets, registered with the host on lookup.
 pub trait SkinRegistry {
-    /// Look up a 9-patch asset by name and register it with the host if needed.
-    ///
-    /// Registration is idempotent host-side: the tag combines the skin name and
-    /// the asset name so two skins with the same asset name don't alias.
+    /// Look up a 9-patch asset by name and register it with the host if needed,
+    /// under the tag [`Skin::nine_patch_entry`] gives it; registration is idempotent host-side.
     fn get_nine_patch(&self, name: &str) -> Option<SkinEntry>;
 
     /// Get the preview thumbnail asset, if this skin includes a `preview.png`.
@@ -189,20 +181,7 @@ pub trait SkinRegistry {
 
 impl SkinRegistry for Skin {
     fn get_nine_patch(&self, name: &str) -> Option<SkinEntry> {
-        let asset = self.asset(name)?;
-        let tag = format!("skin::{}::{}", self.name, asset.name);
-        Some(SkinEntry {
-            nine_patch: NinePatch {
-                bitmap_id: register_skin_bitmap(&tag, asset.source),
-                left: asset.left,
-                top: asset.top,
-                right: asset.right,
-                bottom: asset.bottom,
-            },
-            width: asset.width,
-            height: asset.height,
-            color: asset.color,
-        })
+        self.nine_patch_entry(name, register_skin_bitmap)
     }
 }
 
@@ -262,11 +241,7 @@ impl DrawAssets for Draw {
     }
 
     fn svg_contain(svg: &Svg, size: f32, color: Color) -> Self {
-        let (vw, vh) = svg.viewbox();
-        let scale = (size / vw).min(size / vh);
-        let w = vw * scale;
-        let h = vh * scale;
-        Self::svg((size - w) / 2.0, (size - h) / 2.0, w, h, svg, color)
+        Self::svg_id_contain(svg.viewbox(), size, ensure_registered(svg), color)
     }
 
     fn bitmap(x: f32, y: f32, w: f32, h: f32, bmp: &Bitmap) -> Self {
@@ -311,37 +286,18 @@ impl DrawAssets for Draw {
 
     fn mesh(x: f32, y: f32, w: f32, h: f32, mdl: &Mesh, view: MeshView) -> Self {
         if let Some(error) = mdl.error {
-            let style = TextStyle {
-                color: RED_50,
-                align: TextAlign::Center,
-                vertical_align: VerticalAlign::Center,
-                ..TextStyle::default()
-            };
-            return Self::autofit_text(x, y, w, h, error, style);
+            return Self::mesh_error(x, y, w, h, error);
         }
         Self::mesh_id(x, y, w, h, ensure_mesh_registered(mdl), view)
     }
 }
 
 /// An icon tab and the click id it emits when tapped.
-#[derive(Clone, Copy, Debug)]
-pub struct Tab {
-    pub icon: &'static Svg,
-    pub click_id: &'static str,
-}
+pub type Tab = IconTab<EmbeddedSource>;
 
 /// A segmented view switcher: a rounded pill of icon tabs, `active` highlighted.
 /// A `disabled` switcher renders dimmed and registers no hit regions.
 #[must_use]
 pub fn switcher(active: usize, disabled: bool, tabs: &[Tab]) -> Node {
-    switcher_with_ids(
-        active,
-        disabled,
-        tabs.iter()
-            .map(|t| SwitcherTab {
-                icon: ensure_registered(t.icon),
-                click_id: t.click_id.to_owned(),
-            })
-            .collect(),
-    )
+    switcher_with_icons(active, disabled, tabs, ensure_registered)
 }

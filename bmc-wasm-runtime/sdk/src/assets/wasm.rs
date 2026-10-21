@@ -25,7 +25,7 @@ use crate::cache::CacheSource;
 use crate::host;
 
 /// A widget package carries every static asset in its `bmc_assets_v1` section.
-pub(super) type Source = PackageSource;
+pub(crate) type Source = PackageSource;
 
 /// Nothing to install: on wasm the host registers assets, the test host included.
 pub fn init_test_registrars() {}

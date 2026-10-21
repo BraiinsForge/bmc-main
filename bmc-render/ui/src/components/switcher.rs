@@ -20,7 +20,44 @@
 
 //! View switcher (segmented control) builder.
 
+use crate::assets::Svg;
+use crate::ids::SvgId;
 use crate::tree::{Node, SwitcherTab};
+
+/// An icon tab and the click id it emits when tapped.
+#[derive(Debug)]
+pub struct IconTab<S: 'static> {
+    pub icon: &'static Svg<S>,
+    pub click_id: &'static str,
+}
+
+impl<S> Clone for IconTab<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> Copy for IconTab<S> {}
+
+/// A segmented view switcher over `tabs`, their icons registered by `register`.
+#[must_use]
+pub fn switcher_with_icons<S>(
+    active: usize,
+    disabled: bool,
+    tabs: &[IconTab<S>],
+    register: impl Fn(&Svg<S>) -> Option<SvgId>,
+) -> Node {
+    switcher_with_ids(
+        active,
+        disabled,
+        tabs.iter()
+            .map(|tab| SwitcherTab {
+                icon: register(tab.icon),
+                click_id: tab.click_id.to_owned(),
+            })
+            .collect(),
+    )
+}
 
 /// A segmented view switcher: a rounded pill of icon tabs, `active` highlighted,
 /// from tabs whose icons are already registered.
@@ -31,5 +68,57 @@ pub fn switcher_with_ids(active: usize, disabled: bool, tabs: Vec<SwitcherTab>) 
         active,
         disabled,
         tabs,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static CLOCK: Svg<()> = Svg {
+        source: (),
+        name: "clock",
+        viewbox: (1.0, 1.0),
+    };
+
+    static CALENDAR: Svg<()> = Svg {
+        source: (),
+        name: "calendar",
+        viewbox: (1.0, 1.0),
+    };
+
+    #[test]
+    fn each_tab_gets_its_registered_icon_and_click_id() {
+        let tabs = [
+            IconTab {
+                icon: &CLOCK,
+                click_id: "a",
+            },
+            IconTab {
+                icon: &CALENDAR,
+                click_id: "b",
+            },
+        ];
+        let register = |icon: &Svg<()>| match icon.name {
+            "clock" => SvgId::from_wire(5),
+            "calendar" => SvgId::from_wire(6),
+            _ => None,
+        };
+
+        let Node::Switcher { tabs, .. } = switcher_with_icons(1, false, &tabs, register) else {
+            panic!("switcher_with_icons should produce Node::Switcher");
+        };
+
+        let tabs: Vec<_> = tabs
+            .into_iter()
+            .map(|tab| (tab.icon, tab.click_id))
+            .collect();
+        assert_eq!(
+            tabs,
+            [
+                (SvgId::from_wire(5), "a".to_owned()),
+                (SvgId::from_wire(6), "b".to_owned())
+            ]
+        );
     }
 }

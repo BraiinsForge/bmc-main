@@ -26,7 +26,7 @@ use super::{AssetIdProvider, Audio, Bitmap, Mesh, Svg};
 use crate::cache::CacheSource;
 
 /// A native build keeps every static asset's payload in the binary.
-pub(super) type Source = EmbeddedSource;
+pub(crate) type Source = EmbeddedSource;
 
 /// What the runtime does with an asset's bytes, done here by the embedder.
 pub trait AssetHost {

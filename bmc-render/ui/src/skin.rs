@@ -90,6 +90,20 @@ pub struct NinePatchAsset<S> {
     pub bottom: u16,
 }
 
+impl<S> NinePatchAsset<S> {
+    /// This asset's insets over `bitmap_id`, the id its bitmap registered under.
+    #[must_use]
+    pub fn nine_patch(&self, bitmap_id: Option<BitmapId>) -> NinePatch {
+        NinePatch {
+            bitmap_id,
+            left: self.left,
+            top: self.top,
+            right: self.right,
+            bottom: self.bottom,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // NinePatch (runtime)
 // ---------------------------------------------------------------------------
@@ -216,6 +230,37 @@ impl<S> Skin<S> {
     #[must_use]
     pub fn asset(&self, name: &str) -> Option<&'static SkinAsset<S>> {
         self.assets.iter().find(|a| a.name == name)
+    }
+
+    /// The asset named `name` as a 9-patch, its bitmap registered by `register`.
+    ///
+    /// The tag `register` gets combines the skin name and the asset name,
+    /// so two skins with the same asset name don't alias.
+    pub fn nine_patch_entry(
+        &self,
+        name: &str,
+        register: impl FnOnce(&str, S) -> Option<BitmapId>,
+    ) -> Option<SkinEntry>
+    where
+        S: Copy,
+    {
+        let asset = self.asset(name)?;
+        let mut tag = String::from("skin::");
+        tag.push_str(self.name);
+        tag.push_str("::");
+        tag.push_str(asset.name);
+        Some(SkinEntry {
+            nine_patch: NinePatch {
+                bitmap_id: register(&tag, asset.source),
+                left: asset.left,
+                top: asset.top,
+                right: asset.right,
+                bottom: asset.bottom,
+            },
+            width: asset.width,
+            height: asset.height,
+            color: asset.color,
+        })
     }
 }
 
@@ -365,4 +410,70 @@ pub fn parse_hex_color(hex: &str, context: &str) -> Color {
     let v = u32::from_str_radix(hex, 16)
         .unwrap_or_else(|e| panic!("{context}: invalid hex color \"{hex}\": {e}"));
     Color::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+    use crate::colors::TRANSPARENT;
+
+    static LLAMA: Skin<&str> = Skin {
+        name: "llama",
+        description: "",
+        palette: &[],
+        assets: &[SkinAsset {
+            name: "button",
+            source: "button-bytes",
+            left: 1,
+            top: 2,
+            right: 3,
+            bottom: 4,
+            width: 20,
+            height: 10,
+            color: TRANSPARENT,
+        }],
+    };
+
+    #[test]
+    fn a_skin_entry_registers_under_the_skin_and_asset_names() {
+        let seen = RefCell::new(None);
+        let bitmap = BitmapId::from_wire(3);
+
+        let entry = LLAMA
+            .nine_patch_entry("button", |tag, source| {
+                seen.replace(Some((tag.to_owned(), source)));
+                bitmap
+            })
+            .expect("BUG: the skin ships a button");
+
+        assert_eq!(
+            seen.take(),
+            Some(("skin::llama::button".to_owned(), "button-bytes"))
+        );
+        let NinePatch {
+            bitmap_id,
+            left,
+            top,
+            right,
+            bottom,
+        } = entry.nine_patch;
+        assert_eq!(bitmap_id, bitmap);
+        assert_eq!((left, top, right, bottom), (1, 2, 3, 4));
+        assert_eq!((entry.width, entry.height), (20, 10));
+    }
+
+    #[test]
+    fn a_skin_without_the_asset_registers_nothing() {
+        let mut registered = false;
+
+        let entry = LLAMA.nine_patch_entry("slider", |_, _| {
+            registered = true;
+            None
+        });
+
+        assert!(entry.is_none());
+        assert!(!registered, "an absent asset has no bitmap to register");
+    }
 }

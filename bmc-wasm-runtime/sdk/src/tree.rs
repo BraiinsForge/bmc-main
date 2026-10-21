@@ -28,7 +28,7 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use bmc_ui::encode_into;
 pub use bmc_ui::tree::*;
-use bmc_ui::{Color, MeshView, RED_50, TextAlign, TextStyle, VerticalAlign, encode};
+use bmc_ui::{Color, MeshView};
 
 use crate::assets::{
     Bitmap, Mesh, NinePatchAsset, Svg, ensure_bitmap_registered, ensure_mesh_registered,
@@ -107,11 +107,7 @@ impl DrawAssets for Draw {
     }
 
     fn svg_contain(svg: &Svg, size: f32, color: Color) -> Self {
-        let (vw, vh) = svg.viewbox();
-        let scale = (size / vw).min(size / vh);
-        let w = vw * scale;
-        let h = vh * scale;
-        Self::svg((size - w) / 2.0, (size - h) / 2.0, w, h, svg, color)
+        Self::svg_id_contain(svg.viewbox(), size, ensure_registered(svg), color)
     }
 
     fn bitmap(x: f32, y: f32, w: f32, h: f32, bmp: &Bitmap) -> Self {
@@ -156,13 +152,7 @@ impl DrawAssets for Draw {
 
     fn mesh(x: f32, y: f32, w: f32, h: f32, mdl: &Mesh, view: MeshView) -> Self {
         if let Some(error) = mdl.error {
-            let style = TextStyle {
-                color: RED_50,
-                align: TextAlign::Center,
-                vertical_align: VerticalAlign::Center,
-                ..TextStyle::default()
-            };
-            return Self::autofit_text(x, y, w, h, error, style);
+            return Self::mesh_error(x, y, w, h, error);
         }
         Self::mesh_id(x, y, w, h, ensure_mesh_registered(mdl), view)
     }
@@ -248,12 +238,6 @@ pub fn begin_tree() {
 #[cfg(target_arch = "wasm32")]
 pub fn submit_and_clear(width: u32, height: u32) {
     TREE_BUFFER.with(|buf| host::submit_tree(&buf.borrow(), width, height));
-}
-
-/// Encode a node to its wire bytes, for a native host that decodes them itself.
-#[must_use]
-pub fn serialize_node_to_bytes(node: &Node) -> Vec<u8> {
-    encode(node)
 }
 
 /// Render UI tree using host-side layout.

@@ -47,13 +47,17 @@ mod native;
 mod wasm;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{AssetHost, init_test_registrars, install_asset_host};
+use native::Host as Platform;
 #[cfg(not(target_arch = "wasm32"))]
-use native::{Host as Platform, Source};
+pub(crate) use native::Source;
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::{AssetHost, init_test_registrars, install_asset_host};
+#[cfg(target_arch = "wasm32")]
+use wasm::Host as Platform;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use wasm::Source;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::init_test_registrars;
-#[cfg(target_arch = "wasm32")]
-use wasm::{Host as Platform, Source};
 
 pub type Svg = bmc_ui::Svg<Source>;
 pub type Bitmap = bmc_ui::Bitmap<Source>;
@@ -90,21 +94,13 @@ fn register_skin_bitmap(tag: &str, source: Source) -> Option<BitmapId> {
 /// cached `BitmapId` without re-decoding/re-uploading.
 #[must_use]
 pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
-    NinePatch {
-        bitmap_id: register_skin_bitmap(asset.name, asset.source),
-        left: asset.left,
-        top: asset.top,
-        right: asset.right,
-        bottom: asset.bottom,
-    }
+    asset.nine_patch(register_skin_bitmap(asset.name, asset.source))
 }
 
 /// A [`Skin`]'s image assets, registered with the host on lookup.
 pub trait SkinRegistry {
-    /// Look up a 9-patch asset by name and register it with the host if needed.
-    ///
-    /// Registration is idempotent host-side: the tag combines the skin name and
-    /// the asset name so two skins with the same asset name don't alias.
+    /// Look up a 9-patch asset by name and register it with the host if needed,
+    /// under the tag [`Skin::nine_patch_entry`] gives it; registration is idempotent host-side.
     fn get_nine_patch(&self, name: &str) -> Option<SkinEntry>;
 
     /// Get the preview thumbnail asset, if this skin includes a `preview.png`.
@@ -115,23 +111,7 @@ pub trait SkinRegistry {
 
 impl SkinRegistry for Skin {
     fn get_nine_patch(&self, name: &str) -> Option<SkinEntry> {
-        let asset = self.asset(name)?;
-        let mut tag = String::from("skin::");
-        tag.push_str(self.name);
-        tag.push_str("::");
-        tag.push_str(asset.name);
-        Some(SkinEntry {
-            nine_patch: NinePatch {
-                bitmap_id: register_skin_bitmap(&tag, asset.source),
-                left: asset.left,
-                top: asset.top,
-                right: asset.right,
-                bottom: asset.bottom,
-            },
-            width: asset.width,
-            height: asset.height,
-            color: asset.color,
-        })
+        self.nine_patch_entry(name, register_skin_bitmap)
     }
 }
 
