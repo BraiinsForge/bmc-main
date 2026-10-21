@@ -57,7 +57,8 @@ pub struct DrawnParagraph {
     pub clip: Option<(f32, f32)>,
 }
 
-/// One recorded [`RenderShapes::fill_rect`] call.
+/// One recorded [`RenderShapes::fill_rect`], [`RenderShapes::fill_rounded_rect`]
+/// or [`RenderShapes::stroke_rect`] call.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DrawnRect {
     pub x: f32,
@@ -72,6 +73,7 @@ pub struct ShapingRecorder {
     pub paragraphs: Vec<DrawnParagraph>,
     pub rects: Vec<DrawnRect>,
     pub rounded_rects: Vec<DrawnRect>,
+    pub strokes: Vec<DrawnRect>,
     font_system: cosmic_text::FontSystem,
     layouts: ParagraphLayoutCache,
     width: f32,
@@ -97,6 +99,7 @@ impl ShapingRecorder {
             paragraphs: Vec::new(),
             rects: Vec::new(),
             rounded_rects: Vec::new(),
+            strokes: Vec::new(),
             font_system: build_font_system(),
             layouts: ParagraphLayoutCache::new(),
             width,
@@ -200,15 +203,8 @@ impl RenderShapes for ShapingRecorder {
     ) {
     }
 
-    fn stroke_rect(
-        &mut self,
-        _x: f32,
-        _y: f32,
-        _w: f32,
-        _h: f32,
-        _border_width: f32,
-        _color: Color,
-    ) {
+    fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, _border_width: f32, _color: Color) {
+        self.strokes.push(DrawnRect { x, y, w, h });
     }
 
     fn stroke_rounded_rect(

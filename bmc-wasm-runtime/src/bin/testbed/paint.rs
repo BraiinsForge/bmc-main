@@ -754,13 +754,8 @@ pub(super) fn paint_view_damage(
     const NO_TREE: egui::Color32 = egui::Color32::from_gray(0x90);
     const MOVING: egui::Color32 = egui::Color32::from_rgb(0x00, 0xE0, 0xFF);
 
-    let on_view = |r: &bmc_render::interaction::Rect| {
-        egui::Rect::from_min_size(
-            view.min + egui::vec2(r.x, r.y) * zoom,
-            egui::vec2(r.w, r.h) * zoom,
-        )
-        .intersect(view)
-    };
+    let on_view =
+        |r: &bmc_render::interaction::Rect| widget_rect_on_view(view, zoom, *r).intersect(view);
     let border = |color| {
         painter.rect_stroke(
             view,
@@ -790,6 +785,50 @@ pub(super) fn paint_view_damage(
             on_view(rect),
             0.0,
             egui::Stroke::new(1.0_f32, MOVING),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+/// Where a rect in widget pixels lands over its view, drawn `zoom` times its size.
+fn widget_rect_on_view(
+    view: egui::Rect,
+    zoom: f32,
+    r: bmc_render::interaction::Rect,
+) -> egui::Rect {
+    egui::Rect::from_min_size(
+        view.min + egui::vec2(r.x, r.y) * zoom,
+        egui::vec2(r.w, r.h) * zoom,
+    )
+}
+
+/// Outline each laid-out box over its view, scaled by `zoom` from widget pixels,
+/// in the colours `DEBUG_LAYOUT` strokes into the frame,
+/// each cut to the scroll viewport it is seen through as the frame's scissor cuts it.
+///
+/// A 1-point stroke whatever the zoom, so the outlines stay a hairline over a magnified view.
+pub(super) fn paint_view_outlines(
+    painter: &egui::Painter,
+    view: egui::Rect,
+    zoom: f32,
+    outlines: &[bmc_render::tree::LayoutOutline],
+) {
+    let on_view = |r| widget_rect_on_view(view, zoom, r);
+    let painter = painter.with_clip_rect(view);
+    for outline in outlines {
+        // `with_clip_rect` intersects with the view's clip, so the outline stays inside both.
+        let painter = outline.clip.map_or_else(
+            || painter.clone(),
+            |clip| painter.with_clip_rect(on_view(clip)),
+        );
+        let c = outline.color;
+        painter.rect_stroke(
+            on_view(outline.rect),
+            0.0,
+            egui::Stroke::new(
+                1.0_f32,
+                egui::Color32::from_rgb(c.red(), c.green(), c.blue()),
+            ),
             egui::StrokeKind::Inside,
         );
     }

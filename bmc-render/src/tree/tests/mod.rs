@@ -146,6 +146,7 @@ impl RenderShapes for KeyRecordingRenderer {
         _border_width: f32,
         _color: Color,
     ) {
+        self.calls.push(("stroke", String::new()));
     }
 
     fn draw_line(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _width: f32, _color: Color) {}
@@ -426,6 +427,8 @@ fn render_with(
         emit: super::EmitMode::All,
         static_layer,
         static_layer_key: "modal-test",
+        layout_outlines: false,
+        stroke_outlines: false,
         damage_rects: &[],
     };
     let mut timings = FrameTimings::default();
@@ -453,6 +456,8 @@ fn render_dynamic_pass(
         emit: super::EmitMode::DynamicOnly,
         static_layer: LayerUse::Reuse,
         static_layer_key: "damage-test",
+        layout_outlines: false,
+        stroke_outlines: false,
         damage_rects: damage,
     };
     let mut timings = FrameTimings::default();
@@ -481,6 +486,8 @@ fn render_pass(
         emit,
         static_layer: LayerUse::Ignore,
         static_layer_key: "band-test",
+        layout_outlines: false,
+        stroke_outlines: false,
         damage_rects: &[],
     };
     let mut timings = FrameTimings::default();
@@ -506,6 +513,8 @@ fn render_once(
         emit: super::EmitMode::All,
         static_layer: LayerUse::Ignore,
         static_layer_key: "modal-test",
+        layout_outlines: false,
+        stroke_outlines: false,
         damage_rects: &[],
     };
     let mut timings = FrameTimings::default();
@@ -528,6 +537,18 @@ fn capture_once(
     renderer: &mut KeyRecordingRenderer,
     tree: &TreeNode,
 ) -> super::TreeResult {
+    capture_collecting(state, renderer, tree, false, false)
+}
+
+/// [`capture_once`], reporting each laid-out box when `layout_outlines` asks
+/// and stroking it into the frame when `stroke_outlines` does.
+fn capture_collecting(
+    state: &mut SlotState,
+    renderer: &mut KeyRecordingRenderer,
+    tree: &TreeNode,
+    layout_outlines: bool,
+    stroke_outlines: bool,
+) -> super::TreeResult {
     let mut ctx = ProcessContext {
         interaction: &mut state.interaction,
         modal_states: &mut state.modal_states,
@@ -541,6 +562,8 @@ fn capture_once(
         emit: super::EmitMode::All,
         static_layer: LayerUse::Capture,
         static_layer_key: "scroll-test",
+        layout_outlines,
+        stroke_outlines,
         damage_rects: &[],
     };
     let mut timings = FrameTimings::default();

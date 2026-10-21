@@ -53,10 +53,13 @@ pub fn debug_layout_enabled() -> bool {
     DEBUG_LAYOUT.load(Ordering::Relaxed)
 }
 
-/// Toggle debug layout outlines on/off.
-pub fn toggle_debug_layout() {
-    let prev = DEBUG_LAYOUT.load(Ordering::Relaxed);
-    DEBUG_LAYOUT.store(!prev, Ordering::Relaxed);
+/// Stop drawing outlines into the frame, and say whether `DEBUG_LAYOUT` asked for them.
+///
+/// For a host that draws [`TreeResult::layout_outlines`] over the frame itself.
+/// Its frames feed damage tracking, where a flag the static layer's key ignores
+/// leaves strokes behind in the buffers it reuses.
+pub fn take_debug_layout() -> bool {
+    DEBUG_LAYOUT.swap(false, Ordering::Relaxed)
 }
 
 mod decode;
@@ -84,10 +87,10 @@ pub use frame::{
     LayerUse, ProcessContext, layout_and_render, layout_and_render_with_asset_resolver,
     process_tree,
 };
-pub(crate) use walk::AnimationContext;
+pub(crate) use walk::{AnimationContext, outline_box};
 #[cfg(test)]
-pub(crate) use walk::DynamicHalf;
-pub use walk::{EmitMode, StaticLayer, TouchHit, TreeResult};
+pub(crate) use walk::{DynamicHalf, Outlines, stroke_inside};
+pub use walk::{EmitMode, LayoutOutline, StaticLayer, TouchHit, TreeResult};
 
 pub use decode::{deserialize_tree, deserialize_tree_keyed};
 

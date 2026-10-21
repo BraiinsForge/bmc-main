@@ -179,10 +179,16 @@ const WINDOW_INSET: egui::Margin = egui::Margin::ZERO;
 /// egui's own inspector only knows widgets, so the enclosure, the views
 /// and the LED strips are invisible to it — exactly the geometry worth
 /// doubting when a mock looks wrong. Under Debug they outline themselves.
-fn debug_outline(ui: &egui::Ui, rect: egui::Rect, what: &str, anchor: egui::Align2) {
+fn debug_outline(
+    debugging: bool,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    what: &str,
+    anchor: egui::Align2,
+) {
     const MARK: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x00, 0xFF);
 
-    if !bmc_render::tree::debug_layout_enabled() {
+    if !debugging {
         return;
     }
     ui.painter().rect_stroke(
@@ -206,6 +212,26 @@ fn debug_outline(ui: &egui::Ui, rect: egui::Rect, what: &str, anchor: egui::Alig
         egui::FontId::monospace(9.0),
         MARK,
     );
+}
+
+/// Draw the damage and layout outlines the view's report carries, under their switches.
+fn paint_view_overlays(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    zoom: f32,
+    view: &super::view::DeviceView,
+    overlays: super::ViewOverlays,
+) {
+    if overlays.damage
+        && let Some(damage) = view.last_damage()
+    {
+        paint::paint_view_damage(painter, rect, zoom, damage);
+    }
+    if overlays.outlines
+        && let Some(outlines) = view.layout_outlines()
+    {
+        paint::paint_view_outlines(painter, rect, zoom, outlines);
+    }
 }
 
 /// Views that sit above one another: two share a column when their
@@ -658,12 +684,14 @@ impl TestbedApp {
                 continue;
             }
             super::paint_tile_texture(ui, view, rect, palette);
-            if self.show_view_damage
-                && let Some(damage) = view.last_damage()
-            {
-                paint::paint_view_damage(ui.painter(), rect, zoom, damage);
-            }
-            debug_outline(ui, rect, "view", egui::Align2::LEFT_TOP);
+            paint_view_overlays(ui.painter(), rect, zoom, view, self.overlays);
+            debug_outline(
+                self.overlays.outlines,
+                ui,
+                rect,
+                "view",
+                egui::Align2::LEFT_TOP,
+            );
             // A choose overlay per candidate viewport: clicking it is what
             // starts the take, so it swallows the view's touch input.
             if self.recording_mode.is_choosing() {
@@ -684,7 +712,7 @@ impl TestbedApp {
                     egui::StrokeKind::Inside,
                 );
             }
-            if self.show_view_timings
+            if self.overlays.timings
                 && let Some(timings) = view.last_timings()
             {
                 paint::paint_view_timings(ui.painter(), rect, &timings, view.last_slip_ms());
@@ -724,12 +752,24 @@ impl TestbedApp {
                 // over the plate's rounded ends and squares them off.
                 // Inset by the radius and the diffuser keeps its shape lit or dark.
                 paint::paint_led_strip(ui.painter(), view, strip_rect.shrink(STRIP_RADIUS), time_s);
-                debug_outline(ui, strip_rect, "strip", egui::Align2::LEFT_TOP);
+                debug_outline(
+                    self.overlays.outlines,
+                    ui,
+                    strip_rect,
+                    "strip",
+                    egui::Align2::LEFT_TOP,
+                );
             }
         }
 
         // Last, so the views' textures cannot paint over the marks measuring them.
-        debug_outline(ui, outer, "state", egui::Align2::RIGHT_BOTTOM);
+        debug_outline(
+            self.overlays.outlines,
+            ui,
+            outer,
+            "state",
+            egui::Align2::RIGHT_BOTTOM,
+        );
     }
 
     /// One choosing-phase overlay: the whole view is the button that opens

@@ -84,6 +84,8 @@ fn render(tree: &TreeNode) -> Vec<DrawnParagraph> {
         emit: EmitMode::All,
         static_layer: LayerUse::Ignore,
         static_layer_key: "text-overflow-test",
+        layout_outlines: false,
+        stroke_outlines: false,
         damage_rects: &[],
     };
     let mut timings = FrameTimings::default();

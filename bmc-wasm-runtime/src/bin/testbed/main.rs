@@ -1189,6 +1189,19 @@ fn dispatch_touch_events(
 
 // ── App ─────────────────────────────────────────────────────────────
 
+/// The toolbar's switches over what each view carries over it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ViewOverlays {
+    /// The view's own timings — off by default:
+    /// an instrument over the widget, while the status bar covers the whole.
+    pub(crate) timings: bool,
+    /// The last frame's damage; off unless `--show-damage`.
+    pub(crate) damage: bool,
+    /// Layout outlines, and egui's inspector over the chrome;
+    /// off unless `DEBUG_LAYOUT=1`, which the testbed takes over from the renderer.
+    pub(crate) outlines: bool,
+}
+
 pub(crate) struct TestbedApp {
     cli: CliArgs,
     prepared_widget: PreparedWidget,
@@ -1198,11 +1211,7 @@ pub(crate) struct TestbedApp {
     theme: theme::ThemeChoice,
     /// Toolbar icons, rasterized on demand per drawn pixel size.
     icons: icon::Icons,
-    /// Whether each view carries its own timings — off by default:
-    /// an instrument over the widget, while the status bar covers the whole.
-    show_view_timings: bool,
-    /// Whether each view carries its last frame's damage; off unless `--show-damage`.
-    show_view_damage: bool,
+    overlays: ViewOverlays,
     notice: Option<Notice>,
     /// Where views render, once the modes that cannot thread have had their say.
     views: ViewPlacement,
@@ -1475,7 +1484,11 @@ impl TestbedApp {
         let (watcher, watcher_rx) =
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
         let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
-        let show_view_damage = cli.show_damage;
+        let overlays = ViewOverlays {
+            timings: false,
+            damage: cli.show_damage,
+            outlines: bmc_render::tree::take_debug_layout(),
+        };
 
         // The build runs from the widget's workspace, where its lock file
         // and `target/` live; without a widget root there is no source
@@ -1512,8 +1525,7 @@ impl TestbedApp {
             canvas: canvas::Canvas::default(),
             theme: theme::ThemeChoice::Auto,
             icons: icon::Icons::new(),
-            show_view_timings: false,
-            show_view_damage,
+            overlays,
             notice: None,
             views,
             exit_requested: false,
@@ -2225,7 +2237,8 @@ impl TestbedApp {
             dormant: self.state().dormant,
             extras: view::ReportExtras {
                 profile: false,
-                damage: self.show_view_damage,
+                damage: self.overlays.damage,
+                outlines: self.overlays.outlines,
             },
         };
         // In recording mode only the active view runs; `App::ui` paints the rest
@@ -2786,7 +2799,7 @@ impl TestbedApp {
         // Debug layout means the whole layout, not only the widget's:
         // egui's own inspector shows the chrome's rects, which is
         // where a mock that paints itself is otherwise unfalsifiable.
-        let debugging = bmc_render::tree::debug_layout_enabled();
+        let debugging = self.overlays.outlines;
         root_ui.ctx().style_mut(|style| {
             style.debug.debug_on_hover = debugging;
             style.debug.hover_shows_next = debugging;

@@ -1434,6 +1434,8 @@ impl WasmWidgetRuntime {
             },
             damage_rects: &damage,
             static_layer_key: &state.instance_id,
+            layout_outlines: state.layout_outlines.is_some(),
+            stroke_outlines: bmc_render::tree::debug_layout_enabled(),
         };
         let mut resolver = RendererAssetRestorer::new(
             &state.instance_id,
@@ -1463,10 +1465,7 @@ impl WasmWidgetRuntime {
                 state.last_timings = timings;
                 // One more buffer has been painted in full, if any was owed.
                 state.painted_in_full();
-                // Shift the damage history: this walk's regions become the
-                // newest, and the pair spans the buffer rotation.
-                state.recent_dynamic_rects.swap(0, 1);
-                state.recent_dynamic_rects[0].clone_from(&result.dynamic_rects);
+                state.keep_walk(&result.dynamic_rects, result.layout_outlines);
                 let missed = matches!(result.static_layer, StaticLayer::Missed);
                 let empty = matches!(result.static_layer, StaticLayer::Captured { empty: true });
                 state.last_repaint = FrameRepaint::of_walk(&result.static_layer, damage);
@@ -2118,6 +2117,23 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn last_repaint(&self) -> &FrameRepaint {
         &self.store.data().last_repaint
+    }
+
+    /// Start or stop collecting each walk's laid-out boxes for [`Self::layout_outlines`].
+    ///
+    /// Turning it on collects nothing until the next frame walks the tree.
+    pub fn set_layout_outlines(&mut self, on: bool) {
+        let outlines = &mut self.store.data_mut().layout_outlines;
+        if on != outlines.is_some() {
+            *outlines = on.then(|| Vec::new().into());
+        }
+    }
+
+    /// The boxes the last walk laid out, modal frames included, in widget pixels;
+    /// `None` unless [`Self::set_layout_outlines`] turned collecting on.
+    #[must_use]
+    pub fn layout_outlines(&self) -> Option<&std::sync::Arc<[bmc_render::tree::LayoutOutline]>> {
+        self.store.data().layout_outlines.as_ref()
     }
 
     /// What the last frame's walk reported moving, which the next two frames repaint;
@@ -2958,5 +2974,91 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(10.0, 10.0, 10.0, 10.0)]
         );
+    }
+
+    /// What one damage-tracked frame showed: how it repainted, what moved,
+    /// and the rects it drew and stroked into the target.
+    type FrameSeen = (
+        String,
+        Vec<(f32, f32, f32, f32)>,
+        Vec<bmc_render::renderer::test_support::DrawnRect>,
+        Vec<bmc_render::renderer::test_support::DrawnRect>,
+    );
+
+    /// Replay a static panel over a capture frame and then preserved frames,
+    /// switching outline collection to `outlines[i]` before frame `i`.
+    fn replay_damage_tracked(outlines: [bool; 3]) -> (Vec<FrameSeen>, WasmWidgetRuntime) {
+        let mut runtime = minimal_runtime();
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 100.0)
+            .with_static_layers();
+        let panel = bmc_render::tree::TreeNode::Column(
+            bmc_render::tree::PropsData {
+                background: bmc_wasm_protocol::colors::Color::from_rgb(1, 2, 3),
+                ..bmc_render::tree::PropsData::default()
+            },
+            Vec::new(),
+        );
+        let state = runtime.store.data_mut();
+        state.cached_tree = Some((panel, 100.0, 100.0));
+        state.static_layer_useful = true;
+        // A layout key no tree has, so the first replay captures the layer.
+        state.last_static_key = Some((0, state.renderer_assets.generation(), u64::MAX));
+
+        let mut seen = Vec::new();
+        for (frame, collect) in outlines.into_iter().enumerate() {
+            runtime.set_layout_outlines(collect);
+            let target = if frame == 0 {
+                crate::TargetContents::Cleared
+            } else {
+                crate::TargetContents::Preserved
+            };
+            assert!(runtime.replay_cached_tree_for_test(renderer_ptr(&mut renderer), 16, target));
+            if frame == 0 {
+                let moved = Rect::new(10.0, 10.0, 10.0, 10.0);
+                let state = runtime.store.data_mut();
+                state.stale_export_buffers = 0;
+                state.recent_dynamic_rects = [vec![moved], vec![moved]];
+            }
+            let moving = runtime
+                .last_dynamic_rects()
+                .unwrap_or_default()
+                .iter()
+                .map(|r| (r.x, r.y, r.w, r.h))
+                .collect();
+            seen.push((
+                format!("{:?}", runtime.last_repaint()),
+                moving,
+                std::mem::take(&mut renderer.rects),
+                std::mem::take(&mut renderer.strokes),
+            ));
+        }
+        (seen, runtime)
+    }
+
+    /// Collecting outlines changes nothing a damage-tracked view paints, on, off
+    /// or switched off between frames: a flag the static layer's key ignores
+    /// would leave strokes in the buffers damage tracking reuses,
+    /// and switching it off would blink between them.
+    #[test]
+    fn collecting_outlines_leaves_the_target_as_it_was() {
+        let (plain, _) = replay_damage_tracked([false; 3]);
+        let (collecting, runtime) = replay_damage_tracked([true; 3]);
+        let (switched_off, switched) = replay_damage_tracked([true, true, false]);
+
+        assert!(
+            plain[1].0.starts_with("Damage"),
+            "the preserved frames blit under damage, got {}",
+            plain[1].0
+        );
+        assert_eq!(collecting, plain);
+        assert_eq!(switched_off, plain);
+        let outlines = runtime
+            .layout_outlines()
+            .expect("BUG: collecting stays on")
+            .iter()
+            .map(|o| (o.rect.x, o.rect.y, o.rect.w, o.rect.h))
+            .collect::<Vec<_>>();
+        assert_eq!(outlines, [(0.0, 0.0, 100.0, 100.0)]);
+        assert!(switched.layout_outlines().is_none());
     }
 }

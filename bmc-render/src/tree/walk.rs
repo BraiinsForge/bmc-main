@@ -23,6 +23,7 @@
 
 use crate::interaction::Rect;
 use crate::partition::Band;
+use crate::renderer::{RenderShapes as _, RenderTarget};
 use crate::{AnimationState, TransitionState, TransitionStateKey};
 use std::collections::HashMap;
 
@@ -159,6 +160,64 @@ pub(crate) struct AnimationContext<'a> {
     pub(crate) has_active: bool,
     /// Injected clock (unix seconds) for lazily-built subtrees.
     pub(crate) now_unix_secs: i64,
+    pub(crate) outlines: Outlines,
+}
+
+/// What a walk does with each laid-out box's outline.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Outlines {
+    /// Record it into [`TreeResult::layout_outlines`].
+    pub(crate) record: bool,
+    /// Stroke it into the frame.
+    pub(crate) stroke: bool,
+}
+
+/// Outline a laid-out box: stroked into the frame and recorded for the host,
+/// each when the frame asked for it.
+///
+/// Both from the pass that finishes the frame only.
+/// A capture frame walks the tree twice, and both walks reach every box:
+/// the static walk would list each box again, and stroke the moving ones into the layer,
+/// where reuse frames blit them back behind the boxes that have since moved.
+pub(crate) fn outline_box(
+    renderer: &mut RenderTarget<'_, '_, '_>,
+    result: &mut TreeResult,
+    anim_ctx: &AnimationContext<'_>,
+    rect: Rect,
+    color: bmc_wasm_protocol::Color,
+) {
+    if anim_ctx.emit == EmitMode::StaticOnly {
+        return;
+    }
+    if anim_ctx.outlines.stroke
+        && let Some(ink) = stroke_inside(rect)
+    {
+        renderer.stroke_rect(ink.x, ink.y, ink.w, ink.h, 1.0, color);
+    }
+    if anim_ctx.outlines.record {
+        result.layout_outlines.push(LayoutOutline {
+            rect,
+            color,
+            clip: anim_ctx.dynamic_half.clip,
+        });
+    }
+}
+
+/// The path a 1 px outline strokes so its ink stays inside `rect`,
+/// or `None` for a box 2 px or narrower, which has no room for one.
+///
+/// Stroked on the edge, half the line and its fringe land outside the box,
+/// on pixels a damage-tracked frame never repaints once the box moves.
+pub(crate) fn stroke_inside(rect: Rect) -> Option<Rect> {
+    const INSET: f32 = 1.0;
+    (rect.w > 2.0 * INSET && rect.h > 2.0 * INSET).then(|| {
+        Rect::new(
+            rect.x + INSET,
+            rect.y + INSET,
+            rect.w - 2.0 * INSET,
+            rect.h - 2.0 * INSET,
+        )
+    })
 }
 
 /// Touch interaction info (position relative to element, plus element dimensions).
@@ -198,6 +257,20 @@ pub struct TreeResult {
     pub dynamic_node_count: usize,
     /// What became of the static layer this frame.
     pub static_layer: StaticLayer,
+    /// Each non-empty box the walk reached, modal frames included, in paint order;
+    /// empty unless [`super::ProcessContext::layout_outlines`] asked for them.
+    pub layout_outlines: Vec<LayoutOutline>,
+}
+
+/// A laid-out box for a host to outline over the frame,
+/// in the colour `DEBUG_LAYOUT` strokes it in.
+#[derive(Debug, Clone, Copy)]
+pub struct LayoutOutline {
+    pub rect: Rect,
+    pub color: bmc_wasm_protocol::Color,
+    /// The scroll viewport the box is seen through, which the frame scissors it to;
+    /// `None` outside any.
+    pub clip: Option<Rect>,
 }
 
 /// What a frame did with its static layer.

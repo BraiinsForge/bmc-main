@@ -465,6 +465,7 @@ fn animation_context<'a>(
         layer_painted: false,
         has_active: false,
         now_unix_secs: 0,
+        outlines: crate::tree::Outlines::default(),
     }
 }
 

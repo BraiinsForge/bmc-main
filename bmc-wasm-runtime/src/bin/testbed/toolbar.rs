@@ -297,20 +297,20 @@ impl TestbedApp {
         {
             self.hot_reload.manual_reload = true;
         }
-        let debug_on = bmc_render::tree::debug_layout_enabled();
+        let debug_on = self.overlays.outlines;
         if Button::bar("Debug")
             .icon(&mut self.icons.debug)
             .tone(Tone::switch(palette, debug_on))
             .show(row, palette)
             .on_hover_text(
-                "outline every layout node in the widget render, \
+                "outline every layout node over each view, \
                  and egui's own inspector over the chrome",
             )
             .clicked()
         {
-            bmc_render::tree::toggle_debug_layout();
+            self.overlays.outlines = !self.overlays.outlines;
         }
-        let timings_on = self.show_view_timings;
+        let timings_on = self.overlays.timings;
         if Button::bar("Timings")
             .icon(&mut self.icons.timer)
             .tone(Tone::switch(palette, timings_on))
@@ -318,9 +318,9 @@ impl TestbedApp {
             .on_hover_text("show each view's own frame cost over it")
             .clicked()
         {
-            self.show_view_timings = !self.show_view_timings;
+            self.overlays.timings = !self.overlays.timings;
         }
-        let damage_on = self.show_view_damage;
+        let damage_on = self.overlays.damage;
         if Button::bar("Damage")
             .icon(&mut self.icons.damage)
             .tone(Tone::switch(palette, damage_on))
@@ -333,7 +333,7 @@ impl TestbedApp {
             )
             .clicked()
         {
-            self.show_view_damage = !self.show_view_damage;
+            self.overlays.damage = !self.overlays.damage;
         }
     }
 

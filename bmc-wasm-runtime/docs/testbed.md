@@ -39,8 +39,10 @@ Docked toolbar, Params / System / Credentials panels, status bar, and one floati
 - **Zoom is the canvas's** — it scales windows and positions; chrome is drawn at natural size. `Fit` binary-searches the
   zoom whose packing fills the canvas. Touch coordinates divide by it, so the guest is unaffected.
 - **Timings** — per-view frame cost and slip against the deadline the frame was armed for. Host FPS is the status bar's.
-- **Debug** — outlines the widget's render tree and enables egui's inspector. The mock *paints* its enclosure, views and
-  strips rather than allocating them, so egui cannot see them; they outline themselves under the same toggle.
+- **Debug** — outlines every layout node of each view, modal frames included, and enables egui's inspector. The outlines
+  are drawn over the view like Damage, never into the widget's buffers, so toggling them leaves what damage tracking
+  reuses untouched. `DEBUG_LAYOUT=1` starts with it on. The mock *paints* its enclosure, views and strips rather than
+  allocating them, so egui cannot see them; they outline themselves under the same toggle.
 - **Damage** — each view's last frame drawn over it: yellow where the static layer was blitted back, a red border when
   it repainted in full, a grey one when it painted no tree, and cyan around what the last walk reported moving.
   `--show-damage` starts with it on. Missing damage shows on its own as trails, since the views rotate two export

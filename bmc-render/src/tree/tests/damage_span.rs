@@ -125,6 +125,8 @@ fn a_failed_layer_blit_lays_the_frame_base_before_the_walk() {
         // Nothing was captured under this key, so the layer blit fails.
         static_layer: LayerUse::Reuse,
         static_layer_key: "failed-blit-test",
+        layout_outlines: false,
+        stroke_outlines: false,
         damage_rects: &damage,
     };
     let mut timings = FrameTimings::default();
@@ -188,6 +190,8 @@ fn walk_with_layer_and_damage(
         emit: super::EmitMode::All,
         static_layer,
         static_layer_key: KEY,
+        layout_outlines: false,
+        stroke_outlines: false,
         damage_rects: damage,
     };
     let mut timings = FrameTimings::default();

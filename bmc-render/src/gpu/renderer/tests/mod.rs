@@ -27,6 +27,8 @@ use super::*;
 
 mod brightness;
 #[cfg(target_os = "linux")]
+mod outline_stroke;
+#[cfg(target_os = "linux")]
 mod svg_damage;
 mod svg_tint;
 

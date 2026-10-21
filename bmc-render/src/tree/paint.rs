@@ -22,13 +22,13 @@
 
 #![expect(clippy::cast_lossless)]
 
-use super::DEBUG_LAYOUT;
 use super::layout::NodeContext;
 use super::layout::ParagraphData;
 use super::walk::AnimationContext;
 use super::walk::EmitMode;
 use super::walk::TouchHit;
 use super::walk::TreeResult;
+use super::walk::outline_box;
 use crate::ScrollState;
 use crate::components::draw::render_draw_command;
 use crate::components::notification::render_notification;
@@ -44,7 +44,6 @@ use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
 use bmc_wasm_protocol::{Color, GRAY_50, GRAY_60, TextOverflow};
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use taffy::prelude::*;
 
 /// Hot-pink-ish colors cycling by depth for debug outlines.
@@ -528,6 +527,7 @@ fn render_taffy_node_body(
             renderer.fill_rect(sbar_x, thumb_y, sbar_w, thumb_height, sbar_color);
         }
 
+        outline_node(renderer, result, anim_ctx, node_rect, depth);
         return;
     }
 
@@ -546,10 +546,20 @@ fn render_taffy_node_body(
         );
     }
 
-    // Debug layout outlines — drawn last so they're on top of everything
-    if DEBUG_LAYOUT.load(Ordering::Relaxed) && w > 0.0 && h > 0.0 {
+    outline_node(renderer, result, anim_ctx, node_rect, depth);
+}
+
+/// Outline a node in its depth's colour, after its subtree so the outline sits on top.
+fn outline_node(
+    renderer: &mut RenderTarget<'_, '_, '_>,
+    result: &mut TreeResult,
+    anim_ctx: &AnimationContext<'_>,
+    rect: Rect,
+    depth: usize,
+) {
+    if rect.w > 0.0 && rect.h > 0.0 {
         let color = DEBUG_COLORS[depth % DEBUG_COLORS.len()];
-        renderer.stroke_rect(x, y, w, h, 1.0, color);
+        outline_box(renderer, result, anim_ctx, rect, color);
     }
 }
 

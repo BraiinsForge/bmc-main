@@ -279,6 +279,8 @@ fn submit_tree(
             emit: bmc_render::tree::EmitMode::All,
             static_layer: layer_use(layered, static_unchanged),
             static_layer_key: &state.instance_id,
+            layout_outlines: state.layout_outlines.is_some(),
+            stroke_outlines: bmc_render::tree::debug_layout_enabled(),
             damage_rects: &[],
         };
         let mut resolver = RendererAssetRestorer::new(
@@ -432,10 +434,7 @@ fn commit_submitted_frame(
     } else {
         state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
     }
-    // Shift the damage history: this walk's regions become the newest, and the
-    // pair spans the buffer rotation.
-    state.recent_dynamic_rects.swap(0, 1);
-    state.recent_dynamic_rects[0].clone_from(&result.dynamic_rects);
+    state.keep_walk(&result.dynamic_rects, result.layout_outlines);
     state.last_repaint = crate::host_api::FrameRepaint::Full;
 }
 

@@ -71,6 +71,19 @@ pub(crate) struct ReportExtras {
     pub(crate) profile: bool,
     /// Copy the last frame's damage into the report.
     pub(crate) damage: bool,
+    /// Collect each walk's laid-out boxes and copy them into the report.
+    pub(crate) outlines: bool,
+}
+
+impl ReportExtras {
+    /// These extras for a tick that did or did not render:
+    /// only a render leaves profiling sections to drain.
+    pub(crate) fn after_tick(self, rendered: bool) -> Self {
+        Self {
+            profile: self.profile && rendered,
+            ..self
+        }
+    }
 }
 
 /// What one tick did, and when the view wants the next one.
@@ -348,32 +361,40 @@ impl ViewCore {
     ///
     /// Takes `&mut self` because profiling sections are drained, not read: the
     /// guest accumulates them until someone collects.
-    pub(crate) fn report(&mut self, profile: bool, damage: bool) -> ViewReport {
+    pub(crate) fn report(&mut self, extras: ReportExtras) -> ViewReport {
         let timings = self.runtime.as_ref().map(|rt| {
             Box::new(bmc_render::FrameTimings {
                 flush_us: self.sched.last_flush_us,
                 ..rt.last_timings()
             })
         });
-        let sections = profile
+        let sections = extras
+            .profile
             .then(|| {
                 self.runtime
                     .as_mut()
                     .map(WasmWidgetRuntime::take_profile_sections)
             })
             .flatten();
-        let damage = self.runtime.as_ref().filter(|_| damage).map(|rt| {
+        let damage = self.runtime.as_ref().filter(|_| extras.damage).map(|rt| {
             Box::new(ViewDamage {
                 repaint: rt.last_repaint().clone(),
                 regions: rt.last_dynamic_rects().map_or_else(Vec::new, <[_]>::to_vec),
             })
         });
+        let outlines = self
+            .runtime
+            .as_ref()
+            .filter(|_| extras.outlines)
+            .and_then(WasmWidgetRuntime::layout_outlines)
+            .cloned();
         ViewReport {
             timings,
             slip_ms: self.sched.last_slip_ms,
             led_scene: self.led.scene.filter(|_| self.led.enabled),
             sections,
             damage,
+            outlines,
         }
     }
 }
@@ -410,6 +431,8 @@ pub(crate) struct ViewReport {
     pub(crate) sections: Option<std::collections::BTreeMap<String, u64>>,
     /// Present only while the damage overlay is on, so nothing is cloned per tick otherwise.
     pub(crate) damage: Option<Box<ViewDamage>>,
+    /// The last walk's laid-out boxes, in widget pixels; present only while Debug is on.
+    pub(crate) outlines: Option<std::sync::Arc<[bmc_render::tree::LayoutOutline]>>,
 }
 
 /// The last frame's damage, in widget pixels.
@@ -598,6 +621,11 @@ impl DeviceView {
         self.report.damage.as_deref()
     }
 
+    /// The last walk's laid-out boxes, while Debug is on.
+    pub(crate) fn layout_outlines(&self) -> Option<&[bmc_render::tree::LayoutOutline]> {
+        self.report.outlines.as_deref()
+    }
+
     /// The scene to draw on the strip, or `None` when it is off.
     pub(crate) fn led_scene(&self) -> Option<&bmc_led::data::LedScene> {
         self.report.led_scene.as_ref()
@@ -734,8 +762,7 @@ impl DeviceView {
                     core.apply(command);
                 }
                 let ticked = core.tick(tick, gl, targets);
-                self.report =
-                    core.report(tick.extras.profile && ticked.rendered, tick.extras.damage);
+                self.report = core.report(tick.extras.after_tick(ticked.rendered));
                 ticked
             }
             Render::Threaded(worker) => {
@@ -826,7 +853,16 @@ impl ViewCore {
             return ViewTicked::default();
         }
 
+        // Outlines come from a walk, and a still widget may not walk again for a while.
+        let outlines_owed = {
+            let rt = self.runtime.as_mut().expect("BUG: checked above");
+            let owed = tick.extras.outlines && rt.layout_outlines().is_none();
+            rt.set_layout_outlines(tick.extras.outlines);
+            owed
+        };
+
         let due = !self.sched.ever_rendered
+            || outlines_owed
             || self.sched.pending_interaction
             || self
                 .sched

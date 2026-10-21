@@ -34,6 +34,8 @@ fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, key
         emit: super::EmitMode::All,
         static_layer: LayerUse::Capture,
         static_layer_key: key,
+        layout_outlines: false,
+        stroke_outlines: false,
         damage_rects: &[],
     };
     let tree = TreeNode::Column(PropsData::default(), vec![TreeNode::Spacer { flex: 1.0 }]);
@@ -222,4 +224,108 @@ fn each_slot_captures_under_its_own_key() {
             );
         }
     }
+}
+
+/// A scroll container outlines itself like any other box,
+/// and the boxes inside it carry its viewport as their clip.
+#[test]
+fn a_scroll_container_is_outlined_and_clips_what_it_holds() {
+    let mut renderer = KeyRecordingRenderer::default();
+    let mut state = SlotState::default();
+
+    let result = capture_collecting(&mut state, &mut renderer, &scrolling_tree(), true, false);
+
+    let viewport = (0.0, 0.0, 100.0, 100.0);
+    let bounds = |r: Rect| (r.x, r.y, r.w, r.h);
+    let container = result
+        .layout_outlines
+        .iter()
+        .filter(|o| bounds(o.rect) == viewport && o.clip.is_none())
+        .count();
+    let held = result
+        .layout_outlines
+        .iter()
+        .filter_map(|o| o.clip.map(bounds))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        container, 1,
+        "the container outlines itself, outside its own viewport"
+    );
+    assert_eq!(held, [viewport, viewport]);
+}
+
+/// A capture frame strokes its outlines after the layer, never into it:
+/// the layer outlives the frame, and reuse frames would blit the strokes back
+/// where the boxes no longer are.
+#[test]
+fn a_capture_frame_strokes_its_outlines_over_the_layer() {
+    let mut renderer = KeyRecordingRenderer::default();
+    let mut state = SlotState::default();
+
+    capture_collecting(&mut state, &mut renderer, &scrolling_tree(), false, true);
+
+    let calls = renderer
+        .calls
+        .iter()
+        .map(|(call, _)| *call)
+        .filter(|call| matches!(*call, "begin" | "end" | "stroke"))
+        .collect::<Vec<_>>();
+    let end = calls
+        .iter()
+        .position(|call| *call == "end")
+        .expect("BUG: a capture frame ends the layer it began");
+    assert_eq!(
+        calls[..=end],
+        ["begin", "end"],
+        "nothing strokes into the layer"
+    );
+    assert!(
+        calls[end..].contains(&"stroke"),
+        "the outlines still stroke over it, got {calls:?}"
+    );
+}
+
+/// A scroll inside a scroll clips what it holds to both viewports at once:
+/// the frame's scissors nest, so the inner one never paints outside the outer.
+#[test]
+fn a_nested_scroll_clips_what_it_holds_to_both_viewports() {
+    let canvas = |height: f32| TreeNode::Canvas {
+        props: PropsData {
+            width: 100.0,
+            height,
+            ..PropsData::default()
+        },
+        touch_key: None,
+        draws: Vec::new(),
+    };
+    // The inner viewport spans rows 60..140, past the outer one's 0..100.
+    let tree = TreeNode::Scroll {
+        scroll_key: "outer".to_owned(),
+        props: PropsData::default(),
+        children: vec![
+            canvas(60.0),
+            TreeNode::Scroll {
+                scroll_key: "inner".to_owned(),
+                props: PropsData {
+                    width: 100.0,
+                    height: 80.0,
+                    ..PropsData::default()
+                },
+                children: vec![canvas(120.0)],
+            },
+        ],
+    };
+    let mut renderer = KeyRecordingRenderer::default();
+    let mut state = SlotState::default();
+
+    let result = capture_collecting(&mut state, &mut renderer, &tree, true, false);
+
+    let bounds = |r: Rect| (r.x, r.y, r.w, r.h);
+    let held = result
+        .layout_outlines
+        .iter()
+        .filter(|o| o.rect.h > 100.0)
+        .map(|o| o.clip.map(bounds))
+        .collect::<Vec<_>>();
+    assert_eq!(held, [Some((0.0, 60.0, 100.0, 40.0))]);
 }

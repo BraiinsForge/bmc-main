@@ -199,6 +199,7 @@ fn draw(
         layer_painted: false,
         has_active: false,
         now_unix_secs: 0,
+        outlines: crate::tree::Outlines::default(),
     };
     renderer.begin_frame(W / frame.dpi, H / frame.dpi, dpi);
     let mut target = RenderTarget::new(&mut renderer, None);

@@ -31,6 +31,7 @@ use super::paint::render_taffy_node;
 use super::walk::AnimationContext;
 use super::walk::DynamicHalf;
 use super::walk::EmitMode;
+use super::walk::Outlines;
 use super::walk::StaticLayer;
 use super::walk::TreeResult;
 use crate::components::modal::{ModalInfo, render_modal};
@@ -103,6 +104,21 @@ pub struct ProcessContext<'a> {
     /// each other's layer. Use the caller's asset namespace, so slot teardown
     /// reclaims the layer with its other assets.
     pub static_layer_key: &'a str,
+    /// Report the laid-out boxes in [`TreeResult::layout_outlines`],
+    /// for a host to outline over the frame.
+    pub layout_outlines: bool,
+    /// Stroke an outline around each laid-out box into the frame itself,
+    /// as [`super::debug_layout_enabled`] asks of a host whose flag cannot change.
+    pub stroke_outlines: bool,
+}
+
+impl ProcessContext<'_> {
+    fn outlines(&self) -> Outlines {
+        Outlines {
+            record: self.layout_outlines,
+            stroke: self.stroke_outlines,
+        }
+    }
 }
 
 /// Process a tree: deserialize, layout, render.
@@ -223,6 +239,7 @@ fn layout_and_render_inner(
     #[cfg(feature = "frame-timings")]
     let t2 = Instant::now();
 
+    let outlines = ctx.outlines();
     let mut anim_ctx = AnimationContext {
         emit: ctx.emit,
         animation_states: ctx.animation_states,
@@ -237,6 +254,7 @@ fn layout_and_render_inner(
         layer_painted: false,
         has_active: false,
         now_unix_secs: ctx.now_unix_secs,
+        outlines,
     };
     let resolver = resolver.map(RefCell::new);
     let mut target = RenderTarget::new(renderer, resolver.as_ref());

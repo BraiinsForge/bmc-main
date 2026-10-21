@@ -186,3 +186,78 @@ fn a_closed_modal_damages_nothing() {
         result.dynamic_rects
     );
 }
+
+/// A scrolling modal with a footer button.
+fn modal_tree_with_footer() -> TreeNode {
+    let TreeNode::Column(props, mut children) = scrollable_modal_tree() else {
+        unreachable!("BUG: scrollable_modal_tree builds a Column")
+    };
+    if let Some(TreeNode::Modal {
+        footer_primary_key,
+        footer_primary_label,
+        ..
+    }) = children.last_mut()
+    {
+        "ok".clone_into(footer_primary_key);
+        "OK".clone_into(footer_primary_label);
+    }
+    TreeNode::Column(props, children)
+}
+
+/// Outlines cover the modal's own frame beside the tree's boxes,
+/// its body seen through the viewport under the header,
+/// and a capture frame, which walks the tree twice, reports each box once.
+#[test]
+fn outlines_cover_the_modal_frame_once_per_capture_frame() {
+    let mut renderer = KeyRecordingRenderer::default();
+    let mut state = SlotState::default();
+    // Let the modal's entrance animation settle, so its frame is on screen.
+    for _ in 0..40 {
+        capture_once(&mut state, &mut renderer, &modal_tree_with_footer());
+    }
+
+    let result = capture_collecting(
+        &mut state,
+        &mut renderer,
+        &modal_tree_with_footer(),
+        true,
+        false,
+    );
+
+    let in_color = |color| {
+        result
+            .layout_outlines
+            .iter()
+            .filter(move |o| o.color == color)
+    };
+    let root = result
+        .layout_outlines
+        .iter()
+        .filter(|o| o.color == Color::from_hex(0xFF_00_FF))
+        .filter(|o| (o.rect.x, o.rect.y, o.rect.w, o.rect.h) == (0.0, 0.0, 100.0, 100.0))
+        .count();
+    assert_eq!(
+        (
+            in_color(VIOLET_50).count(),
+            in_color(BLUE_50).count(),
+            in_color(GREEN_50).count(),
+            root
+        ),
+        (1, 1, 1, 1)
+    );
+
+    let header = in_color(BLUE_50).next().expect("BUG: counted above").rect;
+    let body_clips = result
+        .layout_outlines
+        .iter()
+        .filter_map(|o| o.clip)
+        .collect::<Vec<_>>();
+    assert!(
+        !body_clips.is_empty(),
+        "the body's boxes carry its viewport"
+    );
+    assert!(
+        body_clips.iter().all(|clip| clip.y >= header.y + header.h),
+        "the body is seen below the header, got {body_clips:?} under {header:?}"
+    );
+}

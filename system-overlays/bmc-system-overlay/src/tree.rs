@@ -173,6 +173,8 @@ impl TreeUi {
             emit: bmc_render::tree::EmitMode::All,
             static_layer: bmc_render::tree::LayerUse::Ignore,
             static_layer_key: STATIC_LAYER_KEY,
+            layout_outlines: false,
+            stroke_outlines: bmc_render::tree::debug_layout_enabled(),
             damage_rects: &[],
         };
         #[expect(

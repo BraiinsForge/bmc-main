@@ -1014,6 +1014,11 @@ pub(crate) struct HostState {
     /// How the last frame repainted its target.
     pub last_repaint: FrameRepaint,
 
+    /// The boxes the last walk laid out, while a host outlines them;
+    /// `None` while it does not, so a walk collects nothing.
+    /// Shared, so a report taken every tick only counts a reference.
+    pub layout_outlines: Option<Arc<[bmc_render::tree::LayoutOutline]>>,
+
     /// Whether the last submitted tree had a static half worth caching,
     /// per [`has_static_content`](bmc_render::partition::has_static_content).
     pub static_layer_useful: bool,
@@ -1483,6 +1488,7 @@ impl HostState {
             frame_counter: 0,
             recent_dynamic_rects: [Vec::new(), Vec::new()],
             last_repaint: FrameRepaint::NoTree,
+            layout_outlines: None,
             static_layer_useful: true,
             last_static_key: None,
             empty_static_key: None,
@@ -1710,6 +1716,24 @@ impl HostState {
         self.frame_schedule
             .deferred_wasm_render_at_ms
             .is_some_and(|deadline_ms| self.monotonic_ms >= deadline_ms)
+    }
+
+    /// Keep what a walk reported for later frames and the host.
+    ///
+    /// Its regions become the newest of the damage history,
+    /// a pair because it has to span the buffer rotation.
+    pub(crate) fn keep_walk(
+        &mut self,
+        dynamic_rects: &[Rect],
+        outlines: Vec<bmc_render::tree::LayoutOutline>,
+    ) {
+        self.recent_dynamic_rects.swap(0, 1);
+        let newest = &mut self.recent_dynamic_rects[0];
+        newest.clear();
+        newest.extend_from_slice(dynamic_rects);
+        if let Some(kept) = &mut self.layout_outlines {
+            *kept = outlines.into();
+        }
     }
 
     /// Account for a frame that repainted its whole target.

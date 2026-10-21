@@ -34,12 +34,12 @@ use taffy::prelude::*;
 use bmc_wasm_protocol::*;
 
 use crate::components::{ButtonSize, ButtonStyle, draw_button_with_target};
-use crate::interaction::InteractionState;
+use crate::interaction::{InteractionState, Rect};
 use crate::renderer::RenderTarget;
 use crate::renderer::prelude::*;
 use crate::tree::{
     AnimationContext, NodeContext, TouchHit, TreeNode, TreeResult, build_taffy_node,
-    compute_taffy_layout, debug_layout_enabled, render_taffy_node,
+    compute_taffy_layout, outline_box, render_taffy_node,
 };
 use crate::{ModalState, ScrollState};
 
@@ -399,16 +399,14 @@ pub(crate) fn render_modal(
     }
 
     // Debug layout outlines for the modal frame
-    if debug_layout_enabled() {
-        // Modal outline
-        renderer.stroke_rect(modal_x, modal_y, modal_width, modal_height, 1.0, VIOLET_50);
-        // Header outline
-        renderer.stroke_rect(modal_x, modal_y, modal_width, header_height, 1.0, BLUE_50);
-        // Footer outline
-        if has_footer {
-            let fy = modal_y + modal_height - footer_height;
-            renderer.stroke_rect(modal_x, fy, modal_width, footer_height, 1.0, GREEN_50);
-        }
+    let modal_rect = Rect::new(modal_x, modal_y, modal_width, modal_height);
+    outline_box(renderer, result, anim_ctx, modal_rect, VIOLET_50);
+    let header_rect = Rect::new(modal_x, modal_y, modal_width, header_height);
+    outline_box(renderer, result, anim_ctx, header_rect, BLUE_50);
+    if has_footer {
+        let fy = modal_y + modal_height - footer_height;
+        let footer_rect = Rect::new(modal_x, fy, modal_width, footer_height);
+        outline_box(renderer, result, anim_ctx, footer_rect, GREEN_50);
     }
 }
 
@@ -479,6 +477,7 @@ mod title_truncation_tests {
                 layer_painted: false,
                 has_active: false,
                 now_unix_secs: 0,
+                outlines: crate::tree::Outlines::default(),
             },
             &mut TaffyTree::new(),
         );
