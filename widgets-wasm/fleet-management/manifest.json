@@ -14,7 +14,7 @@
   "settings": [
     "localization"
   ],
-  "config_help": "Bind one *Username & password* account to each miner family you run. The widget logs into every miner of a family with that one account, so they must all share the same username and password. A family left unbound is listed but not read. AxeOS miners need no account.\n\nThe miner APIs are plain HTTP, so the password crosses your local network unencrypted. To keep the account from being sent anywhere else, list your network's range, for example `192.168.1.0/24`, under the account's allowed destinations.\n\nA BOS password containing `\"` or `\\` cannot be used.",
+  "config_help": "**Requires BOS 26.09 or newer on BOS miners and AxeOS v2.15.0 or newer on AxeOS miners.**\n\nBOS turns on *Advertise over mDNS* by default only on Braiins Mini Miners. On other BOS miners, turn it on in the advanced settings, or the widget will not find them.\n\nBind one *Username & password* account to each miner family you run. The widget logs into every miner of a family with that one account, so they must all share the same username and password. A family left unbound is listed but not read. AxeOS miners need no account.\n\nThe miner APIs are plain HTTP, so the password crosses your local network unencrypted. To keep the account from being sent anywhere else, list your network's range, for example `192.168.1.0/24`, under the account's allowed destinations.\n\nA BOS password containing `\"` or `\\` cannot be used.",
   "supported_viewports": [
     {
       "type": "rectangular",
@@ -27,13 +27,13 @@
   "params": {
     "fleet_name": {
       "name": "Fleet name",
-      "description": "Heading shown above the fleet overview",
+      "description": "Heading shown above the fleet overview.",
       "type": "string",
       "default_value": "My Fleet"
     },
     "axeos_enabled": {
       "name": "Show AxeOS miners",
-      "description": "Include AxeOS miners in the fleet view and keep polling them",
+      "description": "Include AxeOS miners in the fleet view and keep polling them. Requires AxeOS v2.15.0 or newer.",
       "type": "boolean",
       "default_value": true
     },
@@ -63,7 +63,7 @@
     "bos": {
       "type": "generic-userpass",
       "label": "BOS miners",
-      "description": "The login of every BOS miner on the network. The username is root.",
+      "description": "The login of every BOS miner on the network. The username is root. Requires BOS 26.09 or newer.",
       "required": false
     },
     "ubos": {

@@ -125,7 +125,7 @@ impl Params {
 pub mod credentials {
     ///BOS miners — a `generic-userpass` account. Optional.
     ///
-    ///The login of every BOS miner on the network. The username is root.
+    ///The login of every BOS miner on the network. The username is root. Requires BOS 26.09 or newer.
     pub mod bos {
         ///Placeholder for this slot's `basic` field.
         pub const BASIC: &str = "{{ credential.bos.basic }}";
