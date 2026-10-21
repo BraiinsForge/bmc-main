@@ -38,7 +38,7 @@ An at-a-glance view of every Bitcoin miner on the local network. Discovers BOS, 
 NerdQAxe++) miners over mDNS, polls each for live telemetry, and rolls them up into a fleet total, a per-model
 breakdown, and a per-device detail view — with hashrate trend charts, OK/degraded/off health against each miner's
 nominal, per-family credentials, and a selectable chart time range. The charts keep sampling while another widget is on
-screen.
+screen. Renders on the Deck's full screen and in BMM101's own frame.
 
 ### [Formula 1 Widget](formula-1.md)
 
