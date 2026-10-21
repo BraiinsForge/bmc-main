@@ -34,8 +34,8 @@ use bmc_wasm_sdk::*;
 use crate::device::DeviceFamily;
 use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::parts::{
-    BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
-    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, header, pager,
+    BORDER, CARD_BG, DATA_H, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL, LABEL_FONT, PAD,
+    ROW_FONT, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, header, pager, row_tap,
     si_parts_or_dash, status_counts,
 };
 use crate::view::{PagerScope, model_detail_click_id};
@@ -43,8 +43,8 @@ use crate::view::{PagerScope, model_detail_click_id};
 // Column widths within the table card. Balanced against the Figma "Braiins DECK"
 // list frame: Model was over-wide and starved the rest, the sparkline worst of
 // all — width shifted off Model onto the spark (to the design's ~83px) and the
-// value columns.
-const COL_MODEL: f32 = 310.0;
+// value columns. Model also takes the width the Detail button held.
+const COL_MODEL: f32 = 406.0;
 // The three count slots fill 150; the extra 12 keeps a two-digit off count from
 // crowding the next column, which a short "—" placeholder makes obvious.
 const COL_STATUS: f32 = 162.0;
@@ -62,7 +62,7 @@ const STATUS_ICON: f32 = 16.0;
 #[derive(Debug)]
 pub struct ModelRow {
     pub name: String,
-    /// The model group's family, for the Detail drill-in click id.
+    /// The model group's family, for the row's drill-in click id.
     pub family: Option<DeviceFamily>,
     pub ok: usize,
     pub degraded: usize,
@@ -128,7 +128,6 @@ fn header_row() -> Node {
             head_cell(COL_POWER, "Power"),
             head_cell(COL_EFF, "Efficiency"),
             head_cell(COL_AVG, "Avg"),
-            col(props!(flex: 1.0), Vec::<Node>::new()),
         ],
     )
 }
@@ -187,8 +186,7 @@ fn model_row(r: &ModelRow, window: ChartWindow) -> Node {
                     r.avg_temp.map_or("", |_| "°C"),
                 ),
             ),
-            col(props!(flex: 1.0), Vec::<Node>::new()),
-            detail_button(r.family, &r.name),
+            row_tap(&model_detail_click_id(r.family, &r.name)),
         ],
     )
 }
@@ -208,20 +206,6 @@ fn value(number: &str, unit: &str) -> Node {
     text(
         fmt!("{number} {unit}"),
         style!(size: ROW_FONT, color: WHITE),
-    )
-}
-
-fn detail_button(family: Option<DeviceFamily>, name: &str) -> Node {
-    let id = model_detail_click_id(family, name);
-    touchable(
-        &id,
-        props!(width: DETAIL_BUTTON_WIDTH, height: 48.0, background: GRAY_90),
-        vec![Draw::text(
-            DETAIL_BUTTON_WIDTH / 2.0,
-            24.0,
-            "Detail",
-            style!(size: LABEL_FONT, color: WHITE, align: TextAlign::Center, valign: VerticalAlign::Center),
-        )],
     )
 }
 

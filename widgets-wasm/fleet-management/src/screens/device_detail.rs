@@ -19,7 +19,7 @@
 // the grant above.
 
 //! One miner's read-only telemetry as a stat-tile grid,
-//! opened from a device's Detail button.
+//! opened by tapping a device's row.
 
 use bmc_wasm_sdk::types::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 #[cfg_attr(
