@@ -34,9 +34,9 @@ use bmc_wasm_sdk::*;
 use crate::device::DeviceFamily;
 use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::parts::{
-    BORDER, CARD_BG, DATA_H, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL, LABEL_FONT, PAD,
-    ROW_FONT, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, header, pager, row_tap,
-    si_parts_or_dash, status_counts,
+    BORDER, CARD_BG, DATA_H, DECK_PAGER, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
+    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, header, pager,
+    row_tap, si_parts_or_dash, status_counts,
 };
 use crate::view::{PagerScope, model_detail_click_id};
 
@@ -94,7 +94,7 @@ pub fn table_view(data: &TableViewData) -> Node {
                 props!(gap: GAP, flex: 1.0),
                 [
                     table_card(data),
-                    pager(PagerScope::Fleet, data.page, data.page_count),
+                    pager(PagerScope::Fleet, data.page, data.page_count, DECK_PAGER),
                 ],
             ),
         ],

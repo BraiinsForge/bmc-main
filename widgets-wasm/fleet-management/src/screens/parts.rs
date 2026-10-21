@@ -114,12 +114,21 @@ pub fn icon(svg: &Svg, size: f32, color: Color) -> Node {
 /// The Back chip — steps out one nav level (device → model → fleet), while a
 /// breadcrumb jumps straight to any ancestor.
 #[must_use]
-pub fn back_button() -> Node {
+pub fn back_button(size: f32) -> Node {
     touchable(
         "back",
-        props!(width: BACK_CHIP, height: BACK_CHIP, background: GRAY_90),
-        vec![Draw::svg(10.0, 10.0, 20.0, 20.0, &icons::CHEVRON_LEFT, WHITE).with_anti_alias()],
+        chip_props(size),
+        [chip_glyph(&icons::CHEVRON_LEFT, size, WHITE)],
     )
+}
+
+fn chip_props(size: f32) -> PropsData {
+    props!(width: size, height: size, background: GRAY_90)
+}
+
+fn chip_glyph(svg: &Svg, size: f32, color: Color) -> Draw {
+    let inset = size / 4.0;
+    Draw::svg(inset, inset, size / 2.0, size / 2.0, svg, color).with_anti_alias()
 }
 
 const CRUMB_FONT: u32 = TITLE_FONT;
@@ -183,7 +192,8 @@ pub fn header(title: &str, count: usize, list_active: bool) -> Node {
     )
 }
 
-fn toggle(list_active: bool) -> Node {
+#[must_use]
+pub fn toggle(list_active: bool) -> Node {
     switcher(
         usize::from(list_active),
         false,
@@ -248,14 +258,14 @@ pub fn status_counts(
 /// The "N Auth failures" line under the status counts, shown when a miner
 /// rejects its credentials — a distinct prompt, not a fourth count column.
 #[must_use]
-pub fn auth_failures(count: usize) -> Node {
+pub fn auth_failures(count: usize, icon_px: f32, font: u32) -> Node {
     row(
         props!(gap: 6.0, cross_align: CrossAlign::Center),
         [
-            icon(&icons::UNLINK, 20.0, ERROR),
+            icon(&icons::UNLINK, icon_px, ERROR),
             text(
                 fmt!("{count} Auth failures"),
-                style!(size: LABEL_FONT, color: ERROR),
+                style!(size: font, color: ERROR),
             ),
         ],
     )
@@ -613,12 +623,27 @@ pub fn count_str(count: usize) -> String {
     out
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PagerSize {
+    pub width: f32,
+    pub chip: f32,
+    pub gap: f32,
+    pub font: u32,
+}
+
+pub const DECK_PAGER: PagerSize = PagerSize {
+    width: PAGER_W,
+    chip: 40.0,
+    gap: 8.0,
+    font: PAGER_FONT,
+};
+
 /// The bottom page control: 1-based page/total framed by up/down chips.
 /// `scope` scopes the turn click ids to the fleet or model-detail table.
 #[must_use]
-pub fn pager(scope: PagerScope, page: usize, page_count: usize) -> Node {
+pub fn pager(scope: PagerScope, page: usize, page_count: usize, size: PagerSize) -> Node {
     col(
-        props!(gap: 8.0, cross_align: CrossAlign::Center, width: PAGER_W),
+        props!(gap: size.gap, cross_align: CrossAlign::Center, width: size.width),
         [
             // Leading spacer pushes the cluster to the bottom of its column.
             col(props!(flex: 1.0), Vec::<Node>::new()),
@@ -626,34 +651,35 @@ pub fn pager(scope: PagerScope, page: usize, page_count: usize) -> Node {
                 &icons::PAGER_UP,
                 page > 0,
                 pager_click_id(scope, PageTurn::Prev),
+                size.chip,
             ),
             text(
                 // Unbroken, so a tight column can't split the count over two lines.
                 typography::unbroken(fmt!("{} / {}", page + 1, page_count.max(1))),
-                style!(size: PAGER_FONT, color: LABEL),
+                style!(size: size.font, color: LABEL),
             ),
             pager_button(
                 &icons::PAGER_DOWN,
                 page + 1 < page_count,
                 pager_click_id(scope, PageTurn::Next),
+                size.chip,
             ),
         ],
     )
 }
 
-fn pager_button(svg: &Svg, enabled: bool, click_id: &str) -> Node {
+fn pager_button(svg: &Svg, enabled: bool, click_id: &str, chip: f32) -> Node {
     // Disabled keeps the chip and only dims the glyph; a dead direction isn't tappable.
     let glyph = if enabled {
         WHITE
     } else {
         WHITE.with_alpha(0.3)
     };
-    let draws = vec![Draw::svg(10.0, 10.0, 20.0, 20.0, svg, glyph).with_anti_alias()];
-    let props = props!(width: 40.0, height: 40.0, background: GRAY_90);
+    let draws = [chip_glyph(svg, chip, glyph)];
     if enabled {
-        touchable(click_id, props, draws)
+        touchable(click_id, chip_props(chip), draws)
     } else {
-        canvas(props, draws)
+        canvas(chip_props(chip), draws)
     }
 }
 

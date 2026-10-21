@@ -31,9 +31,9 @@ use bmc_wasm_sdk::*;
 use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::icons;
 use crate::screens::parts::{
-    BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
-    LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, back_button,
-    breadcrumb, icon, pager, row_tap, si_parts_or_dash, status_glyph,
+    BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, DECK_PAGER, FRAME_H, FRAME_W, GAP, HEAD_H,
+    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart,
+    back_button, breadcrumb, icon, pager, row_tap, si_parts_or_dash, status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::view::{CrumbTarget, PagerScope, crumb_click_id};
@@ -87,7 +87,12 @@ pub fn model_detail_view(data: &ModelDetailViewData) -> Node {
                 props!(gap: GAP, flex: 1.0),
                 [
                     table_card(data),
-                    pager(PagerScope::ModelDetail, data.page, data.page_count),
+                    pager(
+                        PagerScope::ModelDetail,
+                        data.page,
+                        data.page_count,
+                        DECK_PAGER,
+                    ),
                 ],
             ),
         ],
@@ -98,7 +103,7 @@ fn detail_header(fleet_name: &str, title: &str, count: usize) -> Node {
     row(
         props!(height: BACK_CHIP, cross_align: CrossAlign::Center, gap: 16.0),
         [
-            back_button(),
+            back_button(BACK_CHIP),
             breadcrumb(&[
                 Crumb {
                     label: fleet_name,
