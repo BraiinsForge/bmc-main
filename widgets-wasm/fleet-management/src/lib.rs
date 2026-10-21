@@ -447,7 +447,8 @@ fn rebuild_model_detail_rows(
     reason = "the render entry orchestrates derive, view dispatch, and click routing"
 )]
 pub extern "C" fn render(_delta_ms: u32) {
-    let WidgetSize { width, height, .. } = widget_size();
+    let WidgetViewport { width, height, .. } = widget_viewport();
+    let layout = screens::Layout::of(width, height);
     let params_version = bmc_wasm_sdk::params::version();
     DERIVED.with(|cell| {
         let mut cell = cell.borrow_mut();
@@ -527,7 +528,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                             })
                         });
                     if let Some(data) = detail {
-                        (screens::device_detail::device_detail_view(&data), 1)
+                        (layout.device_detail(&data), 1)
                     } else {
                         let data = HISTORY.with(|h| {
                             screens::model_detail::ModelDetailViewData::from_summary(
@@ -539,7 +540,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                             )
                         });
                         let page_count = data.page_count;
-                        (screens::model_detail::model_detail_view(&data), page_count)
+                        (layout.model_detail(&data), page_count)
                     }
                 } else {
                     let data = HISTORY.with(|h| {
@@ -552,10 +553,10 @@ pub extern "C" fn render(_delta_ms: u32) {
                         )
                     });
                     let page_count = data.page_count;
-                    (screens::model_detail::model_detail_view(&data), page_count)
+                    (layout.model_detail(&data), page_count)
                 }
             } else if derived.summary.groups.is_empty() {
-                (screens::searching(), 1)
+                (layout.searching(), 1)
             } else {
                 match nav.mode {
                     view::ViewMode::Grid => {
@@ -566,7 +567,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                                 &h.borrow().view(chart_span, chart_window),
                             )
                         });
-                        (screens::dashboard::dashboard_view(&data), 1)
+                        (layout.dashboard(&data), 1)
                     }
                     view::ViewMode::List => {
                         let table = HISTORY.with(|h| {
@@ -578,7 +579,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                             )
                         });
                         let page_count = table.page_count;
-                        (screens::table::table_view(&table), page_count)
+                        (layout.table(&table), page_count)
                     }
                 }
             };

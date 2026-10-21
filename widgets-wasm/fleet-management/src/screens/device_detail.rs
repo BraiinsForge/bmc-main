@@ -138,7 +138,7 @@ fn header(fleet_name: &str, model: &str, hostname: &str) -> Node {
     row(
         props!(height: BACK_CHIP, cross_align: CrossAlign::Center, gap: 16.0),
         [
-            back_button(),
+            back_button(BACK_CHIP),
             breadcrumb(&[
                 Crumb {
                     label: fleet_name,
@@ -238,7 +238,7 @@ fn state_tile(state: DeviceStatus) -> Node {
     clippy::cast_possible_truncation,
     reason = "a chart ceiling is fine at f32 precision"
 )]
-fn nominal_ths(nominal: Option<Hashrate>) -> Option<f32> {
+pub(crate) fn nominal_ths(nominal: Option<Hashrate>) -> Option<f32> {
     let ths = nominal?.as_terahashes_per_second() as f32;
     (ths > 0.0).then_some(ths)
 }

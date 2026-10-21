@@ -125,7 +125,7 @@ fn fleet_status(data: &DashboardViewData) -> Node {
         ),
     ];
     if data.auth > 0 {
-        children.push(auth_failures(data.auth));
+        children.push(auth_failures(data.auth, METRIC_ICON, LABEL_FONT));
     }
     card(STATUS_W, children)
 }

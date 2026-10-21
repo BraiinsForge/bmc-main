@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Fleet screen modules plus the shared empty state.
+//! Fleet screen modules, the frame they draw in, plus the shared empty state.
 
 #[cfg_attr(
     not(test),
@@ -29,6 +29,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+pub mod bmm101;
 pub mod dashboard;
 pub mod device_detail;
 pub mod fixtures;
@@ -36,6 +37,76 @@ pub mod icons;
 pub mod model_detail;
 pub mod parts;
 pub mod table;
+
+use bmm101::Bmm101;
+use dashboard::DashboardViewData;
+use device_detail::DeviceDetailData;
+use model_detail::ModelDetailViewData;
+use table::TableViewData;
+
+/// The frame the screens draw: the Deck's full band, or BMM101's own.
+#[derive(Clone, Copy, Debug)]
+pub enum Layout {
+    Deck,
+    Bmm101(Bmm101),
+}
+
+impl Layout {
+    /// Anything no wider than BMM101 takes its frame, fitted to the viewport;
+    /// the manifest admits only that range besides the Deck's full band.
+    #[must_use]
+    pub fn of(width: u32, height: u32) -> Self {
+        if width <= Bmm101::DESIGN_WIDTH {
+            Self::Bmm101(Bmm101::fit(width, height))
+        } else {
+            Self::Deck
+        }
+    }
+
+    #[must_use]
+    pub fn dashboard(self, data: &DashboardViewData) -> Node {
+        match self {
+            Self::Deck => dashboard::dashboard_view(data),
+            Self::Bmm101(m) => bmm101::dashboard::dashboard_view(m, data),
+        }
+    }
+
+    #[must_use]
+    pub fn table(self, data: &TableViewData) -> Node {
+        match self {
+            Self::Deck => table::table_view(data),
+            Self::Bmm101(m) => bmm101::table::table_view(m, data),
+        }
+    }
+
+    #[must_use]
+    pub fn model_detail(self, data: &ModelDetailViewData) -> Node {
+        match self {
+            Self::Deck => model_detail::model_detail_view(data),
+            Self::Bmm101(m) => bmm101::model_detail::model_detail_view(m, data),
+        }
+    }
+
+    #[must_use]
+    pub fn device_detail(self, data: &DeviceDetailData) -> Node {
+        match self {
+            Self::Deck => device_detail::device_detail_view(data),
+            Self::Bmm101(m) => bmm101::device_detail::device_detail_view(m, data),
+        }
+    }
+
+    #[must_use]
+    pub fn searching(self) -> Node {
+        match self {
+            Self::Deck => searching(),
+            Self::Bmm101(m) => bmm101::searching(m),
+        }
+    }
+}
+
+/// What the empty fleet asks of the user, on every device.
+const SEARCHING_HINT: &str =
+    "Make sure miners are on this network and their accounts are picked in the widget settings";
 
 /// Fleet-empty state: discovery is still running, or every device was filtered
 /// out by the operator's model lists / disabled families. The indeterminate
@@ -53,10 +124,7 @@ pub fn searching() -> Node {
                         "Searching for miners\u{2026}",
                         style!(size: 28, color: WHITE),
                     ),
-                    text(
-                        "Make sure miners are on this network and the Deck has their credentials",
-                        style!(size: 16, color: GRAY_60),
-                    ),
+                    text(SEARCHING_HINT, style!(size: 16, color: GRAY_60)),
                     col(
                         props!(width: 260.0),
                         [progress_bar!(
@@ -69,4 +137,35 @@ pub fn searching() -> Node {
             )],
         )],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bmm101_scale(width: u32, height: u32) -> f32 {
+        match Layout::of(width, height) {
+            Layout::Bmm101(m) => m.scale(),
+            Layout::Deck => panic!("BUG: {width}x{height} took the Deck frame"),
+        }
+    }
+
+    #[test]
+    fn the_deck_full_band_keeps_the_deck_frame() {
+        assert!(matches!(Layout::of(1_280, 480), Layout::Deck));
+    }
+
+    #[test]
+    fn bmm101_draws_its_frame_unscaled() {
+        assert!((bmm101_scale(480, 320) - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn bmm100_shrinks_the_bmm101_frame_by_its_tighter_side() {
+        let scale = bmm101_scale(320, 240);
+        assert!(
+            (scale - 2.0 / 3.0).abs() < 1e-6,
+            "320 / 480 is tighter than 240 / 320, got {scale}"
+        );
+    }
 }
