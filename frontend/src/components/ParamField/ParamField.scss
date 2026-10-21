@@ -120,6 +120,12 @@ $remove-button-size: mini-units(5);
     color: $text-error;
 }
 
+.toggleHelper {
+    composes: helper-text-01 from 'styles/carbon/typography.scss';
+    margin-block-start: mini-units(0.5);
+    color: $text-helper;
+}
+
 .columnLabel {
     composes: helper-text-01 from 'styles/carbon/typography.scss';
     composes: inline center from 'styles/layout.scss';

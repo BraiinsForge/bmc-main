@@ -193,12 +193,16 @@ export interface BoundToggleProps extends iField<boolean> {
     id: string;
     labelText: string;
     hideLabel?: boolean;
+    helperText?: ReactNode;
 }
 export function BoundToggle(props: BoundToggleProps) {
-    const { id, labelText, hideLabel, value, onChange, disabled, error } = props;
+    const { id, labelText, hideLabel, helperText, value, onChange, disabled, error } = props;
     const { formatMessage } = useIntl();
     const hiddenLabelId = `${id}-label`;
     const errorId = `${id}-error`;
+    const helperId = `${id}-helper`;
+    // The error takes the helper's place, as on Carbon's own inputs.
+    const helper = error ? undefined : helperText;
 
     const toggle = (
         <Toggle
@@ -217,16 +221,33 @@ export function BoundToggle(props: BoundToggleProps) {
             aria-labelledby={hideLabel ? hiddenLabelId : undefined}
             aria-invalid={error ? true : undefined}
             aria-errormessage={error ? errorId : undefined}
+            aria-describedby={helper ? helperId : undefined}
         />
     );
 
-    return (
+    const messages = (
         <Fragment>
-            {/* Not Carbon's `hideLabel`: it shows `labelText` in place of the On/Off side label. */}
-            {hideLabel ? <span id={hiddenLabelId} className="cds--visually-hidden" children={labelText} /> : null}
-            {hideLabel ? <div className={css.toggleBox} children={toggle} /> : toggle}
             {error ? <div id={errorId} className={css.toggleError} children={error} /> : null}
+            {helper ? <div id={helperId} className={css.toggleHelper} children={helper} /> : null}
         </Fragment>
+    );
+
+    if (hideLabel) {
+        return (
+            <Fragment>
+                {/* Not Carbon's `hideLabel`: it shows `labelText` in place of the On/Off side label. */}
+                <span id={hiddenLabelId} className="cds--visually-hidden" children={labelText} />
+                <div className={css.toggleBox} children={toggle} />
+                {messages}
+            </Fragment>
+        );
+    }
+    // One form item, as Carbon's inputs are, so the messages sit under the toggle and not a form gap away.
+    return (
+        <div className="cds--form-item">
+            {toggle}
+            {messages}
+        </div>
     );
 }
 
@@ -426,6 +447,7 @@ function ScalarField(props: ScalarFieldProps) {
                     id={id}
                     labelText={labelText}
                     hideLabel={hideLabel}
+                    helperText={helperText}
                     error={error}
                     value={asBoolean(value)}
                     onChange={onChange}
