@@ -4,7 +4,8 @@ The fleet management widget gives an at-a-glance view of every Bitcoin miner on 
 drill from the whole-fleet overview down to a single miner. It discovers miners over mDNS, polls each one for live
 telemetry, and rolls the readings up into a fleet total, a per-model breakdown, and a per-device detail view. It
 supports three device families — BOS, Forge Firmware, and AxeOS (Bitaxe / NerdQAxe++) — each independently discovered,
-authenticated, and polled, so one family failing never blanks another's numbers.
+authenticated, and polled, so one family failing never blanks another's numbers. It fills the Deck's full screen and has
+a reduced frame of its own on BMM101.
 
 ## User stories
 
@@ -56,7 +57,7 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 > As an operator, I want to open a model and see each individual miner of that type.
 
-- Opening a model's *Detail* shows a per-device list for that model: one row per miner with its hostname, hashrate and
+- Tapping a model's row shows a per-device list for that model: one row per miner with its hostname, hashrate and
   sparkline, power, efficiency, and avg/min/max temperature.
 - A miner with no live telemetry shows its status (unreachable / API error) where the metric columns would be, instead
   of a row of meaningless zeros.
@@ -66,9 +67,28 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 > As an operator, I want a full read-out for one miner so I can diagnose it.
 
-- Opening a device's *Detail* shows its detail screen: IP and MAC, state, current hashrate with a chart, nominal
-  (nameplate) hashrate, power, efficiency, uptime, and temperature (a single value or avg/min/max).
+- Tapping a device's row shows its detail screen: IP and MAC, state, current hashrate with a chart, nominal (nameplate)
+  hashrate, power, efficiency, uptime, and temperature (a single value or avg/min/max).
 - The nominal hashrate is a static nameplate value, not a time series.
+
+### See my fleet on a BMM101
+
+> As an operator watching my fleet from a BMM101, I want the widget on its smaller screen too, showing what matters most
+> at each level.
+
+- BMM101 has a 480×320 frame of its own at every level, with the same navigation as the Deck.
+- The overview shows the fleet status counts (and auth failures) and efficiency above a full-width hashrate chart.
+- The per-model list shows each model's name, OK/degraded/off counts, hashrate and sparkline.
+- The per-device list shows each miner's hostname, hashrate, sparkline and efficiency. A miner with no live telemetry
+  shows its status there instead.
+- A device's detail shows IP and MAC, state, hashrate with its chart, and efficiency. The chart is topped at the nominal
+  hashrate, as on the Deck, so a miner well below its nameplate draws a low line.
+- Power, temperatures, nominal hashrate and uptime stay on the Deck, which has room for them.
+- Both lists page four rows at a time; a whole row is tappable.
+- A drilled-in screen shows a Back chip and its model, or model and hostname, as the title. Back steps out one level;
+  there is no breadcrumb to jump straight to the fleet.
+- Names too long for their place are cut short with an ellipsis.
+- BMM100 has no frame of its own: it draws BMM101's with smaller text and fills its whole 320×240 screen.
 
 ### Read the hashrate trend
 
@@ -217,8 +237,9 @@ how accounts are saved and bound.
 
 ## Constraints
 
-- The widget targets the Deck's full **1280×480** rectangular viewport only; the manifest declares no smaller sizes.
-- Font sizes are fixed for that layout.
+- The widget renders on the Deck's full **1280×480** screen and on the BMM101 and BMM100 screens; the Deck's smaller
+  widget slots are not supported.
+- Font sizes are fixed for each frame; on BMM100 they shrink with BMM101's frame.
 - BOS miners must run BOS 26.09 or newer, and AxeOS miners AxeOS v2.15.0 or newer. These are the first releases that
   announce the miner over mDNS, the only way the widget finds miners; the APIs it then reads are older. The
   configuration help and the matching account and setting descriptions state both minimums. Forge Firmware needs no
