@@ -1282,7 +1282,7 @@
       "additionalProperties": false
     },
     "UbosParams": {
-      "description": "Tunables for a simulated Braiins Forge Miner x4 (Braiins OS Libre).",
+      "description": "Tunables for a simulated Braiins Forge Miner x4 (Forge Firmware).",
       "type": "object",
       "properties": {
         "hashrate_ths": {

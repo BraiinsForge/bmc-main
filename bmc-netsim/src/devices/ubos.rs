@@ -42,7 +42,7 @@ use crate::build::{celsius, drift, leaf};
 use crate::http_status::HttpStatus;
 use crate::quantity::{Celsius, NonNegative};
 
-/// Tunables for a simulated Braiins Forge Miner x4 (Braiins OS Libre).
+/// Tunables for a simulated Braiins Forge Miner x4 (Forge Firmware).
 // Strict for the same reason as the BOS params: a mistyped key in a
 // hand-authored blueprint must not silently drop the fault it meant to inject.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

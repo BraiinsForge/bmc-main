@@ -3,7 +3,7 @@
 The fleet management widget gives an at-a-glance view of every Bitcoin miner on the local network, and lets the operator
 drill from the whole-fleet overview down to a single miner. It discovers miners over mDNS, polls each one for live
 telemetry, and rolls the readings up into a fleet total, a per-model breakdown, and a per-device detail view. It
-supports three device families — BOS, Braiins OS Libre, and AxeOS (Bitaxe / NerdQAxe++) — each independently discovered,
+supports three device families — BOS, Forge Firmware, and AxeOS (Bitaxe / NerdQAxe++) — each independently discovered,
 authenticated, and polled, so one family failing never blanks another's numbers.
 
 ## User stories
@@ -47,8 +47,8 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 - The list view shows one row per resolved model name, each with that model's hashrate, a hashrate sparkline, power,
   efficiency, average temperature, and its OK/degraded/off counts.
-- Groups are ordered by family — Braiins OS Libre first, then BOS, then Bitaxe — and alphabetically by model name within
-  a family.
+- Groups are ordered by family — Forge Firmware first, then BOS, then Bitaxe — and alphabetically by model name within a
+  family.
 - Miners whose model cannot be resolved collect into a single *Unknown* group, pinned last.
 - The table pages when the model list is longer than the body height.
 
@@ -114,15 +114,15 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 > As an operator, I want to give the widget one saved account per family so it can read stats from every miner of that
 > family on the network.
 
-- The widget offers two account pickers, *BOS miners* and *Braiins OS Libre devices*, each taking a *Username &
-  password* account from the device's saved accounts.
+- The widget offers two account pickers, *BOS miners* and *Forge Firmware miners*, each taking a *Username & password*
+  account from the device's saved accounts.
 - The *BOS miners* account logs into every BOS miner; its username is `root`.
-- The *Braiins OS Libre devices* account is sent as HTTP Basic auth to every Braiins OS Libre device.
+- The *Forge Firmware miners* account is sent as HTTP Basic auth to every Forge Firmware miner.
 - AxeOS miners need no account.
 - An account is shared fleet-wide per family — every miner of the family must accept the same username and password.
 - A family left unbound is still listed, each miner marked *Check account*, but none of them is contacted.
 - Binding or swapping an account takes effect at once: that family's miners are logged into again on the next pass.
-- Editing a bound account logs every BOS and Braiins OS Libre miner in again, since the Deck does not say which account
+- Editing a bound account logs every BOS and Forge Firmware miner in again, since the Deck does not say which account
   changed. The miners keep their model groups meanwhile.
 
 ### Show or hide AxeOS miners
@@ -130,7 +130,7 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 > As an operator, I want to hide the AxeOS (Bitaxe / NerdQAxe++) miners so they do not clutter a view of my main fleet.
 
 - *Show AxeOS miners* toggles the AxeOS family in the view; turning it off hides every AxeOS device and stops polling
-  them. BOS and Braiins OS Libre are always shown.
+  them. BOS and Forge Firmware are always shown.
 - mDNS discovery keeps running while AxeOS is hidden, so re-enabling it resumes polling the already-discovered devices
   without re-discovery.
 
@@ -172,23 +172,23 @@ authenticated, and polled, so one family failing never blanks another's numbers.
 
 ## Supported families
 
-| Family           | Display label    | mDNS browse  | Default port | API base      | Auth                                                       |
-| ---------------- | ---------------- | ------------ | ------------ | ------------- | ---------------------------------------------------------- |
-| BOS              | BOS              | `_http._tcp` | 80           | `/api/v1`     | token login at `/auth/login` with the *BOS miners* account |
-| Braiins OS Libre | Braiins OS Libre | `_ubos._tcp` | 8080         | `/api`        | HTTP Basic with the *Braiins OS Libre devices* account     |
-| AxeOS            | Bitaxe           | `_http._tcp` | 80           | `/api/system` | none                                                       |
+| Family         | Display label  | mDNS browse  | Default port | API base      | Auth                                                       |
+| -------------- | -------------- | ------------ | ------------ | ------------- | ---------------------------------------------------------- |
+| BOS            | BOS            | `_http._tcp` | 80           | `/api/v1`     | token login at `/auth/login` with the *BOS miners* account |
+| Forge Firmware | Forge Firmware | `_ubos._tcp` | 8080         | `/api`        | HTTP Basic with the *Forge Firmware miners* account        |
+| AxeOS          | Bitaxe         | `_http._tcp` | 80           | `/api/system` | none                                                       |
 
-- **Discovery.** The widget runs two mDNS browses: the base `_http._tcp` service (BOS and AxeOS share it) and Braiins OS
-  Libre's own `_ubos._tcp`. On `_http._tcp`, both families are identified up front by their discovery TXT records: AxeOS
-  by its `family` or `board` key, BOS by its `bos_version` key or the `bos=1` flag. Any other host on the type is
+- **Discovery.** The widget runs two mDNS browses: the base `_http._tcp` service (BOS and AxeOS share it) and Forge
+  Firmware's own `_ubos._tcp`. On `_http._tcp`, both families are identified up front by their discovery TXT records:
+  AxeOS by its `family` or `board` key, BOS by its `bos_version` key or the `bos=1` flag. Any other host on the type is
   ignored and never contacted, so the BOS password reaches only hosts that announce themselves as BOS. BOS firmware that
-  predates these TXT keys is not discovered. Braiins OS Libre is identified directly by its own service type. A miner
-  that advertises neither browsed type, or sits on a network segment mDNS does not reach, is not discovered.
+  predates these TXT keys is not discovered. Forge Firmware is identified directly by its own service type. A miner that
+  advertises neither browsed type, or sits on a network segment mDNS does not reach, is not discovered.
 - **BOS** (Braiins OS) miners are polled across three endpoints: `/miner/stats` (hashrate and power),
   `/miner/hw/hashboards` (the hottest chip temperature and the chip type/count), and `/miner/details` (uptime, platform,
   nominal hashrate, and miner model). A `401`/`403` triggers one re-authentication per device per pass.
-- **Braiins OS Libre** devices expose a single `/info` endpoint carrying hashrate, power, temperature, and uptime.
-  Braiins OS Libre advertises no platform identifier and no nominal hashrate, so its product name doubles as the model
+- **Forge Firmware** miners expose a single `/info` endpoint carrying hashrate, power, temperature, and uptime. Forge
+  Firmware advertises no platform identifier and no nominal hashrate, so the `name` it reports doubles as the model
   grouping and its nameplate hashrate comes from the built-in model catalog.
 - **AxeOS** miners — Bitaxe and NerdQAxe++ running ESP-Miner — expose a single `/info` endpoint carrying hashrate,
   power, temperature, uptime, and nominal hashrate. The model is resolved from `deviceModel` (falling back to the board
@@ -210,10 +210,10 @@ All parameters are manifest-driven widget settings, configurable from the web UI
 Both slots take a `generic-userpass` account and are optional; see [Credential Accounts](../credential-accounts.md) for
 how accounts are saved and bound.
 
-| Slot   | Label                    | Used for                                              |
-| ------ | ------------------------ | ----------------------------------------------------- |
-| `bos`  | BOS miners               | The `/auth/login` body sent to every BOS miner.       |
-| `ubos` | Braiins OS Libre devices | The HTTP Basic header sent to every Braiins OS Libre. |
+| Slot   | Label                 | Used for                                                  |
+| ------ | --------------------- | --------------------------------------------------------- |
+| `bos`  | BOS miners            | The `/auth/login` body sent to every BOS miner.           |
+| `ubos` | Forge Firmware miners | The HTTP Basic header sent to every Forge Firmware miner. |
 
 ## Constraints
 
@@ -221,7 +221,8 @@ how accounts are saved and bound.
 - Font sizes are fixed for that layout.
 - BOS miners must run BOS 26.09 or newer, and AxeOS miners AxeOS v2.15.0 or newer. These are the first releases that
   announce the miner over mDNS, the only way the widget finds miners; the APIs it then reads are older. The
-  configuration help and the matching account and setting descriptions state both minimums.
+  configuration help and the matching account and setting descriptions state both minimums. Forge Firmware needs no
+  minimum, as every public release announces itself.
 - BOS announces itself by default only on Braiins Mini Miners. Other BOS miners are found once their *Advertise over
   mDNS* advanced setting is turned on. The configuration help says so.
 - Devices install the widget automatically when it is missing. A removed widget comes back at the next reboot or update.

@@ -68,8 +68,8 @@
     },
     "ubos": {
       "type": "generic-userpass",
-      "label": "Braiins OS Libre devices",
-      "description": "The HTTP Basic login of every Braiins OS Libre device on the network.",
+      "label": "Forge Firmware miners",
+      "description": "The HTTP Basic login of every Forge Firmware miner on the network.",
       "required": false
     }
   }

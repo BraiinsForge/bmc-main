@@ -35,7 +35,7 @@ cargo run -p bmc-netsim -- schema
 
 Unpinned devices fill ports from `20000` upward in blueprint order, skipping any an instance pins via `port`. A widget
 browsing the LAN finds each over mDNS and polls its `host:port`. To point a real Deck at it, run the sim on a machine on
-the Deck's Wi-Fi and open the fleet-management widget — the sim accepts any BOS/uBOS credentials.
+the Deck's Wi-Fi and open the fleet-management widget — the sim accepts any BOS or Forge Firmware credentials.
 
 ## Blueprint
 

@@ -134,9 +134,9 @@ pub mod credentials {
         ///Placeholder for this slot's `username` field.
         pub const USERNAME: &str = "{{ credential.bos.username }}";
     }
-    ///Braiins OS Libre devices — a `generic-userpass` account. Optional.
+    ///Forge Firmware miners — a `generic-userpass` account. Optional.
     ///
-    ///The HTTP Basic login of every Braiins OS Libre device on the network.
+    ///The HTTP Basic login of every Forge Firmware miner on the network.
     pub mod ubos {
         ///Placeholder for this slot's `basic` field.
         pub const BASIC: &str = "{{ credential.ubos.basic }}";

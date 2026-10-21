@@ -52,7 +52,7 @@ impl DeviceFamily {
 pub fn family_label(family: DeviceFamily) -> &'static str {
     match family {
         DeviceFamily::Bos => "BOS",
-        DeviceFamily::Ubos => "Braiins OS Libre",
+        DeviceFamily::Ubos => "Forge Firmware",
         DeviceFamily::Bitaxe => "Bitaxe",
     }
 }
@@ -679,7 +679,7 @@ mod tests {
     #[test]
     fn family_label_covers_all_families() {
         assert_eq!(family_label(DeviceFamily::Bos), "BOS");
-        assert_eq!(family_label(DeviceFamily::Ubos), "Braiins OS Libre");
+        assert_eq!(family_label(DeviceFamily::Ubos), "Forge Firmware");
         assert_eq!(family_label(DeviceFamily::Bitaxe), "Bitaxe");
     }
 

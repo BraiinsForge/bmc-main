@@ -255,7 +255,7 @@ pub extern "C" fn init() {
     HTTP_BROWSE.set(http_browse);
     let ubos_browse = mdns::mdns_browse(UbosAdapter.browse_service_types(), on_ubos_event);
     if ubos_browse.is_none() {
-        log_warn!("fleet: uBOS mDNS browse rejected by host runtime limits");
+        log_warn!("fleet: Forge Firmware mDNS browse rejected by host runtime limits");
     }
     UBOS_BROWSE.set(ubos_browse);
     request_frame();

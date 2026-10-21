@@ -80,7 +80,7 @@ pub enum Instance {
         #[serde(default)]
         port: Option<u16>,
     },
-    // Braiins OS Libre is the product name; only the Rust side keeps uBOS.
+    // Keyed by the old Braiins OS Libre name so existing blueprints still parse.
     #[serde(rename = "bos-libre")]
     Ubos {
         /// Human label describing this entry's scenario, shown in the readout.
