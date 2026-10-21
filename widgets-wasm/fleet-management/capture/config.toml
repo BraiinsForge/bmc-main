@@ -7,3 +7,12 @@ target = "bmc100:full"
 [fixtures.bmc100-full-unbound]
 path = "fixtures/bmc100-full-unbound.jsonl.gz"
 target = "bmc100:full"
+
+[fixtures.bmm101-full-example]
+path = "fixtures/bmm101-full-example.jsonl.gz"
+target = "bmm101:full"
+
+# BMM100 draws BMM101's frame shrunk, so the BMM101 take navigates it as well.
+[fixtures.bmm100-full-example]
+path = "fixtures/bmm101-full-example.jsonl.gz"
+target = "bmm100:full"
