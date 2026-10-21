@@ -422,7 +422,7 @@ in
   '';
 
   # Resolved entries must match what the index publishes;
-  # widget-hello-widget stands in while the shipped list is empty.
+  # widget-hello-widget keeps that checked even when the shipped list is empty.
   widget-autoinstall =
     let
       autoinstall = deckPackages.core.pkg.widgetAutoinstall;

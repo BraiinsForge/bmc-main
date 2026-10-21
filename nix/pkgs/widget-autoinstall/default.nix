@@ -29,7 +29,7 @@
 let
   inherit (armv7Pkgs) lib;
 
-  names = [ ];
+  names = [ "widget-fleet-management" ];
 
   # Name, version and store path come from the entry the index publishes,
   # so they cannot disagree with it.
