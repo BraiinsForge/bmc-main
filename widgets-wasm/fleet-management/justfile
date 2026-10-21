@@ -1,0 +1,37 @@
+# Fleet Management dev tasks: `just widgets::fleet-management::dev`,
+# or bare `just dev` from this directory. Generic mechanics delegate
+# to the wasm and netsim modules; this file owns only their wiring.
+# The widget finds netsim's miners over mDNS on the LAN, so the testbed needs no URL rewrite.
+
+import '../../common.justfile'
+
+dir := source_directory()
+repo := parent_directory(parent_directory(dir))
+root_justfile := repo / "justfile"
+
+# Widget + sim + watch in mprocs. BLUEPRINT names a bmc-netsim blueprint; PLATFORM is a testbed platform id.
+dev BLUEPRINT="example" PLATFORM="BMC100":
+    @just --justfile {{ root_justfile }} wasm::prebuild fleet-management
+    mprocs \
+        --names "netsim:{{ BLUEPRINT }},watch,testbed:{{ PLATFORM }}" \
+        "just --justfile {{ source_file() }} run-netsim {{ BLUEPRINT }}" \
+        "just --justfile {{ root_justfile }} wasm::watch fleet-management" \
+        "just --justfile {{ source_file() }} run-testbed {{ BLUEPRINT }} {{ PLATFORM }}"
+
+# Serve BLUEPRINT's simulated fleet over mDNS on the LAN.
+run-netsim BLUEPRINT="example":
+    @just --justfile {{ root_justfile }} netsim::run {{ BLUEPRINT }}
+
+# Testbed on PLATFORM; its cache bucket is BLUEPRINT's, so fleets never share history.
+[private]
+run-testbed BLUEPRINT PLATFORM:
+    @just --justfile {{ root_justfile }} wasm::testbed fleet-management "--platform={{ PLATFORM }}" {{ BLUEPRINT }}
+
+# Render gallery scenes headlessly; NAME picks one recipe, default all.
+capture NAME="*":
+    @just --justfile {{ root_justfile }} wasm::scenes fleet-management "{{ NAME }}"
+
+# Record TARGET's capture fixture against BLUEPRINT; needs `run-netsim BLUEPRINT` already serving.
+record BLUEPRINT TARGET="bmc100:full":
+    @just --justfile {{ root_justfile }} wasm::record fleet-management \
+        --record={{ TARGET }} --record-name={{ replace(TARGET, ":", "-") + "-" + BLUEPRINT }}
