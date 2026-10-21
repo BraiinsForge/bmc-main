@@ -102,9 +102,9 @@ impl Image {
 
 /// The boxed renderer in this thread's RENDERER, registering assets for bmc-render
 /// and for the SDK, whose asset host the widget scenes still build through.
-struct DeckAssetHost(*mut FemtoVgRenderer);
+struct FemtoVgAssetHost(*mut FemtoVgRenderer);
 
-impl DeckAssetHost {
+impl FemtoVgAssetHost {
     fn with_renderer<R>(&self, register: impl FnOnce(&mut FemtoVgRenderer) -> R) -> R {
         // SAFETY: RENDERER keeps the box alive for every scene call,
         // and each asset host is held per thread, so this runs on the thread that owns it.
@@ -112,7 +112,7 @@ impl DeckAssetHost {
     }
 }
 
-impl AssetHost for DeckAssetHost {
+impl AssetHost for FemtoVgAssetHost {
     fn register_svg(&self, tag: &str, data: &[u8]) -> Option<SvgId> {
         self.with_renderer(|renderer| renderer.register_svg(tag, data))
     }
@@ -130,7 +130,7 @@ impl AssetHost for DeckAssetHost {
     }
 }
 
-impl bmc_wasm_sdk::assets::AssetHost for DeckAssetHost {
+impl bmc_wasm_sdk::assets::AssetHost for FemtoVgAssetHost {
     fn register_svg(&self, tag: &str, data: &[u8]) -> Option<SvgId> {
         self.with_renderer(|renderer| renderer.register_svg(tag, data))
     }
@@ -228,8 +228,8 @@ fn init_renderer_with(loader: &gallery::GlLoader, [width, height]: [u32; 2], fbo
             .expect("BUG: failed to create the FemtoVG renderer")
         },
     );
-    install_asset_host(DeckAssetHost(&raw mut *renderer));
-    bmc_wasm_sdk::assets::install_asset_host(DeckAssetHost(&raw mut *renderer));
+    install_asset_host(FemtoVgAssetHost(&raw mut *renderer));
+    bmc_wasm_sdk::assets::install_asset_host(FemtoVgAssetHost(&raw mut *renderer));
     RENDERER.set(Some(renderer));
     // SAFETY: same loader, same context femtovg just bound itself to.
     GL.set(Some(unsafe {

@@ -47,7 +47,7 @@ unsafe extern "C" {
         out_len: u32,
     ) -> i32;
     /// Resolve `(tz_name, unix_secs)` to the UTC offset in seconds.
-    /// Returns `i32::MIN` when the name is not in the deck's supported timezone list.
+    /// Returns `i32::MIN` when the name is not in the supported timezone list.
     fn host_resolve_tz(name_ptr: *const u8, name_len: u32, unix_secs: i64) -> i32;
 }
 

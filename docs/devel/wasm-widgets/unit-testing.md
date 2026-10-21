@@ -1,7 +1,8 @@
 # WASM Widget Unit Testing
 
-A widget's unit tests compile to `wasm32` and run under the wasm test runner, in `wasmi`, the interpreter the Deck runs
-widgets in. Mark a test with `#[bmc_wasm_sdk::wasm_test]` where a native test would take `#[test]`.
+A widget's unit tests compile to `wasm32` and run under the wasm test runner, in `wasmi`, the interpreter the BMC
+application runs widgets in. Import `bmc_wasm_sdk::wasm_test` and mark a test with `#[wasm_test]` where a native test
+would take `#[test]`.
 
 These are logic tests. What a widget draws is checked by [regression testing](regression-testing.md).
 

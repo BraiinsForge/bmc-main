@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Wire format, reader and builder for the deck-wide `system` snapshot channel.
+//! Wire format, reader and builder for the system-wide `system` snapshot channel.
 //!
 //! The host encoder (`bmc-wasm-runtime::system`) and the [`Snapshot`] reader build
 //! on the same enum tags and field-kind discriminator, so the two cannot drift on
@@ -27,7 +27,7 @@
 //! `bmc-wasm-sdk::system` re-exports the enums, the reader
 //! and the builder, and adds the host-fed snapshot lifecycle.
 //!
-//! A [`Snapshot`] is an owned copy of the deck-wide settings (timezone, formatting
+//! A [`Snapshot`] is an owned copy of the system-wide settings (timezone, formatting
 //! preferences, next-alarm) the host delivered to a widget instance. Fields are read
 //! through typed accessors that walk the byte buffer lazily — no upfront tree
 //! allocation, no serde.
@@ -318,7 +318,7 @@ impl From<UnitSystem> for bmc_shared_utils::unit_system::UnitSystem {
     }
 }
 
-/// Owned snapshot of the host-delivered deck-wide system state.
+/// Owned snapshot of the host-delivered system-wide state.
 ///
 /// Cheap to [`Clone`] — the underlying storage is a single `Vec<u8>`.
 /// Accessors return borrowed views into the snapshot bytes,
@@ -416,7 +416,7 @@ impl Snapshot {
             .and_then(|t| UnitSystem::try_from(t).ok())
     }
 
-    /// Whether deck-wide night mode is currently active.
+    /// Whether system-wide night mode is currently active.
     /// Derived host-side from the enable toggle, the operator
     /// configured time interval, and the wall-clock crossing
     /// the interval bounds — widgets only see the resolved bool.

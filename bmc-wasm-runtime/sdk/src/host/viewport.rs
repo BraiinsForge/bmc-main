@@ -360,7 +360,7 @@ mod size_variant_tests {
     }
 
     #[wasm_test]
-    fn exact_bmc100_dimensions_keep_their_variant() {
+    fn canonical_dimensions_keep_their_variant() {
         assert_eq!(variant_of(1_280, 480), SizeVariant::Full);
         assert_eq!(variant_of(638, 480), SizeVariant::Large);
         assert_eq!(variant_of(638, 238), SizeVariant::Medium);
@@ -368,7 +368,7 @@ mod size_variant_tests {
     }
 
     #[wasm_test]
-    fn non_deck_fullscreen_viewports_map_to_closest_legacy_variant() {
+    fn other_fullscreen_viewports_map_to_closest_legacy_variant() {
         assert_eq!(variant_of(320, 240), SizeVariant::Small);
         // BMM101 (480x320) lands on Large by a thin margin: normalized
         // distance Large 0.581 vs Medium 0.592. This assertion guards that

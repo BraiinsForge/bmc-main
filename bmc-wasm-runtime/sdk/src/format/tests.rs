@@ -137,7 +137,7 @@ mod off_device {
     }
 
     #[test]
-    fn an_override_zone_the_deck_does_not_ship_reads_unknown() {
+    fn an_override_zone_the_system_does_not_know_reads_unknown() {
         with_system_tz(None, || {
             let helsinki = Tz::from_runtime("Europe/Helsinki");
             assert_eq!(

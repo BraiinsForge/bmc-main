@@ -26,14 +26,14 @@ leaves, and refuses to send a service-pinned credential anywhere else.
 
 ### [System Settings](system-settings.md)
 
-How a widget reads the host-defined deck-wide system snapshot: timezone, formatting settings, next alarm, and night
-mode. Covers the fixed SDK accessors, update hook, and the testbed's System panel.
+How a widget reads the host-defined system-wide snapshot: timezone, formatting settings, next alarm, and night mode.
+Covers the fixed SDK accessors, update hook, and the testbed's System panel.
 
 ### [Unit Testing](unit-testing.md)
 
-How a widget marks its tests with `#[wasm_test]` to run them on `wasm32` in the Deck's interpreter, the `just` recipes
-and plain cargo commands that run them, and the hermetic host a test runs against: refused network, in-memory storage, a
-fixed clock and seed, and the fuel and timeout limits.
+How a widget marks its tests with `#[wasm_test]` to run them on `wasm32` in the runtime's interpreter, the `just`
+recipes and plain cargo commands that run them, and the hermetic host a test runs against: refused network, in-memory
+storage, a fixed clock and seed, and the fuel and timeout limits.
 
 ### [Regression Testing](regression-testing.md)
 
@@ -80,7 +80,7 @@ Two ways to find where a widget spends time, for different questions:
   dispatch — this measures the *host*, not your widget's own functions.
 - **Fuel profiling** — wrap sections in `profile::span("name")` and build with `--features profiling`
   (`CARGO_EXTRA_FLAGS=--features profiling`). Fuel is `wasmi`'s instruction count — hardware-independent, so the ratios
-  you measure on a laptop hold on the Deck, and your sections show up as counter tracks in the same profile. Off by
+  you measure on a laptop hold on a device, and your sections show up as counter tracks in the same profile. Off by
   default — `span()` compiles to nothing, so the instrumentation can live in the widget source permanently. This is the
   one that answers "which part of *my* widget is expensive".
 

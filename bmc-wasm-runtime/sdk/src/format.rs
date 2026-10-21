@@ -22,7 +22,7 @@
 //!
 //! Mirrors the JS SDK's `sdk.format.*` API from deckfeeder.
 //!
-//! Preference-aware formatters keyed on the deck-wide `SystemSnapshot` (`number_format`,
+//! Preference-aware formatters keyed on the system-wide `SystemSnapshot` (`number_format`,
 //! `unit_system`, `temperature_unit`, timezone, time and date formats). wasm goes through
 //! the host; native through the same `bmc_shared_utils` and calendar core, matching the device.
 //!
@@ -55,7 +55,7 @@ use native::Host as Platform;
 #[cfg(target_arch = "wasm32")]
 use wasm::Host as Platform;
 
-/// Format a number per the deck's preferences. Called by [`format_number!`].
+/// Format a number per the device's preferences. Called by [`format_number!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_number(value: f64, decimals: u32) -> String {
@@ -63,7 +63,7 @@ pub fn _host_format_number(value: f64, decimals: u32) -> String {
 }
 
 /// SI value and unit split, D3 `.3s`-style: `("13.2", "kW")`. `unit_prefix`
-/// picks the scale; the mantissa renders per the deck's number format at
+/// picks the scale; the mantissa renders per the device's number format at
 /// `sig_figs` significant digits. Split so value and unit can be sized apart.
 #[doc(hidden)]
 #[must_use]
@@ -126,14 +126,14 @@ fn si_decimals(mantissa: f64, sig_figs: u32) -> u32 {
     sig_figs.saturating_sub(int_digits)
 }
 
-/// Format a speed per the deck's preferences. Called by [`format_speed!`].
+/// Format a speed per the device's preferences. Called by [`format_speed!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_speed(value: f64, decimals: u32, metric_unit: u32) -> String {
     Platform::speed(value, decimals, metric_unit)
 }
 
-/// Format a distance per the deck's preferences.
+/// Format a distance per the device's preferences.
 /// Called by [`format_distance!`].
 #[doc(hidden)]
 #[must_use]
@@ -141,7 +141,7 @@ pub fn _host_format_distance(value: f64, decimals: u32) -> String {
     Platform::distance(value, decimals)
 }
 
-/// Format a temperature per the deck's preferences. Called by [`format_temperature!`].
+/// Format a temperature per the device's preferences. Called by [`format_temperature!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> String {
@@ -196,7 +196,7 @@ pub struct FormatTimeOpts {
     /// `None` uses `system::current().time_format()`.
     pub format: Option<TimeFormat>,
     /// Override the timezone the moment is rendered in.
-    /// `None` uses the system timezone, as does a name the deck does not know
+    /// `None` uses the system timezone, as does a name the system does not know
     /// (see [`local_unix_secs_or_system`]).
     pub timezone: Option<Tz>,
     /// Include seconds in the output (e.g. `12:34` vs `12:34:56`).
@@ -323,7 +323,7 @@ pub fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>)
 }
 
 /// Shift `now.unix_secs` by `tz`'s UTC offset for a downstream `strftime`.
-/// Returns `None` for a zone the deck does not ship.
+/// Returns `None` for a zone the system does not ship.
 #[must_use]
 pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
     let offset_secs = resolve_tz_offset(tz, now.unix_secs)?;
@@ -331,7 +331,7 @@ pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
 }
 
 /// Resolve the UTC offset (in seconds) for an IANA-name timezone at a
-/// moment. Returns `None` for a zone the deck does not ship.
+/// moment. Returns `None` for a zone the system does not ship.
 #[must_use]
 pub fn resolve_tz_offset(tz: &Tz, unix_secs: i64) -> Option<i32> {
     Platform::zone_offset(tz, unix_secs)
@@ -435,7 +435,7 @@ macro_rules! format_number {
 
 /// Format a speed value with user-preferred units and number formatting.
 ///
-/// Input is always km/h, converted to mph when the deck is set to imperial (both arms).
+/// Input is always km/h, converted to mph when the device is set to imperial (both arms).
 /// Use the `ms` arm to request m/s when the system is metric.
 ///
 /// # Example
@@ -455,7 +455,7 @@ macro_rules! format_speed {
 
 /// Format a distance value with user-preferred units and number formatting.
 ///
-/// Input is always km, converted to miles when the deck is set to imperial.
+/// Input is always km, converted to miles when the device is set to imperial.
 ///
 /// # Example
 /// ```ignore
@@ -470,7 +470,7 @@ macro_rules! format_distance {
 
 /// Format a temperature with user-preferred units and number formatting.
 ///
-/// Input is always °C, converted to °F when the deck prefers it. Use the `bare`
+/// Input is always °C, converted to °F when the device prefers it. Use the `bare`
 /// arm for the degree-only form ("26°", no scale letter) used in dense
 /// hourly/daily strips.
 ///

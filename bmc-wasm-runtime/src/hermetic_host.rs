@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! A host that runs a widget module away from a Deck with nothing live in it:
+//! A host that runs a widget module away from a device with nothing live in it:
 //! no network, no state shared between instances, and a fixed clock.
 
 use std::path::Path;
