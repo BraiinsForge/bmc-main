@@ -58,14 +58,21 @@ fn main() -> Result<()> {
         "starting bmc-wasm-host"
     );
 
-    let listener = prepare_listener(&socket_path)?;
-    tracing::info!(socket = %socket_path.display(), "listening");
+    let start = || -> Result<_> {
+        let listener = prepare_listener(&socket_path)?;
+        tracing::info!(socket = %socket_path.display(), "listening");
 
-    let (mut shared, mut renderer) = bmc_wasm_host::host::SharedHost::init(
-        STAGING_MAX_WIDTH,
-        STAGING_MAX_HEIGHT,
-        derive_image_decode_lock_path(&socket_path),
-    )?;
+        let (shared, renderer) = bmc_wasm_host::host::SharedHost::init(
+            STAGING_MAX_WIDTH,
+            STAGING_MAX_HEIGHT,
+            derive_image_decode_lock_path(&socket_path),
+        )?;
+        Ok((listener, shared, renderer))
+    };
+    let (listener, mut shared, mut renderer) = start().unwrap_or_else(|error| {
+        tracing::error!(?error, "host failed to start");
+        std::process::exit(1);
+    });
 
     match bmc_wasm_host::main_loop::run(&mut shared, &mut renderer, &listener) {
         Err(error) => {
