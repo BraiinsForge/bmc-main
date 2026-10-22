@@ -24,5 +24,29 @@
 //! It owns no socket and no clock, and does not depend on the widget SDK:
 //! it reads every message through [`proto::JsonLookup`], so its tests drive it with documents of their own,
 //! such as the allocation test's model of lookups the host answers.
+//! The adapter runs it on the widget SDK, and is the widget's whole interface:
+//!
+//! ```ignore
+//! let client = home_assistant::connect("ha", on_ha_event)?;
+//! let sensor = client.subscribe(&["sensor.outdoor"], &["friendly_name", "unit_of_measurement"])?;
+//! let call = client.call_service("button", "press", "button.gate", &ServiceData::new())?;
+//! ```
+//!
+//! Every type a widget handles is re-exported here; [`proto`] holds the engine behind them.
+//! A widget that redraws on each [`Event::EntityChanged`] can answer it with `request_frame_after`,
+//! which merges every request before a frame into one.
 
+#[cfg(target_arch = "wasm32")]
+mod adapter;
+#[cfg(any(target_arch = "wasm32", test))]
+mod credential;
 pub mod proto;
+
+#[cfg(target_arch = "wasm32")]
+pub use adapter::{Client, ConnectError, EventCallback, Subscription, connect};
+pub use proto::{
+    AttributeValue, CallFailure, CallId, Entity, Event, HaError, MAX_ATTRIBUTE_TEXT_BYTES,
+    MAX_ATTRIBUTES_PER_SUBSCRIPTION, MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES,
+    MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, Presence,
+    RequestError, ServiceData, Status, SubscriptionId, UNKNOWN_ERROR, is_entity_id,
+};

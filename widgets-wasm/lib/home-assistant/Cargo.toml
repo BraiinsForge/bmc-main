@@ -9,6 +9,11 @@ publish = false
 # [dependencies] table and fails on a crate without one.
 [dependencies]
 
+# Only the wasm adapter talks to the SDK, so a native build of the protocol
+# core cannot reach for it by accident.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bmc-wasm-sdk = { path = "../../../bmc-wasm-runtime/sdk" }
+
 [dev-dependencies]
 bmc-wasm-sdk = { path = "../../../bmc-wasm-runtime/sdk" }
 serde_json = "1.0.149"
