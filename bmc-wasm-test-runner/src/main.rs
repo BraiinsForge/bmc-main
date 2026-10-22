@@ -45,12 +45,10 @@ use listing::{ListedTest, list_tests};
 const FAILED: i32 = 101;
 
 fn main() {
-    let (test_binary, mut arguments) = match parse(std::env::args_os()) {
+    let (test_binary, arguments) = match parse(std::env::args_os()) {
         Ok(parsed) => parsed,
         Err(error) => exit_with(&error),
     };
-    // A runtime cannot leave the thread it was built on, so each test runs on the main thread.
-    arguments.test_threads = Some(1);
     match trials(&test_binary, arguments.nocapture) {
         Ok(trials) => libtest_mimic::run(&arguments, trials).exit(),
         Err(error) => exit_with(&error),

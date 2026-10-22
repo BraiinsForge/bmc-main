@@ -110,5 +110,4 @@ Fuel stops a looping guest, but not a host call that never returns. nextest ends
 What the widget logs is kept and printed with a failing test. With `--nocapture`, or nextest's `--no-capture`, it prints
 as it happens.
 
-Tests from one binary run one at a time, since a runtime cannot leave the thread it was built on. nextest runs each test
-in a process of its own, so it still runs them in parallel.
+Tests run in parallel, each on a runtime of its own, as libtest runs native ones. `--test-threads 1` runs them serially.
