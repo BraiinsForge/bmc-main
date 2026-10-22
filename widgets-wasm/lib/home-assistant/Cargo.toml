@@ -1,0 +1,17 @@
+[package]
+name = "home-assistant"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+# Empty, but present: ci-tools' check-workspace-deps reads every crate's
+# [dependencies] table and fails on a crate without one.
+[dependencies]
+
+[dev-dependencies]
+bmc-wasm-sdk = { path = "../../../bmc-wasm-runtime/sdk" }
+serde_json = "1.0.149"
+
+[lints]
+workspace = true
