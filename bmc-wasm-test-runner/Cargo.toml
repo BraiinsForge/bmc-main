@@ -11,13 +11,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 bmc-render = { workspace = true, features = ["test-support"] }
-bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 bmc-wasm-runtime = { path = "../bmc-wasm-runtime", features = ["hermetic-host"] }
+bmc-wasm-test-abi = { path = "abi" }
 indoc.workspace = true
 libtest-mimic.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 tempfile.workspace = true
 wasmi.workspace = true
 wat.workspace = true

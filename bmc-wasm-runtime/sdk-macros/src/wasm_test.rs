@@ -20,7 +20,7 @@
 
 //! `#[wasm_test]`: a libtest test natively, a pair of exports for the wasm test runner on wasm32.
 
-use bmc_wasm_protocol::test_descriptor::{META_EXPORT_PREFIX, RUN_EXPORT_PREFIX, parse_fuel};
+use bmc_wasm_test_abi::{META_EXPORT_PREFIX, RUN_EXPORT_PREFIX, parse_fuel};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{Attribute, Expr, ExprLit, ItemFn, Lit, LitStr, Meta, ReturnType, parse_quote};

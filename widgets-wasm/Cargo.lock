@@ -199,6 +199,7 @@ dependencies = [
  "bmc-ui",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
+ "bmc-wasm-test-abi",
  "percent-encoding",
  "tracing",
  "ufmt",
@@ -210,11 +211,15 @@ name = "bmc-wasm-sdk-macros"
 version = "0.1.0"
 dependencies = [
  "bmc-shared-time",
- "bmc-wasm-protocol",
+ "bmc-wasm-test-abi",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "bmc-wasm-test-abi"
+version = "0.1.0"
 
 [[package]]
 name = "bmc-wasm-widgets"

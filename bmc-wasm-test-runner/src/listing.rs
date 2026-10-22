@@ -21,12 +21,12 @@
 //! The tests a `#[wasm_test]` binary exports, read back from its records.
 
 use anyhow::{Context as _, Result};
-use bmc_wasm_protocol::test_descriptor::{
-    GuestSpan, META_EXPORT_PREFIX, RECORD_LEN, TestDescriptor, libtest_name, run_export_for,
-};
 use bmc_wasm_runtime::hermetic_host::HermeticHost;
 use bmc_wasm_runtime::platform_catalog::Target;
 use bmc_wasm_runtime::{EntryPolicy, WasmWidgetRuntime};
+use bmc_wasm_test_abi::{
+    GuestSpan, META_EXPORT_PREFIX, RECORD_LEN, TestDescriptor, libtest_name, run_export_for,
+};
 
 /// A test a module exports, named as libtest would name it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,8 +96,8 @@ fn guest_string(runtime: &WasmWidgetRuntime, span: GuestSpan) -> Option<String> 
 mod tests {
     use std::fmt::Write as _;
 
-    use bmc_wasm_protocol::test_descriptor::{IGNORED, RECORD_VERSION, SHOULD_PANIC, offset};
     use bmc_wasm_runtime::platform_catalog;
+    use bmc_wasm_test_abi::{IGNORED, RECORD_VERSION, SHOULD_PANIC, offset};
 
     use super::*;
 

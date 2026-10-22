@@ -5,37 +5,39 @@ Path dependencies among the wasm-side crates, dependant → dependencies. Shared
 
 ```text
 bmc-gallery          → bmc-render, bmc-wasm-sdk, bmc-render-keyboard, the overlays and widgets it stages
-bmc-wasm-test-runner → bmc-render, bmc-wasm-runtime, bmc-wasm-protocol
+bmc-wasm-test-runner → bmc-render, bmc-wasm-runtime, bmc-wasm-test-abi
 bmc-wasm-runtime     → bmc-render, bmc-ui, bmc-wasm-assets, bmc-wasm-protocol
 bmc-render           → bmc-ui, bmc-render-macros, bmc-wasm-protocol; at build time bmc-svg-compiler
-bmc-wasm-sdk         → bmc-ui, bmc-render-macros, bmc-wasm-sdk-macros, bmc-wasm-protocol
+bmc-wasm-sdk         → bmc-ui, bmc-render-macros, bmc-wasm-sdk-macros, bmc-wasm-protocol, bmc-wasm-test-abi
 bmc-render-macros    → bmc-ui, bmc-wasm-assets, bmc-svg-compiler
 bmc-wasm-assets      → bmc-ui, bmc-wasm-protocol
 bmc-wasm-protocol    → bmc-ui
-bmc-wasm-sdk-macros  → (none)
+bmc-wasm-sdk-macros  → bmc-wasm-test-abi
+bmc-wasm-test-abi    → (none)
 bmc-svg-compiler     → (none)
 bmc-ui               → (none)
 ```
 
 ## Crate roles
 
-| Crate                  | Role                                                     | Location                         |
-| ---------------------- | -------------------------------------------------------- | -------------------------------- |
-| `bmc-ui`               | Tree, components, macros, codec, design vocabulary       | `bmc-render/ui/`                 |
-| `bmc-wasm-protocol`    | Guest↔host contract beyond the tree: ids, params, I/O    | `bmc-wasm-runtime/protocol/`     |
-| `bmc-svg-compiler`     | SVG → compact binary path compilation                    | `bmc-wasm-runtime/svg-compiler/` |
-| `bmc-wasm-assets`      | Package asset records: digest, record format, extraction | `bmc-wasm-assets/`               |
-| `bmc-render-macros`    | `include_*!` asset proc macros (svg, bitmap, mesh, …)    | `bmc-render/macros/`             |
-| `bmc-wasm-sdk-macros`  | Compile-time `json!` / `fmt!` template proc macros       | `bmc-wasm-runtime/sdk-macros/`   |
-| `bmc-wasm-sdk`         | Widget authoring API: host bindings over `bmc-ui`        | `bmc-wasm-runtime/sdk/`          |
-| `bmc-render`           | Render engine: FemtoVG, layout, interaction, animation   | `bmc-render/`                    |
-| `bmc-wasm-runtime`     | WASM interpreter, host state, network, testbed/capture   | `bmc-wasm-runtime/`              |
-| `bmc-wasm-test-runner` | Runs `#[wasm_test]` binaries under the hermetic host     | `bmc-wasm-test-runner/`          |
-| `bmc-gallery`          | Dev tool — visual catalog of SDK components              | `bmc-gallery/`                   |
+| Crate                  | Role                                                            | Location                         |
+| ---------------------- | --------------------------------------------------------------- | -------------------------------- |
+| `bmc-ui`               | Tree, components, macros, codec, design vocabulary              | `bmc-render/ui/`                 |
+| `bmc-wasm-protocol`    | Guest↔host contract beyond the tree: ids, params, I/O           | `bmc-wasm-runtime/protocol/`     |
+| `bmc-svg-compiler`     | SVG → compact binary path compilation                           | `bmc-wasm-runtime/svg-compiler/` |
+| `bmc-wasm-assets`      | Package asset records: digest, record format, extraction        | `bmc-wasm-assets/`               |
+| `bmc-render-macros`    | `include_*!` asset proc macros (svg, bitmap, mesh, …)           | `bmc-render/macros/`             |
+| `bmc-wasm-sdk-macros`  | `json!` / `fmt!` templates and `#[wasm_test]`                   | `bmc-wasm-runtime/sdk-macros/`   |
+| `bmc-wasm-test-abi`    | The `#[wasm_test]` record the macro writes and the runner reads | `bmc-wasm-test-runner/abi/`      |
+| `bmc-wasm-sdk`         | Widget authoring API: host bindings over `bmc-ui`               | `bmc-wasm-runtime/sdk/`          |
+| `bmc-render`           | Render engine: FemtoVG, layout, interaction, animation          | `bmc-render/`                    |
+| `bmc-wasm-runtime`     | WASM interpreter, host state, network, testbed/capture          | `bmc-wasm-runtime/`              |
+| `bmc-wasm-test-runner` | Runs `#[wasm_test]` binaries under the hermetic host            | `bmc-wasm-test-runner/`          |
+| `bmc-gallery`          | Dev tool — visual catalog of SDK components                     | `bmc-gallery/`                   |
 
 ## Leaf crates
 
-`bmc-ui`, `bmc-svg-compiler` and `bmc-wasm-sdk-macros` are the leaves — no path dependencies of their own.
+`bmc-ui`, `bmc-svg-compiler` and `bmc-wasm-test-abi` are the leaves — no path dependencies of their own.
 `bmc-wasm-protocol` depends only on `bmc-ui`, for the `define_id!` macro its handles are declared with and the resource
 ids its `IdPool` hands out. `bmc-render`, `bmc-wasm-sdk`, `bmc-render-macros`, `bmc-wasm-runtime` and `bmc-wasm-assets`
 take `bmc-ui` directly, for the tree and its builders, the ids and the descriptor types the asset macros expand to. The

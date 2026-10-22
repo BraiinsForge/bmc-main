@@ -22,6 +22,7 @@ bmc-render-macros = { path = "../../bmc-render/macros" }
 bmc-ui = { path = "../../bmc-render/ui" }
 bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }
+bmc-wasm-test-abi = { path = "../../bmc-wasm-test-runner/abi" }
 glam = { workspace = true, default-features = false, features = ["libm"], optional = true }
 percent-encoding.workspace = true
 ufmt = { workspace = true }

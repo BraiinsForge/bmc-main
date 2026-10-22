@@ -38,10 +38,10 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use bmc_render::renderer::Renderer;
 use bmc_render::renderer::test_support::ShapingRecorder;
-use bmc_wasm_protocol::test_descriptor::parse_fuel;
 use bmc_wasm_runtime::hermetic_host::HermeticHost;
 use bmc_wasm_runtime::platform_catalog::{self, Target};
 use bmc_wasm_runtime::{EntryPolicy, GuestLogSink, GuestPanic, TestExportError};
+use bmc_wasm_test_abi::parse_fuel;
 use indoc::formatdoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 

@@ -1631,6 +1631,7 @@ dependencies = [
  "bmc-ui",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
+ "bmc-wasm-test-abi",
  "glam",
  "percent-encoding",
  "tracing",
@@ -1643,11 +1644,15 @@ name = "bmc-wasm-sdk-macros"
 version = "0.1.0"
 dependencies = [
  "bmc-shared-time",
- "bmc-wasm-protocol",
+ "bmc-wasm-test-abi",
  "proc-macro2",
  "quote",
  "syn 2.0.100",
 ]
+
+[[package]]
+name = "bmc-wasm-test-abi"
+version = "0.1.0"
 
 [[package]]
 name = "bmc-wasm-test-runner"
@@ -1657,6 +1662,7 @@ dependencies = [
  "bmc-render",
  "bmc-wasm-protocol",
  "bmc-wasm-runtime",
+ "bmc-wasm-test-abi",
  "indoc",
  "libtest-mimic",
  "tempfile",

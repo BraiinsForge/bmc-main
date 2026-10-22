@@ -20,10 +20,10 @@
 
 //! What `#[wasm_test]` expands to on wasm32: a test's record, and the runner that reports its panics.
 
-use bmc_wasm_protocol::test_descriptor::{GuestSpan, RECORD_LEN, RECORD_VERSION, offset};
-pub use bmc_wasm_protocol::test_descriptor::{IGNORED, SHOULD_PANIC};
+use bmc_wasm_test_abi::{GuestSpan, RECORD_LEN, RECORD_VERSION, offset};
+pub use bmc_wasm_test_abi::{IGNORED, SHOULD_PANIC};
 
-/// A test's record, laid out as [`bmc_wasm_protocol::test_descriptor`] reads it.
+/// A test's record, laid out as [`bmc_wasm_test_abi`] reads it.
 #[derive(Debug)]
 #[repr(C)]
 pub struct TestRecord {
@@ -126,7 +126,7 @@ pub fn run(test: fn()) {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_protocol::test_descriptor::TestDescriptor;
+    use bmc_wasm_test_abi::TestDescriptor;
 
     use super::*;
     use crate::wasm_test;
