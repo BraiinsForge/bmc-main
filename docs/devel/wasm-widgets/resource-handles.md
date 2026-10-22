@@ -20,7 +20,8 @@ Each call except `register_poll` returns `None` when the host refuses the resour
 limit refuses it, a listener's port cannot be bound, or the mDNS daemon cannot register a service; input it cannot use,
 such as an empty list of service types, is refused without a log. A hermetic capture refuses `http_listen` and
 `mdns_register`; the other network calls get a handle that receives only the events in the capture's fixture, and none
-when the fixture has none. A native build, such as a widget's unit tests, has no host and none of these calls.
+when the fixture has none. A widget's unit tests run hermetic with no fixture: `http_listen` and `mdns_register` are
+refused, and the other calls get a handle that never receives an event.
 
 ## Keep The Handle
 

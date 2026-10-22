@@ -114,4 +114,4 @@ matters on screen, start the timer in `on_wake` instead of `init`, since `on_wak
 frame, and stop it in `on_sleep`.
 
 Keep the logic a tick runs in a plain function that takes `elapsed_periods`, as [Best Practices](best-practices.md)
-recommends for all widget logic, so native tests can cover it without a host.
+recommends for all widget logic, so a unit test can cover it without driving a timer.

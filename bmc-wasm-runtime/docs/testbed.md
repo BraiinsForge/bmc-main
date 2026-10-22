@@ -134,8 +134,7 @@ at `EGL device enumeration not supported`, and `mdns_coexistence` / `multi_runti
 `display 1280x480 rectangular dpi=217`. For a general smoke run prefer hello-widget: it animates itself, so a stalled
 view shows without touching anything.
 
-**hello-widget's own tests never run:** `SystemTime::{now, local, utc}` are `wasm32`-gated, so it does not compile
-natively and its `#[test]`s are never built. Round-layout coverage rests on the baselines. BDK-704 lifts the gate.
+**hello-widget has no unit tests:** its round-layout coverage rests on the baselines.
 
 ## Left open
 

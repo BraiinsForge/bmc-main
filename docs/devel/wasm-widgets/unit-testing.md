@@ -29,7 +29,8 @@ mod tests {
 ```
 
 `#[should_panic]` and `#[ignore]` go after the attribute, as they would after `#[test]`. Off `wasm32` the attribute
-becomes a plain `#[test]`, so a native `cargo test` still runs the same test.
+becomes a plain `#[test]`, but widget tests run on `wasm32` only: natively, a test that builds an asset-bearing node
+panics for want of an asset host.
 
 A plain `#[test]` never reaches the runner, so the `no-plain-test-in-widgets` ast-grep rule refuses one in
 `widgets-wasm/` and `widgets-wasm-examples/`. Its fix swaps in `#[wasm_test]`, which is how the widgets were ported; the
