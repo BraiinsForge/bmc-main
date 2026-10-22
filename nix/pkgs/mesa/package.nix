@@ -53,7 +53,6 @@
 , fetchCrate
 , fetchFromGitLab
 , flex
-, jdupes
 , libdisplay-info
 , libdrm
 , libunwind
@@ -82,7 +81,6 @@
 , eglPlatforms ? [
     "wayland"
   ]
-, mesa
 , mesa-gl-headers
 , makeSetupHook
 ,
@@ -125,7 +123,7 @@ let
 
   common = import ./common.nix { inherit lib fetchFromGitLab; };
 in
-stdenv.mkDerivation {
+stdenv.mkDerivation (finalAttrs: {
   inherit (common)
     pname
     version
@@ -175,6 +173,10 @@ stdenv.mkDerivation {
   # llvm, install-mesa-clc, install-precomp-compiler, tools).
   mesonFlags = [
     "--sysconfdir=/etc"
+
+    # Disable debug assertions for performance/compatibility
+    # https://gitlab.freedesktop.org/mesa/mesa/-/blob/main/docs/meson.rst?ref_type=heads#options
+    (lib.mesonBool "b_ndebug" true)
 
     # Size optimization
     "--buildtype=release"
@@ -260,7 +262,6 @@ stdenv.mkDerivation {
     python3Packages.pycparser
     python3Packages.mako
     python3Packages.pyyaml
-    jdupes
     rustc
     rust-bindgen
     rust-cbindgen
@@ -299,9 +300,6 @@ stdenv.mkDerivation {
 
     # Don't depend on build python
     patchShebangs --host --update $out/bin/*
-
-    # NAR doesn't support hard links, so convert them to symlinks to save space.
-    jdupes --hard-links --link-soft --recurse "$out"
   '';
 
   passthru = {
@@ -312,12 +310,13 @@ stdenv.mkDerivation {
       galliumDrivers;
 
     # for compatibility
-    drivers = lib.warn "`mesa.drivers` is deprecated, use `mesa` instead" mesa;
+    drivers = lib.warn "`mesa.drivers` is deprecated, use `mesa` instead" finalAttrs.finalPackage;
 
     llvmpipeHook = makeSetupHook
       {
         name = "llvmpipe-hook";
-        substitutions.mesa = mesa;
+        substitutions.mesa = finalAttrs.finalPackage;
+        meta.license = lib.licenses.mit;
       } ./llvmpipe-hook.sh;
   };
-}
+})
