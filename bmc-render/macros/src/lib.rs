@@ -765,7 +765,10 @@ fn load_skin_from_zip(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .unwrap_or_else(|e| panic!("failed to read zip entry {i} name: {e}"))
+            .into_owned();
         if !std::path::Path::new(&name)
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))

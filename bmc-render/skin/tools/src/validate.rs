@@ -144,7 +144,13 @@ fn validate_zip(path: &std::path::Path, errors: &mut Vec<String>, warnings: &mut
             Ok(e) => e,
             Err(_) => continue,
         };
-        let name = entry.name().to_string();
+        let name = match entry.name() {
+            Ok(name) => name.into_owned(),
+            Err(e) => {
+                errors.push(format!("zip entry {i}: undecodable name: {e}"));
+                continue;
+            }
+        };
         if let Some(stem) = name.strip_suffix(".9.png") {
             asset_names.push(stem.to_string());
         }
@@ -174,7 +180,9 @@ fn validate_zip(path: &std::path::Path, errors: &mut Vec<String>, warnings: &mut
             Ok(e) => e,
             Err(_) => continue,
         };
-        let name = entry.name().to_string();
+        let Ok(name) = entry.name().map(std::borrow::Cow::into_owned) else {
+            continue;
+        };
         if !name.ends_with(".9.png") {
             continue;
         }

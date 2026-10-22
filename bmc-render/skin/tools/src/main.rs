@@ -219,11 +219,10 @@ fn extract_buttons(
 fn build_entry_map(wsz: &mut zip::ZipArchive<Cursor<&[u8]>>) -> HashMap<String, String> {
     let mut entries = HashMap::new();
     for i in 0..wsz.len() {
-        let name = wsz
-            .by_index(i)
-            .expect("BUG: zip index out of bounds")
-            .name()
-            .to_string();
+        let entry = wsz.by_index(i).expect("BUG: zip index out of bounds");
+        let Ok(name) = entry.name().map(std::borrow::Cow::into_owned) else {
+            continue;
+        };
         entries.insert(name.to_lowercase(), name);
     }
     entries

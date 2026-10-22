@@ -400,7 +400,12 @@ mod tests {
             let mut buf = Vec::new();
             file.read_to_end(&mut buf)
                 .expect("BUG: archive entry reads");
-            entries.insert(file.name().to_owned(), buf);
+            entries.insert(
+                file.name()
+                    .expect("BUG: archive entry name decodes")
+                    .into_owned(),
+                buf,
+            );
         }
         entries
     }
@@ -522,7 +527,13 @@ mod tests {
 
         let mut zip = ZipArchive::new(Cursor::new(&buf)).expect("BUG: open archive");
         let names: Vec<String> = (0..zip.len())
-            .map(|i| zip.by_index(i).expect("BUG: entry").name().to_owned())
+            .map(|i| {
+                zip.by_index(i)
+                    .expect("BUG: entry")
+                    .name()
+                    .expect("BUG: entry name")
+                    .into_owned()
+            })
             .collect();
 
         assert_eq!(names.len(), 3, "entries: {names:?}");

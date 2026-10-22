@@ -57,8 +57,10 @@ pub fn rewrite_package_asset_sections(wasm: &[u8]) -> Result<RewrittenModule<'_>
             continue;
         }
         if let Some((id, range)) = payload.as_section() {
+            let start = usize::try_from(range.start).context("section start exceeds usize")?;
+            let end = usize::try_from(range.end).context("section end exceeds usize")?;
             let data = wasm
-                .get(range)
+                .get(start..end)
                 .context("parser returned an out-of-bounds section range")?;
             append_section(&mut module, id, data)?;
         }

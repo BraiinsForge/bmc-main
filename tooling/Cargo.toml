@@ -33,7 +33,7 @@ strum = { version = "0.27.1", features = ["derive"] }
 tap = "1.0.1"
 thiserror = "2.0.11"
 url = { version = "2.5.4", features = ["serde"] }
-uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
+uuid = { version = "1.15.1", features = ["serde", "v4"] }
 
 [workspace.lints.rust]
 # deny

@@ -193,7 +193,7 @@ wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
 ab_glyph = "0.2"
-anstyle-parse = "0.2.6"
+anstyle-parse = "1.0.0"
 anyhow = "1.0.98"
 apa102-spi = "0.5.1"
 askama = "0.14"
@@ -284,9 +284,7 @@ drm-fourcc = "2.2.0"
 eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui = "0.34"
 egui-notify = "0.22"
-# Pinned to yvind/master (open PR #53 upstream — egui 0.34 bump unmerged as of 2026-04-07). Drop back to a crates.io release once that PR lands;
-# follow-up tracked in BDK-477. https://github.com/JakeHandsome/egui_autocomplete/pull/53
-egui_autocomplete = { git = "https://github.com/yvind/egui_autocomplete.git", rev = "01153df7c1915bb1196d0d97acf44a2783890016", features = ["serde"] }
+egui_autocomplete = { version = "13.0.0", features = ["serde"] }
 egui_glow = { version = "0.34", features = ["clipboard", "wayland", "winit", "x11"] }
 egui_sgr = "0.3"
 egui_virtual_list = "0.10"
@@ -326,7 +324,7 @@ glutin-winit = "0.5"
 # probe widgets inline rather than rely on a cross-target build of an example crate.
 governor = "0.8.1"
 gpiod = "0.2.3"
-hashbrown = "0.16"
+hashbrown = "0.17"
 headers = "0.3.9"
 heck = "0.5"
 hex = "0.4.3"
@@ -386,7 +384,6 @@ merge-streams = "0.1.2"
 mime = "0.3.17"
 mime_guess = "2.0.5"
 minifb = "0.28.0"
-netlink-packet-route = "0.20.1"
 netlink-sys = "0.8.5"
 nix = { version = "0.30.1", default-features = false, features = ["socket", "uio"] }
 nix-archive = { version = "0.6.0", default-features = false }
@@ -419,7 +416,6 @@ rodio = { version = "0.20", default-features = false }
 roxmltree = "0.20.0"
 rqrr = "0.10.1"
 rrule = "0.14.0"
-rtnetlink = { git = "https://github.com/rust-netlink/rtnetlink.git", rev = "d6e8b4c" } # FIXME: change to a crates.io version after they update netlink-packet-route
 rustix = { version = "0.38", default-features = false, features = ["fs", "std"] }
 rustls = { version = "0.23.37", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 schemars = "1.2.1"
@@ -443,7 +439,6 @@ smithay = { git = "https://github.com/Smithay/smithay.git", rev = "c114b88eb54c6
     "use_system_lib",
     "wayland_frontend",
 ] }
-smithay-drm-extras = { git = "https://github.com/Smithay/smithay.git", rev = "c114b88eb54c6ecc1be16997ca39628363600101", default-features = false }
 spidev = { version = "0.7.0" }
 strum = { version = "0.27", default-features = false }
 strum_macros = "0.27"
@@ -465,8 +460,8 @@ tokio-stream = { version = "0.1.17", default-features = false }
 tokio-test = "0.4.2"
 tokio-tungstenite = "0.24.0"
 tokio-util = "0.7"
-toml = "0.8"
-toml_edit = "0.22"
+toml = "1"
+toml_edit = "0.25"
 tower = { version = "0.5.2", default-features = false }
 tower-cookies = "0.11.0"
 tower-http = "0.6.2"
@@ -480,12 +475,12 @@ ureq = "3.4"
 url = { version = "2.5.4", features = ["serde"] }
 usvg = "0.45"
 utoipa = { version = "5.3.1", features = ["uuid"] }
-uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
+uuid = { version = "1.15.1", features = ["serde", "v4"] }
 ux = { version = "0.1.6" }
 walkdir = "2.5.0"
-wasm-encoder = { version = "0.244", default-features = false, features = ["std", "wasmparser"] }
+wasm-encoder = { version = "0.262", default-features = false, features = ["std", "wasmparser"] }
 wasmi = "1.0"
-wasmparser = { version = "0.244", default-features = false, features = ["simd", "std"] }
+wasmparser = { version = "0.262", default-features = false, features = ["simd", "std"] }
 wat = "1"
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31.14"
@@ -496,4 +491,4 @@ wayland-server = "0.31"
 webpki-roots = "1.0.6"
 winit = "0.30"
 wl-nl80211 = "0.3.2"
-zip = { version = "8.6.0", default-features = false }
+zip = { version = "9.1.0", default-features = false }

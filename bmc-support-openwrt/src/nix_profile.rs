@@ -191,7 +191,12 @@ mod tests {
             let mut buf = Vec::new();
             file.read_to_end(&mut buf)
                 .expect("BUG: archive entry reads");
-            entries.insert(file.name().to_owned(), buf);
+            entries.insert(
+                file.name()
+                    .expect("BUG: archive entry name decodes")
+                    .into_owned(),
+                buf,
+            );
         }
         entries
     }

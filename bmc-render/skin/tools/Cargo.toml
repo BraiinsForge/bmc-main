@@ -41,4 +41,4 @@ unwrap_used = "warn"
 clap = "4"
 image = { version = "0.25", default-features = false }
 toml = "0.8"
-zip = { version = "2", default-features = false }
+zip = { version = "9", default-features = false }
