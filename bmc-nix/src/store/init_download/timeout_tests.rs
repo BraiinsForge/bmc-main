@@ -18,7 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;

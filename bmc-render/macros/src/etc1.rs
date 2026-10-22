@@ -99,7 +99,7 @@ pub fn compress(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
 }
 
 fn compress_row(rgba: &[u8], width: usize, block_y: usize, row: &mut [u8]) {
-    for (block_x, dst) in row.chunks_exact_mut(BLOCK_BYTES).enumerate() {
+    for (block_x, dst) in row.as_chunks_mut::<BLOCK_BYTES>().0.iter_mut().enumerate() {
         let [header, selectors] = compress_block(&load_block(rgba, width, block_x, block_y));
         dst[..4].copy_from_slice(&header.to_le_bytes());
         dst[4..].copy_from_slice(&selectors.to_le_bytes());
@@ -498,7 +498,7 @@ mod tests {
     /// Squared error of the decoded image against the RGBA source.
     fn decoded_error(rgba: &[u8], width: usize, blocks: &[u8]) -> i64 {
         let mut err = 0;
-        for (n, block) in blocks.chunks_exact(BLOCK_BYTES).enumerate() {
+        for (n, block) in blocks.as_chunks::<BLOCK_BYTES>().0.iter().enumerate() {
             let (block_x, block_y) = (n % (width / 4), n / (width / 4));
             for (i, pixel) in decode(block).iter().enumerate() {
                 let source = ((block_y * 4 + i / 4) * width + block_x * 4 + i % 4) * 4;
@@ -544,7 +544,9 @@ mod tests {
         );
         let rgba: Vec<u8> = image
             .pixels
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
             .collect();
         let width = image.width as usize;

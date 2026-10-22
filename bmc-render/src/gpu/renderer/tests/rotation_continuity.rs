@@ -76,7 +76,7 @@ fn outer_transform() -> Transform2D {
 fn ink_centroid(px: &[[u8; 4]]) -> (f32, f32) {
     let mut sum = (0.0_f64, 0.0_f64);
     let mut count = 0_usize;
-    for (y, row) in px.chunks_exact(W as usize).enumerate() {
+    for (y, row) in px.as_chunks::<{ W as usize }>().0.iter().enumerate() {
         for (x, p) in row.iter().enumerate() {
             if lit(*p) {
                 sum.0 += x as f64 + 0.5;

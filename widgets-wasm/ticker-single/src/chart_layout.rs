@@ -394,10 +394,6 @@ pub fn label_text(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::float_cmp,
-    reason = "the values under test are exact in floating point"
-)]
 mod tests {
     use bmc_wasm_sdk::LocalDateTime;
     use bmc_wasm_sdk::system::TimeFormat;

@@ -418,7 +418,9 @@ fn jpeg_to_rgba(pixels: &[u8], format: jpeg_decoder::PixelFormat) -> anyhow::Res
     use jpeg_decoder::PixelFormat;
     match format {
         PixelFormat::RGB24 => Ok(pixels
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect()),
         PixelFormat::L8 => Ok(pixels.iter().flat_map(|&g| [g, g, g, 255]).collect()),

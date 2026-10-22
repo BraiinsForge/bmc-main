@@ -358,8 +358,7 @@ fn wait_for_configure(
             PollOutcome::Events => {}
             PollOutcome::Timeout => {
                 anyhow::bail!(
-                    "{context}: timed out after {:?} waiting for layer-surface configure",
-                    CONFIGURE_TIMEOUT
+                    "{context}: timed out after {CONFIGURE_TIMEOUT:?} waiting for layer-surface configure"
                 );
             }
         }

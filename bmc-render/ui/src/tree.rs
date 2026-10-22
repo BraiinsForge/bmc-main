@@ -1575,7 +1575,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::float_cmp, reason = "clamp output is an exact bound")]
     fn with_drop_shadow_clamps_blur_to_range() {
         // Negative blur clamps to 0 without tripping the debug assertion
         // (the assertion only fires for values *above* the cap).

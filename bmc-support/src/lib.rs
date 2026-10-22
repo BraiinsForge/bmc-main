@@ -386,7 +386,7 @@ impl<'a> SupportArchive<'a> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::io::{Cursor, Read as _};
+    use std::io::Cursor;
 
     use zip::ZipArchive;
 

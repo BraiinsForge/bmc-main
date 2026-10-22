@@ -153,7 +153,6 @@ fn fingerprint(digest: &[u8; 32]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64;
     use ring::signature::KeyPair as _;
 

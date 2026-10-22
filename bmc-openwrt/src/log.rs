@@ -52,7 +52,6 @@ pub fn init(log_to_file: bool) {
 /// Build a panic hook that prints the panic message and a backtrace.
 /// This is the same as the default panic hook, but it also uses the tracing
 /// log to print the panic message and backtrace.
-#[must_use]
 pub fn build_panic_hook_with_tracing() -> Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync> {
     Box::new(|info| {
         // If this is a double panic, make sure that we print a backtrace

@@ -267,7 +267,7 @@ fn check_region(data_len: usize, offset: usize, size: Option<usize>, label: &str
         bail!("{label} end overflow (offset={offset} + size={size})");
     };
     if end > data_len {
-        bail!("{label} extends past data ({offset}..{end} > {data_len})",);
+        bail!("{label} extends past data ({offset}..{end} > {data_len})");
     }
     Ok(())
 }

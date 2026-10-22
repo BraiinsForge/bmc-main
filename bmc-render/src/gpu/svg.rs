@@ -405,15 +405,11 @@ fn read_icon_path(
 
     let fill_color = if has_fill { Some(r.read_u32()?) } else { None };
 
-    let stroke_color;
-    let stroke_width;
-    if has_stroke {
-        stroke_color = Some(r.read_u32()?);
-        stroke_width = r.read_f32()?;
+    let (stroke_color, stroke_width) = if has_stroke {
+        (Some(r.read_u32()?), r.read_f32()?)
     } else {
-        stroke_color = None;
-        stroke_width = 0.0;
-    }
+        (None, 0.0)
+    };
 
     let id = if has_id {
         let id_len = r.read_u16()? as usize;

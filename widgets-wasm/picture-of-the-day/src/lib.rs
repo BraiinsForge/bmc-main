@@ -417,7 +417,7 @@ mod wasm_glue {
             meta.describes(source(), &stored, size.width, size.height)
                 .then_some(meta)
         };
-        let meta = match read_caption().and_then(&fits) {
+        let meta = match read_caption().and_then(fits) {
             Some(meta) => Some(meta),
             // A decode that lands while dormant updates the picture entry, not
             // the caption. The feed's last answer still names that picture,

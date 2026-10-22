@@ -100,10 +100,6 @@ fn a_span_shapes_at_its_own_size() {
 /// so a span leaving its metrics unset hands the line to a smaller sibling
 /// — which centres the tall run against a box too short for it.
 #[test]
-#[expect(
-    clippy::float_cmp,
-    reason = "the unit must leave the line where it found it, to the bit"
-)]
 fn a_smaller_span_does_not_move_the_line_it_joins() {
     let mut font_system = font_system();
     let base = TextStyle {
@@ -159,10 +155,6 @@ fn the_cache_key_tells_two_span_sizes_apart() {
 /// not from the buffer or from the tallest line in the paragraph.
 /// Otherwise small text following large text sits against the large ascent.
 #[test]
-#[expect(
-    clippy::float_cmp,
-    reason = "two ascents differing at all is the point"
-)]
 fn wrapped_line_uses_its_own_metrics() {
     let mut font_system = font_system();
     let (buffer, _, _) = mixed_size_paragraph(&mut font_system);
@@ -231,7 +223,6 @@ fn a_paragraph_of_only_a_smaller_span_is_as_short_as_that_span() {
 /// Every femtovg baseline must convert to the alphabetic baseline
 /// that glyph positions are relative to; a wrong sign here shifts a line.
 #[test]
-#[expect(clippy::float_cmp, reason = "the conversion is exact arithmetic")]
 fn baseline_conversion_matrix() {
     let (max_ascent, max_descent, y) = (10.0_f32, 4.0_f32, 100.0_f32);
     assert_eq!(
@@ -338,10 +329,6 @@ fn non_default_line_height_does_not_shift_baselines() {
 /// The bases below have no precomposed form,
 /// so the shaper cannot collapse base and mark into a single glyph.
 #[test]
-#[expect(
-    clippy::float_cmp,
-    reason = "the folding must reproduce LayoutGlyph::physical bit for bit"
-)]
 fn nonzero_offsets_fold_into_position() {
     let mut font_system = font_system();
     let mut offset_x = 0_usize;

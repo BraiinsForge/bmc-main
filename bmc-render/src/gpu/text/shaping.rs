@@ -319,10 +319,6 @@ pub(crate) fn extract_lines(buffer: &Buffer) -> Vec<LineGlyphs> {
 /// Pin the reimplemented vertical advance to the original,
 /// which it matches only under the preconditions `extract_lines` asserts.
 #[cfg(debug_assertions)]
-#[expect(
-    clippy::float_cmp,
-    reason = "the accumulation must reproduce layout_runs bit for bit"
-)]
 fn assert_lines_match_layout_runs(buffer: &Buffer, lines: &[LineGlyphs]) {
     let runs: Vec<f32> = buffer.layout_runs().map(|run| run.line_y).collect();
     debug_assert_eq!(

@@ -408,10 +408,7 @@ impl PendingDeckWidgetSurfaceClient {
         }
 
         if Instant::now() >= self.deadline {
-            anyhow::bail!(
-                "timed out after {:?} waiting for configure_done",
-                CONFIGURE_TIMEOUT
-            );
+            anyhow::bail!("timed out after {CONFIGURE_TIMEOUT:?} waiting for configure_done");
         }
 
         Ok(PendingDeckWidgetSurfaceAdvance::Pending(self))
@@ -497,8 +494,7 @@ impl DeckWidgetSurfaceClient {
             {
                 PollOutcome::Events => {}
                 PollOutcome::Timeout => anyhow::bail!(
-                    "timed out after {:?} waiting for configure_done",
-                    CONFIGURE_TIMEOUT
+                    "timed out after {CONFIGURE_TIMEOUT:?} waiting for configure_done"
                 ),
             }
         }

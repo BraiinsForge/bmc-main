@@ -772,7 +772,7 @@ impl EglCompositor {
                 // when the compositor is idle.
                 if !app_state.compositor.invalidated_buffers.is_empty() {
                     let invalidated: Vec<_> =
-                        app_state.compositor.invalidated_buffers.drain(..).collect();
+                        std::mem::take(&mut app_state.compositor.invalidated_buffers);
                     renderer.invalidate_textures(&invalidated);
                 }
 
@@ -800,12 +800,9 @@ impl EglCompositor {
 
                 if should_render {
                     ii_stopwatch::stopwatch_start!(render_w);
-                    let dirty: Vec<_> = app_state.compositor.dirty_buffers.drain(..).collect();
-                    let capture_frames: Vec<_> = app_state
-                        .compositor
-                        .pending_capture_frames
-                        .drain(..)
-                        .collect();
+                    let dirty: Vec<_> = std::mem::take(&mut app_state.compositor.dirty_buffers);
+                    let capture_frames: Vec<_> =
+                        std::mem::take(&mut app_state.compositor.pending_capture_frames);
                     let capture_active = !app_state.compositor.capture_sessions.is_empty();
                     let output_damage = app_state.compositor.current_output_damage();
                     let logical_width = renderer.logical_size().0;
@@ -873,11 +870,8 @@ impl EglCompositor {
                 if !app_state.compositor.pending_capture_frames.is_empty()
                     && renderer.capture_cache_ready()
                 {
-                    let frames: Vec<_> = app_state
-                        .compositor
-                        .pending_capture_frames
-                        .drain(..)
-                        .collect();
+                    let frames: Vec<_> =
+                        std::mem::take(&mut app_state.compositor.pending_capture_frames);
                     renderer.fulfill_from_cache(frames);
                 }
             } else {

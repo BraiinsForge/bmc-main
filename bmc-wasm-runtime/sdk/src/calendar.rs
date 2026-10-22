@@ -227,8 +227,10 @@ mod wasm {
 
             // Decode packed i64[] little-endian
             out.truncate(written as usize);
-            out.chunks_exact(8)
-                .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+            out.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|&c| i64::from_le_bytes(c))
                 .collect()
         }
     }

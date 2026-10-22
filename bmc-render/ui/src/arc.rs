@@ -234,7 +234,7 @@ pub fn decode_arc_segments(data: &[u8], pos: &mut usize) -> Option<ArcSegments> 
         ARC_SEGMENTS_CONTINUOUS => Some(ArcSegments::Continuous),
         ARC_SEGMENTS_EXPLICIT => {
             let count = usize::try_from(read_u32(data, pos)?).ok()?;
-            let remaining_segments = data.get(*pos..)?.chunks_exact(8).len();
+            let remaining_segments = data.get(*pos..)?.as_chunks::<8>().0.len();
             if count > remaining_segments {
                 return None;
             }

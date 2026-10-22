@@ -493,15 +493,10 @@ fn delete_transient_service(instance_name: &str) -> anyhow::Result<()> {
         Ok(())
     } else if let Some(code) = status.code() {
         anyhow::bail!(
-            "ubus delete for transient service '{}' failed with exit code {}",
-            instance_name,
-            code
+            "ubus delete for transient service '{instance_name}' failed with exit code {code}"
         )
     } else {
-        anyhow::bail!(
-            "ubus delete for transient service '{}' terminated by signal",
-            instance_name
-        )
+        anyhow::bail!("ubus delete for transient service '{instance_name}' terminated by signal")
     }
 }
 

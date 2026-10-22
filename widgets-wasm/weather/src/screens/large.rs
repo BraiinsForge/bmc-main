@@ -318,10 +318,6 @@ pub fn large(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::float_cmp,
-    reason = "the values under test are exact in floating point"
-)]
 mod tests {
     use bmc_wasm_sdk::wasm_test;
 

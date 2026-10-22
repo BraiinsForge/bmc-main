@@ -45,6 +45,9 @@ members = [
 unused_must_use = "deny"
 
 [workspace.lints.clippy]
+# Its `assert_eq!(x, [])` rewrite cannot infer the element type for most of
+# our collections, so it is not a drop-in improvement.
+assert_is_empty = "allow"
 doc_markdown = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"

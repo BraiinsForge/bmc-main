@@ -834,7 +834,7 @@ mod tests {
         let (vertices, indices) = sphere_mesh_data();
         let max_span = 1.0 / LONGITUDE_SEGMENTS as f32 + f32::EPSILON;
 
-        assert!(indices.chunks_exact(3).all(|triangle| {
+        assert!(indices.as_chunks::<3>().0.iter().all(|triangle| {
             let mut u = triangle
                 .iter()
                 .map(|index| vertices[usize::from(*index) * VERTEX_COMPONENTS + 3]);
@@ -850,7 +850,7 @@ mod tests {
     fn sphere_mesh_non_degenerate_triangles_face_outwards() {
         let (vertices, indices) = sphere_mesh_data();
 
-        assert!(indices.chunks_exact(3).all(|triangle| {
+        assert!(indices.as_chunks::<3>().0.iter().all(|triangle| {
             let a = position(&vertices, triangle[0]);
             let b = position(&vertices, triangle[1]);
             let c = position(&vertices, triangle[2]);

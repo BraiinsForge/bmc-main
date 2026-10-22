@@ -413,7 +413,7 @@ fn pack_to_fit(
     let (mut low, mut high) = (super::canvas::MIN_ZOOM, super::canvas::MAX_ZOOM);
     let mut best = None;
     for _ in 0..PACK_SEARCH_STEPS {
-        let zoom = 0.5 * (low + high);
+        let zoom = f32::midpoint(low, high);
         let (positions, bounds) = pack_at(zoom);
         // With nothing to place there is nothing to overflow.
         if bounds.is_none_or(|bounds| canvas.contains_rect(bounds)) {

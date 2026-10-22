@@ -307,13 +307,15 @@ fn assert_damage_tracking_matches_full_repaints(trees: &[Vec<u8>; 2]) {
         let actual = tracked.target.read(gl.as_ref());
         let row_bytes = usize::from(W) * 4;
         // Readback rows run bottom-up.
-        let differing: Vec<(usize, usize, &[u8], &[u8])> = expected
+        let differing: Vec<(usize, usize, &[u8; 4], &[u8; 4])> = expected
             .chunks_exact(row_bytes)
             .zip(actual.chunks_exact(row_bytes))
             .enumerate()
             .flat_map(|(row, (want, got))| {
-                want.chunks_exact(4)
-                    .zip(got.chunks_exact(4))
+                want.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(got.as_chunks::<4>().0)
                     .enumerate()
                     .filter(|(_, (want, got))| want != got)
                     .map(move |(x, (want, got))| (x, usize::from(H) - 1 - row, want, got))

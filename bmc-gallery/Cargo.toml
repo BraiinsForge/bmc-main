@@ -43,6 +43,11 @@ needless_continue = "allow"
 new_without_default = "allow"
 similar_names = "allow"
 unreadable_literal = "allow"
+# Its `assert_eq!(x, [])` rewrite cannot infer the element type for most of
+# our collections, so it is not a drop-in improvement.
+assert_is_empty = "allow"
+# An `async fn` in a trait impl has the shape the trait gives it.
+unused_async_trait_impl = "allow"
 # additional useful lints not coveded by clippy::pedantic
 allow_attributes = "warn"
 # Configured in the repo-root `clippy.toml`; allow-by-default without this.
@@ -157,12 +162,6 @@ ignored = [
     "ticker-list",
     "weather",
 ]
-
-# rustc 1.97.1 aborts (SIGABRT, no diagnostic) generating code for this dylib
-# incrementally; the same build with `CARGO_INCREMENTAL=0` succeeds. Drop this
-# once a toolchain builds the scenes with it back on.
-[profile.dev]
-incremental = false
 
 # Scenes stay debuggable at opt 0, but bmc-render/femtovg
 # at opt 0 would crawl. Optimize dependencies only.

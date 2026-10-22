@@ -74,7 +74,7 @@ pub struct FieldViolations(Vec<FieldViolation>);
 
 impl FieldViolations {
     pub fn new() -> Self {
-        Self(Vec::with_capacity(0))
+        Self(Vec::new())
     }
 
     pub fn is_empty(&self) -> bool {

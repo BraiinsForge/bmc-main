@@ -867,10 +867,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "idle-scene alpha is the literal 1.0, not a computed value"
-    )]
     fn rendered_scenes_include_offsets_during_automatic_transition() {
         let mut t = WidgetTracker::with_screen_width(1000);
         t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
@@ -888,10 +884,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "0.25 and its complement 0.75 are exact in binary"
-    )]
     fn rendered_scenes_cross_fade_overlays_scenes_with_complementary_alpha() {
         let mut t = WidgetTracker::with_screen_width(1000);
         t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);

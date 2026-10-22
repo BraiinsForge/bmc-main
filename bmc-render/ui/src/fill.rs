@@ -356,10 +356,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "byte-layout test asserts exact bit pattern"
-    )]
     fn linear_layout_is_start_end_angle() {
         let mut buf = Vec::new();
         encode_fill(&mut buf, &Fill::linear(90.0, RED, BLUE));
