@@ -139,7 +139,10 @@ ssh "root@${device}" "[ -f ${profile_path}.orig ] || cp ${profile_path} ${profil
 # Upload binary to staging directory
 # shellcheck disable=SC2029 # Intentional client-side expansion
 ssh "root@${device}" "mkdir -p ${deploy_dir}"
-scp "$local_bin" "root@${device}:${deploy_path}"
+# A running binary cannot be opened for writing (ETXTBSY), but it can be renamed over.
+scp "$local_bin" "root@${device}:${deploy_path}.new"
+# shellcheck disable=SC2029 # Intentional client-side expansion
+ssh "root@${device}" "mv -f ${deploy_path}.new ${deploy_path}"
 
 # Symlink profile entry to the deployed binary
 # shellcheck disable=SC2029 # Intentional client-side expansion
