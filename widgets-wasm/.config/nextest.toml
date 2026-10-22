@@ -11,6 +11,11 @@ command = "../scripts/wasm_test_runner.sh --nextest-setup"
 platform = 'cfg(target_arch = "wasm32")'
 setup = "wasm-test-runner"
 
+# Fuel stops a looping guest, but not a host call that never returns.
+[[profile.default.overrides]]
+platform = 'cfg(target_arch = "wasm32")'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 # For a coding agent: the built-in reporter goes silent, and `scripts/nextest_report.py`
 # reads the `libtest-json-plus` stream instead — a line per binary naming every test,
 # failures in full. `common.justfile` selects it whenever an agent's environment is detected.

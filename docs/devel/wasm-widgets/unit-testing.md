@@ -102,18 +102,10 @@ that needs more names its own budget, and the attribute takes one only with a re
 #[wasm_test(fuel = 250e6, reason = "parses 2,048 candles")]
 ```
 
-Fuel is a whole number of units, written out or in exponent form, here and in the flag and environment below.
+Fuel is a whole number of units, written out or in exponent form.
 
-A wall-clock watchdog ends the process when a test runs past a minute. Both limits can be raised for a whole run, the
-fuel one over every test's own budget:
-
-| Limit   | Flag                  | Environment             |
-| ------- | --------------------- | ----------------------- |
-| Fuel    | `--fuel <units>`      | `BMC_WASM_TEST_FUEL`    |
-| Timeout | `--timeout <seconds>` | `BMC_WASM_TEST_TIMEOUT` |
-
-The flags reach the runner after `--` in `cargo test`. nextest forwards only libtest's own arguments, so use the
-environment there.
+Fuel stops a looping guest, but not a host call that never returns. nextest ends a wasm32 test after a minute, per the
+`slow-timeout` in each workspace's `.config/nextest.toml`. A plain `cargo test` has no timeout, like a native one.
 
 What the widget logs is kept and printed with a failing test. With `--nocapture`, or nextest's `--no-capture`, it prints
 as it happens.
