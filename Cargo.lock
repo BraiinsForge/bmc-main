@@ -985,6 +985,7 @@ version = "0.1.0"
 dependencies = [
  "file-rotate",
  "libc",
+ "log",
  "tempfile",
  "tracing",
  "tracing-subscriber",

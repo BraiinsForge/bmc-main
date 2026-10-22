@@ -235,8 +235,21 @@ pub fn init_file_with_widget_capture(path: &Path, widget_log_path: &Path) -> io:
     Ok(())
 }
 
-fn env_filter() -> Targets {
-    parse_env_filter(std::env::var("RUST_LOG").ok().as_deref())
+fn env_filter<S>() -> impl tracing_subscriber::layer::Filter<S> {
+    parse_env_filter(std::env::var("RUST_LOG").ok().as_deref()).and(library_ceiling())
+}
+
+/// Libraries held to INFO whatever `RUST_LOG` asks for, even a directive naming them.
+///
+/// Their debug and trace lines print the URL they dial and the bytes they send,
+/// and the widget host sends credentials through both once it has substituted them:
+/// tungstenite on a WebSocket, ureq on a fetch.
+/// A target matches by prefix, so `ureq` also holds `ureq_proto`.
+fn library_ceiling() -> Targets {
+    Targets::new()
+        .with_default(LevelFilter::TRACE)
+        .with_target("tungstenite", LevelFilter::INFO)
+        .with_target("ureq", LevelFilter::INFO)
 }
 
 fn parse_env_filter(value: Option<&str>) -> Targets {
@@ -286,6 +299,30 @@ mod tests {
         assert!(filter.would_enable("bmc_nix::index", &tracing::Level::DEBUG));
         assert!(!filter.would_enable("bmc_nix::index", &tracing::Level::TRACE));
         assert!(!filter.would_enable("bmc_nix::store", &tracing::Level::ERROR));
+    }
+
+    /// Where the libraries log a dialled URL or the bytes they send.
+    const CREDENTIAL_LIBRARY_TARGETS: [&str; 4] = [
+        "tungstenite::handshake::client",
+        "tungstenite::protocol",
+        "ureq::run",
+        "ureq_proto::util",
+    ];
+
+    #[test]
+    fn credential_libraries_are_held_to_info_and_nothing_else_is() {
+        let ceiling = super::library_ceiling();
+        for target in CREDENTIAL_LIBRARY_TARGETS {
+            assert!(
+                !ceiling.would_enable(target, &tracing::Level::DEBUG),
+                "{target} must not log past INFO"
+            );
+            assert!(
+                ceiling.would_enable(target, &tracing::Level::INFO),
+                "{target} must keep its INFO lines"
+            );
+        }
+        assert!(ceiling.would_enable("bmc_wasm_runtime", &tracing::Level::TRACE));
     }
 
     #[test]
