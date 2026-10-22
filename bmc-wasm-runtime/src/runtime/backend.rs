@@ -866,15 +866,6 @@ impl WasmWidgetModule {
         }
         result
     }
-
-    /// Names of the module's exports.
-    #[must_use]
-    pub fn export_names(&self) -> Vec<String> {
-        self.module
-            .exports()
-            .map(|export| export.name().to_owned())
-            .collect()
-    }
 }
 
 /// WebAssembly widget runtime.
@@ -2464,16 +2455,6 @@ impl WasmWidgetRuntime {
     #[cfg(any(test, feature = "hermetic-host"))]
     pub fn take_guest_panic(&mut self) -> Option<GuestPanic> {
         self.store.data_mut().guest_panic.take()
-    }
-
-    /// A copy of `len` bytes of guest memory at `ptr`, or `None` past its end.
-    #[cfg(any(test, feature = "hermetic-host"))]
-    #[must_use]
-    pub fn read_guest_memory(&self, ptr: u32, len: u32) -> Option<Vec<u8>> {
-        let memory = self.instance.get_memory(&self.store, "memory")?;
-        let start = usize::try_from(ptr).ok()?;
-        let end = start.checked_add(usize::try_from(len).ok()?)?;
-        memory.data(&self.store).get(start..end).map(<[u8]>::to_vec)
     }
 
     /// Test-only escape hatch: call an arbitrary `() -> i32` export by name.

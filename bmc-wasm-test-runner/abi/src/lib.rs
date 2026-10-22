@@ -20,18 +20,16 @@
 
 //! What a `#[wasm_test]` leaves in a wasm test binary, and how a host reads it.
 //!
-//! Each test exports a run function and a metadata function.
-//! The metadata function returns the [`GuestSpan`] of the test's record,
-//! and the record names two more spans: the test's name and the message `should_panic` expects.
+//! Each test exports a run function and links a record into the [`SECTION`] custom section.
+//! The linker concatenates the records of every test,
+//! so a host lists the tests from the module's bytes without entering it.
 
 use core::fmt;
 
 /// Prefix of the export that runs a test, followed by the test's `module_path!()::name`.
-///
-/// Neither prefix starts the other, so no test path can make one export read as the other kind.
 pub const RUN_EXPORT_PREFIX: &str = "__bmc_test_run:";
-/// Prefix of the export that returns a test's record, followed by the test's `module_path!()::name`.
-pub const META_EXPORT_PREFIX: &str = "__bmc_test_meta:";
+/// The custom section every test's record is linked into.
+pub const SECTION: &str = "bmc_tests";
 
 pub const RECORD_VERSION: u32 = 1;
 /// The test carries `#[ignore]`.
@@ -39,130 +37,136 @@ pub const IGNORED: u32 = 1 << 0;
 /// The test carries `#[should_panic]`.
 pub const SHOULD_PANIC: u32 = 1 << 1;
 
-/// A record is six little-endian `u32` fields
-/// and a `u64` fuel budget, at the [`offset`]s below.
-pub const RECORD_LEN: usize = 32;
+/// A record opens with little-endian `u32` version and flags, a `u64` fuel budget (`0` for the runner's),
+/// and the `u32` lengths of the name and the expected panic message, which follow inline.
+const HEADER_LEN: usize = 24;
 
-pub mod offset {
-    pub const VERSION: usize = 0;
-    pub const FLAGS: usize = 4;
-    pub const NAME_PTR: usize = 8;
-    pub const NAME_LEN: usize = 12;
-    pub const EXPECTED_PTR: usize = 16;
-    pub const EXPECTED_LEN: usize = 20;
-    /// The test's own fuel budget,
-    /// `0` when it takes the runner's.
-    pub const FUEL: usize = 24;
-}
-
-/// Read a fuel budget: a whole number of units, written out or in exponent form (`250000000`, `250e6`, `2.5e8`).
+/// The length of the record [`encode`] builds for a test of `name` expecting `expected`.
 #[must_use]
-pub fn parse_fuel(text: &str) -> Option<u64> {
-    /// 2^53, up to which `f64` holds every whole number exactly.
-    const EXACT_IN_F64: f64 = 9_007_199_254_740_992.0;
-
-    if let Ok(units) = text.parse() {
-        return Some(units);
-    }
-    let units: f64 = text.parse().ok()?;
-    if units.fract() != 0.0 || !(0.0..=EXACT_IN_F64).contains(&units) {
-        return None;
-    }
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a whole number in 0..=2^53, which u64 holds exactly"
-    )]
-    let units = units as u64;
-    Some(units)
+pub const fn record_len(name: &str, expected: &str) -> usize {
+    HEADER_LEN + name.len() + expected.len()
 }
 
-/// A range of guest memory, which crosses the boundary packed as `ptr | len << 32`.
+/// A test's record, `N` bytes long as [`record_len`] gives it for the same strings.
+///
+/// `fuel` is the test's own budget, `None` to take the runner's.
+#[must_use]
+pub const fn encode<const N: usize>(
+    name: &str,
+    flags: u32,
+    expected: &str,
+    fuel: Option<u64>,
+) -> [u8; N] {
+    assert!(
+        N == record_len(name, expected),
+        "a record is `record_len` of its strings long"
+    );
+    let fuel = match fuel {
+        Some(units) => units,
+        None => 0,
+    };
+    let mut record = [0; N];
+    let mut at = put(&mut record, 0, &RECORD_VERSION.to_le_bytes());
+    at = put(&mut record, at, &flags.to_le_bytes());
+    at = put(&mut record, at, &fuel.to_le_bytes());
+    at = put(&mut record, at, &text_len(name).to_le_bytes());
+    at = put(&mut record, at, &text_len(expected).to_le_bytes());
+    assert!(at == HEADER_LEN, "the header fields fill HEADER_LEN");
+    at = put(&mut record, at, name.as_bytes());
+    put(&mut record, at, expected.as_bytes());
+    record
+}
+
+/// Copy `bytes` into `record` at `at`, returning where they end.
+const fn put(record: &mut [u8], at: usize, bytes: &[u8]) -> usize {
+    let mut index = 0;
+    while index < bytes.len() {
+        record[at + index] = bytes[index];
+        index += 1;
+    }
+    at + bytes.len()
+}
+
+const fn text_len(text: &str) -> u32 {
+    assert!(
+        text.len() <= u32::MAX as usize,
+        "a test name or panic message fits u32"
+    );
+    #[expect(clippy::cast_possible_truncation, reason = "checked just above")]
+    let len = text.len() as u32;
+    len
+}
+
+/// One test's record, read back from a [`SECTION`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GuestSpan {
-    pub ptr: u32,
-    pub len: u32,
-}
-
-impl GuestSpan {
-    #[must_use]
-    pub fn pack(self) -> u64 {
-        u64::from(self.ptr) | (u64::from(self.len) << 32)
-    }
-
-    #[must_use]
-    pub fn unpack(packed: u64) -> Self {
-        let [p0, p1, p2, p3, l0, l1, l2, l3] = packed.to_le_bytes();
-        Self {
-            ptr: u32::from_le_bytes([p0, p1, p2, p3]),
-            len: u32::from_le_bytes([l0, l1, l2, l3]),
-        }
-    }
-}
-
-/// The `N` bytes of `record` at `AT`; an offset past the record fails the build.
-fn at<const AT: usize, const N: usize>(record: &[u8; RECORD_LEN]) -> [u8; N] {
-    const { assert!(AT + N <= RECORD_LEN, "the field runs past the record") };
-    let mut bytes = [0; N];
-    bytes.copy_from_slice(&record[AT..AT + N]);
-    bytes
-}
-
-fn u32_at<const AT: usize>(record: &[u8; RECORD_LEN]) -> u32 {
-    u32::from_le_bytes(at::<AT, 4>(record))
-}
-
-fn u64_at<const AT: usize>(record: &[u8; RECORD_LEN]) -> u64 {
-    u64::from_le_bytes(at::<AT, 8>(record))
-}
-
-/// One test's record, its strings still in guest memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TestDescriptor {
-    pub name: GuestSpan,
+pub struct TestRecord<'a> {
+    /// The test's `module_path!()::name`.
+    pub name: &'a str,
     pub ignored: bool,
     /// The message the panic must contain, for a `#[should_panic]` test.
-    pub should_panic: Option<GuestSpan>,
+    pub should_panic: Option<&'a str>,
     /// The fuel the test asked for, `None` to take the runner's budget.
     pub fuel: Option<u64>,
 }
 
-impl TestDescriptor {
-    /// Read a record a guest built for [`RECORD_VERSION`].
-    ///
-    /// # Errors
-    /// When the record carries another version, or a flag this version does not define.
-    pub fn decode(record: &[u8; RECORD_LEN]) -> Result<Self, RecordError> {
-        let version = u32_at::<{ offset::VERSION }>(record);
-        if version != RECORD_VERSION {
-            return Err(RecordError::UnknownVersion(version));
-        }
-        let flags = u32_at::<{ offset::FLAGS }>(record);
-        let unknown = flags & !(IGNORED | SHOULD_PANIC);
-        if unknown != 0 {
-            return Err(RecordError::UnknownFlags(unknown));
-        }
-        let fuel = u64_at::<{ offset::FUEL }>(record);
-        Ok(Self {
-            name: GuestSpan {
-                ptr: u32_at::<{ offset::NAME_PTR }>(record),
-                len: u32_at::<{ offset::NAME_LEN }>(record),
-            },
-            ignored: flags & IGNORED != 0,
-            should_panic: (flags & SHOULD_PANIC != 0).then(|| GuestSpan {
-                ptr: u32_at::<{ offset::EXPECTED_PTR }>(record),
-                len: u32_at::<{ offset::EXPECTED_LEN }>(record),
-            }),
-            fuel: (fuel != 0).then_some(fuel),
-        })
+/// Read every record in a [`SECTION`], in the order the linker laid them out.
+///
+/// # Errors
+/// When a record is cut short, carries another version or a flag this version does not define,
+/// or holds a string that is not UTF-8.
+pub fn decode(mut section: &[u8]) -> Result<Vec<TestRecord<'_>>, RecordError> {
+    let mut records = Vec::new();
+    while !section.is_empty() {
+        let (record, rest) = decode_one(section)?;
+        records.push(record);
+        section = rest;
     }
+    Ok(records)
 }
 
-/// The run export paired with a metadata export, which share everything after their prefixes.
+fn decode_one(bytes: &[u8]) -> Result<(TestRecord<'_>, &[u8]), RecordError> {
+    let (version, bytes) = take(bytes)?;
+    let version = u32::from_le_bytes(version);
+    if version != RECORD_VERSION {
+        return Err(RecordError::UnknownVersion(version));
+    }
+    let (flags, bytes) = take(bytes)?;
+    let flags = u32::from_le_bytes(flags);
+    let unknown = flags & !(IGNORED | SHOULD_PANIC);
+    if unknown != 0 {
+        return Err(RecordError::UnknownFlags(unknown));
+    }
+    let (fuel, bytes) = take(bytes)?;
+    let fuel = u64::from_le_bytes(fuel);
+    let (name_len, bytes) = take(bytes)?;
+    let (expected_len, bytes) = take(bytes)?;
+    let (name, bytes) = text(bytes, name_len)?;
+    let (expected, bytes) = text(bytes, expected_len)?;
+    let record = TestRecord {
+        name,
+        ignored: flags & IGNORED != 0,
+        should_panic: (flags & SHOULD_PANIC != 0).then_some(expected),
+        fuel: (fuel != 0).then_some(fuel),
+    };
+    Ok((record, bytes))
+}
+
+fn take<const N: usize>(bytes: &[u8]) -> Result<([u8; N], &[u8]), RecordError> {
+    let (field, rest) = bytes.split_first_chunk().ok_or(RecordError::Truncated)?;
+    Ok((*field, rest))
+}
+
+fn text(bytes: &[u8], len: [u8; 4]) -> Result<(&str, &[u8]), RecordError> {
+    let len = usize::try_from(u32::from_le_bytes(len)).map_err(|_| RecordError::Truncated)?;
+    let (text, rest) = bytes.split_at_checked(len).ok_or(RecordError::Truncated)?;
+    let text = core::str::from_utf8(text).map_err(|_| RecordError::NotUtf8)?;
+    Ok((text, rest))
+}
+
+/// The run export of the test whose record holds `recorded`.
 #[must_use]
-pub fn run_export_for(meta_export: &str) -> Option<String> {
-    let id = meta_export.strip_prefix(META_EXPORT_PREFIX)?;
-    Some([RUN_EXPORT_PREFIX, id].concat())
+pub fn run_export(recorded: &str) -> String {
+    [RUN_EXPORT_PREFIX, recorded].concat()
 }
 
 /// The name libtest would give a test whose record holds `module_path!()::name`.
@@ -174,12 +178,14 @@ pub fn libtest_name(recorded: &str) -> &str {
         .map_or(recorded, |(_crate, path)| path)
 }
 
-/// Why [`TestDescriptor::decode`] refused a record.
+/// Why [`decode`] refused a section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordError {
     UnknownVersion(u32),
     /// The flag bits this version does not define.
     UnknownFlags(u32),
+    Truncated,
+    NotUtf8,
 }
 
 impl fmt::Display for RecordError {
@@ -193,6 +199,8 @@ impl fmt::Display for RecordError {
                 f,
                 "test record carries flags {bits:#x} that version {RECORD_VERSION} does not define"
             ),
+            Self::Truncated => f.write_str("a test record ends before its fields do"),
+            Self::NotUtf8 => f.write_str("a test record holds a string that is not UTF-8"),
         }
     }
 }
@@ -203,101 +211,109 @@ impl core::error::Error for RecordError {}
 mod tests {
     use super::*;
 
-    fn record(version: u32, flags: u32, fuel: u64) -> [u8; RECORD_LEN] {
-        let mut bytes = [0_u8; RECORD_LEN];
-        for (at, value) in [
-            (offset::VERSION, version),
-            (offset::FLAGS, flags),
-            (offset::NAME_PTR, 64),
-            (offset::NAME_LEN, 9),
-            (offset::EXPECTED_PTR, 128),
-            (offset::EXPECTED_LEN, 4),
-        ] {
-            bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
-        }
-        bytes[offset::FUEL..offset::FUEL + 8].copy_from_slice(&fuel.to_le_bytes());
-        bytes
+    /// The record `#[wasm_test]` would link for these strings.
+    macro_rules! encoded {
+        ($name:literal, $flags:expr, $expected:literal, $fuel:expr) => {{
+            const N: usize = record_len($name, $expected);
+            encode::<N>($name, $flags, $expected, $fuel)
+        }};
     }
 
     #[test]
-    fn a_should_panic_record_decodes_its_expected_message() {
+    fn a_record_decodes_to_what_it_was_built_from() {
+        let record = encoded!(
+            "probe::tests::panics",
+            SHOULD_PANIC,
+            "boom",
+            Some(300_000_000)
+        );
+
         assert_eq!(
-            TestDescriptor::decode(&record(RECORD_VERSION, SHOULD_PANIC, 0)),
-            Ok(TestDescriptor {
-                name: GuestSpan { ptr: 64, len: 9 },
+            decode(&record),
+            Ok(vec![TestRecord {
+                name: "probe::tests::panics",
                 ignored: false,
-                should_panic: Some(GuestSpan { ptr: 128, len: 4 }),
+                should_panic: Some("boom"),
+                fuel: Some(300_000_000),
+            }])
+        );
+    }
+
+    #[test]
+    fn a_record_without_a_budget_takes_the_runner_budget() {
+        let record = encoded!("probe::tests::slow", IGNORED, "", None);
+
+        assert_eq!(
+            decode(&record),
+            Ok(vec![TestRecord {
+                name: "probe::tests::slow",
+                ignored: true,
+                should_panic: None,
                 fuel: None,
-            })
+            }])
         );
     }
 
     #[test]
-    fn a_record_without_should_panic_has_no_expected_message() {
-        let descriptor = TestDescriptor::decode(&record(RECORD_VERSION, 0, 0))
-            .expect("BUG: a current record decodes");
+    fn records_the_linker_concatenated_decode_in_order() {
+        let section = [
+            encoded!("probe::a", 0, "", None).as_slice(),
+            encoded!("probe::b", SHOULD_PANIC, "boom", None).as_slice(),
+        ]
+        .concat();
 
-        assert_eq!(descriptor.should_panic, None);
+        let names: Vec<_> = decode(&section)
+            .expect("BUG: concatenated records decode")
+            .iter()
+            .map(|record| record.name)
+            .collect();
+
+        assert_eq!(names, ["probe::a", "probe::b"]);
     }
 
     #[test]
-    fn an_ignored_record_reads_as_ignored() {
-        let descriptor = TestDescriptor::decode(&record(RECORD_VERSION, IGNORED, 0))
-            .expect("BUG: a current record decodes");
+    fn a_section_cut_short_is_refused() {
+        let record = encoded!("probe::tests::panics", SHOULD_PANIC, "boom", None);
 
-        assert!(descriptor.ignored);
-    }
-
-    #[test]
-    fn a_record_with_a_flag_this_version_does_not_define_is_refused() {
-        let unknown = 1 << 7;
-
-        assert_eq!(
-            TestDescriptor::decode(&record(RECORD_VERSION, IGNORED | unknown, 0)),
-            Err(RecordError::UnknownFlags(unknown))
-        );
-    }
-
-    #[test]
-    fn a_record_carries_the_fuel_its_test_asked_for() {
-        let descriptor = TestDescriptor::decode(&record(RECORD_VERSION, 0, 300_000_000))
-            .expect("BUG: a current record decodes");
-
-        assert_eq!(descriptor.fuel, Some(300_000_000));
-    }
-
-    #[test]
-    fn a_fuel_budget_reads_written_out_or_in_exponent_form() {
-        assert_eq!(
-            ["250000000", "250e6", "2.5e8"].map(parse_fuel),
-            [Some(250_000_000); 3]
-        );
-    }
-
-    #[test]
-    fn a_fuel_budget_is_a_whole_number_of_units() {
-        assert_eq!(
-            ["2.5", "-1e3", "1e300", "NaN", "lots"].map(parse_fuel),
-            [None; 5]
-        );
+        for cut in [1, HEADER_LEN, record.len() - 1] {
+            assert_eq!(
+                decode(&record[..cut]),
+                Err(RecordError::Truncated),
+                "cut at {cut}"
+            );
+        }
     }
 
     #[test]
     fn a_record_of_another_version_is_refused() {
+        let mut record = encoded!("probe::a", 0, "", None);
+        record[..4].copy_from_slice(&(RECORD_VERSION + 1).to_le_bytes());
+
         assert_eq!(
-            TestDescriptor::decode(&record(RECORD_VERSION + 1, 0, 0)),
+            decode(&record),
             Err(RecordError::UnknownVersion(RECORD_VERSION + 1))
         );
     }
 
     #[test]
-    fn a_span_survives_packing() {
-        let span = GuestSpan {
-            ptr: 0x0001_0040,
-            len: 24,
-        };
+    fn a_record_with_a_flag_this_version_does_not_define_is_refused() {
+        let unknown = 1 << 7;
+        let record = encoded!("probe::a", IGNORED | unknown, "", None);
 
-        assert_eq!(GuestSpan::unpack(span.pack()), span);
+        assert_eq!(decode(&record), Err(RecordError::UnknownFlags(unknown)));
+    }
+
+    #[test]
+    fn a_name_that_is_not_utf8_is_refused() {
+        let mut record = encoded!("probe::a", 0, "", None);
+        record[HEADER_LEN] = 0xff;
+
+        assert_eq!(decode(&record), Err(RecordError::NotUtf8));
+    }
+
+    #[test]
+    fn an_empty_section_holds_no_tests() {
+        assert_eq!(decode(&[]), Ok(Vec::new()));
     }
 
     #[test]
@@ -309,10 +325,10 @@ mod tests {
     }
 
     #[test]
-    fn a_metadata_export_names_its_run_export() {
+    fn a_record_names_its_run_export() {
         assert_eq!(
-            run_export_for("__bmc_test_meta:clock::tests::digital").as_deref(),
-            Some("__bmc_test_run:clock::tests::digital")
+            run_export("clock::tests::digital"),
+            "__bmc_test_run:clock::tests::digital"
         );
     }
 }

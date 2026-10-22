@@ -16,10 +16,9 @@ bmc-wasm-test-abi = { path = "abi" }
 indoc.workspace = true
 libtest-mimic.workspace = true
 tracing.workspace = true
+wasmparser.workspace = true
 
 [dev-dependencies]
-bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
-tempfile.workspace = true
 wasmi.workspace = true
 wat.workspace = true
 

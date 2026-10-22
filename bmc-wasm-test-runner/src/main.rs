@@ -81,10 +81,12 @@ fn target() -> Target {
 }
 
 fn trials(test_binary: &std::path::Path, nocapture: bool) -> Result<Vec<Trial>> {
+    let wasm =
+        std::fs::read(test_binary).with_context(|| format!("read {}", test_binary.display()))?;
+    let tests = list_tests(&wasm)
+        .with_context(|| format!("list the tests in {}", test_binary.display()))?;
     let host = Arc::new(HermeticHost::prepare(test_binary)?);
     let target = target();
-    let tests = list_tests(&host, target)
-        .with_context(|| format!("list the tests in {}", test_binary.display()))?;
     if tests.is_empty() {
         eprintln!(
             "wasm-test: {} holds no `#[wasm_test]`, so nothing ran on wasm32 \

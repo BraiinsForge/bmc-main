@@ -1660,14 +1660,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-render",
- "bmc-wasm-protocol",
  "bmc-wasm-runtime",
  "bmc-wasm-test-abi",
  "indoc",
  "libtest-mimic",
- "tempfile",
  "tracing",
  "wasmi",
+ "wasmparser 0.244.0",
  "wat",
 ]
 

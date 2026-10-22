@@ -18,9 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! `#[wasm_test]`: a libtest test natively, a pair of exports for the wasm test runner on wasm32.
+//! `#[wasm_test]`: a libtest test natively, a record
+//! and a run export for the wasm test runner on wasm32.
 
-use bmc_wasm_test_abi::{META_EXPORT_PREFIX, RUN_EXPORT_PREFIX, parse_fuel};
+use bmc_wasm_test_abi::{RUN_EXPORT_PREFIX, SECTION};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{Attribute, Expr, ExprLit, ItemFn, Lit, LitStr, Meta, ReturnType, parse_quote};
@@ -51,6 +52,7 @@ fn try_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
     let attributes = take_test_attributes(&mut function.attrs)?;
 
     let name = &function.sig.ident;
+    let path = quote!(::core::module_path!(), "::", ::core::stringify!(#name));
     let libtest = &attributes.libtest;
     let flags = flags(&attributes);
     let expected = attributes.should_panic.unwrap_or_default();
@@ -66,24 +68,16 @@ fn try_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
 
         #[cfg(all(test, target_arch = "wasm32"))]
         const _: () = {
-            static __BMC_RECORD: ::bmc_wasm_sdk::__test_support::TestRecord =
-                ::bmc_wasm_sdk::__test_support::TestRecord::new(
-                    ::core::concat!(::core::module_path!(), "::", ::core::stringify!(#name)),
-                    #flags,
-                    #expected,
-                    #fuel,
-                );
+            const NAME: &str = ::core::concat!(#path);
+            const EXPECTED: &str = #expected;
 
-            #[unsafe(export_name = ::core::concat!(
-                #META_EXPORT_PREFIX, ::core::module_path!(), "::", ::core::stringify!(#name)
-            ))]
-            extern "C" fn __bmc_locate_record() -> u64 {
-                __BMC_RECORD.locate()
-            }
+            // No `#[used]`: the section survives without it,
+            // and with it every record is copied into linear memory as well.
+            #[unsafe(link_section = #SECTION)]
+            static __BMC_RECORD: [u8; ::bmc_wasm_sdk::__test_support::record_len(NAME, EXPECTED)] =
+                ::bmc_wasm_sdk::__test_support::encode(NAME, #flags, EXPECTED, #fuel);
 
-            #[unsafe(export_name = ::core::concat!(
-                #RUN_EXPORT_PREFIX, ::core::module_path!(), "::", ::core::stringify!(#name)
-            ))]
+            #[unsafe(export_name = ::core::concat!(#RUN_EXPORT_PREFIX, #path))]
             extern "C" fn __bmc_run() {
                 ::bmc_wasm_sdk::__test_support::run(#name);
             }
@@ -135,6 +129,27 @@ fn fuel(attr: TokenStream) -> syn::Result<Option<u64>> {
 }
 
 const FUEL_UNITS: &str = "fuel is a whole number of units, such as `250_000_000` or `250e6`";
+
+/// Read a fuel budget: a whole number of units, written out or in exponent form (`250000000`, `250e6`, `2.5e8`).
+fn parse_fuel(text: &str) -> Option<u64> {
+    /// 2^53, up to which `f64` holds every whole number exactly.
+    const EXACT_IN_F64: f64 = 9_007_199_254_740_992.0;
+
+    if let Ok(units) = text.parse() {
+        return Some(units);
+    }
+    let units: f64 = text.parse().ok()?;
+    if units.fract() != 0.0 || !(0.0..=EXACT_IN_F64).contains(&units) {
+        return None;
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a whole number in 0..=2^53, which u64 holds exactly"
+    )]
+    let units = units as u64;
+    Some(units)
+}
 
 fn check_signature(function: &ItemFn) -> syn::Result<()> {
     let signature = &function.sig;
@@ -284,11 +299,17 @@ mod tests {
                 .expect("BUG: a fuel budget in exponent form parses"),
             Some(250_000_000)
         );
+        assert_eq!(
+            fuel(quote!(fuel = 250e6, reason = "a large fixture"))
+                .expect("BUG: a fuel budget with a whole mantissa parses"),
+            Some(250_000_000)
+        );
     }
 
     #[test]
     fn a_fuel_budget_is_a_whole_number_of_units() {
         assert!(fuel(quote!(fuel = 2.5, reason = "a large fixture")).is_err());
+        assert!(fuel(quote!(fuel = 1e300, reason = "a large fixture")).is_err());
         assert!(fuel(quote!(fuel = "lots", reason = "a large fixture")).is_err());
     }
 

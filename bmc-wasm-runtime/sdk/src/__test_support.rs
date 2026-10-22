@@ -20,72 +20,7 @@
 
 //! What `#[wasm_test]` expands to on wasm32: a test's record, and the runner that reports its panics.
 
-use bmc_wasm_test_abi::{GuestSpan, RECORD_LEN, RECORD_VERSION, offset};
-pub use bmc_wasm_test_abi::{IGNORED, SHOULD_PANIC};
-
-/// A test's record, laid out as [`bmc_wasm_test_abi`] reads it.
-#[derive(Debug)]
-#[repr(C)]
-pub struct TestRecord {
-    version: u32,
-    flags: u32,
-    name_ptr: *const u8,
-    name_len: usize,
-    expected_ptr: *const u8,
-    expected_len: usize,
-    fuel: u64,
-}
-
-// SAFETY: a record never changes after construction,
-// and its pointers are to `'static` strings.
-unsafe impl Sync for TestRecord {}
-
-const _: () = {
-    assert!(size_of::<TestRecord>() == RECORD_LEN);
-    assert!(core::mem::offset_of!(TestRecord, version) == offset::VERSION);
-    assert!(core::mem::offset_of!(TestRecord, flags) == offset::FLAGS);
-    assert!(core::mem::offset_of!(TestRecord, name_ptr) == offset::NAME_PTR);
-    assert!(core::mem::offset_of!(TestRecord, name_len) == offset::NAME_LEN);
-    assert!(core::mem::offset_of!(TestRecord, expected_ptr) == offset::EXPECTED_PTR);
-    assert!(core::mem::offset_of!(TestRecord, expected_len) == offset::EXPECTED_LEN);
-    assert!(core::mem::offset_of!(TestRecord, fuel) == offset::FUEL);
-};
-
-impl TestRecord {
-    /// `fuel` is the test's own budget,
-    /// `None` to take the runner's.
-    #[must_use]
-    pub const fn new(
-        name: &'static str,
-        flags: u32,
-        expected: &'static str,
-        fuel: Option<u64>,
-    ) -> Self {
-        Self {
-            version: RECORD_VERSION,
-            flags,
-            name_ptr: name.as_ptr(),
-            name_len: name.len(),
-            expected_ptr: expected.as_ptr(),
-            expected_len: expected.len(),
-            fuel: match fuel {
-                Some(units) => units,
-                None => 0,
-            },
-        }
-    }
-
-    /// Where this record sits in guest memory,
-    /// packed as a metadata export returns it.
-    #[must_use]
-    pub fn locate(&'static self) -> u64 {
-        GuestSpan {
-            ptr: wasm32_u32(core::ptr::from_ref(self).addr()),
-            len: wasm32_u32(RECORD_LEN),
-        }
-        .pack()
-    }
-}
+pub use bmc_wasm_test_abi::{IGNORED, SHOULD_PANIC, encode, record_len};
 
 use crate::ffi_u32;
 
@@ -126,53 +61,7 @@ pub fn run(test: fn()) {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_test_abi::TestDescriptor;
-
-    use super::*;
     use crate::wasm_test;
-
-    fn span(text: &'static str) -> GuestSpan {
-        GuestSpan {
-            ptr: wasm32_u32(text.as_ptr().addr()),
-            len: wasm32_u32(text.len()),
-        }
-    }
-
-    fn decoded(record: &TestRecord) -> TestDescriptor {
-        // SAFETY: the layout asserts above make a record exactly `RECORD_LEN` bytes
-        // with no padding, so viewing it as a byte array reads every byte it holds.
-        let bytes: &[u8; RECORD_LEN] = unsafe { &*core::ptr::from_ref(record).cast() };
-        TestDescriptor::decode(bytes).expect("BUG: a record the SDK built decodes")
-    }
-
-    #[wasm_test]
-    fn a_record_decodes_to_what_it_was_built_from() {
-        const NAME: &str = "probe::tests::panics";
-        const EXPECTED: &str = "boom";
-
-        let record = TestRecord::new(NAME, SHOULD_PANIC, EXPECTED, Some(300_000_000));
-
-        assert_eq!(
-            decoded(&record),
-            TestDescriptor {
-                name: span(NAME),
-                ignored: false,
-                should_panic: Some(span(EXPECTED)),
-                fuel: Some(300_000_000),
-            }
-        );
-    }
-
-    #[wasm_test]
-    fn a_record_without_a_budget_decodes_to_the_runner_budget() {
-        let record = TestRecord::new("probe::tests::ignored", IGNORED, "", None);
-
-        let descriptor = decoded(&record);
-
-        assert!(descriptor.ignored);
-        assert_eq!(descriptor.should_panic, None);
-        assert_eq!(descriptor.fuel, None);
-    }
 
     macro_rules! stamped {
         ($module:ident) => {
