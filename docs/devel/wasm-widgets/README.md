@@ -2,11 +2,12 @@
 
 Developer-facing notes for writing WASM widgets.
 
-Start with [Best Practices](best-practices.md) before writing or changing any widget; the other documents go deeper on
-individual topics.
+Start with [Boundaries](boundaries.md) and [Best Practices](best-practices.md) before writing or changing any widget;
+the other documents go deeper on individual topics.
 
 ## Documents
 
+- [Boundaries](boundaries.md) — what a widget must not and should not do on a device.
 - [Best Practices](best-practices.md) — the conventions every widget follows.
 - [Params](params.md) — per-instance operator configuration.
 - [Credentials](credentials.md) — the accounts a widget needs, whose secrets only the host sees.

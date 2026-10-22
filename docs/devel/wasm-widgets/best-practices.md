@@ -2,7 +2,7 @@
 
 Read this before writing or changing a WASM widget. It collects the conventions and the easy-to-miss host behaviors
 every widget under `widgets-wasm/` (and the SDK examples) should follow. The other pages in [WASM Widgets](README.md) go
-deeper on individual topics.
+deeper on individual topics. What a widget must not and should not do is in [Boundaries](boundaries.md).
 
 ## Split pure logic from the wasm boundary
 
