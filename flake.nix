@@ -26,9 +26,6 @@
   inputs = {
     self.lfs = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    # Tools newer than the pin above carries, scoped to them rather than moving it:
-    # `set default-list` in common.justfile needs just >= 1.52.0, and the frontend builds with pnpm 12.
-    nixpkgs-tools.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-source-info.url = "github:BraiinsForge/nix-source-info";
     nixlib.url = "github:BraiinsForge/nix-lib/master";
@@ -53,8 +50,8 @@
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-tools, flake-utils, nixlib, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
-    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (localSystem:
+  outputs = { self, nixpkgs, flake-utils, nixlib, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (localSystem:
       let
         pkgs = import nixpkgs {
           inherit localSystem;
@@ -72,17 +69,13 @@
             (final: prev: {
               nodejs = prev.nodejs_24;
             })
-            # See the `nixpkgs-tools` input for why these tools come from elsewhere.
-            (final: prev:
-              let tools = nixpkgs-tools.legacyPackages.${localSystem}; in {
-                just = tools.just;
-                # Its own set rather than nixpkgs' attributes, so the pin's packages built with `fetchPnpmDeps`
-                # keep the fetcher, and so the hashes, they were locked with.
-                pnpmToolchain = {
-                  inherit (tools) fetchPnpmDeps pnpmConfigHook;
-                  pnpm = tools.pnpm_12;
-                };
-              })
+            # One set for the frontend, so its `fetchPnpmDeps` hashes track a single pnpm.
+            (final: prev: {
+              pnpmToolchain = {
+                inherit (prev) fetchPnpmDeps pnpmConfigHook;
+                pnpm = prev.pnpm_12;
+              };
+            })
           ];
         };
 

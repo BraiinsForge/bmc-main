@@ -47,7 +47,7 @@ from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import NewType, Protocol, TypedDict, cast
+from typing import IO, NewType, Protocol, TypedDict, cast
 
 import msgspec
 from rich.markup import escape
@@ -3454,13 +3454,13 @@ def _stream_events(argv: list[str]) -> list[dict[str, Json]]:
     events: list[dict[str, Json]] = []
     decoder = json.JSONDecoder()
     with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc:
-        stdout = proc.stdout
+        stdout: IO[str] | None = proc.stdout
         if stdout is None:
             msg = "BUG: Popen(stdout=PIPE) produced no stdout"
             raise RuntimeError(msg)
         # Drain stderr on a thread: with this loop blocked on stdout, a
         # chatty stderr would fill its 64 KiB pipe and deadlock the child.
-        stderr_pipe = proc.stderr
+        stderr_pipe: IO[str] | None = proc.stderr
         stderr_chunks: list[str] = []
         stderr_thread: threading.Thread | None = None
         if stderr_pipe is not None:
@@ -4123,11 +4123,11 @@ def run_firmware_stream(dev: Device, cycle: FirmwareCycle) -> StreamResult:
         cycle.started_upgrade = False
         raise
 
-    stdout = proc.stdout
+    stdout: IO[str] | None = proc.stdout
     if stdout is None:
         msg = "BUG: Popen(stdout=PIPE) produced no stdout"
         raise RuntimeError(msg)
-    stderr_pipe = proc.stderr
+    stderr_pipe: IO[str] | None = proc.stderr
     stderr_chunks: list[str] = []
     stderr_thread: threading.Thread | None = None
     if stderr_pipe is not None:

@@ -74,9 +74,9 @@ import '../common.justfile'
 Settings cross an `import` but **not** a `mod`, so the import goes in every justfile individually — including one that
 is itself a `mod` of another (`bmc-virt/harness/justfile`). Miss it and the file silently gets the footgun back.
 
-`default-list` needs just >= 1.52.0. The dev shell pins one through the `nixpkgs-tools` flake input, but a `just` on
-`PATH` outside it is the developer's own, and an older one fails to parse every justfile here. `set minimum-version`
-would say so plainly, except it only arrived in 1.55.0 — too late to help the versions that need the warning.
+`default-list` needs just >= 1.52.0. The dev shell's nixpkgs provides one, but a `just` on `PATH` outside it is the
+developer's own, and an older one fails to parse every justfile here. `set minimum-version` would say so plainly, except
+it only arrived in 1.55.0 — too late to help the versions that need the warning.
 
 The one exception is `bmc-virt/rootfs/overlay/root/justfile`, which ships to the VM as `/root/justfile` where
 `common.justfile` does not exist. Keep its first recipe a harmless one by hand.

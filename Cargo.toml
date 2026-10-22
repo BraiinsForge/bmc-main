@@ -279,7 +279,6 @@ drm-fourcc = "2.2.0"
 eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui = "0.34"
 egui-notify = "0.22"
-strsim = "0.11.1"
 # Pinned to yvind/master (open PR #53 upstream — egui 0.34 bump unmerged as of 2026-04-07). Drop back to a crates.io release once that PR lands;
 # follow-up tracked in BDK-477. https://github.com/JakeHandsome/egui_autocomplete/pull/53
 egui_autocomplete = { git = "https://github.com/yvind/egui_autocomplete.git", rev = "01153df7c1915bb1196d0d97acf44a2783890016", features = ["serde"] }
@@ -294,6 +293,7 @@ evdev = "0.13.1"
 eventsource-stream = "0.2.3"
 fake = "4"
 fdlimit = "0.3.0"
+strsim = "0.11.1"
 # femtovg 0.20.4 passes GL_R8 as the Gray8 sub-upload format
 # on GLES3 and desktop GL; the gallery's desktop context needs GL_RED instead.
 # Pinned to the fork revision carrying that one-token fix, now merged upstream;

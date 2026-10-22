@@ -33,25 +33,29 @@ let
   # `compositorUdev` carries the matching libudev.so.1 into the runtime closure without
   # rebinding `udev` globally, which would pull unrelated packages (lvm2, btrfs-progs)
   # onto libudev-zero APIs they do not support.
+  #
+  # QEMU's virtio-tablet-pci (REL_WHEEL + ABS_X/ABS_Y + BTN_TOUCH) needs libudev-zero >= 1.0.4
+  # to be tagged ID_INPUT_TOUCHSCREEN; older releases check EV_REL first and libinput then
+  # refuses the device as "not tagged as supported input device".
   applianceOverlay = final: prev:
     let
-      # nixpkgs ships libudev-zero 1.0.3, whose ID_INPUT_* tag synthesis in set_properties_from_evdev
-      # checks EV_REL before EV_ABS — any device carrying both (e.g. QEMU's virtio-tablet-pci,
-      # with REL_WHEEL + ABS_X/ABS_Y + BTN_TOUCH) falls through the REL branch and never reaches
-      # the TOUCHSCREEN tag. libinput then refuses the device as "not tagged as supported input device".
-      #
-      # Upstream fix bbeb7ad5 ("Fixes incorrect detection of touchpads (#66)") swaps the branch
-      # order so EV_ABS is checked first. Never released, so we pin to the fix commit directly
-      # until a >=1.0.4 tag lands and nixpkgs picks it up.
-      libudevZero = (prev."libudev-zero").overrideAttrs (_: {
-        version = "unstable-2024-04-17";
-        src = prev.fetchFromGitHub {
-          owner = "illiliti";
-          repo = "libudev-zero";
-          rev = "bbeb7ad51c1edb7ab3cf63f30a21e9bb383b7994";
-          hash = "sha256-hQoLnKpT/cnGyUl56DnHjZ0nfenLPI9EvmOejqEPxfc=";
-        };
-      });
+      # 1.0.5 reads USB vendor names from hwdata's usb.ids at runtime.
+      # The appliance has no use for the names and hwdata is banned from the Deck closure,
+      # so point the lookup at a path the image does not have.
+      libudevZero =
+        assert lib.assertMsg (lib.versionAtLeast prev."libudev-zero".version "1.0.4")
+          "libudev-zero ${prev."libudev-zero".version} lacks the EV_ABS-first touchscreen tagging";
+        prev."libudev-zero".overrideAttrs (old:
+          let
+            isUsbIds = lib.hasPrefix "USB_IDS_PATH=";
+          in
+          assert lib.assertMsg (builtins.any isUsbIds old.makeFlags)
+            "libudev-zero no longer takes USB_IDS_PATH; drop the hwdata rewrite";
+          {
+            makeFlags = map (flag: if isUsbIds flag then "USB_IDS_PATH=/usr/share/hwdata/usb.ids" else flag)
+              old.makeFlags;
+            disallowedReferences = (old.disallowedReferences or [ ]) ++ [ prev.hwdata ];
+          });
     in
     {
       libinput = prev.libinput.override {
@@ -77,26 +81,18 @@ let
       // applianceOverlay final prev
       // {
         libdrm = prev.libdrm.override { withIntel = false; };
-        libinput = (applianceOverlay final prev).libinput.overrideAttrs (old:
-          let
-            oldBuildInputs = old.buildInputs or [ ];
-            oldMesonFlags = old.mesonFlags or [ ];
-          in
-          assert lib.assertMsg (builtins.elem prev.lua5_4 oldBuildInputs)
-            "ARMv7 libinput no longer includes lua5_4 in buildInputs";
-          assert lib.assertMsg
-            (builtins.all (flag: !(lib.hasPrefix "-Dlua-plugins=" flag)) oldMesonFlags)
-            "ARMv7 libinput now defines lua-plugins upstream";
-          {
-            buildInputs = lib.remove prev.lua5_4 oldBuildInputs;
-            disallowedReferences = (old.disallowedReferences or [ ]) ++ [ prev.lua5_4 ];
-            mesonFlags = oldMesonFlags ++ [ "-Dlua-plugins=disabled" ];
-          });
+        # Deck needs no Lua plugin loader; keep the interpreter out of the image.
+        libinput = ((applianceOverlay final prev).libinput.override { luaSupport = false; }).overrideAttrs (old: {
+          disallowedReferences = (old.disallowedReferences or [ ]) ++ [ prev.lua5_4 ];
+        });
         # Smithay links libxkbcommon unconditionally, but Deck does not use keyboard input.
         libxkbcommon = prev.libxkbcommon.overrideAttrs (old:
           let
             oldBuildInputs = old.buildInputs or [ ];
             oldMesonFlags = old.mesonFlags or [ ];
+            # No xkbcli: Deck ships no keyboard tooling, and the 1.13 info tool
+            # needs xkeyboard-config's extension paths, which this build lacks
+            # because it drops xkeyboard_config below.
             mesonFlags = map
               (flag:
                 if lib.hasPrefix "-Dxkb-config-root=" flag
@@ -104,7 +100,7 @@ let
                 else if lib.hasPrefix "-Dx-locale-root=" flag
                 then "-Dx-locale-root=/etc/X11/locale"
                 else flag)
-              oldMesonFlags ++ [ "-Denable-x11=false" ];
+              oldMesonFlags ++ [ "-Denable-x11=false" "-Denable-tools=false" ];
           in
           assert lib.assertMsg (builtins.elem prev.xkeyboard_config oldBuildInputs)
             "ARMv7 libxkbcommon no longer includes xkeyboard_config in buildInputs";
@@ -119,6 +115,9 @@ let
           assert lib.assertMsg
             (builtins.all (flag: !(lib.hasPrefix "-Denable-x11=" flag)) oldMesonFlags)
             "ARMv7 libxkbcommon now defines enable-x11 upstream";
+          assert lib.assertMsg
+            (builtins.all (flag: !(lib.hasPrefix "-Denable-tools=" flag)) oldMesonFlags)
+            "ARMv7 libxkbcommon now defines enable-tools upstream";
           {
             buildInputs = builtins.filter
               (input: input != prev.xkeyboard_config && input != prev.libxcb)

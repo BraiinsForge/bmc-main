@@ -40,7 +40,7 @@ from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, NewType, Protocol, TypedDict, cast
+from typing import IO, Literal, NewType, Protocol, TypedDict, cast
 
 import msgspec
 
@@ -93,7 +93,8 @@ def _await_listening(proc: "subprocess.Popen[str]", port: int, what: str) -> Non
             time.sleep(0.1)
         else:
             return
-    stderr = proc.stderr.read().strip() if proc.stderr is not None else ""
+    stderr_pipe: IO[str] | None = proc.stderr
+    stderr = stderr_pipe.read().strip() if stderr_pipe is not None else ""
     raise Abort(f"{what} failed (ssh exit {proc.returncode}): {stderr}")
 
 
@@ -165,10 +166,11 @@ class _RealExec:
         with subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
         ) as proc:
-            if proc.stdout is None:
+            stdout: IO[str] | None = proc.stdout
+            if stdout is None:
                 msg = "BUG: Popen(stdout=PIPE) produced no stdout"
                 raise RuntimeError(msg)
-            for line in proc.stdout:
+            for line in stdout:
                 on_line(line.rstrip("\n"))
         return proc.returncode
 

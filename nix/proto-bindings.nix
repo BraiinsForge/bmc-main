@@ -53,7 +53,7 @@ let
       nativeBuildInputs = [ buf ];
       SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
       outputHashMode = "flat";
-      outputHash = "sha256-TpVZIX5VZvsAMMxej3zVJXolqe2CiggW/m6VdX0bVYk=";
+      outputHash = "sha256-rVBEhmKPcOgRwiodHuMZdj15Sq1wKxDZa2ExRL/t7wU=";
     }
     ''
       export HOME=$TMPDIR

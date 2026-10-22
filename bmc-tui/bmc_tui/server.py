@@ -172,7 +172,7 @@ class _Unsatisfiable(enum.Enum):
     RANGE = enum.auto()
 
 
-def _byte_range(header: str | None, size: int) -> tuple[int, int] | None | _Unsatisfiable:
+def _byte_range(header: str | None, size: int) -> tuple[int, int] | _Unsatisfiable | None:
     """Inclusive start/end for a single `bytes=` range, or None to send it all.
 
     Only the one-range form is honoured; anything else falls back to the whole
@@ -299,7 +299,7 @@ class _Handler(BaseHTTPRequestHandler):
         size: int,
         content_type: str,
         extra: Mapping[str, str] | None = None,
-    ) -> tuple[int, tuple[int, int] | None | _Unsatisfiable]:
+    ) -> tuple[int, tuple[int, int] | _Unsatisfiable | None]:
         """Send the headers for a `size`-byte body under the request's Range;
         return the status sent and the span to stream — None for all of it,
         nothing after a 416."""

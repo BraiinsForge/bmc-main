@@ -52,6 +52,7 @@ import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import IO
 
 from bmc_virt import VM, Event, sleep, ui
 from bmc_virt.paths import BMC_CONFIG, BMC_LOG
@@ -133,8 +134,9 @@ def build_mesh_demo() -> Path:
         proc = subprocess.Popen(
             cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
         )
-        assert proc.stdout is not None, "BUG: requested PIPE but stdout missing"
-        collected.extend(line.rstrip() for line in proc.stdout if line.strip())
+        stdout: IO[str] | None = proc.stdout
+        assert stdout is not None, "BUG: requested PIPE but stdout missing"
+        collected.extend(line.rstrip() for line in stdout if line.strip())
         rc = proc.wait()
 
     if rc != 0:
