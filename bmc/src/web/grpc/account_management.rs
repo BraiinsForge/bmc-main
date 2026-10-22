@@ -137,6 +137,7 @@ impl web::AccountManagementService for AccountManagementService {
         if replace_values {
             validate_account(&type_id, &field_values).await?;
         }
+        let field_values = normalized_field_values(&type_id, field_values);
 
         let allow_hosts = req.allow_hosts;
         {
@@ -325,6 +326,32 @@ fn validate_schema(
             "Must be an absolute path",
         );
     }
+
+    if type_id == credential::BuiltinType::HomeAssistant.id()
+        && let Some(address) = field_values.get(credential::HOME_ASSISTANT_URL_FIELD)
+        && !address.is_empty()
+        && let Err(reason) = credential::service_origin(address)
+    {
+        violations.push(
+            field_error_key(credential::HOME_ASSISTANT_URL_FIELD),
+            reason,
+        );
+    }
+}
+
+/// A Home Assistant address is stored as its bare origin,
+/// so a widget appending `/api/…` to it never doubles the slash.
+fn normalized_field_values(
+    type_id: &str,
+    mut field_values: IndexMap<ParamKey, String>,
+) -> IndexMap<ParamKey, String> {
+    if type_id == credential::BuiltinType::HomeAssistant.id()
+        && let Some(address) = field_values.get_mut(credential::HOME_ASSISTANT_URL_FIELD)
+        && let Ok(origin) = credential::service_origin(address)
+    {
+        *address = origin;
+    }
+    field_values
 }
 
 /// Per-type live check. Braiins Pool verifies the token against the pool API; other types have no
@@ -669,6 +696,70 @@ mod tests {
         );
         let reasons: Vec<&str> = violations.iter().map(|v| v.description.as_str()).collect();
         assert_eq!(reasons, ["Required"]);
+    }
+
+    fn home_assistant_violations(address: &str) -> Vec<String> {
+        schema_violations(
+            credential::BuiltinType::HomeAssistant.id(),
+            &[
+                (credential::HOME_ASSISTANT_URL_FIELD, address),
+                (credential::HOME_ASSISTANT_TOKEN_FIELD, "t0ken"),
+            ],
+        )
+        .into_iter()
+        .map(|v| format!("{}: {}", v.field, v.description))
+        .collect()
+    }
+
+    #[test]
+    fn a_home_assistant_address_must_be_an_http_origin() {
+        assert!(home_assistant_violations("http://homeassistant.local:8123/").is_empty());
+        for address in [
+            "homeassistant.local:8123",
+            "ftp://homeassistant.local",
+            "https://ha.example.com",
+            "http://homeassistant.local:8123/lovelace",
+        ] {
+            let violations = home_assistant_violations(address);
+            assert_eq!(violations.len(), 1, "{address:?}: {violations:?}");
+            assert!(
+                violations[0].starts_with(&field_error_key(credential::HOME_ASSISTANT_URL_FIELD)),
+                "the violation must sit on the address field: {violations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_home_assistant_address_is_stored_as_its_origin() {
+        let stored = normalized_field_values(
+            credential::BuiltinType::HomeAssistant.id(),
+            values(&[
+                (
+                    credential::HOME_ASSISTANT_URL_FIELD,
+                    "http://HomeAssistant.local:8123/",
+                ),
+                (credential::HOME_ASSISTANT_TOKEN_FIELD, "t0ken"),
+            ]),
+        );
+
+        assert_eq!(
+            stored[credential::HOME_ASSISTANT_URL_FIELD],
+            "http://homeassistant.local:8123"
+        );
+        assert_eq!(stored[credential::HOME_ASSISTANT_TOKEN_FIELD], "t0ken");
+    }
+
+    #[test]
+    fn a_home_assistant_account_takes_no_destination_list() {
+        let violations = allow_hosts_violations(
+            credential::BuiltinType::HomeAssistant.id(),
+            &["anywhere.example"],
+        );
+        assert_eq!(
+            violations.len(),
+            1,
+            "its address already pins the token: {violations:?}"
+        );
     }
 
     /// The file is written by another service, possibly after the account

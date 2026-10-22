@@ -38,11 +38,28 @@ export function CredentialTypeForm({ type, values, onChange, errors }: Credentia
 
     // Derived from the structured policy rather than the type's own prose,
     // so it stays truthful for a type whose description someone else wrote.
-    const hosts = type.egress?.allowHosts ?? [];
-    const egress =
-        hosts.length > 0
-            ? formatMessage({ defaultMessage: 'It is only ever sent to {hosts}.' }, { hosts: hosts.join(', ') })
-            : formatMessage({ defaultMessage: 'It may be sent to any host.' });
+    const pin = type.egress?.pin;
+    let egress: string;
+    switch (pin?.case) {
+        case 'hosts':
+            egress = formatMessage(
+                { defaultMessage: 'It is only ever sent to {hosts}.' },
+                { hosts: pin.value.allowHosts.join(', ') },
+            );
+            break;
+        case 'address':
+            egress = formatMessage(
+                {
+                    defaultMessage: 'It is only ever sent to the address you enter in {field}.',
+                    description:
+                        'Account form notice on where a credential may be sent; field is the name of the form field holding the service address, such as Address',
+                },
+                { field: type.fields.find(field => field.key === pin.value.field)?.name ?? pin.value.field },
+            );
+            break;
+        default:
+            egress = formatMessage({ defaultMessage: 'It may be sent to any host.' });
+    }
 
     return (
         <div className={css.root}>

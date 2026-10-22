@@ -45,7 +45,7 @@ pub struct CredentialType {
     pub fields: IndexMap<ParamKey, ScalarField>,
     /// Absent means the secret may be sent anywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub egress: Option<EgressPolicy>,
+    pub egress: Option<EgressPin>,
     /// Absent means the frontend renders its own generic glyph.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<Icon>,
@@ -90,11 +90,11 @@ pub struct Icon {
     pub data: String,
 }
 
-/// Hosts a credential type's secrets may be sent to.
+/// Where a credential's secret may be sent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EgressPolicy {
-    /// Where this type's secret may go.
-    /// Each entry is one of:
+#[serde(rename_all = "snake_case")]
+pub enum EgressPin {
+    /// Only to these hosts. Each entry is one of:
     ///
     /// - an exact host, optionally with a port
     ///     - `api.example.com`
@@ -107,29 +107,106 @@ pub struct EgressPolicy {
     ///   (`fd00::1`) or bracketed, and brackets are how a port attaches:
     ///   `[fd00::1]:8443`.
     ///
-    /// An empty list allows everything, exactly as omitting the policy does.
-    pub allow_hosts: Vec<String>,
+    /// An empty list admits nothing.
+    Hosts(Vec<String>),
+    /// Only to the host and port of the address in this configured field,
+    /// the account's own service, such as a Home Assistant instance.
+    /// An address that is missing or does not parse admits nothing.
+    Address { field: String },
 }
 
-impl EgressPolicy {
-    /// Whether this policy permits sending the secret to `host`.
+impl EgressPin {
+    /// Whether this pin permits sending one account's secret to `host`,
+    /// reading the account's configured fields through `configured`.
     ///
-    /// `host` is the request authority with any IPv6 brackets already removed,
-    /// and `port` its explicit port if the URL carried one.
-    /// The caller does that split because it holds a URL parser;
-    /// this crate deliberately has no URL dependency.
+    /// `host` and `port` are the request's, as [`authority_of`] gives them.
     ///
     /// Comparison is ASCII-case-insensitive.
     /// A non-ASCII host is compared as-is,
     /// so an internationalised domain must be listed in punycode.
     #[must_use]
-    pub fn allows(&self, host: &str, port: Option<u16>) -> bool {
-        self.allow_hosts.is_empty()
-            || self
-                .allow_hosts
-                .iter()
-                .any(|entry| entry_allows(entry, host, port))
+    pub fn allows_account<'a>(
+        &self,
+        host: &str,
+        port: Option<u16>,
+        configured: impl Fn(&str) -> Option<&'a str>,
+    ) -> bool {
+        match self {
+            Self::Hosts(entries) => entries.iter().any(|entry| entry_allows(entry, host, port)),
+            // Compared as parsed, never read back as an entry,
+            // so the address cannot pick up the entry grammar's wildcards or ranges.
+            Self::Address { field } => configured(field).and_then(service_authority).is_some_and(
+                |(pinned_host, pinned_port)| {
+                    pinned_host.eq_ignore_ascii_case(host) && pinned_port == port
+                },
+            ),
+        }
     }
+
+    /// [`Self::allows_account`] for an account with no fields configured.
+    #[cfg(test)]
+    fn allows(&self, host: &str, port: Option<u16>) -> bool {
+        self.allows_account(host, port, |_| None)
+    }
+}
+
+/// Host and effective port of a parsed URL.
+///
+/// The port is the one connected to, not the one spelled: an entry
+/// spelling `api.example.com:443` matches `https://api.example.com/`.
+///
+/// Goes through the typed [`url::Host`] rather than `host_str`,
+/// which keeps the brackets around an IPv6 literal.
+/// Rendering the address instead gives the bare form a CIDR entry parses,
+/// and a domain arrives IDNA-encoded, so an internationalised name
+/// is already punycode by the time a pin sees it.
+#[must_use]
+pub fn authority_of(url: &url::Url) -> Option<(String, Option<u16>)> {
+    let host = match url.host()? {
+        url::Host::Domain(domain) => domain.to_owned(),
+        url::Host::Ipv4(addr) => addr.to_string(),
+        url::Host::Ipv6(addr) => addr.to_string(),
+    };
+
+    Some((host, url.port_or_known_default()))
+}
+
+fn service_authority(address: &str) -> Option<(String, Option<u16>)> {
+    let url = url::Url::parse(address).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    authority_of(&url)
+}
+
+/// A service address as an account stores it: the bare origin,
+/// such as `http://homeassistant.local:8123`.
+///
+/// Parsed with `url::Url`, the parser the egress pin reads requests with,
+/// so the two agree on the host the pin admits.
+///
+/// # Errors
+///
+/// A capitalised English sentence naming what is wrong with the address,
+/// fit to show beside the field.
+pub fn service_origin(address: &str) -> Result<String, &'static str> {
+    let url = url::Url::parse(address).map_err(|_| "This is not a valid address")?;
+    // Widgets reach the service over a WebSocket, and the host has no `wss://` yet (BDK-1000).
+    if url.scheme() == "https" {
+        return Err(
+            "Encrypted (https://) addresses are not supported yet. Enter the http:// address",
+        );
+    }
+    if url.scheme() != "http" {
+        return Err("The address must start with http://");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("The address must not carry a user name or password");
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return Err("Enter the address alone, without a path after it");
+    }
+    Ok(url.origin().ascii_serialization())
 }
 
 fn entry_allows(entry: &str, host: &str, port: Option<u16>) -> bool {
@@ -272,15 +349,17 @@ pub enum BuiltinType {
     GenericUserpass,
     BraiinsPool,
     LocalFileToken,
+    HomeAssistant,
 }
 
 impl BuiltinType {
     /// In catalog order: [`builtins`] preserves it, and the picker follows.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::GenericToken,
         Self::GenericUserpass,
         Self::BraiinsPool,
         Self::LocalFileToken,
+        Self::HomeAssistant,
     ];
 
     #[must_use]
@@ -290,6 +369,7 @@ impl BuiltinType {
             Self::GenericUserpass => "generic-userpass",
             Self::BraiinsPool => "braiins-pool",
             Self::LocalFileToken => "local-file-token",
+            Self::HomeAssistant => "home-assistant",
         }
     }
 
@@ -305,11 +385,12 @@ impl BuiltinType {
             Self::GenericUserpass => generic_userpass(),
             Self::BraiinsPool => braiins_pool(),
             Self::LocalFileToken => local_file_token(),
+            Self::HomeAssistant => home_assistant(),
         }
     }
 
     #[must_use]
-    pub fn egress(self) -> Option<EgressPolicy> {
+    pub fn egress(self) -> Option<EgressPin> {
         self.schema().egress
     }
 
@@ -318,6 +399,7 @@ impl BuiltinType {
     pub const fn derived_field_names(self) -> &'static [&'static str] {
         match self {
             Self::GenericUserpass => &[USERPASS_BASIC_FIELD],
+            Self::HomeAssistant => &[HOME_ASSISTANT_WEBSOCKET_URL_FIELD],
             Self::GenericToken | Self::BraiinsPool | Self::LocalFileToken => &[],
         }
     }
@@ -344,6 +426,10 @@ impl BuiltinType {
                 }
                 (None, _) | (_, None) => Vec::new(),
             },
+            Self::HomeAssistant => configured(HOME_ASSISTANT_URL_FIELD)
+                .and_then(websocket_url)
+                .map(|url| vec![(HOME_ASSISTANT_WEBSOCKET_URL_FIELD, url)])
+                .unwrap_or_default(),
             Self::GenericToken | Self::BraiinsPool | Self::LocalFileToken => Vec::new(),
         }
     }
@@ -381,6 +467,8 @@ static GENERIC_USERPASS_ICON: LazyLock<Icon> =
     LazyLock::new(|| svg_icon(include_str!("../assets/generic-userpass.svg")));
 static LOCAL_FILE_TOKEN_ICON: LazyLock<Icon> =
     LazyLock::new(|| svg_icon(include_str!("../assets/local-file-token.svg")));
+static HOME_ASSISTANT_ICON: LazyLock<Icon> =
+    LazyLock::new(|| svg_icon(include_str!("../assets/home-assistant.svg")));
 
 fn secret_field(name: &str, description: &str) -> ScalarField {
     string_field(name, description, Some(StringFormat::Password))
@@ -478,9 +566,7 @@ fn braiins_pool() -> CredentialType {
             "token",
             secret_field("API token", "Your Braiins Pool API token."),
         )]),
-        egress: Some(EgressPolicy {
-            allow_hosts: vec![BRAIINS_POOL_HOST.to_owned()],
-        }),
+        egress: Some(EgressPin::Hosts(vec![BRAIINS_POOL_HOST.to_owned()])),
         icon: Some(BRAIINS_POOL_ICON.clone()),
     }
 }
@@ -524,19 +610,84 @@ fn local_file_token() -> CredentialType {
     }
 }
 
+/// The configured field of a Home Assistant account: the instance's address.
+pub const HOME_ASSISTANT_URL_FIELD: &str = "url";
+
+/// The configured field of a Home Assistant account: a long-lived access token.
+pub const HOME_ASSISTANT_TOKEN_FIELD: &str = "token";
+
+/// The spendable field derived from the address: the instance's WebSocket API.
+pub const HOME_ASSISTANT_WEBSOCKET_URL_FIELD: &str = "websocket_url";
+
+/// Where a Home Assistant instance at `address` serves its WebSocket API:
+/// `ws` for `http`, `wss` for `https`, at `/api/websocket`.
+fn websocket_url(address: &str) -> Option<String> {
+    let mut url = url::Url::parse(address).ok()?;
+    let scheme = match url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        _ => return None,
+    };
+    url.set_scheme(scheme).ok()?;
+    url.set_path("/api/websocket");
+    url.set_query(None);
+    url.set_fragment(None);
+    Some(url.into())
+}
+
+fn home_assistant() -> CredentialType {
+    let address = ScalarField {
+        name: "Address".to_owned(),
+        description: Some(
+            "The address you open Home Assistant at, such as http://homeassistant.local:8123."
+                .to_owned(),
+        ),
+        is_optional: false,
+        kind: ScalarKind::String(StringParam {
+            format: Some(StringFormat::Uri),
+            min_length: None,
+            max_length: None,
+            enum_values: Vec::new(),
+            enum_control: EnumControl::Dropdown,
+            default_value: None,
+            placeholder: Some("http://homeassistant.local:8123".to_owned()),
+        }),
+    };
+
+    CredentialType {
+        id: BuiltinType::HomeAssistant.id().to_owned(),
+        name: "Home Assistant".to_owned(),
+        description: "A Home Assistant instance and a long-lived access token for it. \
+                      The token is only ever sent to that address."
+            .to_owned(),
+        fields: field_map([
+            (HOME_ASSISTANT_URL_FIELD, address),
+            (
+                HOME_ASSISTANT_TOKEN_FIELD,
+                secret_field(
+                    "Long-lived access token",
+                    "Create one in Home Assistant on your profile page, under Security.",
+                ),
+            ),
+        ]),
+        egress: Some(EgressPin::Address {
+            field: HOME_ASSISTANT_URL_FIELD.to_owned(),
+        }),
+        icon: Some(HOME_ASSISTANT_ICON.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn policy(entries: &[&str]) -> EgressPolicy {
-        EgressPolicy {
-            allow_hosts: entries.iter().map(|e| (*e).to_owned()).collect(),
-        }
+    fn policy(entries: &[&str]) -> EgressPin {
+        EgressPin::Hosts(entries.iter().map(|e| (*e).to_owned()).collect())
     }
 
     #[test]
-    fn an_empty_list_allows_everything() {
-        assert!(policy(&[]).allows("anywhere.example.com", None));
+    fn an_empty_list_admits_nothing() {
+        assert!(!policy(&[]).allows("anywhere.example.com", None));
     }
 
     #[test]
@@ -700,7 +851,7 @@ mod tests {
         let egress = find("braiins-pool")
             .egress
             .expect("BUG: braiins-pool must be egress-pinned");
-        assert!(egress.allow_hosts.iter().any(|h| h == "api.braiins.com"));
+        assert_eq!(egress, EgressPin::Hosts(vec!["api.braiins.com".to_owned()]));
     }
 
     #[test]
@@ -796,7 +947,8 @@ mod tests {
 
     #[test]
     fn every_type_derives_exactly_the_fields_it_names() {
-        let everything = |_: &str| Some("x");
+        // Address-shaped, so a field derived from an address has one to parse.
+        let everything = |_: &str| Some("http://x.example");
         for builtin in BuiltinType::ALL {
             let derived: Vec<&str> = builtin
                 .derived_fields(everything)
@@ -822,7 +974,9 @@ mod tests {
         for builtin in BuiltinType::ALL {
             if matches!(
                 builtin,
-                BuiltinType::LocalFileToken | BuiltinType::GenericUserpass
+                BuiltinType::LocalFileToken
+                    | BuiltinType::GenericUserpass
+                    | BuiltinType::HomeAssistant
             ) {
                 continue;
             }
@@ -922,5 +1076,159 @@ mod tests {
         // so letting it through would save an entry meaning more than was written.
         assert!(check_entry("api.example.com:notaport").is_err());
         assert!(check_entry("api.example.com:99999").is_err());
+    }
+
+    fn derived_websocket_url(address: &str) -> Option<String> {
+        BuiltinType::HomeAssistant
+            .derived_fields(|field| (field == HOME_ASSISTANT_URL_FIELD).then_some(address))
+            .into_iter()
+            .find(|(field, _)| *field == HOME_ASSISTANT_WEBSOCKET_URL_FIELD)
+            .map(|(_, url)| url)
+    }
+
+    #[test]
+    fn a_home_assistant_address_derives_its_websocket_api() {
+        for (address, expected) in [
+            (
+                "http://homeassistant.local:8123",
+                "ws://homeassistant.local:8123/api/websocket",
+            ),
+            (
+                "http://homeassistant.local:8123/",
+                "ws://homeassistant.local:8123/api/websocket",
+            ),
+            ("http://192.168.1.10", "ws://192.168.1.10/api/websocket"),
+            (
+                "https://ha.example.com",
+                "wss://ha.example.com/api/websocket",
+            ),
+            (
+                "https://ha.example.com/",
+                "wss://ha.example.com/api/websocket",
+            ),
+            (
+                "https://ha.example.com:8443",
+                "wss://ha.example.com:8443/api/websocket",
+            ),
+        ] {
+            assert_eq!(
+                derived_websocket_url(address).as_deref(),
+                Some(expected),
+                "from {address}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_address_that_does_not_parse_derives_no_websocket_api() {
+        for address in ["", "homeassistant.local:8123", "ftp://ha.example.com"] {
+            assert_eq!(derived_websocket_url(address), None, "from {address:?}");
+        }
+    }
+
+    fn home_assistant_pin() -> EgressPin {
+        BuiltinType::HomeAssistant
+            .egress()
+            .expect("BUG: home-assistant is egress-pinned")
+    }
+
+    fn admits(address: Option<&str>, host: &str, port: u16) -> bool {
+        home_assistant_pin().allows_account(host, Some(port), |field| {
+            (field == HOME_ASSISTANT_URL_FIELD)
+                .then_some(address)
+                .flatten()
+        })
+    }
+
+    #[test]
+    fn a_home_assistant_token_may_reach_its_address_and_nothing_else() {
+        let address = Some("http://homeassistant.local:8123");
+
+        assert!(admits(address, "homeassistant.local", 8123));
+        assert!(
+            !admits(address, "homeassistant.local", 80),
+            "the pin holds the port as well as the host"
+        );
+        assert!(!admits(address, "attacker.example", 8123));
+    }
+
+    #[test]
+    fn an_address_without_a_port_pins_its_schemes_default() {
+        let address = Some("http://homeassistant.local");
+
+        assert!(
+            admits(address, "homeassistant.local", 80),
+            "ws:// shares http's default port"
+        );
+        assert!(!admits(address, "homeassistant.local", 8123));
+    }
+
+    #[test]
+    fn an_ipv6_address_pins_its_bare_host() {
+        assert!(admits(Some("http://[fd00::1]:8123"), "fd00::1", 8123));
+    }
+
+    #[test]
+    fn an_address_is_never_read_as_a_wildcard() {
+        let address = Some("http://*.lan:8123");
+
+        assert!(
+            url::Url::parse("http://*.lan:8123").is_ok(),
+            "the URL parser keeps `*` in a host, so only the comparison stops it",
+        );
+        assert!(!admits(address, "evil.lan", 8123));
+        assert!(admits(address, "*.lan", 8123));
+    }
+
+    #[test]
+    fn a_missing_or_broken_address_admits_nothing() {
+        for address in [None, Some("not a url"), Some("ftp://homeassistant.local")] {
+            assert!(
+                !admits(address, "homeassistant.local", 8123),
+                "{address:?} must pin nowhere, never everywhere"
+            );
+        }
+        assert!(
+            !home_assistant_pin().allows("homeassistant.local", Some(8123)),
+            "a check that reads no fields must not take the empty list as no pin"
+        );
+    }
+
+    #[test]
+    fn a_service_address_is_stored_as_its_bare_origin() {
+        for (address, stored) in [
+            (
+                "http://homeassistant.local:8123",
+                "http://homeassistant.local:8123",
+            ),
+            (
+                "http://HomeAssistant.local:8123/",
+                "http://homeassistant.local:8123",
+            ),
+            ("http://ha.example.com:80", "http://ha.example.com"),
+            ("http://[fd00::1]:8123", "http://[fd00::1]:8123"),
+        ] {
+            assert_eq!(service_origin(address), Ok(stored.to_owned()), "{address}");
+        }
+    }
+
+    #[test]
+    fn a_service_address_with_anything_beyond_its_origin_is_refused() {
+        for address in [
+            "",
+            "not a url",
+            "homeassistant.local:8123",
+            "ftp://homeassistant.local",
+            "https://homeassistant.local:8123",
+            "http://user:secret@homeassistant.local:8123",
+            "http://homeassistant.local:8123/lovelace",
+            "http://homeassistant.local:8123/?a=1",
+            "http://homeassistant.local:8123/#top",
+        ] {
+            assert!(
+                service_origin(address).is_err(),
+                "{address:?} must be refused"
+            );
+        }
     }
 }

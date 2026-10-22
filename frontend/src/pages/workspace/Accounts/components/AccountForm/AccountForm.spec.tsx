@@ -28,7 +28,17 @@ beforeEach(cleanup);
 
 const DESTINATIONS = 'Allowed destinations (optional)';
 
-const credentialTypes = (allowHosts: string[]) =>
+type Pin = { allowHosts: string[] } | { addressField: string };
+
+const egressPolicy = (pin: Pin) =>
+    pb.create(pb.EgressPolicySchema, {
+        pin:
+            'allowHosts' in pin
+                ? { case: 'hosts', value: pb.create(pb.HostPinSchema, pin) }
+                : { case: 'address', value: pb.create(pb.AddressPinSchema, { field: pin.addressField }) },
+    });
+
+const credentialTypes = (pin?: Pin) =>
     new Map([
         [
             'demo',
@@ -37,17 +47,17 @@ const credentialTypes = (allowHosts: string[]) =>
                 name: 'Demo',
                 description: 'A token.',
                 fields: [],
-                egress: allowHosts.length ? pb.create(pb.EgressPolicySchema, { allowHosts }) : undefined,
+                egress: pin ? egressPolicy(pin) : undefined,
             }),
         ],
     ]);
 
-const renderForm = (typePin: string[], allowHostsError?: string) =>
+const renderForm = (pin?: Pin, allowHostsError?: string) =>
     render(
         <IntlProvider locale="en">
             <AccountForm
                 mode="create"
-                credentialTypes={credentialTypes(typePin)}
+                credentialTypes={credentialTypes(pin)}
                 type={{ value: 'demo', onChange: () => {} }}
                 name={{ value: '', onChange: () => {} }}
                 fieldValues={{}}
@@ -59,19 +69,24 @@ const renderForm = (typePin: string[], allowHostsError?: string) =>
 
 describe('AccountForm destination control', () => {
     test('lets the operator name destinations for a type that pins none', () => {
-        expect(renderForm([]).queryByLabelText(DESTINATIONS)).toBeTruthy();
+        expect(renderForm().queryByLabelText(DESTINATIONS)).toBeTruthy();
     });
 
     test('offers no control for a type that pins its own', () => {
         // Not merely disabled: a pinned type's destinations are fixed,
         // so the form has nothing for the operator to set.
-        expect(renderForm(['api.braiins.com']).queryByLabelText(DESTINATIONS)).toBeNull();
+        expect(renderForm({ allowHosts: ['api.braiins.com'] }).queryByLabelText(DESTINATIONS)).toBeNull();
+    });
+
+    test('offers no control for a type pinned to its own address', () => {
+        // An empty host list must not read as "anywhere" when the address is the pin.
+        expect(renderForm({ addressField: 'url' }).queryByLabelText(DESTINATIONS)).toBeNull();
     });
 
     test('shows a rejected entry against the field it came from', () => {
         // The server reports `Line N`, and that only means something
         // beside the textarea those lines were typed into.
-        const { queryByText } = renderForm([], 'Line 2: an entry cannot contain spaces');
+        const { queryByText } = renderForm(undefined, 'Line 2: an entry cannot contain spaces');
 
         expect(queryByText('Line 2: an entry cannot contain spaces')).toBeTruthy();
     });

@@ -2290,6 +2290,11 @@
     "source": "Back to Scenes List",
     "translation": "返回场景列表"
   },
+  "x23UIheriP": {
+    "source": "It is only ever sent to the address you enter in {field}.",
+    "translation": "它只会发送到您在 {field} 中输入的地址。",
+    "description": "Account form notice on where a credential may be sent; field is the name of the form field holding the service address, such as Address"
+  },
   "xGb4YfSMXf": {
     "source": "Expand row",
     "translation": "展开行"

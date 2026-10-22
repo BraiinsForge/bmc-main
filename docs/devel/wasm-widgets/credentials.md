@@ -27,7 +27,7 @@ to an account, and the name your placeholders use.
       "label": "Weather service"
     },
     "home": {
-      "type": "generic-token",
+      "type": "home-assistant",
       "label": "Home Assistant"
     }
   }
@@ -36,12 +36,13 @@ to an account, and the name your placeholders use.
 
 `type` names one of the account kinds the firmware provides:
 
-| Type               | Configured fields      | Spendable fields                | Egress                      |
-| ------------------ | ---------------------- | ------------------------------- | --------------------------- |
-| `generic-token`    | `token`                | `token`                         | anywhere                    |
-| `generic-userpass` | `username`, `password` | `username`, `password`, `basic` | anywhere                    |
-| `braiins-pool`     | `token`                | `token`                         | pinned to `api.braiins.com` |
-| `local-file-token` | `path`                 | `token`                         | anywhere                    |
+| Type               | Configured fields      | Spendable fields                | Egress                               |
+| ------------------ | ---------------------- | ------------------------------- | ------------------------------------ |
+| `generic-token`    | `token`                | `token`                         | anywhere                             |
+| `generic-userpass` | `username`, `password` | `username`, `password`, `basic` | anywhere                             |
+| `braiins-pool`     | `token`                | `token`                         | pinned to `api.braiins.com`          |
+| `local-file-token` | `path`                 | `token`                         | anywhere                             |
+| `home-assistant`   | `url`, `token`         | `url`, `token`, `websocket_url` | pinned to the host and port of `url` |
 
 A slot's placeholders are generated for the **spendable** fields. For `local-file-token` the operator configures a file
 path on the device and bmc reads the token from it (polled every 5 s), so the widget spends `token` and never sees the
@@ -50,6 +51,12 @@ placeholder is refused like any unknown field.
 
 For `generic-userpass`, `basic` is `username:password` in base64, the credential HTTP Basic auth sends. The widget
 cannot encode a placeholder itself, so bmc does it: send `Authorization: Basic {{ credential.<slot>.basic }}`.
+
+For `home-assistant`, `url` is the instance's `http://` address, stored as its bare origin such as
+`http://homeassistant.local:8123`, so `{{ credential.<slot>.url }}/api/states` reaches the REST API. `websocket_url` is
+the WebSocket API derived from it: `ws://homeassistant.local:8123/api/websocket`. An `https://` address is refused when
+the account is saved, since the host cannot dial `wss://` yet. The token may go only to the host and port of `url`, and
+the account takes no destination list of its own.
 
 `label` is what the operator sees in the picker and is required. `description` is optional helper text. `required`
 defaults to `false`; a required slot left unbound warns the operator in the editor but never blocks saving, so your
@@ -72,6 +79,8 @@ For the manifest above that emits:
 pub mod credentials {
     pub mod home {
         pub const TOKEN: &str = "{{ credential.home.token }}";
+        pub const URL: &str = "{{ credential.home.url }}";
+        pub const WEBSOCKET_URL: &str = "{{ credential.home.websocket_url }}";
     }
     pub mod pool {
         pub const TOKEN: &str = "{{ credential.pool.token }}";
@@ -114,7 +123,7 @@ its own, so the host judges it against the host and port the socket connected to
 that authenticates on the socket, as Home Assistant does, takes the token in a message:
 
 ```rust
-let Some(ws) = ws_connect("ws://homeassistant.local:8123/api/websocket", None, on_event) else {
+let Some(ws) = ws_connect(credentials::home::WEBSOCKET_URL, None, on_event) else {
     return; // past the socket limit
 };
 

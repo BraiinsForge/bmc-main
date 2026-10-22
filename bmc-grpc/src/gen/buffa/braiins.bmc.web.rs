@@ -8927,14 +8927,14 @@ impl ::buffa::Message for CredentialType {
         self.icon = ::buffa::MessageField::none();
     }
 }
+/// Where a credential type's secret may go.
 #[derive(Clone, PartialEq, Default)]
 pub struct EgressPolicy {
-    /// Field 1: `allow_hosts`
-    pub allow_hosts: ::buffa::alloc::vec::Vec<::buffa::alloc::string::String>,
+    pub pin: ::core::option::Option<__buffa::oneof::egress_policy::Pin>,
 }
 impl ::core::fmt::Debug for EgressPolicy {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_struct("EgressPolicy").field("allow_hosts", &self.allow_hosts).finish()
+        f.debug_struct("EgressPolicy").field("pin", &self.pin).finish()
     }
 }
 impl EgressPolicy {
@@ -8952,6 +8952,158 @@ impl ::buffa::MessageName for EgressPolicy {
     const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.EgressPolicy";
 }
 impl ::buffa::Message for EgressPolicy {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let ::core::option::Option::Some(ref v) = self.pin {
+            match v {
+                __buffa::oneof::egress_policy::Pin::Hosts(x) => {
+                    let __slot = __cache.reserve();
+                    let inner = x.compute_size(__cache);
+                    __cache.set(__slot, inner);
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
+                            + inner as u64;
+                }
+                __buffa::oneof::egress_policy::Pin::Address(x) => {
+                    let __slot = __cache.reserve();
+                    let inner = x.compute_size(__cache);
+                    __cache.set(__slot, inner);
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
+                            + inner as u64;
+                }
+            }
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        __cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let ::core::option::Option::Some(ref v) = self.pin {
+            match v {
+                __buffa::oneof::egress_policy::Pin::Hosts(x) => {
+                    ::buffa::types::put_len_delimited_header(
+                        3u32,
+                        u64::from(__cache.consume_next()),
+                        buf,
+                    );
+                    x.write_to(__cache, buf);
+                }
+                __buffa::oneof::egress_policy::Pin::Address(x) => {
+                    ::buffa::types::put_len_delimited_header(
+                        4u32,
+                        u64::from(__cache.consume_next()),
+                        buf,
+                    );
+                    x.write_to(__cache, buf);
+                }
+            }
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                if let ::core::option::Option::Some(
+                    __buffa::oneof::egress_policy::Pin::Hosts(ref mut existing),
+                ) = self.pin
+                {
+                    ::buffa::Message::merge_length_delimited(existing, buf, ctx)?;
+                } else {
+                    let mut val = ::core::default::Default::default();
+                    ::buffa::Message::merge_length_delimited(&mut val, buf, ctx)?;
+                    self.pin = ::core::option::Option::Some(
+                        __buffa::oneof::egress_policy::Pin::Hosts(val),
+                    );
+                }
+            }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                if let ::core::option::Option::Some(
+                    __buffa::oneof::egress_policy::Pin::Address(ref mut existing),
+                ) = self.pin
+                {
+                    ::buffa::Message::merge_length_delimited(existing, buf, ctx)?;
+                } else {
+                    let mut val = ::core::default::Default::default();
+                    ::buffa::Message::merge_length_delimited(&mut val, buf, ctx)?;
+                    self.pin = ::core::option::Option::Some(
+                        __buffa::oneof::egress_policy::Pin::Address(val),
+                    );
+                }
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.pin = ::core::option::Option::None;
+    }
+}
+pub mod egress_policy {
+    #[allow(unused_imports)]
+    use super::*;
+    #[doc(inline)]
+    pub use super::__buffa::oneof::egress_policy::Pin;
+    #[doc(inline)]
+    pub use super::__buffa::view::oneof::egress_policy::Pin as PinView;
+}
+#[derive(Clone, PartialEq, Default)]
+pub struct HostPin {
+    /// Field 1: `allow_hosts`
+    pub allow_hosts: ::buffa::alloc::vec::Vec<::buffa::alloc::string::String>,
+}
+impl ::core::fmt::Debug for HostPin {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("HostPin").field("allow_hosts", &self.allow_hosts).finish()
+    }
+}
+impl HostPin {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.HostPin";
+}
+::buffa::impl_default_instance!(HostPin);
+impl ::buffa::MessageName for HostPin {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "HostPin";
+    const FULL_NAME: &'static str = "braiins.bmc.web.HostPin";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.HostPin";
+}
+impl ::buffa::Message for HostPin {
     /// Returns the total encoded size in bytes.
     ///
     /// Accumulates in `u64` (which cannot overflow for in-memory
@@ -9010,6 +9162,89 @@ impl ::buffa::Message for EgressPolicy {
     }
     fn clear(&mut self) {
         self.allow_hosts.clear();
+    }
+}
+#[derive(Clone, PartialEq, Default)]
+pub struct AddressPin {
+    /// The account field holding its service's address, such as a Home Assistant instance's.
+    ///
+    /// Field 1: `field`
+    pub field: ::buffa::alloc::string::String,
+}
+impl ::core::fmt::Debug for AddressPin {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("AddressPin").field("field", &self.field).finish()
+    }
+}
+impl AddressPin {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.AddressPin";
+}
+::buffa::impl_default_instance!(AddressPin);
+impl ::buffa::MessageName for AddressPin {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "AddressPin";
+    const FULL_NAME: &'static str = "braiins.bmc.web.AddressPin";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.AddressPin";
+}
+impl ::buffa::Message for AddressPin {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if !self.field.is_empty() {
+            size += 1u64 + ::buffa::types::string_encoded_len(&self.field) as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if !self.field.is_empty() {
+            ::buffa::types::put_string_field(1u32, &self.field, buf);
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(&mut self.field, buf)?;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.field.clear();
     }
 }
 #[derive(Clone, PartialEq, Default)]
@@ -36043,10 +36278,12 @@ pub mod __buffa {
             type View<'a> = CredentialTypeView<'a>;
             type ViewHandle = CredentialTypeOwnedView;
         }
+        /// Where a credential type's secret may go.
         #[derive(Clone, Debug, Default)]
         pub struct EgressPolicyView<'a> {
-            /// Field 1: `allow_hosts`
-            pub allow_hosts: ::buffa::RepeatedView<'a, &'a str>,
+            pub pin: ::core::option::Option<
+                super::super::__buffa::view::oneof::egress_policy::Pin<'a>,
+            >,
         }
         impl<'a> ::buffa::MessageView<'a> for EgressPolicyView<'a> {
             type Owned = super::super::EgressPolicy;
@@ -36084,16 +36321,67 @@ pub mod __buffa {
                 let view = self;
                 let mut cur = cur;
                 match tag.field_number() {
-                    1u32 => {
+                    3u32 => {
                         ::buffa::encoding::check_wire_type(
                             tag,
                             ::buffa::encoding::WireType::LengthDelimited,
                         )?;
-                        let __elem = ::buffa::types::borrow_str(&mut cur)?;
-                        ctx.register_element_memory(
-                            ::buffa::__private::element_footprint(&__elem),
+                        let __sub_ctx = ctx.descend()?;
+                        let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                        if let Some(
+                            super::super::__buffa::view::oneof::egress_policy::Pin::Hosts(
+                                ref mut existing,
+                            ),
+                        ) = view.pin
+                        {
+                            ::buffa::MessageView::merge_into_view(
+                                &mut **existing,
+                                sub,
+                                __sub_ctx,
+                            )?;
+                        } else {
+                            view.pin = Some(
+                                super::super::__buffa::view::oneof::egress_policy::Pin::Hosts(
+                                    ::buffa::alloc::boxed::Box::new(
+                                        <super::super::__buffa::view::HostPinView as ::buffa::MessageView>::decode_view_ctx(
+                                            sub,
+                                            __sub_ctx,
+                                        )?,
+                                    ),
+                                ),
+                            );
+                        }
+                    }
+                    4u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
                         )?;
-                        view.allow_hosts.push(__elem);
+                        let __sub_ctx = ctx.descend()?;
+                        let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                        if let Some(
+                            super::super::__buffa::view::oneof::egress_policy::Pin::Address(
+                                ref mut existing,
+                            ),
+                        ) = view.pin
+                        {
+                            ::buffa::MessageView::merge_into_view(
+                                &mut **existing,
+                                sub,
+                                __sub_ctx,
+                            )?;
+                        } else {
+                            view.pin = Some(
+                                super::super::__buffa::view::oneof::egress_policy::Pin::Address(
+                                    ::buffa::alloc::boxed::Box::new(
+                                        <super::super::__buffa::view::AddressPinView as ::buffa::MessageView>::decode_view_ctx(
+                                            sub,
+                                            __sub_ctx,
+                                        )?,
+                                    ),
+                                ),
+                            );
+                        }
                     }
                     _ => {
                         ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
@@ -36121,36 +36409,96 @@ pub mod __buffa {
                 use ::buffa::alloc::string::ToString as _;
                 let _ = __buffa_src;
                 ::core::result::Result::Ok(super::super::EgressPolicy {
-                    allow_hosts: self
-                        .allow_hosts
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect(),
+                    pin: match self.pin.as_ref() {
+                        ::core::option::Option::Some(v) => {
+                            ::core::option::Option::Some(
+                                match v {
+                                    super::super::__buffa::view::oneof::egress_policy::Pin::Hosts(
+                                        v,
+                                    ) => {
+                                        super::super::__buffa::oneof::egress_policy::Pin::Hosts(
+                                            v.to_owned_from_source(__buffa_src)?,
+                                        )
+                                    }
+                                    super::super::__buffa::view::oneof::egress_policy::Pin::Address(
+                                        v,
+                                    ) => {
+                                        super::super::__buffa::oneof::egress_policy::Pin::Address(
+                                            v.to_owned_from_source(__buffa_src)?,
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        ::core::option::Option::None => ::core::option::Option::None,
+                    },
                     ..::core::default::Default::default()
                 })
             }
         }
         impl<'a> ::buffa::ViewEncode<'a> for EgressPolicyView<'a> {
             #[allow(clippy::needless_borrow, clippy::let_and_return)]
-            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+            fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
                 #[allow(unused_imports)]
                 use ::buffa::Enumeration as _;
                 let mut size = 0u64;
-                for v in &self.allow_hosts {
-                    size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+                if let ::core::option::Option::Some(ref v) = self.pin {
+                    match v {
+                        super::super::__buffa::view::oneof::egress_policy::Pin::Hosts(
+                            x,
+                        ) => {
+                            let __slot = __cache.reserve();
+                            let inner = x.compute_size(__cache);
+                            __cache.set(__slot, inner);
+                            size
+                                += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
+                                    + inner as u64;
+                        }
+                        super::super::__buffa::view::oneof::egress_policy::Pin::Address(
+                            x,
+                        ) => {
+                            let __slot = __cache.reserve();
+                            let inner = x.compute_size(__cache);
+                            __cache.set(__slot, inner);
+                            size
+                                += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
+                                    + inner as u64;
+                        }
+                    }
                 }
                 ::buffa::saturate_size(size)
             }
             #[allow(clippy::needless_borrow)]
             fn write_to(
                 &self,
-                _cache: &mut ::buffa::SizeCache,
+                __cache: &mut ::buffa::SizeCache,
                 buf: &mut impl ::buffa::EncodeSink,
             ) {
                 #[allow(unused_imports)]
                 use ::buffa::Enumeration as _;
-                for v in &self.allow_hosts {
-                    ::buffa::types::put_string_field(1u32, v, buf);
+                if let ::core::option::Option::Some(ref v) = self.pin {
+                    match v {
+                        super::super::__buffa::view::oneof::egress_policy::Pin::Hosts(
+                            x,
+                        ) => {
+                            ::buffa::types::put_len_delimited_header(
+                                3u32,
+                                u64::from(__cache.consume_next()),
+                                buf,
+                            );
+                            x.write_to(__cache, buf);
+                        }
+                        super::super::__buffa::view::oneof::egress_policy::Pin::Address(
+                            x,
+                        ) => {
+                            ::buffa::types::put_len_delimited_header(
+                                4u32,
+                                u64::from(__cache.consume_next()),
+                                buf,
+                            );
+                            x.write_to(__cache, buf);
+                        }
+                    }
                 }
             }
         }
@@ -36244,10 +36592,14 @@ pub mod __buffa {
             pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
                 self.0.into_bytes()
             }
-            /// Field 1: `allow_hosts`
+            /// Oneof `pin`.
             #[must_use]
-            pub fn allow_hosts(&self) -> &::buffa::RepeatedView<'_, &'_ str> {
-                &self.0.reborrow().allow_hosts
+            pub fn pin(
+                &self,
+            ) -> ::core::option::Option<
+                &super::super::__buffa::view::oneof::egress_policy::Pin<'_>,
+            > {
+                self.0.reborrow().pin.as_ref()
             }
         }
         impl ::core::convert::From<::buffa::OwnedView<EgressPolicyView<'static>>>
@@ -36271,6 +36623,449 @@ pub mod __buffa {
         impl ::buffa::HasMessageView for super::super::EgressPolicy {
             type View<'a> = EgressPolicyView<'a>;
             type ViewHandle = EgressPolicyOwnedView;
+        }
+        #[derive(Clone, Debug, Default)]
+        pub struct HostPinView<'a> {
+            /// Field 1: `allow_hosts`
+            pub allow_hosts: ::buffa::RepeatedView<'a, &'a str>,
+        }
+        impl<'a> ::buffa::MessageView<'a> for HostPinView<'a> {
+            type Owned = super::super::HostPin;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        let __elem = ::buffa::types::borrow_str(&mut cur)?;
+                        ctx.register_element_memory(
+                            ::buffa::__private::element_footprint(&__elem),
+                        )?;
+                        view.allow_hosts.push(__elem);
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<super::super::HostPin, ::buffa::DecodeError> {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<super::super::HostPin, ::buffa::DecodeError> {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::HostPin {
+                    allow_hosts: self
+                        .allow_hosts
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for HostPinView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                for v in &self.allow_hosts {
+                    size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                _cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                for v in &self.allow_hosts {
+                    ::buffa::types::put_string_field(1u32, v, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for HostPinView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "HostPin";
+            const FULL_NAME: &'static str = "braiins.bmc.web.HostPin";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.HostPin";
+        }
+        ::buffa::impl_default_view_instance!(HostPinView);
+        ::buffa::impl_view_reborrow!(HostPinView);
+        /** Self-contained, `'static` owned view of a `HostPin` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`HostPinView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`HostPinView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct HostPinOwnedView(::buffa::OwnedView<HostPinView<'static>>);
+        impl HostPinOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    HostPinOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    HostPinOwnedView(
+                        ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+                    ),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::HostPin,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    HostPinOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`HostPinView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &HostPinView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::HostPin {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// Field 1: `allow_hosts`
+            #[must_use]
+            pub fn allow_hosts(&self) -> &::buffa::RepeatedView<'_, &'_ str> {
+                &self.0.reborrow().allow_hosts
+            }
+        }
+        impl ::core::convert::From<::buffa::OwnedView<HostPinView<'static>>>
+        for HostPinOwnedView {
+            fn from(inner: ::buffa::OwnedView<HostPinView<'static>>) -> Self {
+                HostPinOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<HostPinOwnedView>
+        for ::buffa::OwnedView<HostPinView<'static>> {
+            fn from(wrapper: HostPinOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<::buffa::OwnedView<HostPinView<'static>>>
+        for HostPinOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<HostPinView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::HostPin {
+            type View<'a> = HostPinView<'a>;
+            type ViewHandle = HostPinOwnedView;
+        }
+        #[derive(Clone, Debug, Default)]
+        pub struct AddressPinView<'a> {
+            /// The account field holding its service's address, such as a Home Assistant instance's.
+            ///
+            /// Field 1: `field`
+            pub field: &'a str,
+        }
+        impl<'a> ::buffa::MessageView<'a> for AddressPinView<'a> {
+            type Owned = super::super::AddressPin;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.field = ::buffa::types::borrow_str(&mut cur)?;
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<super::super::AddressPin, ::buffa::DecodeError> {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<super::super::AddressPin, ::buffa::DecodeError> {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::AddressPin {
+                    field: self.field.to_string(),
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for AddressPinView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                if !self.field.is_empty() {
+                    size
+                        += 1u64 + ::buffa::types::string_encoded_len(&self.field) as u64;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                _cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                if !self.field.is_empty() {
+                    ::buffa::types::put_string_field(1u32, &self.field, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for AddressPinView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "AddressPin";
+            const FULL_NAME: &'static str = "braiins.bmc.web.AddressPin";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.AddressPin";
+        }
+        ::buffa::impl_default_view_instance!(AddressPinView);
+        ::buffa::impl_view_reborrow!(AddressPinView);
+        /** Self-contained, `'static` owned view of a `AddressPin` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`AddressPinView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`AddressPinView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct AddressPinOwnedView(::buffa::OwnedView<AddressPinView<'static>>);
+        impl AddressPinOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    AddressPinOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    AddressPinOwnedView(
+                        ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+                    ),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::AddressPin,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    AddressPinOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`AddressPinView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &AddressPinView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::AddressPin {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// The account field holding its service's address, such as a Home Assistant instance's.
+            ///
+            /// Field 1: `field`
+            #[must_use]
+            pub fn field(&self) -> &'_ str {
+                self.0.reborrow().field
+            }
+        }
+        impl ::core::convert::From<::buffa::OwnedView<AddressPinView<'static>>>
+        for AddressPinOwnedView {
+            fn from(inner: ::buffa::OwnedView<AddressPinView<'static>>) -> Self {
+                AddressPinOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<AddressPinOwnedView>
+        for ::buffa::OwnedView<AddressPinView<'static>> {
+            fn from(wrapper: AddressPinOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<::buffa::OwnedView<AddressPinView<'static>>>
+        for AddressPinOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<AddressPinView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::AddressPin {
+            type View<'a> = AddressPinView<'a>;
+            type ViewHandle = AddressPinOwnedView;
         }
         #[derive(Clone, Debug, Default)]
         pub struct GetCredentialTypesResponseView<'a> {
@@ -56776,6 +57571,23 @@ pub mod __buffa {
                     ),
                 }
             }
+            pub mod egress_policy {
+                #[allow(unused_imports)]
+                use super::*;
+                #[derive(Clone, Debug)]
+                pub enum Pin<'a> {
+                    Hosts(
+                        ::buffa::alloc::boxed::Box<
+                            super::super::super::super::__buffa::view::HostPinView<'a>,
+                        >,
+                    ),
+                    Address(
+                        ::buffa::alloc::boxed::Box<
+                            super::super::super::super::__buffa::view::AddressPinView<'a>,
+                        >,
+                    ),
+                }
+            }
             pub mod network_config {
                 #[allow(unused_imports)]
                 use super::*;
@@ -57183,6 +57995,37 @@ pub mod __buffa {
                 }
             }
         }
+        pub mod egress_policy {
+            #[allow(unused_imports)]
+            use super::*;
+            #[derive(Clone, PartialEq, Debug)]
+            #[allow(clippy::large_enum_variant)]
+            pub enum Pin {
+                Hosts(super::super::super::HostPin),
+                Address(super::super::super::AddressPin),
+            }
+            impl ::buffa::Oneof for Pin {}
+            impl From<super::super::super::HostPin> for Pin {
+                fn from(v: super::super::super::HostPin) -> Self {
+                    Self::Hosts(v)
+                }
+            }
+            impl From<super::super::super::HostPin> for ::core::option::Option<Pin> {
+                fn from(v: super::super::super::HostPin) -> Self {
+                    Self::Some(Pin::from(v))
+                }
+            }
+            impl From<super::super::super::AddressPin> for Pin {
+                fn from(v: super::super::super::AddressPin) -> Self {
+                    Self::Address(v)
+                }
+            }
+            impl From<super::super::super::AddressPin> for ::core::option::Option<Pin> {
+                fn from(v: super::super::super::AddressPin) -> Self {
+                    Self::Some(Pin::from(v))
+                }
+            }
+        }
         pub mod network_config {
             #[allow(unused_imports)]
             use super::*;
@@ -57490,6 +58333,14 @@ pub use self::__buffa::view::CredentialTypeOwnedView;
 pub use self::__buffa::view::EgressPolicyView;
 #[doc(inline)]
 pub use self::__buffa::view::EgressPolicyOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::HostPinView;
+#[doc(inline)]
+pub use self::__buffa::view::HostPinOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::AddressPinView;
+#[doc(inline)]
+pub use self::__buffa::view::AddressPinOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::GetCredentialTypesResponseView;
 #[doc(inline)]

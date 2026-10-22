@@ -55,6 +55,12 @@ export interface AccountFormProps {
 const $ = getID('account-form').get;
 const br: ReactNode = <br />;
 
+/**
+ * Whether a type pins where its secret may go, by a list or by the account's own address,
+ * so that an account of it takes no destination list.
+ */
+export const isEgressPinned = (type: pb.CredentialType | undefined): boolean => type?.egress?.pin.case !== undefined;
+
 // Fully controlled, presentational account form: the credential-type picker, the account name, the
 // secret-disclosure notice, and the type's masked fields. The parent owns all state and submission.
 export function AccountForm(props: AccountFormProps) {
@@ -63,7 +69,6 @@ export function AccountForm(props: AccountFormProps) {
 
     const isEdit = mode === 'edit';
     const selectedType = type.value ? credentialTypes.get(type.value) : undefined;
-    const typePin = selectedType?.egress?.allowHosts ?? [];
 
     return (
         <Form className={css.form}>
@@ -121,7 +126,7 @@ export function AccountForm(props: AccountFormProps) {
                 />
             ) : null}
 
-            {selectedType && typePin.length === 0 ? (
+            {selectedType && !isEgressPinned(selectedType) ? (
                 <TextArea
                     id={$('allow-hosts')}
                     rows={3}

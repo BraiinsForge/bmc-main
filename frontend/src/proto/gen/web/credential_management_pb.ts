@@ -37,7 +37,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file web/credential_management.proto.
  */
 export const file_web_credential_management: GenFile = /*@__PURE__*/
-  fileDesc("Ch93ZWIvY3JlZGVudGlhbF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIi2wEKDkNyZWRlbnRpYWxUeXBlEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSOAoGZmllbGRzGAQgAygLMiguYnJhaWlucy5ibWMud2ViLk1hbmlmZXN0UGFyYW1EZWZpbml0aW9uEi0KBmVncmVzcxgFIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5FZ3Jlc3NQb2xpY3kSKAoEaWNvbhgGIAEoCzIVLmJyYWlpbnMuYm1jLndlYi5JY29uSACIAQFCBwoFX2ljb24iIwoMRWdyZXNzUG9saWN5EhMKC2FsbG93X2hvc3RzGAEgAygJIlcKGkdldENyZWRlbnRpYWxUeXBlc1Jlc3BvbnNlEjkKEGNyZWRlbnRpYWxfdHlwZXMYASADKAsyHy5icmFpaW5zLmJtYy53ZWIuQ3JlZGVudGlhbFR5cGUyeAobQ3JlZGVudGlhbE1hbmFnZW1lbnRTZXJ2aWNlElkKEkdldENyZWRlbnRpYWxUeXBlcxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRorLmJyYWlpbnMuYm1jLndlYi5HZXRDcmVkZW50aWFsVHlwZXNSZXNwb25zZWIGcHJvdG8z", [file_google_protobuf_empty, file_web_field_schema, file_web_shared]);
+  fileDesc("Ch93ZWIvY3JlZGVudGlhbF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIi2wEKDkNyZWRlbnRpYWxUeXBlEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSOAoGZmllbGRzGAQgAygLMiguYnJhaWlucy5ibWMud2ViLk1hbmlmZXN0UGFyYW1EZWZpbml0aW9uEi0KBmVncmVzcxgFIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5FZ3Jlc3NQb2xpY3kSKAoEaWNvbhgGIAEoCzIVLmJyYWlpbnMuYm1jLndlYi5JY29uSACIAQFCBwoFX2ljb24imAEKDEVncmVzc1BvbGljeRIpCgVob3N0cxgDIAEoCzIYLmJyYWlpbnMuYm1jLndlYi5Ib3N0UGluSAASLgoHYWRkcmVzcxgEIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5BZGRyZXNzUGluSABCBQoDcGluSgQIARACSgQIAhADUgthbGxvd19ob3N0c1INYWRkcmVzc19maWVsZCIeCgdIb3N0UGluEhMKC2FsbG93X2hvc3RzGAEgAygJIhsKCkFkZHJlc3NQaW4SDQoFZmllbGQYASABKAkiVwoaR2V0Q3JlZGVudGlhbFR5cGVzUmVzcG9uc2USOQoQY3JlZGVudGlhbF90eXBlcxgBIAMoCzIfLmJyYWlpbnMuYm1jLndlYi5DcmVkZW50aWFsVHlwZTJ4ChtDcmVkZW50aWFsTWFuYWdlbWVudFNlcnZpY2USWQoSR2V0Q3JlZGVudGlhbFR5cGVzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GisuYnJhaWlucy5ibWMud2ViLkdldENyZWRlbnRpYWxUeXBlc1Jlc3BvbnNlYgZwcm90bzM", [file_google_protobuf_empty, file_web_field_schema, file_web_shared]);
 
 /**
  * A kind of account a widget can bind. Each field key is the interpolation variable a widget
@@ -89,13 +89,31 @@ export const CredentialTypeSchema: GenMessage<CredentialType> = /*@__PURE__*/
   messageDesc(file_web_credential_management, 0);
 
 /**
+ * Where a credential type's secret may go.
+ *
  * @generated from message braiins.bmc.web.EgressPolicy
  */
 export type EgressPolicy = Message<"braiins.bmc.web.EgressPolicy"> & {
   /**
-   * @generated from field: repeated string allow_hosts = 1;
+   * @generated from oneof braiins.bmc.web.EgressPolicy.pin
    */
-  allowHosts: string[];
+  pin: {
+    /**
+     * Only to these hosts.
+     *
+     * @generated from field: braiins.bmc.web.HostPin hosts = 3;
+     */
+    value: HostPin;
+    case: "hosts";
+  } | {
+    /**
+     * Only to the host and port of the address an account of the type configures.
+     *
+     * @generated from field: braiins.bmc.web.AddressPin address = 4;
+     */
+    value: AddressPin;
+    case: "address";
+  } | { case: undefined; value?: undefined };
 };
 
 /**
@@ -104,6 +122,42 @@ export type EgressPolicy = Message<"braiins.bmc.web.EgressPolicy"> & {
  */
 export const EgressPolicySchema: GenMessage<EgressPolicy> = /*@__PURE__*/
   messageDesc(file_web_credential_management, 1);
+
+/**
+ * @generated from message braiins.bmc.web.HostPin
+ */
+export type HostPin = Message<"braiins.bmc.web.HostPin"> & {
+  /**
+   * @generated from field: repeated string allow_hosts = 1;
+   */
+  allowHosts: string[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.HostPin.
+ * Use `create(HostPinSchema)` to create a new message.
+ */
+export const HostPinSchema: GenMessage<HostPin> = /*@__PURE__*/
+  messageDesc(file_web_credential_management, 2);
+
+/**
+ * @generated from message braiins.bmc.web.AddressPin
+ */
+export type AddressPin = Message<"braiins.bmc.web.AddressPin"> & {
+  /**
+   * The account field holding its service's address, such as a Home Assistant instance's.
+   *
+   * @generated from field: string field = 1;
+   */
+  field: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.AddressPin.
+ * Use `create(AddressPinSchema)` to create a new message.
+ */
+export const AddressPinSchema: GenMessage<AddressPin> = /*@__PURE__*/
+  messageDesc(file_web_credential_management, 3);
 
 /**
  * @generated from message braiins.bmc.web.GetCredentialTypesResponse
@@ -120,7 +174,7 @@ export type GetCredentialTypesResponse = Message<"braiins.bmc.web.GetCredentialT
  * Use `create(GetCredentialTypesResponseSchema)` to create a new message.
  */
 export const GetCredentialTypesResponseSchema: GenMessage<GetCredentialTypesResponse> = /*@__PURE__*/
-  messageDesc(file_web_credential_management, 2);
+  messageDesc(file_web_credential_management, 4);
 
 /**
  * @generated from service braiins.bmc.web.CredentialManagementService

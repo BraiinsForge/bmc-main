@@ -30,6 +30,7 @@
 //! so guest code has no path to a credential value.
 
 use anyhow::Result;
+use bmc_widget_manifest::credential::authority_of;
 use std::collections::BTreeMap;
 use wasmi::{Caller, Extern, Linker};
 
@@ -548,14 +549,17 @@ fn egress_permitted(
             });
         };
         let account_hosts = access.secrets.allow_hosts(slot);
-        let permitted = if account_hosts.is_empty() {
-            builtin.egress().is_none_or(|p| p.allows(host, port))
+        // An empty operator list leaves the type's own pin, or none, in force.
+        let pin = if account_hosts.is_empty() {
+            builtin.egress()
         } else {
-            let policy = bmc_widget_manifest::credential::EgressPolicy {
-                allow_hosts: account_hosts.iter().map(|&e| e.to_owned()).collect(),
-            };
-            policy.allows(host, port)
+            Some(bmc_widget_manifest::credential::EgressPin::Hosts(
+                account_hosts.iter().map(|&e| e.to_owned()).collect(),
+            ))
         };
+        let permitted = pin.is_none_or(|pin| {
+            pin.allows_account(host, port, |field| access.secrets.field(slot, field))
+        });
         if !permitted {
             return Err(CredentialRefusal::OutsideEgressPin {
                 slot: bounded_refusal_text(slot),
@@ -564,27 +568,6 @@ fn egress_permitted(
         }
     }
     Ok(())
-}
-
-/// Host and effective port of a parsed URL.
-///
-/// The port is the one connected to, not the one spelled: an entry
-/// spelling `api.example.com:443` matches `https://api.example.com/`.
-/// Comparing written ports left that spelling inert while the grammar offered it.
-///
-/// Goes through the typed [`url::Host`] rather than `host_str`,
-/// which keeps the brackets around an IPv6 literal.
-/// Rendering the address instead gives the bare form a CIDR entry parses,
-/// and a domain arrives IDNA-encoded, so an internationalised name
-/// is already punycode by the time a pin sees it.
-fn authority_of(url: &url::Url) -> Option<(String, Option<u16>)> {
-    let host = match url.host()? {
-        url::Host::Domain(domain) => domain.to_owned(),
-        url::Host::Ipv4(addr) => addr.to_string(),
-        url::Host::Ipv6(addr) => addr.to_string(),
-    };
-
-    Some((host, url.port_or_known_default()))
 }
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
@@ -1301,6 +1284,88 @@ mod tests {
                 "dialling {url}"
             );
         }
+    }
+
+    /// A host holding a Home Assistant account at `address` on the `home` slot.
+    fn host_state_with_home_assistant(address: &str) -> HostState {
+        let mut state = host_state_with(BuiltinType::HomeAssistant.id());
+        let mut view = BTreeMap::new();
+        view.insert(
+            "home".to_owned(),
+            BoundCredential {
+                type_id: BuiltinType::HomeAssistant.id().to_owned(),
+                account_name: "Home".to_owned(),
+            },
+        );
+        state.credentials.replace(CredentialView::new(view));
+        let mut slots = serde_json::Map::new();
+        slots.insert(
+            "home".to_owned(),
+            serde_json::json!({ "fields": {
+                "url": address,
+                "token": "h4-t0ken",
+                "websocket_url": "ws://homeassistant.local:8123/api/websocket",
+            } }),
+        );
+        state.credential_secrets = bmc_widget_protocol::CredentialSecrets::new(slots);
+        state
+    }
+
+    const HOME_AUTH: &str = r#"{"type":"auth","access_token":"{{ credential.home.token }}"}"#;
+
+    #[test]
+    fn a_home_assistant_socket_dials_and_authenticates_on_its_own_address() {
+        let state = host_state_with_home_assistant("http://homeassistant.local:8123");
+
+        let spent = spend(&state, "{{ credential.home.websocket_url }}", &[], None)
+            .expect("BUG: the derived URL lies on the account's own address");
+        assert_eq!(spent.url, "ws://homeassistant.local:8123/api/websocket");
+
+        let message = spend_message(
+            CredentialAccess::of(&state),
+            &dialled_destination(&spent.url),
+            HOME_AUTH.to_owned(),
+        )
+        .expect("BUG: the socket was dialled to the account's own address");
+        assert_eq!(message.text, r#"{"type":"auth","access_token":"h4-t0ken"}"#);
+    }
+
+    #[test]
+    fn a_home_assistant_token_cannot_follow_a_socket_elsewhere() {
+        let state = host_state_with_home_assistant("http://homeassistant.local:8123");
+
+        for destination in [
+            dialled("attacker.example", 8123),
+            dialled("homeassistant.local", 80),
+        ] {
+            assert_eq!(
+                spend_message(
+                    CredentialAccess::of(&state),
+                    &destination,
+                    HOME_AUTH.to_owned()
+                ),
+                Err(CredentialRefusal::OutsideEgressPin {
+                    slot: "home".to_owned(),
+                    type_id: BuiltinType::HomeAssistant.id().to_owned(),
+                }),
+                "toward {destination:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_home_assistant_account_without_a_usable_address_spends_nowhere() {
+        let state = host_state_with_home_assistant("not a url");
+
+        assert!(
+            spend_message(
+                CredentialAccess::of(&state),
+                &dialled("homeassistant.local", 8123),
+                HOME_AUTH.to_owned()
+            )
+            .is_err(),
+            "a broken address must pin the token nowhere, never everywhere",
+        );
     }
 
     fn parsed_authority(url: &str) -> Option<(String, Option<u16>)> {

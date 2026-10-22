@@ -32,13 +32,28 @@ const credentialType = (allowHosts: string[], description = 'A token.') =>
         name: 'Demo',
         description,
         fields: [],
-        egress: allowHosts.length ? pb.create(pb.EgressPolicySchema, { allowHosts }) : undefined,
+        egress: allowHosts.length
+            ? pb.create(pb.EgressPolicySchema, {
+                  pin: { case: 'hosts', value: pb.create(pb.HostPinSchema, { allowHosts }) },
+              })
+            : undefined,
     });
 
-const renderForm = (type: pb.CredentialType) =>
+const addressPinnedType = () =>
+    pb.create(pb.CredentialTypeSchema, {
+        id: 'demo',
+        name: 'Demo',
+        description: 'A service.',
+        fields: [pb.create(pb.ManifestParamDefinitionSchema, { key: 'url', name: 'Address' })],
+        egress: pb.create(pb.EgressPolicySchema, {
+            pin: { case: 'address', value: pb.create(pb.AddressPinSchema, { field: 'url' }) },
+        }),
+    });
+
+const renderForm = (type: pb.CredentialType, values: Record<string, string> = {}) =>
     render(
         <IntlProvider locale="en">
-            <CredentialTypeForm type={type} values={{}} onChange={() => {}} />
+            <CredentialTypeForm type={type} values={values} onChange={() => {}} />
         </IntlProvider>,
     );
 
@@ -59,5 +74,14 @@ describe('CredentialTypeForm egress disclosure', () => {
         const { queryByText } = renderForm(credentialType([], 'Only ever sent to totally-safe.example.'));
 
         expect(queryByText('It may be sent to any host.')).toBeTruthy();
+    });
+});
+
+describe('CredentialTypeForm address pin', () => {
+    test('names the address field a type is pinned to, never any host', () => {
+        const { queryByText } = renderForm(addressPinnedType());
+
+        expect(queryByText('It is only ever sent to the address you enter in Address.')).toBeTruthy();
+        expect(queryByText('It may be sent to any host.')).toBeNull();
     });
 });

@@ -559,6 +559,38 @@ mod tests {
     }
 
     #[test]
+    fn a_home_assistant_account_also_yields_its_websocket_url() {
+        let mut account = account(
+            "a-5",
+            BuiltinType::HomeAssistant.id(),
+            "Home",
+            HOME_ASSISTANT_URL_FIELD,
+            "http://homeassistant.local:8123",
+        );
+        account
+            .field_values
+            .insert(slot(HOME_ASSISTANT_TOKEN_FIELD), "t0ken".to_owned());
+
+        let resolution = resolve(
+            &bound(&[(POOL, "a-5")]),
+            &store(vec![account]),
+            &FileTokens::default(),
+        );
+
+        assert_eq!(
+            resolution
+                .secrets
+                .field(POOL, HOME_ASSISTANT_WEBSOCKET_URL_FIELD),
+            Some("ws://homeassistant.local:8123/api/websocket")
+        );
+        assert_eq!(
+            resolution.secrets.field(POOL, HOME_ASSISTANT_URL_FIELD),
+            Some("http://homeassistant.local:8123"),
+            "the address stays spendable too, for the REST API, and pins the token"
+        );
+    }
+
+    #[test]
     fn a_userpass_account_missing_its_password_yields_no_basic_credential() {
         let resolution = resolve(
             &bound(&[(POOL, "a-4")]),

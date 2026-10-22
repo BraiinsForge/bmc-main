@@ -43,7 +43,9 @@ const credentialTypeList = [
         name: 'Braiins Pool',
         description: 'A Braiins Pool API token used to fetch your worker stats.',
         fields: [stringField('token', 'API token', 'Your Braiins Pool API token.', true)],
-        egress: pb.create(pb.EgressPolicySchema, { allowHosts: ['api.braiins.com'] }),
+        egress: pb.create(pb.EgressPolicySchema, {
+            pin: { case: 'hosts', value: pb.create(pb.HostPinSchema, { allowHosts: ['api.braiins.com'] }) },
+        }),
     }),
     pb.create(pb.CredentialTypeSchema, {
         id: 'generic-token',

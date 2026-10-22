@@ -2290,6 +2290,11 @@
     "source": "Back to Scenes List",
     "translation": "[Ɓȧȧƈķ ŧǿǿ Şƈḗḗƞḗḗş Ŀīşŧ]"
   },
+  "x23UIheriP": {
+    "source": "It is only ever sent to the address you enter in {field}.",
+    "translation": "[Īŧ īş ǿǿƞŀẏ ḗḗṽḗḗř şḗḗƞŧ ŧǿǿ ŧħḗḗ ȧȧḓḓřḗḗşş ẏǿǿŭŭ ḗḗƞŧḗḗř īƞ {field}.]",
+    "description": "Account form notice on where a credential may be sent; field is the name of the form field holding the service address, such as Address"
+  },
   "xGb4YfSMXf": {
     "source": "Expand row",
     "translation": "[Ḗẋƥȧȧƞḓ řǿǿẇ]"

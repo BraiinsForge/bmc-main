@@ -50,11 +50,12 @@
 //!
 //! #[unsafe(no_mangle)]
 //! pub extern "C" fn init() {
-//!     WS.set(ws_connect("ws://192.168.1.10:8123/api/websocket", None, on_event));
+//!     WS.set(ws_connect("{{ credential.home.websocket_url }}", None, on_event));
 //! }
 //!
-//! // The host substitutes the bound token as the message leaves;
-//! // the widget never sees it. See `docs/devel/wasm-widgets/credentials.md`.
+//! // The host substitutes the bound account's values as the URL is dialled
+//! // and the message leaves; the widget never sees them.
+//! // See `docs/devel/wasm-widgets/credentials.md`.
 //! fn on_event(ws: &Ws, event: &WsEvent<'_>) {
 //!     match event {
 //!         WsEvent::Open => {

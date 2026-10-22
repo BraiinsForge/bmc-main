@@ -52,13 +52,7 @@ fn credential_type_to_proto(t: &credential::CredentialType) -> web::CredentialTy
             .iter()
             .map(|(key, field)| scalar_field_to_proto(key.as_str(), field))
             .collect(),
-        egress: t
-            .egress
-            .as_ref()
-            .map(|e| web::EgressPolicy {
-                allow_hosts: e.allow_hosts.clone(),
-            })
-            .into(),
+        egress: t.egress.as_ref().map(egress_pin_to_proto).into(),
         icon: t
             .icon
             .as_ref()
@@ -68,6 +62,20 @@ fn credential_type_to_proto(t: &credential::CredentialType) -> web::CredentialTy
             })
             .into(),
     }
+}
+
+fn egress_pin_to_proto(pin: &credential::EgressPin) -> web::EgressPolicy {
+    let pin = match pin {
+        credential::EgressPin::Hosts(hosts) => web::egress_policy::Pin::Hosts(web::HostPin {
+            allow_hosts: hosts.clone(),
+        }),
+        credential::EgressPin::Address { field } => {
+            web::egress_policy::Pin::Address(web::AddressPin {
+                field: field.clone(),
+            })
+        }
+    };
+    web::EgressPolicy { pin: Some(pin) }
 }
 
 #[cfg(test)]
@@ -85,12 +93,26 @@ mod tests {
     fn maps_egress_pin_and_field_order() {
         let pool = credential_type_to_proto(&find("braiins-pool"));
         assert_eq!(pool.id, "braiins-pool");
-        assert_eq!(
-            pool.egress
-                .expect("BUG: braiins-pool egress must map")
-                .allow_hosts,
-            vec!["api.braiins.com".to_owned()]
-        );
+        let Some(web::egress_policy::Pin::Hosts(hosts)) = pool
+            .egress
+            .into_option()
+            .expect("BUG: braiins-pool egress must map")
+            .pin
+        else {
+            panic!("BUG: braiins-pool is pinned to hosts");
+        };
+        assert_eq!(hosts.allow_hosts, vec!["api.braiins.com".to_owned()]);
+
+        let home = credential_type_to_proto(&find("home-assistant"));
+        let Some(web::egress_policy::Pin::Address(address)) = home
+            .egress
+            .into_option()
+            .expect("BUG: home-assistant egress must map")
+            .pin
+        else {
+            panic!("BUG: home-assistant is pinned to its address");
+        };
+        assert_eq!(address.field, "url");
 
         let userpass = credential_type_to_proto(&find("generic-userpass"));
         assert!(userpass.egress.is_unset(), "generics carry no egress pin");

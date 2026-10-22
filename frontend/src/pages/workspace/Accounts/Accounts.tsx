@@ -194,7 +194,7 @@ class View extends Component<Props, State> {
         if (!dialog) return;
 
         // Covers a hand-edited store, whose list never passed through the form.
-        const pinned = !!this.state.credentialTypes.get(form.values.type ?? '')?.egress?.allowHosts.length;
+        const pinned = Comp.isEgressPinned(this.state.credentialTypes.get(form.values.type ?? ''));
         const hosts = pinned ? [] : splitAllowHosts(form.values.allowHosts ?? '');
 
         await setState(this, {
