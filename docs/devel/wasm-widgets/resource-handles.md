@@ -16,12 +16,14 @@ plain id instead, and ends on its own.
 | `http_listener::http_listen`                                 | `HttpListener`     | `close()`      |
 | `register_poll`                                              | `PollHandle`       | `stop()`       |
 
-Each call except `register_poll` returns `None` when the host refuses the resource. The host logs why when a runtime
-limit refuses it, a listener's port cannot be bound, or the mDNS daemon cannot register a service; input it cannot use,
-such as an empty list of service types, is refused without a log. A hermetic capture refuses `http_listen` and
-`mdns_register`; the other network calls get a handle that receives only the events in the capture's fixture, and none
-when the fixture has none. A widget's unit tests run hermetic with no fixture: `http_listen` and `mdns_register` are
-refused, and the other calls get a handle that never receives an event.
+Each call except `register_poll` returns `None` when the host refuses the resource, such as one past the runtime limit.
+A socket `ws_connect` hands back can still be refused after that, for a credential or a URL the host will not dial; it
+reports why at the next delivery as `WsEvent::HostClosed`. The host logs why when a runtime limit refuses it, a
+listener's port cannot be bound, or the mDNS daemon cannot register a service; input it cannot use, such as an empty
+list of service types, is refused without a log. A hermetic capture refuses `http_listen` and `mdns_register`; the other
+network calls get a handle that receives only the events in the capture's fixture, and none when the fixture has none. A
+widget's unit tests run hermetic with no fixture: `http_listen` and `mdns_register` are refused, and the other calls get
+a handle that never receives an event.
 
 ## Keep The Handle
 
@@ -88,7 +90,8 @@ fn on_socket_event(socket: &Socket, event: &SocketEvent<'_>) {
 The borrowed handle stays usable after that, but does nothing: a write or a send on a closed connection is dropped.
 
 When the peer closes a socket or a WebSocket, the callback gets `SocketEvent::Closed` or `WsEvent::Close`, and the
-stored handle reaches nothing from then on. Clear or replace it there, so a stored `Some` keeps meaning connected.
+stored handle reaches nothing from then on. A WebSocket the host closes, or refuses to open, gets `WsEvent::HostClosed`
+instead, and ends the same way. Clear or replace it there, so a stored `Some` keeps meaning connected.
 
 Several handles of one kind can share a callback. To find the one an event belongs to, compare the argument with the
 stored handles.

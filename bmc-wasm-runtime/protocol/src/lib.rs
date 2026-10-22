@@ -34,6 +34,7 @@ pub mod time;
 pub mod timer;
 pub mod version;
 pub mod versioned_snapshot;
+pub mod ws;
 #[cfg(feature = "host")]
 pub mod xml;
 
@@ -45,3 +46,4 @@ pub use tags::*;
 pub use time::*;
 pub use timer::*;
 pub use version::*;
+pub use ws::{LEGACY_HOST_CLOSE_CODE, WsEventKind, WsHostClose};

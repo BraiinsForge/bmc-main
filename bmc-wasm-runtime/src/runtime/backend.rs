@@ -1141,6 +1141,7 @@ impl WasmWidgetRuntime {
         // State is staged; instantiate (running `start`, if any) and resolve exports.
         let instance = linker.instantiate_and_start(&mut store, &module.module)?;
         let protocol_version = check_protocol_version(instance, &mut store)?;
+        store.data_mut().widget_protocol_version = Some(protocol_version);
         let entered = match entry {
             EntryPolicy::Widget => Entry::Widget {
                 render: instance.get_typed_func::<u32, ()>(&store, "render")?,
@@ -2542,9 +2543,15 @@ impl WasmWidgetRuntime {
         let (msg_tx, msg_rx) = std::sync::mpsc::channel::<crate::host_api::WsOutbound>();
         let (_evt_tx, event_rx) = std::sync::mpsc::channel();
         let id = bmc_wasm_protocol::WebsocketId::alloc(&mut state.next_ws_id);
-        state
-            .websockets
-            .insert(id, crate::host_api::ActiveWebSocket { msg_tx, event_rx });
+        state.websockets.insert(
+            id,
+            crate::host_api::ActiveWebSocket {
+                msg_tx,
+                event_rx,
+                destination: crate::host_api::WsDestination::Stub,
+                host_close: None,
+            },
+        );
         std::thread::spawn(move || while msg_rx.recv().is_ok() {})
     }
 

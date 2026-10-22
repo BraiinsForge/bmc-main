@@ -1001,7 +1001,7 @@ fn protocol_version_constant_matches_fixture_assumption() {
     let (major, minor, patch) = WasmWidgetRuntime::host_protocol_version();
     let packed = u64::from(major) | (u64::from(minor) << 16) | (u64::from(patch) << 32);
     assert_eq!(
-        packed, 589_824,
+        packed, 655_360,
         "host protocol version drifted to ({major}, {minor}, {patch}); \
          bumping `PROTOCOL_VERSION` means updating this pinned literal."
     );

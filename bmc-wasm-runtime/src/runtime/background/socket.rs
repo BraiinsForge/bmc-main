@@ -117,73 +117,78 @@ pub(in crate::runtime) fn build_tls_client_config(
 }
 
 /// Background thread for a single WebSocket connection.
+///
+/// `url` is dialled and may carry substituted secrets, so it is never logged;
+/// `log_url` is the widget's own placeholder form.
 #[expect(clippy::too_many_lines)]
 #[expect(clippy::needless_pass_by_value)] // ownership needed: moved into spawned thread
 pub(in crate::runtime) fn ws_background_thread(
     ws_id: u32,
     url: &str,
+    log_url: &str,
     headers: &[(String, String)],
     event_tx: std::sync::mpsc::Sender<WsEvent>,
     msg_rx: std::sync::mpsc::Receiver<WsOutbound>,
 ) {
+    use tungstenite::Message;
     use tungstenite::http::Request;
-    use tungstenite::stream::MaybeTlsStream;
-    use tungstenite::{Message, connect};
+    use tungstenite::protocol::CloseFrame;
 
-    let connect_result = if headers.is_empty() {
-        connect(url)
-    } else {
-        let uri: tungstenite::http::Uri = match url.parse() {
-            Ok(u) => u,
-            Err(e) => {
-                tracing::error!(ws_id, "WS bad URL: {e}");
-                let _ = event_tx.send(WsEvent::Close(1002));
-                return;
-            }
-        };
-        let mut request = Request::builder()
-            .uri(&uri)
-            .header(
-                "Host",
-                uri.authority()
-                    .map_or_else(|| "localhost".to_owned(), ToString::to_string),
-            )
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header(
-                "Sec-WebSocket-Key",
-                tungstenite::handshake::client::generate_key(),
-            );
-        for (k, v) in headers {
-            request = request.header(k.as_str(), v.as_str());
+    let uri: tungstenite::http::Uri = match url.parse() {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::error!(ws_id, url = %log_url, "WS bad URL: {e}");
+            let _ = event_tx.send(WsEvent::Close(1002));
+            return;
         }
-        let request = match request.body(()) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!(ws_id, "WS bad request: {e}");
-                let _ = event_tx.send(WsEvent::Close(1002));
-                return;
-            }
-        };
-        connect(request)
+    };
+    let mut request = Request::builder()
+        .uri(&uri)
+        .header("Host", host_header(&uri))
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        );
+    for (k, v) in headers {
+        request = request.header(k.as_str(), v.as_str());
+    }
+    let request = match request.body(()) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(ws_id, url = %log_url, "WS bad request: {e}");
+            let _ = event_tx.send(WsEvent::Close(1002));
+            return;
+        }
     };
 
-    let (mut socket, _response) = match connect_result {
+    let tcp = match dial(&uri) {
+        Ok(tcp) => tcp,
+        Err(reason) => {
+            tracing::error!(ws_id, url = %log_url, "WS connect failed: {reason}");
+            let _ = event_tx.send(WsEvent::Close(1006));
+            return;
+        }
+    };
+    // One handshake on the dialled stream: a redirect fails it instead of being followed,
+    // so the socket never leaves the host the egress pin judged.
+    let (mut socket, _response) = match tungstenite::client(request, tcp) {
         Ok(pair) => pair,
         Err(e) => {
-            tracing::error!(ws_id, "WS connect failed: {e}");
+            tracing::error!(ws_id, url = %log_url, "WS handshake failed: {e}");
             let _ = event_tx.send(WsEvent::Close(1006));
             return;
         }
     };
 
-    if let MaybeTlsStream::Plain(tcp) = socket.get_ref() {
-        let _ = tcp.set_read_timeout(Some(Duration::from_millis(50)));
-    }
+    let _ = socket
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_millis(50)));
 
     let _ = event_tx.send(WsEvent::Open);
-    tracing::info!(ws_id, %url, "WS connected");
+    tracing::info!(ws_id, url = %log_url, "WS connected");
 
     loop {
         loop {
@@ -195,9 +200,12 @@ pub(in crate::runtime) fn ws_background_thread(
                         return;
                     }
                 }
-                Ok(WsOutbound::Close) => {
-                    let _ = socket.close(None);
-                    let _ = event_tx.send(WsEvent::Close(1000));
+                Ok(WsOutbound::Close(code)) => {
+                    let _ = socket.close(code.map(|code| CloseFrame {
+                        code: code.into(),
+                        reason: "".into(),
+                    }));
+                    let _ = event_tx.send(WsEvent::Close(code.unwrap_or(1000)));
                     return;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -238,6 +246,44 @@ pub(in crate::runtime) fn ws_background_thread(
 
     let _ = event_tx.send(WsEvent::Close(1006));
     tracing::info!(ws_id, "WS background thread exiting");
+}
+
+/// Open the TCP connection a `ws://` URI names.
+///
+/// Dialled here rather than by `tungstenite::connect`,
+/// which logs the URI it dials and names it in its errors,
+/// and the URI dialled here may carry substituted secrets.
+fn dial(uri: &tungstenite::http::Uri) -> Result<std::net::TcpStream, String> {
+    use std::net::ToSocketAddrs as _;
+
+    // No TLS is built in, and `tungstenite::client` would run a cleartext handshake against a `wss://` port.
+    if uri.scheme_str() != Some("ws") {
+        return Err("only ws:// is supported".to_owned());
+    }
+    let host = uri
+        .host()
+        .ok_or_else(|| "the URI has no host".to_owned())?
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let port = uri.port_u16().unwrap_or(80);
+    let addrs = (host, port).to_socket_addrs().map_err(|e| e.to_string())?;
+
+    let tcp = addrs
+        .into_iter()
+        .find_map(|addr| std::net::TcpStream::connect(addr).ok())
+        .ok_or_else(|| "unable to connect".to_owned())?;
+    // As `tungstenite::connect` does: a frame goes out whole, so Nagle only delays it.
+    tcp.set_nodelay(true).map_err(|e| e.to_string())?;
+    Ok(tcp)
+}
+
+/// The `Host` header for `uri`: its host and any port it names, without the userinfo.
+fn host_header(uri: &tungstenite::http::Uri) -> String {
+    match (uri.host(), uri.port()) {
+        (Some(host), Some(port)) => format!("{host}:{port}"),
+        (Some(host), None) => host.to_owned(),
+        (None, _) => "localhost".to_owned(),
+    }
 }
 
 /// Background thread for a plain TCP socket connection.
@@ -480,11 +526,67 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
 
 #[cfg(test)]
 mod tests {
-    use super::{TlsVerificationMode, build_tls_client_config};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    use super::{TlsVerificationMode, build_tls_client_config, dial, ws_background_thread};
 
     #[test]
     fn tls_client_config_builds_for_both_modes() {
         assert!(build_tls_client_config(TlsVerificationMode::Full).is_ok());
         assert!(build_tls_client_config(TlsVerificationMode::Insecure).is_ok());
+    }
+
+    #[test]
+    #[expect(
+        clippy::result_large_err,
+        reason = "tungstenite's handshake callback must return its own ErrorResponse"
+    )]
+    fn the_host_header_carries_no_userinfo() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        let server = std::thread::spawn(move || {
+            let (tcp, _) = listener.accept().expect("BUG: accept test client");
+            let mut host = None;
+            let _ = tungstenite::accept_hdr(
+                tcp,
+                |request: &tungstenite::handshake::server::Request,
+                 response: tungstenite::handshake::server::Response| {
+                    host = request
+                        .headers()
+                        .get("Host")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned);
+                    Ok(response)
+                },
+            );
+            host
+        });
+
+        let (event_tx, _event_rx) = mpsc::channel();
+        let (msg_tx, msg_rx) = mpsc::channel();
+        drop(msg_tx);
+        let url = format!("ws://user:s3cr3t@{addr}/");
+        ws_background_thread(1, &url, &url, &[], event_tx, msg_rx);
+
+        assert_eq!(
+            server.join().expect("BUG: the test server panicked"),
+            Some(addr.to_string()),
+            "the Host header names the host and port alone",
+        );
+    }
+
+    #[test]
+    fn a_dialled_stream_sends_without_delay() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        let uri = format!("ws://{addr}/")
+            .parse()
+            .expect("BUG: a loopback URI parses");
+        let tcp = dial(&uri).expect("BUG: the listener accepts");
+        assert!(
+            tcp.nodelay().expect("BUG: read TCP_NODELAY"),
+            "a frame goes out whole, so Nagle would only delay it",
+        );
     }
 }

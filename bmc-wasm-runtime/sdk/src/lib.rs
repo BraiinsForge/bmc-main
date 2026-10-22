@@ -423,7 +423,7 @@ pub use tz::Tz;
 pub use ufmt;
 #[cfg(target_arch = "wasm32")]
 pub use ws::ws_connect;
-pub use ws::{Ws, WsEvent};
+pub use ws::{Ws, WsEvent, WsHostClose};
 pub use xml::XmlDoc;
 
 // `bmc_ui` and the protocol both have `ids` and `time` modules; the root presents

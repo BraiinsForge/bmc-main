@@ -53,7 +53,7 @@ use bmc_render::tree::WalkState;
 use bmc_ui::AudioId;
 use bmc_wasm_protocol::{
     FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId, MdnsBrowseId,
-    MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
+    MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, WsHostClose, XmlId,
 };
 
 use crate::audio_registry::AudioRegistry;
@@ -479,6 +479,10 @@ pub enum FixtureEventKind {
         ws_id: WebsocketId,
         code: u16,
     },
+    WsHostClosed {
+        ws_id: WebsocketId,
+        reason: WsHostClose,
+    },
     SocketConnected {
         socket_id: SocketId,
     },
@@ -632,8 +636,10 @@ pub enum WsEvent {
     Open,
     /// A text message was received.
     Message(Vec<u8>),
-    /// Connection closed with a status code.
+    /// The peer closed the connection with this code, or it failed.
     Close(u16),
+    /// The host closed the connection, or never opened it.
+    HostClosed(WsHostClose),
 }
 
 /// An active WebSocket connection managed by a background thread.
@@ -642,14 +648,33 @@ pub struct ActiveWebSocket {
     pub msg_tx: mpsc::Sender<WsOutbound>,
     /// Channel to receive inbound events from the background read loop.
     pub event_rx: mpsc::Receiver<WsEvent>,
+    pub destination: WsDestination,
+    /// Set when the host closed the socket on the widget's behalf, or refused to open it.
+    /// The widget receives this in place of whatever the thread reports.
+    pub host_close: Option<WsHostClose>,
 }
+
+/// Where a WebSocket's messages go.
+/// A message has no URL of its own, so the egress pin judges it by this.
+#[derive(Debug, PartialEq, Eq)]
+pub enum WsDestination {
+    /// Nothing was dialled: a fixture or hermetic stub, whose messages go nowhere.
+    Stub,
+    /// The host and effective port the connection was dialled to.
+    Dialled { host: String, port: u16 },
+    /// The pin cannot judge this destination, so no credential may follow it.
+    Unpinnable,
+}
+
+/// Close code the peer gets for a message refused because of the credential it spends.
+pub const WS_CLOSE_POLICY_VIOLATION: u16 = 1008;
 
 /// Outbound message or control signal for a WebSocket background thread.
 pub enum WsOutbound {
     /// Send a text message.
     Text(String),
-    /// Close the connection.
-    Close,
+    /// Close the connection, sending the peer this code when one is given.
+    Close(Option<u16>),
 }
 
 /// A TLS socket event queued for delivery to WASM.
@@ -1115,6 +1140,11 @@ pub(crate) struct HostState {
     /// Active WebSocket connections, keyed by ws_id.
     pub websockets: HashMap<WebsocketId, ActiveWebSocket>,
 
+    /// The protocol the widget was built for, `None` until its `__bmc_sdk_init` answers,
+    /// which is after the module's `start` function runs.
+    /// Each gate decides what an unknown version means for it.
+    pub widget_protocol_version: Option<(u16, u16, u16)>,
+
     /// Next WebSocket ID counter (for `WebsocketId::alloc`).
     pub next_ws_id: u32,
 
@@ -1468,6 +1498,14 @@ impl HostState {
             .is_some()
     }
 
+    /// Whether the widget reads the host's closes of a WebSocket as events of their own;
+    /// not before its version is known.
+    #[must_use]
+    pub fn reads_ws_host_close(&self) -> bool {
+        self.widget_protocol_version
+            .is_some_and(|version| version >= bmc_wasm_protocol::WS_HOST_CLOSE_PROTOCOL)
+    }
+
     /// Create new host state with default `system` / `params` snapshots
     /// (version 0). The runtime constructor stages the operator-supplied
     /// initial snapshots via `.replace(...)` to bump both to version 1
@@ -1525,6 +1563,7 @@ impl HostState {
             xml_indices: HashMap::new(),
             next_xml_id: 1,
             websockets: HashMap::new(),
+            widget_protocol_version: None,
             next_ws_id: 1,
             sockets: HashMap::new(),
             next_socket_id: 1,
@@ -2117,6 +2156,20 @@ mod tests {
         state.mark_renderer_assets_active();
         assert!(!state.renderer_assets_are_dormant());
         assert_eq!(state.renderer_asset_gate, RendererAssetGate::Active);
+    }
+
+    #[test]
+    fn a_widget_whose_version_is_not_known_yet_gets_the_old_websocket_contract() {
+        let mut state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+            FetchAgent::default(),
+        );
+
+        assert!(!state.reads_ws_host_close());
+
+        state.widget_protocol_version = Some(bmc_wasm_protocol::PROTOCOL_VERSION);
+        assert!(state.reads_ws_host_close());
     }
 
     #[cfg(feature = "audio")]

@@ -26,7 +26,7 @@ use anyhow::Result;
 use bmc_ui::BitmapId;
 use bmc_wasm_protocol::{
     FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, ON_TIMER_EXPORT,
-    SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId,
+    SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, WsEventKind,
 };
 use std::ptr::NonNull;
 use std::time::Duration;
@@ -94,6 +94,14 @@ impl WasmWidgetRuntime {
                 FixtureEventKind::WsClose { ws_id, code } => {
                     if let Some(tx) = ef.ws_event_txs.get(ws_id) {
                         let _ = tx.send(WsEvent::Close(*code));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                FixtureEventKind::WsHostClosed { ws_id, reason } => {
+                    if let Some(tx) = ef.ws_event_txs.get(ws_id) {
+                        let _ = tx.send(WsEvent::HostClosed(*reason));
                         true
                     } else {
                         false
@@ -586,15 +594,24 @@ impl WasmWidgetRuntime {
         let state = self.store.data_mut();
         for (&ws_id, ws) in &state.websockets {
             while let Ok(event) = ws.event_rx.try_recv() {
-                let is_close = matches!(event, WsEvent::Close(_));
+                let ends = matches!(event, WsEvent::Close(_) | WsEvent::HostClosed(_));
+                if ends && ws.host_close.is_some() {
+                    break;
+                }
                 events.push((ws_id, event));
-                if is_close {
+                if ends {
                     closed_ids.push(ws_id);
                 }
                 #[cfg(feature = "testing")]
                 {
                     state.delivered_events += 1;
                 }
+            }
+            // The host chose this close, so it wins:
+            // a thread still dialling would report its own 1006.
+            if let Some(reason) = ws.host_close {
+                events.push((ws_id, WsEvent::HostClosed(reason)));
+                closed_ids.push(ws_id);
             }
         }
         for id in &closed_ids {
@@ -614,6 +631,10 @@ impl WasmWidgetRuntime {
                         ws_id: *ws_id,
                         code: *code,
                     },
+                    WsEvent::HostClosed(reason) => FixtureEventKind::WsHostClosed {
+                        ws_id: *ws_id,
+                        reason: *reason,
+                    },
                 };
                 state.recorded_events.push(FixtureEvent { at_ms, kind });
             }
@@ -629,7 +650,9 @@ impl WasmWidgetRuntime {
     /// to WASM by calling `__on_ws_event(ws_id, event_type, data_ptr, data_len)`.
     ///
     /// Event types: 0 = Open, 1 = Message, 2 = Close (data_ptr/data_len carry
-    /// the close code as two little-endian bytes).
+    /// the close code as two little-endian bytes), 3 = HostClosed (one byte,
+    /// the `WsHostClose` wire value). A widget built before 3 existed
+    /// gets the host's close as a 2 with its legacy code.
     pub fn deliver_ws_messages(&mut self) -> bool {
         self.stage_ws_messages();
         self.deliver_staged_ws_messages()
@@ -662,12 +685,21 @@ impl WasmWidgetRuntime {
             return false;
         };
 
+        let reads_host_close = self.store.data().reads_ws_host_close();
         for (ws_id, event) in events {
-            let (event_type, data): (u32, &[u8]) = match &event {
-                WsEvent::Open => (0, &[]),
-                WsEvent::Message(bytes) => (1, bytes),
-                WsEvent::Close(code) => (2, &code.to_le_bytes()),
+            let (kind, data): (WsEventKind, &[u8]) = match &event {
+                WsEvent::Open => (WsEventKind::Open, &[]),
+                WsEvent::Message(bytes) => (WsEventKind::Text, bytes),
+                WsEvent::Close(code) => (WsEventKind::Close, &code.to_le_bytes()),
+                WsEvent::HostClosed(reason) if reads_host_close => {
+                    (WsEventKind::HostClosed, &[reason.to_wire()])
+                }
+                WsEvent::HostClosed(_) => (
+                    WsEventKind::Close,
+                    &bmc_wasm_protocol::LEGACY_HOST_CLOSE_CODE.to_le_bytes(),
+                ),
             };
+            let event_type = kind.to_wire();
 
             let Some((data_ptr, data_len)) =
                 self.alloc_guest_bytes(alloc_func, data, "websocket event payload")

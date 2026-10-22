@@ -25,6 +25,10 @@ to an account, and the name your placeholders use.
     "weather": {
       "type": "generic-token",
       "label": "Weather service"
+    },
+    "home": {
+      "type": "generic-token",
+      "label": "Home Assistant"
     }
   }
 }
@@ -66,6 +70,9 @@ For the manifest above that emits:
 
 ```rust
 pub mod credentials {
+    pub mod home {
+        pub const TOKEN: &str = "{{ credential.home.token }}";
+    }
     pub mod pool {
         pub const TOKEN: &str = "{{ credential.pool.token }}";
     }
@@ -99,13 +106,48 @@ sending it half-built:
 A refused request comes back as `FetchOutcome::Refused`, not the `Network` failure a widget would retry — neither cause
 becomes true on a second attempt. Rebinding the slot or fixing the placeholder is what clears it.
 
-In a request that spends a credential, `{{` is reserved: anything between braces that is not a credential reference is
-an error, not text passed through, and the request is refused rather than sent half-built. Write `{{{{` for a literal
-`{{`. A request naming no credential is never examined, so a widget templating its own URL — the image widget's
-`{{width}}` — is unaffected until it also spends a credential.
+### On a WebSocket
 
-Everything the device logs about the request — diagnostics, recorded fixtures, hermetic-run reports — shows the
-placeholder, never the resolved value.
+`ws_connect` substitutes placeholders in the URL and headers, and `Ws::send` in every message. A message has no URL of
+its own, so the host judges it against the host and port the socket connected to. The handshake follows no redirect: a
+3xx answer fails the connect, so the socket only ever talks to the host its URL names, the one the pin judged. A service
+that authenticates on the socket, as Home Assistant does, takes the token in a message:
+
+```rust
+let Some(ws) = ws_connect("ws://homeassistant.local:8123/api/websocket", None, on_event) else {
+    return; // past the socket limit
+};
+
+// Once `on_event` sees `WsEvent::Open`:
+let auth = fmt!(r#"{{"type":"auth","access_token":"{}"}}"#, credentials::home::TOKEN);
+ws.send(&auth);
+```
+
+The same two causes stop it. As with fetch, the widget learns of either from a host callback, never inside the call that
+caused it, and reconnecting does not clear it:
+
+- a refused connect still hands back a socket, which is never dialled. The widget receives
+  `WsEvent::HostClosed(WsHostClose::Credential)` at the next delivery;
+- a refused message is not sent. The host closes the socket instead, and the widget receives the same
+  `WsEvent::HostClosed(WsHostClose::Credential)`. `Ws::send` returns nothing, so that event is how the widget learns of
+  it.
+
+The host's own closes arrive as `WsEvent::HostClosed`, which no peer can send, so a peer's 1008 in a `WsEvent::Close` is
+never mistaken for one. The peer of a refused message still gets a close frame with 1008. A widget built for a protocol
+older than 0.10 has no `HostClosed` to read, and gets the same close as a `WsEvent::Close` with that code instead.
+
+A socket whose URL the host cannot read a host from carries no credential in any message. The value goes in verbatim:
+the host does not escape it for JSON or anything else.
+
+### Reserved Braces
+
+In a request or message that spends a credential, `{{` is reserved: anything between braces that is not a credential
+reference is an error, not text passed through, and the request is refused rather than sent half-built. Write `{{{{` for
+a literal `{{`. A request or message naming no credential is never examined, so a widget templating its own URL — the
+image widget's `{{width}}` — or sending Home Assistant a Jinja template is unaffected until it also spends a credential.
+
+Everything the device logs about the request or socket — diagnostics, recorded fixtures, hermetic-run reports — shows
+the placeholder, never the resolved value.
 
 ## React to Binding Changes
 

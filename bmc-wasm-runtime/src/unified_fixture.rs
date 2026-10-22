@@ -283,6 +283,12 @@ pub enum UnifiedEvent {
         ws_id: u32,
         code: u16,
     },
+    /// The host closed the socket, or refused to open it.
+    WsHostClosed {
+        ws_id: u32,
+        /// By name, such as `"credential"`.
+        reason: bmc_wasm_protocol::WsHostClose,
+    },
 
     // ── TCP socket ──────────────────────────────────────────────
     SocketConnected {
@@ -424,6 +430,7 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
             | UnifiedEvent::WsOpen { .. }
             | UnifiedEvent::WsMessage { .. }
             | UnifiedEvent::WsClose { .. }
+            | UnifiedEvent::WsHostClosed { .. }
             | UnifiedEvent::SocketConnected { .. }
             | UnifiedEvent::SocketData { .. }
             | UnifiedEvent::SocketClosed { .. }
@@ -870,6 +877,10 @@ mod tests {
                 ws_id: 3,
                 code: 1000,
             },
+            UnifiedEvent::WsHostClosed {
+                ws_id: 5,
+                reason: bmc_wasm_protocol::WsHostClose::Credential,
+            },
             UnifiedEvent::SocketConnected { socket_id: 4 },
             UnifiedEvent::SocketData {
                 socket_id: 4,
@@ -891,6 +902,28 @@ mod tests {
             let json = serde_json::to_string(&te).expect("BUG: serialize");
             let parsed: TimelineEvent = serde_json::from_str(&json).expect("BUG: deserialize");
             assert_eq!(parsed.at_ms, 42);
+        }
+    }
+
+    #[test]
+    fn a_host_close_is_written_by_its_reason_s_name() {
+        let line = r#"{"at_ms":0,"type":"ws_host_closed","ws_id":1,"reason":"credential"}"#;
+        let event: TimelineEvent = serde_json::from_str(line).expect("BUG: a named reason parses");
+        assert!(matches!(
+            event.event,
+            UnifiedEvent::WsHostClosed {
+                reason: bmc_wasm_protocol::WsHostClose::Credential,
+                ..
+            }
+        ));
+
+        for reason in [r#""nope""#, "2"] {
+            let line =
+                format!(r#"{{"at_ms":0,"type":"ws_host_closed","ws_id":1,"reason":{reason}}}"#);
+            assert!(
+                serde_json::from_str::<TimelineEvent>(&line).is_err(),
+                "{reason} must be refused when the fixture loads, not replayed as something else",
+            );
         }
     }
 

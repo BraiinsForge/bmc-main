@@ -255,6 +255,10 @@ fn fixture_event_kind_to_unified(kind: &FixtureEventKind) -> crate::unified_fixt
             ws_id: ws_id.to_wire(),
             code: *code,
         },
+        FixtureEventKind::WsHostClosed { ws_id, reason } => UnifiedEvent::WsHostClosed {
+            ws_id: ws_id.to_wire(),
+            reason: *reason,
+        },
         FixtureEventKind::SocketConnected { socket_id } => UnifiedEvent::SocketConnected {
             socket_id: socket_id.to_wire(),
         },

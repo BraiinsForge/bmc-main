@@ -33,7 +33,7 @@ use anyhow::Result;
 use std::collections::BTreeMap;
 use wasmi::{Caller, Extern, Linker};
 
-use crate::host_api::HostState;
+use crate::host_api::{HostState, WsDestination};
 
 /// The account bound to one slot, as the guest is allowed to see it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -171,6 +171,8 @@ pub(crate) enum CredentialRefusal {
     UnknownCredentialType { slot: String, type_id: String },
     #[error("destination is outside the credential's egress pin slot={slot:?} type_id={type_id:?}")]
     OutsideEgressPin { slot: String, type_id: String },
+    #[error("the socket's destination cannot be checked against the egress pin")]
+    SocketDestinationUnpinnable,
 }
 
 impl From<SubstitutionError> for CredentialRefusal {
@@ -306,7 +308,9 @@ pub(in crate::runtime) fn spend(
     let url = resolve(url)?;
     // Never logged with the URL: it now carries the secret.
     let destination = url::Url::parse(&url).map_err(|_| CredentialRefusal::DestinationNotUrl)?;
-    egress_permitted(state, &destination, &spent)?;
+    let (host, port) =
+        authority_of(&destination).ok_or(CredentialRefusal::DestinationWithoutHost)?;
+    egress_permitted(CredentialAccess::of(state), &host, port, &spent)?;
     client_reads_the_same_host(&destination, &url)?;
     let headers = headers
         .iter()
@@ -328,6 +332,66 @@ pub(in crate::runtime) fn spend(
         body,
         carries_secret: true,
     })
+}
+
+/// Where a WebSocket dialled to `url` will send its messages.
+///
+/// Every connect gets one, spent or not:
+/// a socket opened to a literal address may still send a credential later.
+/// Only a host both parsers agree on is pinnable,
+/// for the reason [`client_reads_the_same_host`] gives.
+pub(in crate::runtime) fn dialled_destination(url: &str) -> WsDestination {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return WsDestination::Unpinnable;
+    };
+    if client_reads_the_same_host(&parsed, url).is_err() {
+        return WsDestination::Unpinnable;
+    }
+    match authority_of(&parsed) {
+        Some((host, Some(port))) => WsDestination::Dialled { host, port },
+        Some((_, None)) | None => WsDestination::Unpinnable,
+    }
+}
+
+/// What the egress pin and substitution read, borrowed apart from the rest of [`HostState`]
+/// so that a socket can stay borrowed mutably beside it.
+#[derive(Clone, Copy)]
+pub(in crate::runtime) struct CredentialAccess<'a> {
+    pub view: &'a bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache<CredentialView>,
+    pub secrets: &'a bmc_widget_protocol::CredentialSecrets,
+}
+
+impl<'a> CredentialAccess<'a> {
+    pub(in crate::runtime) fn of(state: &'a HostState) -> Self {
+        Self {
+            view: &state.credentials,
+            secrets: &state.credential_secrets,
+        }
+    }
+}
+
+/// Substitute the widget's credential placeholders into one WebSocket message,
+/// judged by where its socket was dialled.
+/// A message naming no credential is returned untouched.
+pub(in crate::runtime) fn spend_message(
+    access: CredentialAccess<'_>,
+    destination: &WsDestination,
+    message: String,
+) -> Result<String, CredentialRefusal> {
+    let mut spent = Vec::new();
+    collect_slots(&message, &mut spent);
+    if spent.is_empty() {
+        return Ok(message);
+    }
+
+    match destination {
+        WsDestination::Stub => Ok(message),
+        WsDestination::Unpinnable => Err(CredentialRefusal::SocketDestinationUnpinnable),
+        WsDestination::Dialled { host, port } => {
+            egress_permitted(access, host, Some(*port), &spent)?;
+            Ok(substitute(&message, access.secrets)?)
+        }
+    }
 }
 
 /// `url` with the origin a rewrite names swapped for its replacement,
@@ -390,39 +454,42 @@ fn client_reads_the_same_host(destination: &url::Url, sent: &str) -> Result<(), 
 /// means a request is pinned only by the secrets it actually spends.
 fn slots_referenced(url: &str, headers: &[(String, String)], body: Option<&[u8]>) -> Vec<String> {
     let mut slots: Vec<String> = Vec::new();
-    // Same walk as `substitute`, so the two agree on what counts
-    // as a reference, including that an escaped `{{{{` is not one.
-    let mut scan = |text: &str| {
-        let mut rest = text;
-        while let Some((_, after)) = rest.split_once("{{") {
-            if let Some(tail) = after.strip_prefix("{{") {
-                rest = tail;
-                continue;
-            }
-            let Some((name, tail)) = after.split_once("}}") else {
-                break;
-            };
-            let mut parts = name.trim().split('.');
-            if parts.next() == Some("credential")
-                && let Some(slot) = parts.next()
-                && !slots.iter().any(|s| s == slot)
-            {
-                slots.push(slot.to_owned());
-            }
-            rest = tail;
-        }
-    };
 
-    scan(url);
+    collect_slots(url, &mut slots);
     for (name, value) in headers {
-        scan(name);
-        scan(value);
+        collect_slots(name, &mut slots);
+        collect_slots(value, &mut slots);
     }
     if let Some(text) = body.and_then(|b| std::str::from_utf8(b).ok()) {
-        scan(text);
+        collect_slots(text, &mut slots);
     }
 
     slots
+}
+
+/// Add each slot `text` refers to, once.
+///
+/// Same walk as `substitute`, so the two agree on what counts
+/// as a reference, including that an escaped `{{{{` is not one.
+fn collect_slots(text: &str, slots: &mut Vec<String>) {
+    let mut rest = text;
+    while let Some((_, after)) = rest.split_once("{{") {
+        if let Some(tail) = after.strip_prefix("{{") {
+            rest = tail;
+            continue;
+        }
+        let Some((name, tail)) = after.split_once("}}") else {
+            break;
+        };
+        let mut parts = name.trim().split('.');
+        if parts.next() == Some("credential")
+            && let Some(slot) = parts.next()
+            && !slots.iter().any(|s| s == slot)
+        {
+            slots.push(slot.to_owned());
+        }
+        rest = tail;
+    }
 }
 
 /// Whether every credential the request spends may travel to this destination.
@@ -431,12 +498,12 @@ fn slots_referenced(url: &str, headers: &[(String, String)], body: Option<&[u8]>
 /// without one, its credential type decides from the firmware catalog.
 /// Nothing the *guest* says moves the pin either way.
 fn egress_permitted(
-    state: &HostState,
-    url: &url::Url,
+    access: CredentialAccess<'_>,
+    host: &str,
+    port: Option<u16>,
     spent: &[String],
 ) -> Result<(), CredentialRefusal> {
-    let (host, port) = authority_of(url).ok_or(CredentialRefusal::DestinationWithoutHost)?;
-    let view = state.credentials.snapshot();
+    let view = access.view.snapshot();
 
     for slot in spent {
         let Some(type_id) = view.type_of(slot) else {
@@ -446,7 +513,7 @@ fn egress_permitted(
             //
             // A secret whose type cannot be named has no known
             // destination, so it has none: refuse rather than assume.
-            if state.credential_secrets.has_slot(slot) {
+            if access.secrets.has_slot(slot) {
                 return Err(CredentialRefusal::SecretSlotUnknownType {
                     slot: bounded_refusal_text(slot),
                 });
@@ -464,14 +531,14 @@ fn egress_permitted(
                 type_id: bounded_refusal_text(type_id),
             });
         };
-        let account_hosts = state.credential_secrets.allow_hosts(slot);
+        let account_hosts = access.secrets.allow_hosts(slot);
         let permitted = if account_hosts.is_empty() {
-            builtin.egress().is_none_or(|p| p.allows(&host, port))
+            builtin.egress().is_none_or(|p| p.allows(host, port))
         } else {
             let policy = bmc_widget_manifest::credential::EgressPolicy {
                 allow_hosts: account_hosts.iter().map(|&e| e.to_owned()).collect(),
             };
-            policy.allows(&host, port)
+            policy.allows(host, port)
         };
         if !permitted {
             return Err(CredentialRefusal::OutsideEgressPin {
@@ -1040,6 +1107,176 @@ mod tests {
             .err(),
             Some(CredentialRefusal::DestinationWithoutHost),
         );
+    }
+
+    fn dialled(host: &str, port: u16) -> WsDestination {
+        WsDestination::Dialled {
+            host: host.to_owned(),
+            port,
+        }
+    }
+
+    const AUTH_MESSAGE: &str = r#"{"type":"auth","access_token":"{{ credential.pool.token }}"}"#;
+
+    #[test]
+    fn a_socket_on_a_scheme_without_a_known_port_is_unpinnable() {
+        assert_eq!(
+            dialled_destination("foo://api.braiins.com/"),
+            WsDestination::Unpinnable,
+            "with no port to judge, no credential may follow the socket",
+        );
+    }
+
+    #[test]
+    fn a_message_spends_its_secret_toward_the_sockets_destination() {
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
+
+        assert_eq!(
+            spend_message(
+                CredentialAccess::of(&state),
+                &dialled("api.braiins.com", 443),
+                AUTH_MESSAGE.to_owned()
+            ),
+            Ok(r#"{"type":"auth","access_token":"s3cr3t"}"#.to_owned()),
+        );
+    }
+
+    #[test]
+    fn a_message_cannot_spend_a_secret_off_its_sockets_pin() {
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
+
+        assert_eq!(
+            spend_message(
+                CredentialAccess::of(&state),
+                &dialled("attacker.example", 443),
+                AUTH_MESSAGE.to_owned()
+            ),
+            Err(CredentialRefusal::OutsideEgressPin {
+                slot: "pool".to_owned(),
+                type_id: BuiltinType::BraiinsPool.id().to_owned(),
+            }),
+        );
+    }
+
+    #[test]
+    fn a_message_with_an_unresolvable_placeholder_is_refused() {
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
+
+        assert_eq!(
+            spend_message(
+                CredentialAccess::of(&state),
+                &dialled("api.braiins.com", 443),
+                "{{ credential.pool.tokne }}".to_owned()
+            ),
+            Err(CredentialRefusal::Substitution(
+                SubstitutionError::UnknownField {
+                    slot: "pool".to_owned(),
+                    field: "tokne".to_owned(),
+                }
+            )),
+        );
+        assert_eq!(
+            spend_message(
+                CredentialAccess::of(&state),
+                &dialled("api.braiins.com", 443),
+                "{{ credential.weather.token }}".to_owned()
+            ),
+            Err(CredentialRefusal::Substitution(
+                SubstitutionError::NoSecretForSlot {
+                    slot: "weather".to_owned(),
+                }
+            )),
+            "an unbound slot must fail the same way it does for fetch",
+        );
+    }
+
+    #[test]
+    fn no_secret_follows_a_socket_the_pin_cannot_judge() {
+        let state = host_state_with(BuiltinType::GenericToken.id());
+
+        assert_eq!(
+            spend_message(
+                CredentialAccess::of(&state),
+                &WsDestination::Unpinnable,
+                AUTH_MESSAGE.to_owned()
+            ),
+            Err(CredentialRefusal::SocketDestinationUnpinnable),
+            "even an unpinned type: no destination is not the same as any destination",
+        );
+    }
+
+    #[test]
+    fn a_message_spending_nothing_goes_out_untouched_wherever_the_socket_leads() {
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
+        // Home Assistant's `render_template` sends Jinja, braces and all.
+        let template = r#"{"type":"render_template","template":"{{ states('sun.sun') }}"}"#;
+
+        for destination in [dialled("attacker.example", 443), WsDestination::Unpinnable] {
+            assert_eq!(
+                spend_message(
+                    CredentialAccess::of(&state),
+                    &destination,
+                    template.to_owned()
+                )
+                .as_deref(),
+                Ok(template),
+            );
+        }
+    }
+
+    #[test]
+    fn a_stub_socket_dials_nothing_and_so_spends_nothing() {
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
+
+        assert_eq!(
+            spend_message(
+                CredentialAccess::of(&state),
+                &WsDestination::Stub,
+                AUTH_MESSAGE.to_owned()
+            )
+            .as_deref(),
+            Ok(AUTH_MESSAGE),
+        );
+    }
+
+    #[test]
+    fn a_socket_is_pinned_by_the_host_and_port_it_dials() {
+        for (url, expected) in [
+            (
+                "ws://homeassistant.local:8123/api/websocket",
+                dialled("homeassistant.local", 8123),
+            ),
+            (
+                "ws://homeassistant.local/api/websocket",
+                dialled("homeassistant.local", 80),
+            ),
+            (
+                "wss://homeassistant.local/api/websocket",
+                dialled("homeassistant.local", 443),
+            ),
+            (
+                "ws://[fd00::1]:8123/api/websocket",
+                dialled("fd00::1", 8123),
+            ),
+        ] {
+            assert_eq!(dialled_destination(url), expected, "dialling {url}");
+        }
+    }
+
+    #[test]
+    fn a_socket_whose_host_is_in_doubt_is_unpinnable() {
+        for url in [
+            "not a url",
+            "data:text/plain,inline",
+            // WHATWG reads `api.braiins.com` as the host, `http::Uri` refuses the URL.
+            "ws://api.braiins.com\\@evil.example/",
+        ] {
+            assert_eq!(
+                dialled_destination(url),
+                WsDestination::Unpinnable,
+                "dialling {url}"
+            );
+        }
     }
 
     fn parsed_authority(url: &str) -> Option<(String, Option<u16>)> {

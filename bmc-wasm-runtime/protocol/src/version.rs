@@ -31,7 +31,12 @@
 /// - Host function signatures (names, parameter types, return types)
 /// - Binary tree serialization format (node types, field layout)
 /// - Host-side behavioral contracts (e.g. button click reporting)
-pub const PROTOCOL_VERSION: (u16, u16, u16) = (0, 9, 0);
+pub const PROTOCOL_VERSION: (u16, u16, u16) = (0, 10, 0);
+
+/// The first protocol whose widgets read the host's closes of a WebSocket as events of their own.
+/// The host closes an older widget's sockets with a close code instead,
+/// and keeps refusing a connect past the socket limit with no socket at all.
+pub const WS_HOST_CLOSE_PROTOCOL: (u16, u16, u16) = (0, 10, 0);
 
 /// The instantiation-handshake export: returns the version, installs the hook.
 pub const SDK_INIT_EXPORT: &str = "__bmc_sdk_init";

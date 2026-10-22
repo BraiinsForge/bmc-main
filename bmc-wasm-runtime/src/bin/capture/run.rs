@@ -615,6 +615,7 @@ fn run_unified_capture(
             | UnifiedEvent::WsOpen { .. }
             | UnifiedEvent::WsMessage { .. }
             | UnifiedEvent::WsClose { .. }
+            | UnifiedEvent::WsHostClosed { .. }
             | UnifiedEvent::SocketConnected { .. }
             | UnifiedEvent::SocketData { .. }
             | UnifiedEvent::SocketClosed { .. }
@@ -1011,6 +1012,7 @@ fn run_unified_capture(
                 | UnifiedEvent::WsOpen { .. }
                 | UnifiedEvent::WsMessage { .. }
                 | UnifiedEvent::WsClose { .. }
+                | UnifiedEvent::WsHostClosed { .. }
                 | UnifiedEvent::SocketConnected { .. }
                 | UnifiedEvent::SocketData { .. }
                 | UnifiedEvent::SocketClosed { .. }
@@ -1475,6 +1477,18 @@ fn split_unified_events(
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::WsClose { ws_id, code: *code },
+                });
+            }
+            UnifiedEvent::WsHostClosed { ws_id, reason } => {
+                let Some(ws_id) = WebsocketId::from_wire(*ws_id) else {
+                    continue;
+                };
+                network_events.push(FixtureEvent {
+                    at_ms: te.at_ms,
+                    kind: FixtureEventKind::WsHostClosed {
+                        ws_id,
+                        reason: *reason,
+                    },
                 });
             }
             UnifiedEvent::SocketConnected { socket_id } => {

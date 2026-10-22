@@ -927,6 +927,9 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             format!("ws#{ws_id}")
         }
         UnifiedEvent::WsClose { ws_id, code } => format!("ws#{ws_id} code={code}"),
+        UnifiedEvent::WsHostClosed { ws_id, reason } => {
+            format!("ws#{ws_id} host_closed={reason:?}")
+        }
         UnifiedEvent::SocketConnected { socket_id }
         | UnifiedEvent::SocketData { socket_id, .. } => format!("tcp#{socket_id}"),
         UnifiedEvent::SocketClosed { socket_id, code } => format!("tcp#{socket_id} code={code}"),
@@ -1307,6 +1310,7 @@ impl EventKind {
             | UnifiedEvent::WsOpen { .. }
             | UnifiedEvent::WsMessage { .. }
             | UnifiedEvent::WsClose { .. }
+            | UnifiedEvent::WsHostClosed { .. }
             | UnifiedEvent::SocketConnected { .. }
             | UnifiedEvent::SocketData { .. }
             | UnifiedEvent::SocketClosed { .. }

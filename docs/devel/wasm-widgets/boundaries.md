@@ -53,9 +53,8 @@ the device.
 **Must not: put a secret in a param.**
 
 - Params are stored in plaintext in the device configuration and shown in the web UI.
-- Instead: declare a credential slot. The host substitutes the secret into outbound fetch requests, so the widget never
-  holds it; see [Credentials](credentials.md). Substitution works in fetch requests only, so HTTP Digest cannot use a
-  slot yet.
+- Instead: declare a credential slot. The host substitutes the secret into outbound fetch requests and WebSockets, so
+  the widget never holds it; see [Credentials](credentials.md). HTTP Digest cannot use a slot yet.
 
 ## Should Not
 

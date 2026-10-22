@@ -28,7 +28,7 @@ use std::time::Duration;
 use anyhow::Result;
 use bmc_wasm_protocol::{
     FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, MdnsRegId,
-    MediaTypePart, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId,
+    MediaTypePart, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, WsHostClose,
 };
 use wasmi::{Caller, Extern, Linker};
 
@@ -36,7 +36,8 @@ use crate::host_api::{
     ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveSsdpSearch,
     ActiveUdpBroadcast, ActiveWebSocket, CancelDisposition, CompletedFetch, DelayedFetch,
     FetchCompletionContext, FetchRequestKey, HostState, HttpInboundRequest, HttpListenerResponse,
-    MdnsEvent, SocketEvent, SocketOutbound, SsdpEvent, UdpBroadcastEvent, WsEvent, WsOutbound,
+    MdnsEvent, SocketEvent, SocketOutbound, SsdpEvent, UdpBroadcastEvent,
+    WS_CLOSE_POLICY_VIOLATION, WsDestination, WsEvent, WsOutbound,
 };
 
 use super::super::background::{
@@ -55,7 +56,9 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_fetch_cancel_import(linker)?;
     register_fetch_header_import(linker)?;
     register_fetch_media_type_import(linker)?;
-    register_websocket_imports(linker)?;
+    register_ws_connect_import(linker)?;
+    register_ws_send_import(linker)?;
+    register_ws_close_import(linker)?;
     register_socket_connect_imports(linker)?;
     register_socket_io_imports(linker)?;
     register_mdns_browse_imports(linker)?;
@@ -415,7 +418,36 @@ fn media_type_piece(raw: &str, part: MediaTypePart) -> Option<String> {
     })
 }
 
-fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
+fn stub_websocket(
+    msg_tx: std::sync::mpsc::Sender<WsOutbound>,
+    event_rx: std::sync::mpsc::Receiver<WsEvent>,
+) -> ActiveWebSocket {
+    ActiveWebSocket {
+        msg_tx,
+        event_rx,
+        destination: WsDestination::Stub,
+        host_close: None,
+    }
+}
+
+/// A socket the host refused before dialling anything.
+/// The widget learns of `reason` at the next delivery, as it learns of any close,
+/// never from the connect call itself.
+fn host_closed_websocket(state: &mut HostState, reason: WsHostClose) -> u32 {
+    let ws_id = WebsocketId::alloc(&mut state.next_ws_id);
+    let (msg_tx, _msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
+    let (_event_tx, event_rx) = std::sync::mpsc::channel::<WsEvent>();
+    state.websockets.insert(
+        ws_id,
+        ActiveWebSocket {
+            host_close: Some(reason),
+            ..stub_websocket(msg_tx, event_rx)
+        },
+    );
+    ws_id.to_wire()
+}
+
+fn register_ws_connect_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_ws_connect",
@@ -438,33 +470,67 @@ fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 );
                 return 0;
             }
-            let ws_id = WebsocketId::alloc(&mut state.next_ws_id);
 
             let (event_tx, event_rx) = std::sync::mpsc::channel::<WsEvent>();
-
+            // Stubs answer before the pin, as fetch's interceptor does:
+            // nothing is dialled, so nothing is spent.
             if let Some(fixtures) = &mut state.event_fixtures {
+                let ws_id = WebsocketId::alloc(&mut state.next_ws_id);
                 let (msg_tx, _msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
                 state
                     .websockets
-                    .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
+                    .insert(ws_id, stub_websocket(msg_tx, event_rx));
                 fixtures.ws_event_txs.insert(ws_id, event_tx);
-            } else {
-                let (msg_tx, msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
+                return ws_id.to_wire();
+            }
+            if state.refuse_live_io("websocket", &url) {
+                let ws_id = WebsocketId::alloc(&mut state.next_ws_id);
+                let (msg_tx, _msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
                 state
                     .websockets
-                    .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
-                if !state.refuse_live_io("websocket", &url) {
-                    let ws_id_wire = ws_id.to_wire();
-                    std::thread::spawn(move || {
-                        ws_background_thread(ws_id_wire, &url, &headers, event_tx, msg_rx);
-                    });
-                }
+                    .insert(ws_id, stub_websocket(msg_tx, event_rx));
+                return ws_id.to_wire();
             }
 
-            ws_id.to_wire()
+            // Last hop before the wire; `url` keeps the placeholder form for logging.
+            let spent = match super::credentials::spend(state, &url, &headers, None) {
+                Ok(spent) => spent,
+                Err(refusal) => {
+                    tracing::warn!(%refusal, "refusing WebSocket connect: {refusal}");
+                    return host_closed_websocket(state, WsHostClose::Credential);
+                }
+            };
+            let ws_id = WebsocketId::alloc(&mut state.next_ws_id);
+            let (msg_tx, msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
+            state.websockets.insert(
+                ws_id,
+                ActiveWebSocket {
+                    msg_tx,
+                    event_rx,
+                    destination: super::credentials::dialled_destination(&spent.url),
+                    host_close: None,
+                },
+            );
+            let ws_id_wire = ws_id.to_wire();
+            std::thread::spawn(move || {
+                ws_background_thread(
+                    ws_id_wire,
+                    &spent.url,
+                    &url,
+                    &spent.headers,
+                    event_tx,
+                    msg_rx,
+                );
+            });
+
+            ws_id_wire
         },
     )?;
 
+    Ok(())
+}
+
+fn register_ws_send_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_ws_send",
@@ -477,14 +543,40 @@ fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
             };
 
             let state = caller.data_mut();
-            let ok = state
-                .websockets
-                .get(&ws_id)
-                .is_some_and(|ws| ws.msg_tx.send(WsOutbound::Text(msg)).is_ok());
-            u32::from(!ok)
+            let access = super::credentials::CredentialAccess {
+                view: &state.credentials,
+                secrets: &state.credential_secrets,
+            };
+            let Some(ws) = state.websockets.get_mut(&ws_id) else {
+                return 1;
+            };
+            if ws.host_close.is_some() {
+                return 1;
+            }
+            let refusal = match super::credentials::spend_message(access, &ws.destination, msg) {
+                Ok(msg) => return u32::from(ws.msg_tx.send(WsOutbound::Text(msg)).is_err()),
+                Err(refusal) => refusal,
+            };
+
+            // `Ws::send` returns nothing, so closing the socket
+            // is how the widget learns its message never left.
+            tracing::warn!(
+                ws_id = ws_id.to_wire(),
+                %refusal,
+                "refusing WebSocket message, closing the socket: {refusal}"
+            );
+            ws.host_close = Some(WsHostClose::Credential);
+            let _ = ws
+                .msg_tx
+                .send(WsOutbound::Close(Some(WS_CLOSE_POLICY_VIOLATION)));
+            1
         },
     )?;
 
+    Ok(())
+}
+
+fn register_ws_close_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_ws_close",
@@ -494,7 +586,7 @@ fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
             };
             let state = caller.data_mut();
             if let Some(ws) = state.websockets.remove(&ws_id) {
-                let _ = ws.msg_tx.send(WsOutbound::Close);
+                let _ = ws.msg_tx.send(WsOutbound::Close(None));
             }
         },
     )?;

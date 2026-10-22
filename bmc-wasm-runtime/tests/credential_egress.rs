@@ -18,15 +18,16 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Substitution and the egress pin through the real `host_fetch` import.
+//! Substitution and the egress pin through the real `host_fetch`
+//! and `host_ws_*` imports.
 //!
 //! The unit tests already prove the decisions; these catch the wiring going
 //! wrong — moving the check after the dispatch, or dropping an early return,
 //! leaves every unit test green while the secret goes out.
 //!
 //! The destination is a listener these tests own, because the fetch
-//! interceptor and the hermetic guard both answer *before* the pin
-//! and so cannot stand in for a real dispatch.
+//! interceptor, the event fixtures and the hermetic guard all answer
+//! *before* the pin and so cannot stand in for a real dispatch.
 
 #![cfg(all(target_os = "linux", feature = "testing"))]
 
@@ -38,8 +39,10 @@ use std::time::{Duration, Instant};
 
 use bmc_widget_manifest::credential;
 
+use bmc_wasm_protocol::{WebsocketId, WsEventKind, WsHostClose};
 use bmc_wasm_runtime::{
-    BoundCredential, CredentialView, InterceptedReply, RuntimeConfig, WasmWidgetRuntime,
+    BoundCredential, CredentialView, FixtureEvent, FixtureEventKind, InterceptedReply,
+    RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime,
 };
 
 mod common;
@@ -48,6 +51,19 @@ use common::headless_egl;
 /// Generous, because the fetch crosses a spawned thread
 /// and a slow CI box must not read as a refusal.
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a test waits to be sure something did *not* arrive:
+/// a wrongly dialled socket or fetch would reach the listener from another thread.
+const NO_ARRIVAL_GRACE: Duration = Duration::from_millis(300);
+
+/// Fails the test if anything reaches `received` within [`NO_ARRIVAL_GRACE`].
+fn assert_nothing_arrives(received: &mpsc::Receiver<String>, why: &str) {
+    assert_eq!(
+        received.recv_timeout(NO_ARRIVAL_GRACE),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "{why}",
+    );
+}
 
 fn fetch_wat(url: &str) -> String {
     format!(
@@ -218,8 +234,16 @@ fn runtime_for(
     config: RuntimeConfig,
     gl: &headless_egl::HeadlessGl,
 ) -> WasmWidgetRuntime {
+    runtime_from(&fetch_wat(url), config, gl)
+}
+
+fn runtime_from(
+    wat: &str,
+    config: RuntimeConfig,
+    gl: &headless_egl::HeadlessGl,
+) -> WasmWidgetRuntime {
     let _force_use = (&gl.display, gl.fbo_id, gl.proc_address());
-    let wasm = wat::parse_str(fetch_wat(url)).expect("BUG: fetch WAT must parse");
+    let wasm = wat::parse_str(wat).expect("BUG: test WAT must parse");
 
     WasmWidgetRuntime::new(
         &wasm,
@@ -358,8 +382,8 @@ fn a_pinned_credential_is_refused_before_it_can_leave_for_another_host() {
         Some(refused),
         "the widget must see a refusal, not a response",
     );
-    assert!(
-        received.try_recv().is_err(),
+    assert_nothing_arrives(
+        &received,
         "a pinned credential reached a host outside its policy",
     );
 }
@@ -485,4 +509,591 @@ fn every_fetch_outcome_line_stays_bounded_however_long_the_guest_url_is() {
             outcome.len(),
         );
     }
+}
+
+/// Connects to `url` in `init` and, when the host hands out a socket,
+/// sends `message` on it straight away: the host queues it until the socket opens.
+fn ws_wat(url: &str, message: &str, sdk: (u16, u16, u16)) -> String {
+    format!(
+        r#"
+    (module
+      (import "env" "host_ws_connect"
+        (func $host_ws_connect (param i32 i32 i32 i32) (result i32)))
+      (import "env" "host_ws_send"
+        (func $host_ws_send (param i32 i32 i32) (result i32)))
+
+      (memory (export "memory") 1)
+      (data (i32.const 0) "{url}{message}")
+
+      (global $ws_id (mut i32) (i32.const 0))
+      (global $close_code (mut i32) (i32.const 0))
+      (global $host_close (mut i32) (i32.const 0))
+      (global $text_kind (mut i32) (i32.const 0))
+
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const {version})
+
+      (func (export "__alloc") (param $len i32) (result i32)
+        (i32.const 1024))
+
+      (func (export "init")
+        (global.set $ws_id
+          (call $host_ws_connect
+            (i32.const 0)            ;; url_ptr
+            (i32.const {url_len})
+            (i32.const 0)            ;; headers_ptr
+            (i32.const 0)))          ;; headers_len
+        (if (global.get $ws_id)
+          (then
+            (drop
+              (call $host_ws_send
+                (global.get $ws_id)
+                (i32.const {url_len})  ;; msg_ptr
+                (i32.const {message_len}))))))
+
+      ;; Event 2 is Close, its two data bytes the code;
+      ;; event 3 is HostClosed, its one data byte the reason;
+      ;; events 1 and 4 are text, unchecked and checked.
+      (func (export "__on_ws_event")
+        (param $ws_id i32)
+        (param $kind i32)
+        (param $data_ptr i32)
+        (param $data_len i32)
+        (if (i32.or
+              (i32.eq (local.get $kind) (i32.const 1))
+              (i32.eq (local.get $kind) (i32.const 4)))
+          (then
+            (global.set $text_kind (local.get $kind))))
+        (if (i32.eq (local.get $kind) (i32.const 2))
+          (then
+            (global.set $close_code (i32.load16_u (local.get $data_ptr)))))
+        (if (i32.eq (local.get $kind) (i32.const 3))
+          (then
+            (global.set $host_close (i32.load8_u (local.get $data_ptr))))))
+
+      (func (export "render") (param i32))
+
+      (func (export "ws_id") (result i32)
+        global.get $ws_id)
+
+      (func (export "close_code") (result i32)
+        global.get $close_code)
+
+      (func (export "host_close") (result i32)
+        global.get $host_close)
+
+      (func (export "text_kind") (result i32)
+        global.get $text_kind))
+    "#,
+        url_len = url.len(),
+        message_len = message.len(),
+        version = bmc_wasm_protocol::version_pack(sdk)
+    )
+}
+
+/// A Home Assistant style auth message, spending the slot every test binds.
+const AUTH_MESSAGE: &str = "auth {{ credential.pool.token }}";
+
+/// One-shot WebSocket server. Reports `accepted` once a connection arrives,
+/// so even a dial whose handshake fails shows,
+/// then the handshake's request target,
+/// then the first frame the widget sends, as `text …` or `close <code>`.
+/// After a close it reports `ended` once the widget's side has gone,
+/// which the host's socket thread does only after queueing its own close event.
+#[expect(
+    clippy::result_large_err,
+    reason = "tungstenite's handshake callback must return its own ErrorResponse"
+)]
+fn ws_listener() -> (u16, mpsc::Receiver<String>) {
+    use tungstenite::Message;
+    use tungstenite::handshake::server::{ErrorResponse, Request, Response};
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind an ephemeral port");
+    let port = listener
+        .local_addr()
+        .expect("BUG: listener has a local address")
+        .port();
+    let (tx, rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
+        let _ = tx.send("accepted".to_owned());
+        let target_tx = tx.clone();
+        let report_target = move |request: &Request, response: Response| {
+            let _ = target_tx.send(request.uri().to_string());
+            Ok::<Response, ErrorResponse>(response)
+        };
+        let Ok(mut socket) = tungstenite::accept_hdr(stream, report_target) else {
+            return;
+        };
+        let frame = match socket.read() {
+            Ok(Message::Text(text)) => format!("text {text}"),
+            Ok(Message::Close(frame)) => {
+                format!("close {}", frame.map_or(0, |frame| u16::from(frame.code)))
+            }
+            Ok(
+                other @ (Message::Binary(_)
+                | Message::Ping(_)
+                | Message::Pong(_)
+                | Message::Frame(_)),
+            ) => format!("{other:?}"),
+            Err(error) => format!("error {error}"),
+        };
+        let closed = frame.starts_with("close");
+        let _ = tx.send(frame);
+        if closed {
+            let _ = tx.send(wait_for_the_end(socket));
+        }
+    });
+
+    (port, rx)
+}
+
+/// Reads `socket` until the other side drops the connection:
+/// `ended` then, or what went wrong.
+fn wait_for_the_end(mut socket: tungstenite::WebSocket<std::net::TcpStream>) -> String {
+    while socket.read().is_ok() {}
+    let stream = socket.get_mut();
+    if let Err(error) = stream.set_read_timeout(Some(ARRIVAL_TIMEOUT)) {
+        return format!("error {error}");
+    }
+    let mut rest = [0_u8; 64];
+    loop {
+        match stream.read(&mut rest) {
+            Ok(0) => return "ended".to_owned(),
+            Ok(_) => {}
+            Err(error) => return format!("error {error}"),
+        }
+    }
+}
+
+/// A port nothing listens on, so a connect to it fails at once.
+fn closed_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .expect("BUG: bind an ephemeral port")
+        .local_addr()
+        .expect("BUG: listener has a local address")
+        .port()
+}
+
+fn ws_runtime(
+    url: &str,
+    message: &str,
+    config: RuntimeConfig,
+    gl: &headless_egl::HeadlessGl,
+) -> WasmWidgetRuntime {
+    runtime_from(
+        &ws_wat(url, message, bmc_wasm_protocol::PROTOCOL_VERSION),
+        config,
+        gl,
+    )
+}
+
+/// The last protocol before the host's closes became events of their own.
+const PROTOCOL_BEFORE_HOST_CLOSE: (u16, u16, u16) = (0, 9, 0);
+
+/// The host close the probe widget was delivered, after one delivery pass.
+fn host_close_after_a_delivery(runtime: &mut WasmWidgetRuntime) -> Option<WsHostClose> {
+    runtime
+        .poll_deliveries()
+        .expect("BUG: the probe widget must take its host close without trapping");
+    let raw = runtime
+        .call_export_i32("host_close")
+        .expect("BUG: the probe widget exports its host close");
+    WsHostClose::from_wire(u8::try_from(raw).expect("BUG: the probe stores one byte"))
+}
+
+/// The next thing the listener reports past the bare `accepted`.
+fn received(frames: &mpsc::Receiver<String>, what: &str) -> String {
+    loop {
+        let frame = frames
+            .recv_timeout(ARRIVAL_TIMEOUT)
+            .unwrap_or_else(|_| panic!("BUG: the listener never saw {what}"));
+        if frame != "accepted" {
+            return frame;
+        }
+    }
+}
+
+/// Delivers until the probe widget sees a close, and returns its code.
+fn close_code_after_deliveries(runtime: &mut WasmWidgetRuntime) -> i32 {
+    let deadline = Instant::now() + ARRIVAL_TIMEOUT;
+    loop {
+        runtime
+            .poll_deliveries()
+            .expect("BUG: the probe widget must take its close without trapping");
+        match runtime.call_export_i32("close_code") {
+            Some(0) | None => assert!(Instant::now() < deadline, "the socket never closed"),
+            Some(code) => return code,
+        }
+    }
+}
+
+/// One-shot server that answers the upgrade with `status` and no WebSocket,
+/// sending `location` along when given.
+/// Reports `accepted`, then the handshake's request target.
+#[expect(
+    clippy::result_large_err,
+    reason = "tungstenite's handshake callback must return its own ErrorResponse"
+)]
+fn refusing_listener(status: u16, location: Option<String>) -> (u16, mpsc::Receiver<String>) {
+    use tungstenite::handshake::server::{ErrorResponse, Request, Response};
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind an ephemeral port");
+    let port = listener
+        .local_addr()
+        .expect("BUG: listener has a local address")
+        .port();
+    let (tx, rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
+        let _ = tx.send("accepted".to_owned());
+        let refuse = move |request: &Request, _: Response| {
+            let _ = tx.send(request.uri().to_string());
+            let mut answer = ErrorResponse::new(None);
+            *answer.status_mut() =
+                tungstenite::http::StatusCode::from_u16(status).expect("BUG: a valid test status");
+            if let Some(location) = &location {
+                answer.headers_mut().insert(
+                    "Location",
+                    location.parse().expect("BUG: a valid test header"),
+                );
+            }
+            Err(answer)
+        };
+        let _ = tungstenite::accept_hdr(stream, refuse);
+    });
+
+    (port, rx)
+}
+
+#[test]
+fn a_permitted_socket_carries_the_resolved_secret_in_its_url_and_messages() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let (port, frames) = ws_listener();
+    let url = format!("ws://127.0.0.1:{port}/?t={{{{ credential.pool.token }}}}");
+    let config = config_with(
+        credential::BuiltinType::GenericToken.id(),
+        "s3cr3t-on-the-socket",
+        &[],
+    );
+    let _runtime = ws_runtime(&url, AUTH_MESSAGE, config, &gl);
+
+    assert_eq!(
+        received(&frames, "the handshake"),
+        "/?t=s3cr3t-on-the-socket",
+        "the connect URL must be substituted before it is dialled",
+    );
+    assert_eq!(
+        received(&frames, "the auth message"),
+        "text auth s3cr3t-on-the-socket",
+        "the message must be substituted before it is sent",
+    );
+}
+
+/// The connect and connect-failure lines both name a URL,
+/// and so both must name the placeholder form.
+#[test]
+fn the_socket_logs_name_the_placeholder_form_never_the_resolved_secret() {
+    // Must not skip, for the reason the fetch twin above gives.
+    let gl = headless_egl::try_init(64, 64)
+        .expect("BUG: headless EGL is required to prove the socket logs hold no secret");
+    let secret = "s3cr3t-the-socket-must-not-log";
+    let (port, frames) = ws_listener();
+    let reachable = format!("ws://127.0.0.1:{port}/?t={{{{ credential.pool.token }}}}");
+    let unreachable = format!(
+        "ws://127.0.0.1:{}/?t={{{{ credential.pool.token }}}}",
+        closed_port()
+    );
+    let (refusing_port, _refused) = refusing_listener(400, None);
+    let refusing = format!("ws://127.0.0.1:{refusing_port}/?t={{{{ credential.pool.token }}}}");
+    let config = || config_with(credential::BuiltinType::GenericToken.id(), secret, &[]);
+
+    let mut frame = String::new();
+    let logged = capture_logs(|| {
+        let _connected = ws_runtime(&reachable, AUTH_MESSAGE, config(), &gl);
+        received(&frames, "the handshake");
+        // The thread logs the connect before it sends anything,
+        // so once the message is here, so is the line.
+        frame = received(&frames, "the auth message");
+
+        for url in [&unreachable, &refusing] {
+            close_code_after_deliveries(&mut ws_runtime(url, AUTH_MESSAGE, config(), &gl));
+        }
+    });
+
+    assert!(
+        frame.contains(secret),
+        "the run has to resolve the placeholder, or the log has nothing to leak: {frame}",
+    );
+    for (line, url) in [
+        ("WS connected", &reachable),
+        ("WS connect failed", &unreachable),
+        ("WS handshake failed", &refusing),
+    ] {
+        assert!(
+            logged
+                .lines()
+                .any(|logged| logged.contains(line) && logged.contains(url.as_str())),
+            "the {line:?} line must carry the guest's placeholder form: {logged}",
+        );
+    }
+    assert!(
+        !logged.contains(secret),
+        "the resolved secret must never reach a log line: {logged}",
+    );
+}
+
+/// The widget still gets a socket,
+/// so it learns of the refusal from a host callback, not inside its own connect.
+#[test]
+fn a_connect_spending_a_credential_off_its_pin_is_refused_without_dialling() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let (port, frames) = ws_listener();
+    let url = format!("ws://127.0.0.1:{port}/?t={{{{ credential.pool.token }}}}");
+    // `BraiinsPool` is pinned to api.braiins.com.
+    let config = config_with(
+        credential::BuiltinType::BraiinsPool.id(),
+        "s3cr3t-must-not-travel",
+        &[],
+    );
+    let mut runtime = ws_runtime(&url, AUTH_MESSAGE, config, &gl);
+
+    assert_ne!(
+        runtime.call_export_i32("ws_id"),
+        Some(0),
+        "a refused connect must still hand the widget a socket",
+    );
+    assert_eq!(
+        host_close_after_a_delivery(&mut runtime),
+        Some(WsHostClose::Credential),
+    );
+    assert_nothing_arrives(
+        &frames,
+        "a pinned credential reached a host outside its policy",
+    );
+}
+
+/// The egress pin judged the URL's host, so a redirect must not carry the socket elsewhere.
+#[test]
+fn a_redirect_on_the_handshake_is_never_followed() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let (elsewhere, reached) = ws_listener();
+    let (port, asked) = refusing_listener(302, Some(format!("ws://127.0.0.1:{elsewhere}/")));
+    let url = format!("ws://127.0.0.1:{port}/");
+    let config = config_with(credential::BuiltinType::GenericToken.id(), "s3cr3t", &[]);
+    let mut runtime = ws_runtime(&url, AUTH_MESSAGE, config, &gl);
+
+    received(&asked, "the handshake");
+    close_code_after_deliveries(&mut runtime);
+    assert_nothing_arrives(
+        &reached,
+        "a redirect carried the socket to a host the pin never judged",
+    );
+}
+
+/// No TLS is built in, so a `wss://` socket would otherwise handshake in cleartext.
+#[test]
+fn a_wss_socket_is_never_dialled() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let (port, frames) = ws_listener();
+    let url = format!("wss://127.0.0.1:{port}/");
+    let config = config_with(credential::BuiltinType::GenericToken.id(), "s3cr3t", &[]);
+    let mut runtime = ws_runtime(&url, AUTH_MESSAGE, config, &gl);
+
+    close_code_after_deliveries(&mut runtime);
+    assert_nothing_arrives(&frames, "a wss:// socket was dialled in cleartext");
+}
+
+/// Refused at the call, as every other resource is past its limit:
+/// no handle, so nothing for the host to keep until a delivery reports it.
+#[test]
+fn a_connect_past_the_socket_limit_gets_no_socket() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let (port, frames) = ws_listener();
+    let url = format!("ws://127.0.0.1:{port}/");
+    for protocol in [
+        bmc_wasm_protocol::PROTOCOL_VERSION,
+        PROTOCOL_BEFORE_HOST_CLOSE,
+    ] {
+        let config = RuntimeConfig {
+            resource_limits: RuntimeResourceLimits {
+                max_websockets: 0,
+                ..RuntimeResourceLimits::default()
+            },
+            ..config_with(credential::BuiltinType::GenericToken.id(), "s3cr3t", &[])
+        };
+        let mut runtime = runtime_from(&ws_wat(&url, AUTH_MESSAGE, protocol), config, &gl);
+
+        assert_eq!(runtime.call_export_i32("ws_id"), Some(0), "{protocol:?}");
+        assert!(
+            !runtime.has_active_websockets(),
+            "{protocol:?}: a refused connect must leave nothing in the host's map",
+        );
+        assert_eq!(
+            host_close_after_a_delivery(&mut runtime),
+            None,
+            "{protocol:?}"
+        );
+    }
+    assert_nothing_arrives(&frames, "a socket past the limit was dialled");
+}
+
+/// The socket opens, since its URL spends nothing,
+/// and then has to be closed rather than carry the message.
+#[test]
+fn a_refused_message_never_leaves_and_closes_the_socket_as_refused() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+
+    for (type_id, message, why) in [
+        (
+            credential::BuiltinType::BraiinsPool.id(),
+            AUTH_MESSAGE,
+            "a destination outside the pin",
+        ),
+        (
+            credential::BuiltinType::GenericToken.id(),
+            "auth {{ credential.weather.token }}",
+            "an unbound slot",
+        ),
+        (
+            credential::BuiltinType::GenericToken.id(),
+            "auth {{ credential.pool.tokne }}",
+            "an unknown field",
+        ),
+    ] {
+        let (port, frames) = ws_listener();
+        let url = format!("ws://127.0.0.1:{port}/");
+        let mut runtime = ws_runtime(&url, message, config_with(type_id, "s3cr3t", &[]), &gl);
+
+        received(&frames, "the handshake");
+        assert_eq!(
+            received(&frames, "the first frame"),
+            "close 1008",
+            "{why}: the peer must get the close, never the message",
+        );
+        // The socket thread queues its own close before it drops the connection,
+        // so from here the host's close has the thread's to win over.
+        assert_eq!(received(&frames, "the connection's end"), "ended");
+        assert_eq!(
+            host_close_after_a_delivery(&mut runtime),
+            Some(WsHostClose::Credential),
+            "the widget must learn of {why} as the host's close",
+        );
+        assert_eq!(
+            runtime.call_export_i32("close_code"),
+            Some(0),
+            "{why}: the host's close is none a peer could have sent",
+        );
+    }
+}
+
+/// The event kinds a widget gets follow the protocol it declared, not the host's own.
+#[test]
+fn each_widget_gets_the_websocket_events_its_protocol_reads() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let ws_id = WebsocketId::from_wire(1).expect("BUG: the first socket's id is 1");
+    let fixtures = || {
+        [
+            FixtureEventKind::WsOpen { ws_id },
+            FixtureEventKind::WsMessage {
+                ws_id,
+                data: b"hello".to_vec(),
+            },
+            FixtureEventKind::WsHostClosed {
+                ws_id,
+                reason: WsHostClose::Credential,
+            },
+        ]
+        .into_iter()
+        .map(|kind| FixtureEvent { at_ms: 0, kind })
+        .collect()
+    };
+    for (protocol, text, close_code, host_close) in [
+        (
+            PROTOCOL_BEFORE_HOST_CLOSE,
+            WsEventKind::Text,
+            bmc_wasm_protocol::LEGACY_HOST_CLOSE_CODE,
+            None,
+        ),
+        (
+            bmc_wasm_protocol::PROTOCOL_VERSION,
+            WsEventKind::Text,
+            0,
+            Some(WsHostClose::Credential),
+        ),
+    ] {
+        let config = RuntimeConfig {
+            event_fixtures: fixtures(),
+            ..config_with(credential::BuiltinType::GenericToken.id(), "s3cr3t", &[])
+        };
+        let mut runtime =
+            runtime_from(&ws_wat("ws://127.0.0.1:9/", "hello", protocol), config, &gl);
+        runtime.inject_fixture_events(0);
+
+        assert_eq!(
+            host_close_after_a_delivery(&mut runtime),
+            host_close,
+            "{protocol:?}"
+        );
+        assert_eq!(
+            runtime.call_export_i32("text_kind"),
+            i32::try_from(text.to_wire()).ok(),
+            "{protocol:?}"
+        );
+        assert_eq!(
+            runtime.call_export_i32("close_code"),
+            Some(i32::from(close_code)),
+            "{protocol:?}"
+        );
+    }
+}
+
+/// A widget built before the host's closes were events still hears of them, as close codes.
+#[test]
+fn an_older_widget_gets_the_hosts_close_as_a_close_code() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let (port, frames) = ws_listener();
+    let url = format!("ws://127.0.0.1:{port}/");
+    let config = config_with(credential::BuiltinType::BraiinsPool.id(), "s3cr3t", &[]);
+    let mut runtime = runtime_from(
+        &ws_wat(&url, AUTH_MESSAGE, PROTOCOL_BEFORE_HOST_CLOSE),
+        config,
+        &gl,
+    );
+
+    received(&frames, "the handshake");
+    assert_eq!(received(&frames, "the first frame"), "close 1008");
+    assert_eq!(received(&frames, "the connection's end"), "ended");
+    assert_eq!(
+        close_code_after_deliveries(&mut runtime),
+        i32::from(bmc_wasm_protocol::LEGACY_HOST_CLOSE_CODE),
+        "an older widget reads the host's close as the abnormal closure it always saw",
+    );
+    assert_eq!(
+        runtime.call_export_i32("host_close"),
+        Some(0),
+        "an older widget has no event 3 to read",
+    );
 }

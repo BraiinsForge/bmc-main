@@ -31,6 +31,11 @@
 //! to close the connection from there, take the stored handle.
 //! When the peer closes the connection, the callback gets [`WsEvent::Close`]
 //! and the stored handle reaches nothing, so clear or replace it there.
+//! When the host closes it, or refuses to open it, the callback gets
+//! [`WsEvent::HostClosed`] instead, which no peer can send.
+//! [`ws_connect`] refuses only past the widget's socket limit, with `None`;
+//! a connection it hands back but the host will not open
+//! is reported through the callback, at the next delivery.
 //!
 //! # Example
 //!
@@ -48,16 +53,20 @@
 //!     WS.set(ws_connect("ws://192.168.1.10:8123/api/websocket", None, on_event));
 //! }
 //!
+//! // The host substitutes the bound token as the message leaves;
+//! // the widget never sees it. See `docs/devel/wasm-widgets/credentials.md`.
 //! fn on_event(ws: &Ws, event: &WsEvent<'_>) {
 //!     match event {
-//!         WsEvent::Open => ws.send(r#"{"type":"auth","access_token":"..."}"#),
+//!         WsEvent::Open => {
+//!             ws.send(r#"{"type":"auth","access_token":"{{ credential.home.token }}"}"#);
+//!         }
 //!         WsEvent::Message(r#"{"type":"auth_invalid"}"#) => {
 //!             if let Some(ws) = WS.take() {
 //!                 ws.close();
 //!             }
 //!         }
 //!         WsEvent::Message(_) => { /* handle message */ }
-//!         WsEvent::Close(_) => WS.set(None),
+//!         WsEvent::Close(_) | WsEvent::HostClosed(_) => WS.set(None),
 //!     }
 //! }
 //! ```
@@ -67,6 +76,7 @@ use core::mem::ManuallyDrop;
 use std::collections::HashMap;
 
 use bmc_wasm_protocol::WebsocketId;
+pub use bmc_wasm_protocol::WsHostClose;
 
 /// The only handle to a WebSocket connection; dropping it closes the connection.
 #[derive(Debug, PartialEq, Eq)]
@@ -77,6 +87,10 @@ impl Ws {
     ///
     /// Does nothing once the connection has closed,
     /// such as on a callback's argument after the callback closed the stored handle.
+    ///
+    /// A message the host refuses to send, for the credential it spends,
+    /// closes the connection, and the callback gets [`WsEvent::HostClosed`]
+    /// with [`WsHostClose::Credential`].
     #[cfg(target_arch = "wasm32")]
     pub fn send(&self, message: &str) {
         Platform::send(self.0, message);
@@ -103,10 +117,14 @@ pub enum WsEvent<'a> {
     Open,
     /// A text message was received.
     Message(&'a str),
-    /// Connection closed with a status code.
+    /// The peer closed the connection with this code, or it failed, as 1006.
     ///
     /// The widget's stored handle reaches nothing from here on; clear or replace it.
     Close(u16),
+    /// The host closed the connection, or never opened it.
+    ///
+    /// The widget's stored handle reaches nothing from here on; clear or replace it.
+    HostClosed(WsHostClose),
 }
 
 /// Callback type: `fn(ws, event)`.
@@ -143,7 +161,10 @@ fn register_callback(cb: Callback) -> usize {
 /// `headers` is an optional newline-separated list of `Key: Value` pairs
 /// (same format as [`fetch`](crate::fetch())).
 ///
-/// Returns `None` if the host refuses the connection before it is queued.
+/// Returns `None` past the widget's socket limit, as the other resources do.
+/// A connection the host refuses later, such as for a credential it may not send
+/// to this destination, still returns a handle: `on_event` gets [`WsEvent::HostClosed`]
+/// at the next delivery, never while this call runs.
 #[must_use = "dropping the returned Ws closes it"]
 #[cfg(target_arch = "wasm32")]
 pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Option<Ws> {
@@ -155,18 +176,18 @@ pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Optio
 
 /// Hand an event to the callback of its connection, if a handle still holds it.
 ///
-/// A close unregisters the connection before the callback runs.
+/// A close, the peer's or the host's, unregisters the connection before the callback runs.
 #[cfg_attr(
     all(not(target_arch = "wasm32"), not(test)),
     expect(dead_code, reason = "off-target no host delivers events")
 )]
 fn deliver(ws_id: WebsocketId, event: &WsEvent<'_>) {
-    let is_close = matches!(event, WsEvent::Close(_));
+    let ends = matches!(event, WsEvent::Close(_) | WsEvent::HostClosed(_));
 
     // Copy the callback out before invoking (callback may call ws_connect)
     let cb = CONNECTIONS
         .with(|c| {
-            if is_close {
+            if ends {
                 c.borrow_mut().remove(&ws_id)
             } else {
                 c.borrow().get(&ws_id).copied()
@@ -189,9 +210,9 @@ trait WebsocketClient {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use bmc_wasm_protocol::WebsocketId;
+    use bmc_wasm_protocol::{WebsocketId, WsEventKind};
 
-    use super::{WsEvent, deliver};
+    use super::{WsEvent, WsHostClose, deliver};
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
@@ -233,12 +254,7 @@ mod wasm {
         }
     }
 
-    /// Called by the host when a WebSocket event occurs.
-    ///
-    /// Event types:
-    /// - 0 = Open (data empty)
-    /// - 1 = Message (data = UTF-8 text)
-    /// - 2 = Close (data = 2 bytes LE close code)
+    /// Called by the host when a WebSocket event occurs; `event_type` is a [`WsEventKind`].
     #[expect(
         clippy::same_length_and_capacity,
         reason = "the host hands back the size it asked __alloc for"
@@ -257,13 +273,16 @@ mod wasm {
             Vec::new()
         };
 
-        let event = match event_type {
-            0 => WsEvent::Open,
-            1 => {
+        let Some(kind) = WsEventKind::from_wire(event_type) else {
+            return;
+        };
+        let event = match kind {
+            WsEventKind::Open => WsEvent::Open,
+            WsEventKind::Text => {
                 let text = core::str::from_utf8(&data).unwrap_or_default();
                 WsEvent::Message(text)
             }
-            2 => {
+            WsEventKind::Close => {
                 let code = if data.len() >= 2 {
                     u16::from_le_bytes([data[0], data[1]])
                 } else {
@@ -271,7 +290,12 @@ mod wasm {
                 };
                 WsEvent::Close(code)
             }
-            _ => return,
+            WsEventKind::HostClosed => match data.first().copied().and_then(WsHostClose::from_wire)
+            {
+                Some(reason) => WsEvent::HostClosed(reason),
+                // From a newer host: still the end of the connection.
+                None => WsEvent::Close(1006),
+            },
         };
 
         deliver(ws_id, &event);
@@ -357,6 +381,18 @@ mod tests {
         deliver(id);
 
         assert_eq!(SEEN.get(), None);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_reason_this_build_cannot_name_still_ends_its_connection() {
+        let ws = connect(record);
+        let id = ws.0;
+
+        super::wasm::__on_ws_event(id.to_wire(), 3, 0, 0);
+
+        assert_eq!(SEEN.get(), Some(id), "the callback must still hear of it");
+        assert!(!is_registered(id));
     }
 
     #[wasm_test]

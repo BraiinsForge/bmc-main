@@ -151,14 +151,21 @@ fn on_ha_event(ws: &Ws, event: &WsEvent) {
             request_frame();
         }
         WsEvent::Message(text) => handle_message(ws, text),
-        WsEvent::Close(code) => {
-            let msg = fmt!("WebSocket closed (code {})", code);
-            log_warn!("{}", msg);
-            STATE.with(|s| *s.borrow_mut() = HaState::Error(msg));
-            CONNECTION.set(None);
-            request_frame();
+        WsEvent::Close(code) => connection_lost(fmt!("WebSocket closed (code {})", code)),
+        WsEvent::HostClosed(reason) => {
+            let reason = match reason {
+                WsHostClose::Credential => "its credential",
+            };
+            connection_lost(fmt!("WebSocket closed by the host for {}", reason));
         }
     }
+}
+
+fn connection_lost(msg: String) {
+    log_warn!("{}", msg);
+    STATE.with(|s| *s.borrow_mut() = HaState::Error(msg));
+    CONNECTION.set(None);
+    request_frame();
 }
 
 fn handle_message(ws: &Ws, text: &str) {
