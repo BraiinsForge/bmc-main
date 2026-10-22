@@ -787,7 +787,11 @@ in
         # A cargo-built host bakes the store path `nix-cargo-deploy.sh host` ships,
         # not the checkout, which does not exist on the device.
         BMC_FONTS_DIR = "${fonts}";
+        # The cross stdenv puts no build-platform `cc` on PATH, so proc macros fell back to the system one.
+        # Linked against a newer glibc than the Nix rustc that dlopens them, they fail as E0463 "can't find crate".
+        ${hostLinkerVar} = "${pkgs.stdenv.cc}/bin/cc";
       };
+      hostLinkerVar = "CARGO_TARGET_${lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget)}_LINKER";
       shells = pkgs.ii.lib.mapAttrValues (profile: profile.shell) bmc.profiles;
     in
     shells
