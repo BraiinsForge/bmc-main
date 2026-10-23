@@ -47,7 +47,10 @@ pub use client::{
     SubscriptionId,
 };
 pub use effects::{Closed, Command, Effects, Output, Wake};
-pub use entity::{AttributeValue, Entity, MAX_ATTRIBUTE_TEXT_BYTES, Presence};
+pub use entity::{
+    AttributeValue, Entity, MAX_ATTRIBUTE_LIST_BYTES, MAX_ATTRIBUTE_NUMBERS,
+    MAX_ATTRIBUTE_TEXT_BYTES, Presence,
+};
 pub use json::JsonLookup;
 pub use reply::{CallFailure, Event, HaError, Reply, UNKNOWN_ERROR, Values};
 pub use service_data::ServiceData;

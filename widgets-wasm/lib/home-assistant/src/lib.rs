@@ -46,9 +46,9 @@ pub mod proto;
 #[cfg(target_arch = "wasm32")]
 pub use adapter::{Client, ConnectError, EventCallback, Subscription, connect};
 pub use proto::{
-    AttributeValue, CallFailure, CallId, Entity, Event, HaError, MAX_ATTRIBUTE_TEXT_BYTES,
-    MAX_ATTRIBUTES_PER_SUBSCRIPTION, MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES,
-    MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_POINTER_BYTES, MAX_REPLY_VALUES,
-    MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, Presence, Reply, RequestError, ServiceData,
-    Status, SubscriptionId, UNKNOWN_ERROR, Values, is_entity_id,
+    AttributeValue, CallFailure, CallId, Entity, Event, HaError, MAX_ATTRIBUTE_LIST_BYTES,
+    MAX_ATTRIBUTE_NUMBERS, MAX_ATTRIBUTE_TEXT_BYTES, MAX_ATTRIBUTES_PER_SUBSCRIPTION,
+    MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES, MAX_NAME_BYTES, MAX_PENDING_CALLS,
+    MAX_POINTER_BYTES, MAX_REPLY_VALUES, MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, Presence,
+    Reply, RequestError, ServiceData, Status, SubscriptionId, UNKNOWN_ERROR, Values, is_entity_id,
 };

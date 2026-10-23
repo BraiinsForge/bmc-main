@@ -88,8 +88,9 @@ impl Values {
     /// The value at `pointer`, one of those the command asked for.
     ///
     /// `None` when the reply has nothing there, or holds a value the client does not keep:
-    /// `null`, an object or an array (point inside it instead),
-    /// or text over [`MAX_ATTRIBUTE_TEXT_BYTES`](super::MAX_ATTRIBUTE_TEXT_BYTES), as for an entity's attributes.
+    /// `null`, an object (point inside it instead), text over
+    /// [`MAX_ATTRIBUTE_TEXT_BYTES`](super::MAX_ATTRIBUTE_TEXT_BYTES),
+    /// or a list over its cap or mixing types, as for an entity's attributes.
     #[must_use]
     pub fn get(&self, pointer: &str) -> Option<&AttributeValue> {
         self.0.get(pointer)

@@ -31,15 +31,24 @@ use super::json::{JsonLookup, Pointer, PointerBuf};
 
 /// Longest text attribute kept. A longer one reads as absent.
 pub const MAX_ATTRIBUTE_TEXT_BYTES: usize = 1024;
+/// Longest list of texts kept, counting one byte between each two of its texts.
+/// WLED's 218 effect names come to about 2.2 KB. A longer list reads as absent.
+pub const MAX_ATTRIBUTE_LIST_BYTES: usize = 4096;
+/// Longest list of numbers kept, as much memory as the longest text.
+/// A light's longest, `rgbww_color`, holds five. A longer list reads as absent.
+pub const MAX_ATTRIBUTE_NUMBERS: usize = MAX_ATTRIBUTE_TEXT_BYTES / size_of::<f64>();
 
 /// The value of one tracked attribute.
 ///
-/// Objects and arrays are not kept.
+/// Objects are not kept, and an array only when it holds texts alone, such as a thermostat's `hvac_modes`,
+/// or numbers alone, such as a light's `rgb_color`. An empty array is an empty [`Self::List`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttributeValue {
     Text(String),
     Number(f64),
     Bool(bool),
+    List(Vec<String>),
+    Numbers(Vec<f64>),
 }
 
 impl AttributeValue {
@@ -47,7 +56,7 @@ impl AttributeValue {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text(text) => Some(text),
-            Self::Number(_) | Self::Bool(_) => None,
+            Self::Number(_) | Self::Bool(_) | Self::List(_) | Self::Numbers(_) => None,
         }
     }
 
@@ -55,7 +64,7 @@ impl AttributeValue {
     pub fn as_number(&self) -> Option<f64> {
         match self {
             Self::Number(number) => Some(*number),
-            Self::Text(_) | Self::Bool(_) => None,
+            Self::Text(_) | Self::Bool(_) | Self::List(_) | Self::Numbers(_) => None,
         }
     }
 
@@ -63,7 +72,25 @@ impl AttributeValue {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(flag) => Some(*flag),
-            Self::Text(_) | Self::Number(_) => None,
+            Self::Text(_) | Self::Number(_) | Self::List(_) | Self::Numbers(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_list(&self) -> Option<&[String]> {
+        match self {
+            Self::List(items) => Some(items),
+            Self::Text(_) | Self::Number(_) | Self::Bool(_) | Self::Numbers(_) => None,
+        }
+    }
+
+    /// The numbers, also for an empty array, which reads as an empty [`Self::List`].
+    #[must_use]
+    pub fn as_numbers(&self) -> Option<&[f64]> {
+        match self {
+            Self::Numbers(items) => Some(items),
+            Self::List(items) if items.is_empty() => Some(&[]),
+            Self::Text(_) | Self::Number(_) | Self::Bool(_) | Self::List(_) => None,
         }
     }
 }
@@ -125,6 +152,18 @@ impl Entity {
     #[must_use]
     pub fn boolean(&self, name: &str) -> Option<bool> {
         self.attribute(name)?.as_bool()
+    }
+
+    /// A list attribute, `None` when absent or not a list.
+    #[must_use]
+    pub fn list(&self, name: &str) -> Option<&[String]> {
+        self.attribute(name)?.as_list()
+    }
+
+    /// A list of numbers, such as a light's `rgb_color`, `None` when absent or not one.
+    #[must_use]
+    pub fn numbers(&self, name: &str) -> Option<&[f64]> {
+        self.attribute(name)?.as_numbers()
     }
 
     /// Mark the values of a present entity as last seen. Returns whether that changed anything.
@@ -301,7 +340,7 @@ impl<'a, J: JsonLookup> EntityEvent<'a, J> {
     }
 }
 
-/// The value at `path`, with text past its cap read as absent.
+/// The value at `path`, with text or a list past its cap, or a mixed array, read as absent.
 /// Leaves `path` as it found it.
 pub(crate) fn read_value(event: &impl JsonLookup, path: &mut PointerBuf) -> Option<AttributeValue> {
     if let Some(text) = event.str_max(path.as_str(), MAX_ATTRIBUTE_TEXT_BYTES) {
@@ -313,7 +352,50 @@ pub(crate) fn read_value(event: &impl JsonLookup, path: &mut PointerBuf) -> Opti
     if let Some(flag) = event.bool(path.as_str()) {
         return Some(AttributeValue::Bool(flag));
     }
+    if event.is_array(path.as_str()) {
+        let array = path.mark();
+        let numbers = event.f64(path.push_index(0)).is_some();
+        path.truncate(array);
+        let value = if numbers {
+            read_numbers(event, path).map(AttributeValue::Numbers)
+        } else {
+            read_list(event, path).map(AttributeValue::List)
+        };
+        path.truncate(array);
+        return value;
+    }
     None
+}
+
+/// The texts of the array at `path`, `None` when it holds anything else or runs past the cap.
+fn read_list(event: &impl JsonLookup, path: &mut PointerBuf) -> Option<Vec<String>> {
+    let array = path.mark();
+    let mut items = Vec::new();
+    let mut bytes = 0;
+    for index in 0..event.len(path.as_str())? {
+        path.truncate(array);
+        let separator = usize::from(index > 0);
+        let room = MAX_ATTRIBUTE_LIST_BYTES.checked_sub(bytes + separator)?;
+        let item = event.str_max(path.push_index(index), room)?;
+        bytes += item.len() + separator;
+        items.push(item);
+    }
+    Some(items)
+}
+
+/// The numbers of the array at `path`, `None` when it holds anything else or runs past the cap.
+fn read_numbers(event: &impl JsonLookup, path: &mut PointerBuf) -> Option<Vec<f64>> {
+    let len = event.len(path.as_str())?;
+    if len > MAX_ATTRIBUTE_NUMBERS {
+        return None;
+    }
+    let array = path.mark();
+    (0..len)
+        .map(|index| {
+            path.truncate(array);
+            event.f64(path.push_index(index))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -623,6 +705,135 @@ mod tests {
             entity.number("friendly_name"),
             None,
             "text does not read as a number"
+        );
+    }
+
+    fn thermostat(attributes: &serde_json::Value) -> Entity {
+        let mut entity = Entity::awaiting();
+        apply_to(
+            &mut entity,
+            "climate.living_room",
+            &["hvac_modes".to_owned()],
+            &Message::parse(
+                &serde_json::json!({"event":{"a":{"climate.living_room":{"s":"heat","a":attributes}}}})
+                    .to_string(),
+            ),
+            true,
+        );
+        entity
+    }
+
+    #[wasm_test]
+    fn an_array_of_texts_is_kept_as_a_list() {
+        let entity = thermostat(&serde_json::json!({"hvac_modes": ["off", "heat", "auto"]}));
+
+        assert_eq!(
+            entity.list("hvac_modes"),
+            Some(["off", "heat", "auto"].map(str::to_owned).as_slice())
+        );
+        assert_eq!(entity.text("hvac_modes"), None);
+    }
+
+    #[wasm_test]
+    fn an_empty_array_is_an_empty_list() {
+        let entity = thermostat(&serde_json::json!({"hvac_modes": []}));
+
+        assert_eq!(entity.list("hvac_modes"), Some([].as_slice()));
+    }
+
+    #[wasm_test]
+    fn a_mixed_or_nested_array_reads_as_absent() {
+        for modes in [
+            serde_json::json!(["off", 1]),
+            serde_json::json!([1, "off"]),
+            serde_json::json!([["off"]]),
+            serde_json::json!({"0": "off"}),
+        ] {
+            let entity = thermostat(&serde_json::json!({ "hvac_modes": modes }));
+            assert_eq!(entity.attribute("hvac_modes"), None, "{modes}");
+        }
+    }
+
+    fn light(rgb_color: &serde_json::Value) -> Entity {
+        let mut entity = Entity::awaiting();
+        apply_to(
+            &mut entity,
+            "light.desk",
+            &["rgb_color".to_owned()],
+            &Message::parse(
+                &serde_json::json!({"event":{"a":{"light.desk":{"s":"on","a":{"rgb_color":rgb_color}}}}})
+                    .to_string(),
+            ),
+            true,
+        );
+        entity
+    }
+
+    #[wasm_test]
+    fn an_array_of_numbers_is_kept_as_numbers() {
+        let entity = light(&serde_json::json!([255, 128, 0.5]));
+
+        assert_eq!(
+            entity.numbers("rgb_color"),
+            Some([255.0, 128.0, 0.5].as_slice())
+        );
+        assert_eq!(entity.list("rgb_color"), None);
+    }
+
+    #[wasm_test]
+    fn an_empty_array_reads_as_no_numbers_too() {
+        assert_eq!(
+            light(&serde_json::json!([])).numbers("rgb_color"),
+            Some([].as_slice())
+        );
+    }
+
+    #[wasm_test]
+    fn numbers_past_the_cap_read_as_absent() {
+        let at_cap = vec![1; MAX_ATTRIBUTE_NUMBERS];
+        assert!(
+            light(&serde_json::json!(at_cap))
+                .numbers("rgb_color")
+                .is_some()
+        );
+
+        let past_cap = vec![1; MAX_ATTRIBUTE_NUMBERS + 1];
+        assert_eq!(
+            light(&serde_json::json!(past_cap)).attribute("rgb_color"),
+            None
+        );
+    }
+
+    #[wasm_test]
+    fn a_list_past_the_cap_reads_as_absent() {
+        let item = "x".repeat(MAX_ATTRIBUTE_LIST_BYTES / 2);
+        let shorter = "x".repeat(MAX_ATTRIBUTE_LIST_BYTES / 2 - 1);
+        let at_cap = thermostat(&serde_json::json!({"hvac_modes": [item, shorter]}));
+        assert!(
+            at_cap.list("hvac_modes").is_some(),
+            "two halves and their separator fit exactly"
+        );
+
+        let past_cap = thermostat(&serde_json::json!({"hvac_modes": [item, item]}));
+        assert_eq!(past_cap.attribute("hvac_modes"), None);
+    }
+
+    #[wasm_test]
+    fn a_change_replaces_a_list() {
+        let mut entity = thermostat(&serde_json::json!({"hvac_modes": ["off", "heat"]}));
+
+        assert!(apply_to(
+            &mut entity,
+            "climate.living_room",
+            &["hvac_modes".to_owned()],
+            &Message::parse(
+                r#"{"event":{"c":{"climate.living_room":{"+":{"a":{"hvac_modes":["off","cool"]}}}}}}"#
+            ),
+            false,
+        ));
+        assert_eq!(
+            entity.list("hvac_modes"),
+            Some(["off", "cool"].map(str::to_owned).as_slice())
         );
     }
 

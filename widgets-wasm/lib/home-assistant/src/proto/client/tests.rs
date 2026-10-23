@@ -24,7 +24,7 @@ use bmc_wasm_sdk::wasm_test;
 
 use super::*;
 use crate::proto::json::test_support::Message;
-use crate::proto::{Presence, Reply, Values};
+use crate::proto::{AttributeValue, Presence, Reply, Values};
 
 const URL: &str = "ws://ha.test/api/websocket";
 const TOKEN: &str = "token-as-the-transport-takes-it";
@@ -697,25 +697,34 @@ fn a_command_reply_holds_the_wanted_values_its_result_has() {
 }
 
 #[wasm_test]
-fn a_command_reply_reads_text_too() {
+fn a_command_reply_reads_text_and_lists_too() {
     const UNIT: &str = "/unit_system/temperature";
+    const COMPONENTS: &str = "/components";
 
     let mut client = client();
     let _ = ready(&mut client);
     let _ = client
-        .command("get_config", &ServiceData::new(), &[UNIT])
+        .command("get_config", &ServiceData::new(), &[UNIT, COMPONENTS])
         .expect("BUG: the test command is valid while connected");
 
     let out = feed(
         &mut client,
         &json!({"id": 1, "type": "result", "success": true, "result": {
             "unit_system": {"temperature": "°C"},
+            "components": ["climate", "demo"],
         }}),
     );
 
     let reply = only_values(&out);
     assert_eq!(reply.text(UNIT), Some("°C"));
     assert_eq!(reply.number(UNIT), None);
+    assert_eq!(
+        reply.get(COMPONENTS),
+        Some(&AttributeValue::List(vec![
+            "climate".to_owned(),
+            "demo".to_owned()
+        ]))
+    );
 }
 
 #[wasm_test]

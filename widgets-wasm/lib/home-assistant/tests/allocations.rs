@@ -112,6 +112,10 @@ impl JsonLookup for HostDoc {
         })
     }
 
+    fn is_array(&self, path: &str) -> bool {
+        in_host(|| matches!(self.0.pointer(path), Some(Value::Array(_))))
+    }
+
     fn exists(&self, path: &str) -> bool {
         in_host(|| self.0.pointer(path).is_some())
     }

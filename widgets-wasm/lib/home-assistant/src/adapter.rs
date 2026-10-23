@@ -27,7 +27,7 @@
 use core::cell::RefCell;
 use core::mem::ManuallyDrop;
 
-use bmc_wasm_sdk::json::JsonDoc;
+use bmc_wasm_sdk::json::{JsonDoc, JsonKind};
 use bmc_wasm_sdk::log_warn;
 use bmc_wasm_sdk::timer;
 use bmc_wasm_sdk::timer::Timer;
@@ -378,6 +378,10 @@ impl JsonLookup for JsonDoc {
 
     fn len(&self, path: &str) -> Option<usize> {
         JsonDoc::len(self, path)
+    }
+
+    fn is_array(&self, path: &str) -> bool {
+        JsonDoc::kind(self, path) == Some(JsonKind::Array)
     }
 
     fn exists(&self, path: &str) -> bool {

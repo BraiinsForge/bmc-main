@@ -42,6 +42,8 @@ pub trait JsonLookup {
     fn bool(&self, path: &str) -> Option<bool>;
     /// Element count of the array or object at `path`, `None` for anything else.
     fn len(&self, path: &str) -> Option<usize>;
+    /// Whether the value at `path` is an array.
+    fn is_array(&self, path: &str) -> bool;
     /// Whether anything is at `path`, `null` included.
     fn exists(&self, path: &str) -> bool;
 }
@@ -276,6 +278,10 @@ pub(crate) mod test_support {
                 serde_json::Value::Object(members) => Some(members.len()),
                 _ => None,
             }
+        }
+
+        fn is_array(&self, path: &str) -> bool {
+            matches!(self.0.pointer(path), Some(serde_json::Value::Array(_)))
         }
 
         fn exists(&self, path: &str) -> bool {
