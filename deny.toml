@@ -65,8 +65,6 @@ skip = [
 
     # Wayland/Smithay ecosystem splits
     { crate = "calloop@0.13" },
-    { crate = "gbm@0.17" },
-    { crate = "gbm-sys@0.3" },
 
     # winit and sctk-adwaita lag smithay-clipboard on smithay-client-toolkit
     { crate = "calloop-wayland-source@0.3" },

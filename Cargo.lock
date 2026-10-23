@@ -1680,7 +1680,7 @@ dependencies = [
  "bmc-ipc",
  "bmc-widget-protocol",
  "drm-fourcc",
- "gbm 0.17.0",
+ "gbm",
  "glow 0.16.0",
  "libc",
  "serde_json",
@@ -3624,19 +3624,6 @@ checksum = "312d2295c7302019c395cfb90dacd00a82a2eabd700429bba9c7a3f38dbbe11b"
 
 [[package]]
 name = "gbm"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93b5a9807a62b960cef14e1213798e665d1c11cfc2bdbe732ee63b3893e4487f"
-dependencies = [
- "bitflags 2.13.2",
- "drm",
- "drm-fourcc",
- "gbm-sys 0.3.1",
- "libc",
-]
-
-[[package]]
-name = "gbm"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce852e998d3ca5e4a97014fb31c940dc5ef344ec7d364984525fd11e8a547e6a"
@@ -3644,19 +3631,10 @@ dependencies = [
  "bitflags 2.13.2",
  "drm",
  "drm-fourcc",
- "gbm-sys 0.4.0",
+ "gbm-sys",
  "libc",
  "wayland-backend",
  "wayland-server",
-]
-
-[[package]]
-name = "gbm-sys"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9cc2f64de9fa707b5c6b2d2f10d7a7e49e845018a9f5685891eb40d3bab2538"
-dependencies = [
- "libc",
 ]
 
 [[package]]
@@ -7649,7 +7627,7 @@ dependencies = [
  "drm-ffi",
  "drm-fourcc",
  "errno",
- "gbm 0.18.0",
+ "gbm",
  "gl_generator",
  "glow 0.16.0",
  "indexmap",
