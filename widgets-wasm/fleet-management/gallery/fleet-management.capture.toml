@@ -1,7 +1,5 @@
-# Every BMM101 level, the states that change what a level shows
-# (auth failures, rows that report no telemetry, each device state),
-# the longest names a title or a leading cell has to cut short,
-# and BMM100, which shrinks the BMM101 frame.
+# Each device's levels with the states that change what they show and their longest titles,
+# and the extremes the model table's columns must hold; BMM100 shrinks the BMM101 frame.
 
 size = "1280x560"
 sheet = "sheet.png"
@@ -9,84 +7,31 @@ report = "capture.json"
 settle = true
 
 [[shot]]
-name = "bmm101-dashboard"
-scene = "bmc_gallery::fleet::BMM101 Dashboard"
+name = "deck"
+scene = "bmc_gallery::fleet::Deck"
 frames = 4
 
 [[shot]]
-name = "bmm101-dashboard-auth-failures"
-scene = "bmc_gallery::fleet::BMM101 Dashboard"
-frames = 4
-
-[shot.knobs]
-"Auth fails" = 3
-
-[[shot]]
-name = "bmm101-table"
-scene = "bmc_gallery::fleet::BMM101 Table"
+name = "deck-extremes"
+scene = "bmc_gallery::fleet::Deck Extremes"
 frames = 4
 
 [[shot]]
-name = "bmm101-table-last-page"
-scene = "bmc_gallery::fleet::BMM101 Table"
-frames = 4
-
-[shot.knobs]
-Page = 2
-
-[[shot]]
-name = "bmm101-model-detail"
-scene = "bmc_gallery::fleet::BMM101 Model Detail"
+name = "bmm101"
+scene = "bmc_gallery::fleet::BMM101"
 frames = 4
 
 [[shot]]
-name = "bmm101-model-detail-unreachable"
-scene = "bmc_gallery::fleet::BMM101 Model Detail"
-frames = 4
-
-[shot.knobs]
-Page = 1
-
-[[shot]]
-name = "bmm101-model-detail-api-error"
-scene = "bmc_gallery::fleet::BMM101 Model Detail"
-frames = 4
-
-[shot.knobs]
-Page = 2
-
-[[shot]]
-name = "bmm101-device-detail"
-scene = "bmc_gallery::fleet::BMM101 Device Detail"
-frames = 4
-
-[[shot]]
-name = "bmm101-device-detail-login-rejected"
-scene = "bmc_gallery::fleet::BMM101 Device Detail"
-frames = 4
-
-[shot.knobs]
-State = "Login rejected"
-
-[[shot]]
-name = "bmm101-device-detail-unreachable"
-scene = "bmc_gallery::fleet::BMM101 Device Detail"
-frames = 4
-
-[shot.knobs]
-State = "Unreachable"
-
-[[shot]]
-name = "bmm101-searching"
-scene = "bmc_gallery::fleet::BMM101 Searching"
-frames = 4
-
-[[shot]]
-name = "bmm101-long-names"
-scene = "bmc_gallery::fleet::BMM101 Long Names"
+name = "bmm101-extremes"
+scene = "bmc_gallery::fleet::BMM101 Extremes"
 frames = 4
 
 [[shot]]
 name = "bmm100"
 scene = "bmc_gallery::fleet::BMM100"
+frames = 4
+
+[[shot]]
+name = "fleet-status-cases"
+scene = "bmc_gallery::fleet::Fleet Status Cases"
 frames = 4

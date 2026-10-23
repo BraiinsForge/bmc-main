@@ -273,6 +273,17 @@ pub fn sample_model_detail_view(page: usize) -> ModelDetailViewData {
     }
 }
 
+/// A page of devices that all reject the login,
+/// so no row has a figure to size the figure columns by.
+#[must_use]
+pub fn sample_model_detail_all_errors() -> ModelDetailViewData {
+    let mut view = sample_model_detail_view(0);
+    for row in &mut view.rows {
+        row.status = DeviceStatus::AuthError;
+    }
+    view
+}
+
 fn device_detail_fixture(
     mac: Option<&str>,
     temperature: Option<DeviceTemp>,
