@@ -31,67 +31,63 @@
 use bmc_wasm_sdk::*;
 
 use crate::screens::bmm101::{
-    Bmm101, UNIT_FONT, cell, data_row, fleet_header, frame, head_cell, head_row, name_cell,
-    paged_table, spark_cell, value_cell,
+    Bmm101, UNIT_FONT, fleet_header, frame, head, name_text, paged, sparkline, value_text,
 };
-use crate::screens::parts::{pager, row_tap, si_parts_or_dash, status_counts};
+use crate::screens::icons;
+use crate::screens::parts::{
+    Cell, Column, CountSlot, CountStyle, DEGRADED, Fit, OFF, OK, column_table, pager,
+    si_parts_or_dash, status_item,
+};
 use crate::screens::table::{ModelRow, TableViewData};
 use crate::view::{PagerScope, model_detail_click_id};
 
-// Column widths at the design size; they fill the card between its row padding.
-const COL_MODEL: f32 = 104.0;
-const COL_STATUS: f32 = 120.0;
-const COL_HASHRATE: f32 = 86.0;
-const COL_SPARK: f32 = 64.0;
-// The counts sit a size below the row text, so two digits keep clear of the next icon.
-const STATUS_SLOT: f32 = 40.0;
 const STATUS_ICON: f32 = 14.0;
+const STATUS_SPACING: f32 = 8.0;
 
 #[must_use]
 pub fn table_view(m: Bmm101, data: &TableViewData) -> Node {
-    let head = head_row(
-        m,
-        vec![
-            head_cell(m, COL_MODEL, "Model"),
-            head_cell(m, COL_STATUS, "State"),
-            head_cell(m, COL_HASHRATE, "Hashrate"),
-        ],
-    );
-    let rows = data.rows.iter().map(|r| model_row(m, r, data)).collect();
+    let count = CountStyle {
+        icon: m.px(STATUS_ICON),
+        font: m.font(UNIT_FONT),
+        weight: FontWeight::REGULAR,
+        slot: CountSlot::Fit,
+        gap: m.px(4.0),
+    };
+    let name = |r: &ModelRow| Cell::Node(name_text(m, &r.name, FontWeight::BOLD));
+    let ok = |r: &ModelRow| Cell::Node(status_item(&icons::PERF_OK, r.ok, OK, count));
+    let degraded =
+        |r: &ModelRow| Cell::Node(status_item(&icons::PERF_LOW, r.degraded, DEGRADED, count));
+    let off = |r: &ModelRow| Cell::Node(status_item(&icons::PERF_OFF, r.off, OFF, count));
+    let hashrate = |r: &ModelRow| {
+        let (v, u) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
+        Cell::Node(value_text(m, &v, &u))
+    };
+    let spark = |r: &ModelRow| Cell::Node(sparkline(m, &r.series, data.window));
+    let states: [&dyn Fn(&ModelRow) -> Cell; 3] = [&ok, &degraded, &off];
+    let columns = vec![
+        Column::single(head(m, "Model"), Fit::Grow, &name),
+        // One sub-column per state, so the icons line up down the rows.
+        Column::Group {
+            head: head(m, "State"),
+            spacing: m.px(STATUS_SPACING),
+            cells: &states,
+        },
+        Column::single(head(m, "Hashrate"), Fit::End, &hashrate),
+        Column::single(head(m, ""), Fit::Start, &spark),
+    ];
     frame(
         m,
         fleet_header(m, &data.title, data.device_count, true),
-        paged_table(
+        paged(
             m,
-            head,
-            rows,
+            column_table(
+                &data.rows,
+                columns,
+                |r| model_detail_click_id(r.family, &r.name),
+                m.table_width(),
+                m.table(),
+            ),
             pager(PagerScope::Fleet, data.page, data.page_count, m.pager()),
         ),
-    )
-}
-
-fn model_row(m: Bmm101, r: &ModelRow, data: &TableViewData) -> Node {
-    let (hashrate, unit) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
-    data_row(
-        m,
-        vec![
-            name_cell(m, COL_MODEL, &r.name, FontWeight::BOLD),
-            cell(
-                m,
-                COL_STATUS,
-                status_counts(
-                    r.ok,
-                    r.degraded,
-                    r.off,
-                    m.px(STATUS_ICON),
-                    m.font(UNIT_FONT),
-                    m.px(STATUS_SLOT),
-                    FontWeight::REGULAR,
-                ),
-            ),
-            value_cell(m, COL_HASHRATE, &hashrate, &unit),
-            spark_cell(m, COL_SPARK, &r.series, data.window),
-            row_tap(&model_detail_click_id(r.family, &r.name)),
-        ],
     )
 }

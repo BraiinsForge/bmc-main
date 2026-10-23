@@ -34,8 +34,9 @@ use bmc_wasm_sdk::*;
 use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::icons;
 use crate::screens::parts::{
-    BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, UNAVAILABLE,
-    VALUE_FONT, auth_failures, header, icon, scaled_area_chart, si_parts_or_dash, status_counts,
+    BORDER, CARD_BG, CountSlot, CountStyle, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON,
+    PAD, UNAVAILABLE, VALUE_FONT, auth_failures, header, icon, scaled_area_chart, si_parts_or_dash,
+    status_count_font, status_counts,
 };
 
 const STATUS_ICON: f32 = 32.0;
@@ -118,10 +119,14 @@ fn fleet_status(data: &DashboardViewData) -> Node {
             data.ok,
             data.degraded,
             data.off,
-            STATUS_ICON,
-            VALUE_FONT,
-            96.0,
-            FontWeight::SEMIBOLD,
+            CountStyle {
+                icon: STATUS_ICON,
+                font: status_count_font(data.ok, data.degraded, data.off, VALUE_FONT, 32),
+                weight: FontWeight::SEMIBOLD,
+                slot: CountSlot::Fit,
+                gap: 6.0,
+            },
+            32.0,
         ),
     ];
     if data.auth > 0 {

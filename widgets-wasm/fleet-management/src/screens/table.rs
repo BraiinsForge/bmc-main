@@ -33,31 +33,29 @@ use bmc_wasm_sdk::*;
 
 use crate::device::DeviceFamily;
 use crate::history::{ChartPoint, ChartWindow};
+use crate::screens::icons;
 use crate::screens::parts::{
-    BORDER, CARD_BG, DATA_H, DECK_PAGER, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
-    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, header, pager,
-    row_tap, si_parts_or_dash, status_counts,
+    Cell, Column, CountSlot, CountStyle, DECK_PAGER, DECK_TABLE, DEGRADED, FRAME_H, FRAME_W, Fit,
+    GAP, LABEL_FONT, OFF, OK, PAD, ROW_FONT, TABLE_MAX_W, UNAVAILABLE, area_chart, column_table,
+    head_label, header, pager, si_parts_or_dash, status_item,
 };
 use crate::view::{PagerScope, model_detail_click_id};
 
-// Column widths within the table card. Balanced against the Figma "Braiins DECK"
-// list frame: Model was over-wide and starved the rest, the sparkline worst of
-// all — width shifted off Model onto the spark (to the design's ~83px) and the
-// value columns. Model also takes the width the Detail button held.
-const COL_MODEL: f32 = 406.0;
-// The three count slots fill 150; the extra 12 keeps a two-digit off count from
-// crowding the next column, which a short "—" placeholder makes obvious.
-const COL_STATUS: f32 = 162.0;
+// The figure columns, balanced against the Figma "Braiins DECK" list frame:
+// the sparkline at the design's ~83px, each value column wide enough for its figure.
+// Model takes what they and the status counts leave.
 const COL_HASHRATE: f32 = 127.0;
 const COL_SPARK: f32 = 100.0;
 const COL_POWER: f32 = 106.0;
 const COL_EFF: f32 = 118.0;
 const COL_AVG: f32 = 91.0;
-const STATUS_SLOT: f32 = 50.0;
 const SPARK_W: f32 = COL_SPARK - 16.0;
 
 const MODEL_FONT: u32 = 22;
 const STATUS_ICON: f32 = 16.0;
+// Between the counts, and on either side of them,
+// so a cut model name never touches the first icon.
+const STATUS_SPACING: f32 = 16.0;
 
 #[derive(Debug)]
 pub struct ModelRow {
@@ -86,6 +84,68 @@ pub struct TableViewData {
 
 #[must_use]
 pub fn table_view(data: &TableViewData) -> Node {
+    let model = |r: &ModelRow| {
+        Cell::Node(text(
+            &r.name,
+            style!(size: MODEL_FONT, weight: FontWeight::BOLD, color: WHITE, text_overflow: TextOverflow::Ellipsis),
+        ))
+    };
+    let count = CountStyle {
+        icon: STATUS_ICON,
+        font: ROW_FONT,
+        weight: FontWeight::REGULAR,
+        slot: CountSlot::Fit,
+        gap: 6.0,
+    };
+    let ok = |r: &ModelRow| Cell::Node(status_item(&icons::PERF_OK, r.ok, OK, count));
+    let degraded =
+        |r: &ModelRow| Cell::Node(status_item(&icons::PERF_LOW, r.degraded, DEGRADED, count));
+    let off = |r: &ModelRow| Cell::Node(status_item(&icons::PERF_OFF, r.off, OFF, count));
+    let states: [&dyn Fn(&ModelRow) -> Cell; 3] = [&ok, &degraded, &off];
+    let hashrate = |r: &ModelRow| {
+        let (v, u) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
+        value(&v, &u)
+    };
+    let spark = |r: &ModelRow| {
+        Cell::Node(canvas(
+            props!(width: SPARK_W, height: 32.0),
+            area_chart(&r.series, data.window, SPARK_W, 32.0, 0.15),
+        ))
+    };
+    let power = |r: &ModelRow| {
+        let (v, u) = si_parts_or_dash(r.power.map(|p| p.format_si_parts(3)));
+        value(&v, &u)
+    };
+    let efficiency = |r: &ModelRow| {
+        value(
+            &r.efficiency
+                .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(1)),
+            r.efficiency.map_or("", |_| MiningEfficiency::UNIT),
+        )
+    };
+    let avg = |r: &ModelRow| {
+        value(
+            &r.avg_temp
+                .map_or_else(|| UNAVAILABLE.to_owned(), |t| t.format_value(0)),
+            r.avg_temp.map_or("", |_| "°C"),
+        )
+    };
+    let head = |label| head_label(label, LABEL_FONT);
+    let columns = vec![
+        Column::single(head("Model"), Fit::Grow, &model),
+        Column::Gap(STATUS_SPACING),
+        Column::Group {
+            head: head("Status"),
+            spacing: STATUS_SPACING,
+            cells: &states,
+        },
+        Column::Gap(STATUS_SPACING),
+        Column::single(head("Hashrate"), Fit::Fixed(COL_HASHRATE), &hashrate),
+        Column::single(head(""), Fit::Fixed(COL_SPARK), &spark),
+        Column::single(head("Power"), Fit::Fixed(COL_POWER), &power),
+        Column::single(head("Efficiency"), Fit::Fixed(COL_EFF), &efficiency),
+        Column::single(head("Avg"), Fit::Fixed(COL_AVG), &avg),
+    ];
     col(
         props!(background: BLACK, width: FRAME_W, height: FRAME_H, padding: PAD, gap: 16.0),
         [
@@ -93,7 +153,13 @@ pub fn table_view(data: &TableViewData) -> Node {
             row(
                 props!(gap: GAP, flex: 1.0),
                 [
-                    table_card(data),
+                    column_table(
+                        &data.rows,
+                        columns,
+                        |r| model_detail_click_id(r.family, &r.name),
+                        TABLE_MAX_W,
+                        DECK_TABLE,
+                    ),
                     pager(PagerScope::Fleet, data.page, data.page_count, DECK_PAGER),
                 ],
             ),
@@ -101,114 +167,9 @@ pub fn table_view(data: &TableViewData) -> Node {
     )
 }
 
-fn table_card(data: &TableViewData) -> Node {
-    let mut rows: Vec<Node> = vec![header_row()];
-    for r in &data.rows {
-        rows.push(separator());
-        rows.push(model_row(r, data.window));
-    }
-    // border-sim card wrapping the header + data rows.
-    col(
-        props!(background: BORDER, flex: 1.0, padding: 1.0, max_width: TABLE_MAX_W),
-        [col(
-            props!(background: CARD_BG, flex: 1.0, cross_align: CrossAlign::Stretch),
-            rows,
-        )],
-    )
-}
-
-fn header_row() -> Node {
-    row(
-        props!(background: HEADER_BG, height: HEAD_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
-        [
-            head_cell(COL_MODEL, "Model"),
-            head_cell(COL_STATUS, "Status"),
-            head_cell(COL_HASHRATE, "Hashrate"),
-            head_cell(COL_SPARK, ""),
-            head_cell(COL_POWER, "Power"),
-            head_cell(COL_EFF, "Efficiency"),
-            head_cell(COL_AVG, "Avg"),
-        ],
-    )
-}
-
-fn model_row(r: &ModelRow, window: ChartWindow) -> Node {
-    row(
-        props!(height: DATA_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
-        [
-            cell(
-                COL_MODEL,
-                text(
-                    &r.name,
-                    style!(size: MODEL_FONT, weight: FontWeight::BOLD, color: WHITE, text_overflow: TextOverflow::Ellipsis),
-                ),
-            ),
-            cell(
-                COL_STATUS,
-                status_counts(
-                    r.ok,
-                    r.degraded,
-                    r.off,
-                    STATUS_ICON,
-                    ROW_FONT,
-                    STATUS_SLOT,
-                    FontWeight::REGULAR,
-                ),
-            ),
-            cell(COL_HASHRATE, {
-                let (v, u) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
-                value(&v, &u)
-            }),
-            cell(
-                COL_SPARK,
-                canvas(
-                    props!(width: SPARK_W, height: 32.0),
-                    area_chart(&r.series, window, SPARK_W, 32.0, 0.15),
-                ),
-            ),
-            cell(COL_POWER, {
-                let (v, u) = si_parts_or_dash(r.power.map(|p| p.format_si_parts(3)));
-                value(&v, &u)
-            }),
-            cell(
-                COL_EFF,
-                value(
-                    &r.efficiency
-                        .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(1)),
-                    r.efficiency.map_or("", |_| MiningEfficiency::UNIT),
-                ),
-            ),
-            cell(
-                COL_AVG,
-                value(
-                    &r.avg_temp
-                        .map_or_else(|| UNAVAILABLE.to_owned(), |t| t.format_value(0)),
-                    r.avg_temp.map_or("", |_| "°C"),
-                ),
-            ),
-            row_tap(&model_detail_click_id(r.family, &r.name)),
-        ],
-    )
-}
-
-fn head_cell(width: f32, label: &str) -> Node {
-    col(
-        props!(width: width),
-        [text(label, style!(size: LABEL_FONT, color: LABEL))],
-    )
-}
-
-fn cell(width: f32, node: Node) -> Node {
-    col(props!(width: width, cross_align: CrossAlign::Start), [node])
-}
-
-fn value(number: &str, unit: &str) -> Node {
-    text(
+fn value(number: &str, unit: &str) -> Cell {
+    Cell::Node(text(
         fmt!("{number} {unit}"),
         style!(size: ROW_FONT, color: WHITE),
-    )
-}
-
-fn separator() -> Node {
-    col(props!(height: 1.0, background: BORDER), Vec::<Node>::new())
+    ))
 }

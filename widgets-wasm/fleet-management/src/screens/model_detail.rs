@@ -31,9 +31,9 @@ use bmc_wasm_sdk::*;
 use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::icons;
 use crate::screens::parts::{
-    BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, DECK_PAGER, FRAME_H, FRAME_W, GAP, HEAD_H,
-    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart,
-    back_button, breadcrumb, icon, pager, row_tap, si_parts_or_dash, status_glyph,
+    BACK_CHIP, Cell, Column, Crumb, DECK_PAGER, DECK_TABLE, FRAME_H, FRAME_W, Fit, GAP, LABEL,
+    LABEL_FONT, METRIC_ICON, PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, back_button, breadcrumb,
+    column_table, head_label, icon, pager, si_parts_or_dash, status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::view::{CrumbTarget, PagerScope, crumb_click_id};
@@ -65,6 +65,29 @@ pub struct DeviceRow {
     pub max_temp: Option<Temperature>,
 }
 
+impl DeviceRow {
+    /// Whether the device answers with telemetry, rather than a status standing in for it.
+    #[must_use]
+    pub const fn delivering(&self) -> bool {
+        match self.status {
+            DeviceStatus::Ok | DeviceStatus::Degraded => true,
+            DeviceStatus::Unreachable
+            | DeviceStatus::ApiError
+            | DeviceStatus::AuthError
+            | DeviceStatus::AccountUnusable => false,
+        }
+    }
+
+    /// A figure cell, empty for a device whose status stands in for its figures.
+    pub fn figures(&self, node: impl FnOnce() -> Node) -> Cell {
+        if self.delivering() {
+            Cell::Node(node())
+        } else {
+            Cell::Empty
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ModelDetailViewData {
     pub fleet_name: String,
@@ -79,6 +102,59 @@ pub struct ModelDetailViewData {
 
 #[must_use]
 pub fn model_detail_view(data: &ModelDetailViewData) -> Node {
+    let host = |r: &DeviceRow| {
+        Cell::Node(text(
+            &r.hostname,
+            style!(size: HOST_FONT, weight: FontWeight::SEMIBOLD, color: WHITE, text_overflow: TextOverflow::Ellipsis),
+        ))
+    };
+    // A device with no live telemetry would be a row of meaningless zeros;
+    // its status is laid over where the figures would be instead.
+    let hashrate = |r: &DeviceRow| {
+        if r.delivering() {
+            let (v, u) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
+            Cell::Node(value_text(&v, &u))
+        } else {
+            Cell::Overflow(status_banner(r.status))
+        }
+    };
+    let spark = |r: &DeviceRow| {
+        r.figures(|| {
+            canvas(
+                props!(width: SPARK_W, height: 32.0),
+                area_chart(&r.series, data.window, SPARK_W, 32.0, 0.15),
+            )
+        })
+    };
+    let power = |r: &DeviceRow| {
+        r.figures(|| {
+            let (v, u) = si_parts_or_dash(r.power.map(|p| p.format_si_parts(3)));
+            value_text(&v, &u)
+        })
+    };
+    let efficiency = |r: &DeviceRow| {
+        r.figures(|| {
+            value_text(
+                &r.efficiency
+                    .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(1)),
+                r.efficiency.map_or("", |_| MiningEfficiency::UNIT),
+            )
+        })
+    };
+    let avg = |r: &DeviceRow| r.figures(|| temp_text(r.avg_temp));
+    let min = |r: &DeviceRow| r.figures(|| temp_text(r.min_temp));
+    let max = |r: &DeviceRow| r.figures(|| temp_text(r.max_temp));
+    let head = |label| head_label(label, LABEL_FONT);
+    let columns = vec![
+        Column::single(head("Hostname"), Fit::Fixed(COL_HOST), &host),
+        Column::single(head("Hashrate"), Fit::Fixed(COL_HASHRATE), &hashrate),
+        Column::single(head(""), Fit::Fixed(COL_SPARK), &spark),
+        Column::single(head("Power"), Fit::Fixed(COL_POWER), &power),
+        Column::single(head("Efficiency"), Fit::Fixed(COL_EFF), &efficiency),
+        Column::single(temp_head("Avg"), Fit::Fixed(COL_TEMP), &avg),
+        Column::single(temp_head("Min"), Fit::Fixed(COL_TEMP), &min),
+        Column::single(temp_head("Max"), Fit::Fixed(COL_TEMP), &max),
+    ];
     col(
         props!(background: BLACK, width: FRAME_W, height: FRAME_H, padding: PAD, gap: 16.0),
         [
@@ -86,7 +162,13 @@ pub fn model_detail_view(data: &ModelDetailViewData) -> Node {
             row(
                 props!(gap: GAP, flex: 1.0),
                 [
-                    table_card(data),
+                    column_table(
+                        &data.rows,
+                        columns,
+                        |r| r.click_id.clone(),
+                        TABLE_MAX_W,
+                        DECK_TABLE,
+                    ),
                     pager(
                         PagerScope::ModelDetail,
                         data.page,
@@ -122,102 +204,10 @@ fn detail_header(fleet_name: &str, title: &str, count: usize) -> Node {
     )
 }
 
-fn table_card(data: &ModelDetailViewData) -> Node {
-    let mut rows: Vec<Node> = vec![header_row()];
-    for r in &data.rows {
-        rows.push(separator());
-        rows.push(device_row(r, data.window));
-    }
-    col(
-        props!(background: BORDER, flex: 1.0, padding: 1.0, max_width: TABLE_MAX_W),
-        [col(
-            props!(background: CARD_BG, flex: 1.0, cross_align: CrossAlign::Stretch),
-            rows,
-        )],
-    )
-}
-
-fn header_row() -> Node {
-    row(
-        props!(background: HEADER_BG, height: HEAD_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
-        [
-            head_cell(COL_HOST, "Hostname"),
-            head_cell(COL_HASHRATE, "Hashrate"),
-            head_cell(COL_SPARK, ""),
-            head_cell(COL_POWER, "Power"),
-            head_cell(COL_EFF, "Efficiency"),
-            temp_head("Avg"),
-            temp_head("Min"),
-            temp_head("Max"),
-        ],
-    )
-}
-
-fn device_row(r: &DeviceRow, window: ChartWindow) -> Node {
-    let host = cell(
-        COL_HOST,
-        text(
-            &r.hostname,
-            style!(size: HOST_FONT, weight: FontWeight::SEMIBOLD, color: WHITE, text_overflow: TextOverflow::Ellipsis),
-        ),
-    );
-    // A device with no live telemetry would be a row of meaningless zeros; show
-    // its status where the metrics would be, instead of cramming it beside them.
-    let body = match r.status {
-        DeviceStatus::Ok | DeviceStatus::Degraded => metric_cells(r, window),
-        DeviceStatus::Unreachable
-        | DeviceStatus::ApiError
-        | DeviceStatus::AuthError
-        | DeviceStatus::AccountUnusable => {
-            vec![status_banner(r.status)]
-        }
-    };
-    let mut children = vec![host];
-    children.extend(body);
-    children.push(row_tap(&r.click_id));
-    row(
-        props!(height: DATA_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
-        children,
-    )
-}
-
-fn metric_cells(r: &DeviceRow, window: ChartWindow) -> Vec<Node> {
-    vec![
-        cell(COL_HASHRATE, {
-            let (v, u) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
-            value(&v, &u)
-        }),
-        cell(
-            COL_SPARK,
-            canvas(
-                props!(width: SPARK_W, height: 32.0),
-                area_chart(&r.series, window, SPARK_W, 32.0, 0.15),
-            ),
-        ),
-        cell(COL_POWER, {
-            let (v, u) = si_parts_or_dash(r.power.map(|p| p.format_si_parts(3)));
-            value(&v, &u)
-        }),
-        cell(
-            COL_EFF,
-            value(
-                &r.efficiency
-                    .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(1)),
-                r.efficiency.map_or("", |_| MiningEfficiency::UNIT),
-            ),
-        ),
-        cell(COL_TEMP, temp_cell(r.avg_temp)),
-        cell(COL_TEMP, temp_cell(r.min_temp)),
-        cell(COL_TEMP, temp_cell(r.max_temp)),
-    ]
-}
-
-// A non-delivering device: the status glyph + label fill the metric area,
-// left-aligned just after the hostname, in place of a row of zeros.
 fn status_banner(status: DeviceStatus) -> Node {
     let (svg, color, label) = status_glyph(status);
     row(
-        props!(flex: 1.0, gap: 12.0, cross_align: CrossAlign::Center),
+        props!(gap: 12.0, cross_align: CrossAlign::Center),
         [
             icon(svg, 24.0, color),
             text(
@@ -228,44 +218,26 @@ fn status_banner(status: DeviceStatus) -> Node {
     )
 }
 
-fn head_cell(width: f32, label: &str) -> Node {
-    col(
-        props!(width: width),
-        [text(label, style!(size: LABEL_FONT, color: LABEL))],
-    )
-}
-
 fn temp_head(label: &str) -> Node {
-    col(
-        props!(width: COL_TEMP),
-        [row(
-            props!(gap: 8.0, cross_align: CrossAlign::Center),
-            [
-                text(label, style!(size: LABEL_FONT, color: LABEL)),
-                icon(&icons::STAT_TEMP, METRIC_ICON, LABEL),
-            ],
-        )],
+    row(
+        props!(gap: 8.0, cross_align: CrossAlign::Center),
+        [
+            text(label, style!(size: LABEL_FONT, color: LABEL)),
+            icon(&icons::STAT_TEMP, METRIC_ICON, LABEL),
+        ],
     )
 }
 
-fn cell(width: f32, node: Node) -> Node {
-    col(props!(width: width, cross_align: CrossAlign::Start), [node])
-}
-
-fn value(number: &str, unit: &str) -> Node {
+fn value_text(number: &str, unit: &str) -> Node {
     text(
         fmt!("{number} {unit}"),
         style!(size: VALUE_FONT, color: WHITE),
     )
 }
 
-fn temp_cell(temp: Option<Temperature>) -> Node {
+fn temp_text(temp: Option<Temperature>) -> Node {
     temp.map_or_else(
-        || value(UNAVAILABLE, ""),
-        |t| value(&t.format_value(0), "°C"),
+        || value_text(UNAVAILABLE, ""),
+        |t| value_text(&t.format_value(0), "°C"),
     )
-}
-
-fn separator() -> Node {
-    col(props!(height: 1.0, background: BORDER), Vec::<Node>::new())
 }

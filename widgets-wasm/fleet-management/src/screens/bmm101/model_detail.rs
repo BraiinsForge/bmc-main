@@ -32,39 +32,58 @@ use bmc_wasm_sdk::types::MiningEfficiency;
 use bmc_wasm_sdk::*;
 
 use crate::screens::bmm101::{
-    Bmm101, ROW_FONT, back_header, data_row, frame, head_cell, head_row, name_cell, paged_table,
-    spark_cell, value_cell,
+    Bmm101, ROW_FONT, back_header, frame, head, name_text, paged, sparkline, value_text,
 };
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
-use crate::screens::parts::{UNAVAILABLE, icon, pager, row_tap, si_parts_or_dash, status_glyph};
+use crate::screens::parts::{
+    Cell, Column, Fit, UNAVAILABLE, column_table, icon, pager, si_parts_or_dash, status_glyph,
+};
 use crate::summary::DeviceStatus;
 use crate::view::PagerScope;
 
-// Column widths at the design size; they fill the card between its row padding.
-const COL_HOST: f32 = 120.0;
-const COL_HASHRATE: f32 = 86.0;
-const COL_SPARK: f32 = 70.0;
-const COL_EFF: f32 = 98.0;
-
 #[must_use]
 pub fn model_detail_view(m: Bmm101, data: &ModelDetailViewData) -> Node {
-    let head = head_row(
-        m,
-        vec![
-            head_cell(m, COL_HOST, "Hostname"),
-            head_cell(m, COL_HASHRATE, "Hashrate"),
-            head_cell(m, COL_SPARK, ""),
-            head_cell(m, COL_EFF, "Eff."),
-        ],
-    );
-    let rows = data.rows.iter().map(|r| device_row(m, r, data)).collect();
+    let host = |r: &DeviceRow| Cell::Node(name_text(m, &r.hostname, FontWeight::SEMIBOLD));
+    // A device with no live telemetry shows why where its hashrate would be.
+    // The banner widens the column rather than spilling over the ones after it,
+    // which a page of nothing but errors would push off the card.
+    let hashrate = |r: &DeviceRow| {
+        Cell::Node(if r.delivering() {
+            let (v, u) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
+            value_text(m, &v, &u)
+        } else {
+            status_banner(m, r.status)
+        })
+    };
+    let spark = |r: &DeviceRow| r.figures(|| sparkline(m, &r.series, data.window));
+    let efficiency = |r: &DeviceRow| {
+        r.figures(|| {
+            value_text(
+                m,
+                &r.efficiency
+                    .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(1)),
+                r.efficiency.map_or("", |_| MiningEfficiency::UNIT),
+            )
+        })
+    };
+    let columns = vec![
+        Column::single(head(m, "Hostname"), Fit::Grow, &host),
+        Column::single(head(m, "Hashrate"), Fit::End, &hashrate),
+        Column::single(head(m, ""), Fit::Start, &spark),
+        Column::single(head(m, "Eff."), Fit::End, &efficiency),
+    ];
     frame(
         m,
         back_header(m, &data.title, Some(data.device_count)),
-        paged_table(
+        paged(
             m,
-            head,
-            rows,
+            column_table(
+                &data.rows,
+                columns,
+                |r| r.click_id.clone(),
+                m.table_width(),
+                m.table(),
+            ),
             pager(
                 PagerScope::ModelDetail,
                 data.page,
@@ -75,37 +94,10 @@ pub fn model_detail_view(m: Bmm101, data: &ModelDetailViewData) -> Node {
     )
 }
 
-fn device_row(m: Bmm101, r: &DeviceRow, data: &ModelDetailViewData) -> Node {
-    let mut cells = vec![name_cell(m, COL_HOST, &r.hostname, FontWeight::SEMIBOLD)];
-    // A device with no live telemetry shows why, where its metrics would be.
-    match r.status {
-        DeviceStatus::Ok | DeviceStatus::Degraded => {
-            let (hashrate, unit) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
-            cells.extend([
-                value_cell(m, COL_HASHRATE, &hashrate, &unit),
-                spark_cell(m, COL_SPARK, &r.series, data.window),
-                value_cell(
-                    m,
-                    COL_EFF,
-                    &r.efficiency
-                        .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(1)),
-                    r.efficiency.map_or("", |_| MiningEfficiency::UNIT),
-                ),
-            ]);
-        }
-        DeviceStatus::Unreachable
-        | DeviceStatus::ApiError
-        | DeviceStatus::AuthError
-        | DeviceStatus::AccountUnusable => cells.push(status_banner(m, r.status)),
-    }
-    cells.push(row_tap(&r.click_id));
-    data_row(m, cells)
-}
-
 fn status_banner(m: Bmm101, status: DeviceStatus) -> Node {
     let (svg, color, label) = status_glyph(status);
     row(
-        props!(flex: 1.0, gap: m.px(8.0), cross_align: CrossAlign::Center),
+        props!(gap: m.px(8.0), cross_align: CrossAlign::Center),
         [
             icon(svg, m.px(16.0), color),
             text(
