@@ -83,9 +83,9 @@ fn inspect_module(wasm: &[u8]) -> Result<ModuleShape> {
                 }
             }
             Payload::ImportSection(section) => {
-                for import in section.into_imports() {
+                for import in section {
                     match import?.ty {
-                        TypeRef::Func(_) | TypeRef::FuncExact(_) => imported_functions += 1,
+                        TypeRef::Func(_) => imported_functions += 1,
                         TypeRef::Global(_) => imported_globals += 1,
                         TypeRef::Table(_) | TypeRef::Memory(_) | TypeRef::Tag(_) => {}
                     }

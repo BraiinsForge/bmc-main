@@ -293,10 +293,10 @@ fn burning_timer_wat(timers: usize, iterations: u32) -> String {
     )
 }
 
-/// One tick at this budget affords about 25 000 iterations of `burning_timer_wat` at wasmi's current costs.
+/// One tick at this budget affords about 11 000 iterations of `burning_timer_wat` at wasmi's current costs.
 const TICK_FUEL: u64 = 100_000;
 /// Fits one budget, while two ticks' worth does not.
-const MORE_THAN_HALF_A_BUDGET: u32 = 18_000;
+const MORE_THAN_HALF_A_BUDGET: u32 = 8_000;
 
 fn fuel_runtime(timers: usize, iterations: u32) -> WasmWidgetRuntime {
     let config = RuntimeConfig {

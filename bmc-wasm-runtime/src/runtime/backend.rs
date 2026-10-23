@@ -835,9 +835,9 @@ impl WasmWidgetModule {
             crate::package_assets::reject_embedded_package_assets(wasm_bytes)?;
             let mut engine_config = wasmi::Config::default();
             engine_config.consume_fuel(true);
-            // Wasmi 1.0.9's EngineStacks::reuse_or_new allocates on pool exhaustion;
-            // execute_root_func and executor/stack reset reused stacks and initialize
-            // every newly live frame slot. Re-audit on upgrade.
+            // Wasmi 2.0's EngineStacks::reuse_or_new allocates on pool exhaustion;
+            // execute_root_func resets reused stacks and CallStack::push zero-fills
+            // every newly live local slot. Re-audit on upgrade.
             engine_config.set_max_cached_stacks(4);
             // Disable Wasm proposals not used by our Rust-compiled widgets.
             // Saves validation/translation overhead.
@@ -940,8 +940,8 @@ pub struct WasmWidgetRuntime {
 }
 
 impl WasmWidgetRuntime {
-    /// Maximum fuel (instructions) per frame.
-    pub const FUEL_PER_FRAME: u64 = 10_000_000;
+    /// Maximum fuel per frame, one unit per Wasm operator.
+    pub const FUEL_PER_FRAME: u64 = 25_000_000;
 
     /// Create a new runtime from WASM bytes.
     ///

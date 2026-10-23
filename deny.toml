@@ -53,10 +53,6 @@ skip = [
     { crate = "rand_core@0.10" },
     { crate = "cpufeatures@0.3" },
 
-    # wasmi 1.1 uses wasmparser 0.239 while the workspace matches wast 262.
-    # Remove after upgrading wasmi.
-    { crate = "wasmparser@0.239" },
-
     # Font/text ecosystem (cosmic-text pulls swash+harfrust with different versions)
     { crate = "roxmltree@0.20" },
 

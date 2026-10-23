@@ -110,6 +110,14 @@ strip = true
 [profile.dev.package.bmc-render-macros]
 opt-level = 3
 
+# wasmi 2.0 dispatches operators through tail calls, which LLVM lowers
+# as sibling calls only without `debug-assertions`. With them on,
+# each executed operator keeps a native frame, so a 10k-iteration loop
+# overflows a 2 MiB thread stack. Upstream guards the tail-call path
+# only under `--release` (wasmi-labs/wasmi#1942).
+[profile.dev.package.wasmi]
+debug-assertions = false
+
 [profile.release.package.bmc-render-macros]
 opt-level = 3
 
@@ -478,9 +486,9 @@ utoipa = { version = "5.3.1", features = ["uuid"] }
 uuid = { version = "1.15.1", features = ["serde", "v4"] }
 ux = { version = "0.1.6" }
 walkdir = "2.5.0"
-wasm-encoder = { version = "0.262", default-features = false, features = ["std", "wasmparser"] }
-wasmi = "1.0"
-wasmparser = { version = "0.262", default-features = false, features = ["simd", "std"] }
+wasm-encoder = { version = "0.228", default-features = false, features = ["std", "wasmparser"] }
+wasmi = { version = "2.0", default-features = false, features = ["auto-dispatch", "memory64", "stable", "std", "validate"] }
+wasmparser = { version = "0.228", default-features = false, features = ["simd", "std"] }
 wat = "1"
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31.14"

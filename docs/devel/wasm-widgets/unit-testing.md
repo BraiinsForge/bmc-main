@@ -100,7 +100,7 @@ Each test runs on the fuel budget of one device frame, and running out fails it 
 that needs more names its own budget, and the attribute takes one only with a reason:
 
 ```rust
-#[wasm_test(fuel = 250e6, reason = "parses 2,048 candles")]
+#[wasm_test(fuel = 625e6, reason = "parses 2,048 candles")]
 ```
 
 Fuel is a whole number of units, written out or in exponent form.

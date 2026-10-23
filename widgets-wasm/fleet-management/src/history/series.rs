@@ -521,7 +521,7 @@ mod tests {
         all.into_iter().skip(excess).collect()
     }
 
-    #[wasm_test(fuel = 1e9, reason = "records up to 300 samples in 2,000 cases")]
+    #[wasm_test(fuel = 2.5e9, reason = "records up to 300 samples in 2,000 cases")]
     fn record_matches_a_slot_map_over_generated_sequences() {
         let mut rng = Lcg(0x5EED);
         for case in 0..2_000 {
@@ -786,7 +786,7 @@ mod tests {
         );
     }
 
-    #[wasm_test(fuel = 200e6, reason = "plots 2,000 generated series")]
+    #[wasm_test(fuel = 500e6, reason = "plots 2,000 generated series")]
     fn plot_keeps_its_invariants_over_generated_series() {
         let mut rng = Lcg(0x917);
         for case in 0..2_000 {

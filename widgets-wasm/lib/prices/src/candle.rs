@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[wasm_test(
-        fuel = 250e6,
+        fuel = 625e6,
         reason = "the cap only shows past 2,048 bars, each five string keys in the MapJson double"
     )]
     fn cap_keeps_the_newest_candles() {
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[wasm_test(
-        fuel = 500e6,
+        fuel = 1.25e9,
         reason = "the guard only trips past 4,096 bars, each five string keys in the MapJson double"
     )]
     fn payload_beyond_parse_guard_is_rejected() {
@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[wasm_test(
-        fuel = 250e6,
+        fuel = 625e6,
         reason = "a full history is 2,048 bars, each five string keys in the MapJson double"
     )]
     fn full_history_preserves_2_048_monthly_candles() {
