@@ -31,7 +31,7 @@ from bmc_tui import console, firmware
 from bmc_tui.console import lit
 from bmc_tui.fw_index import PLATFORM_ASSET_KEY, FwIndexServer, Release
 from bmc_tui.stage import Abort
-from tests import stubs
+from tests import stubs, web
 
 _FIRMWARE_BYTES = b"firmware fixture\n"
 _SHA256 = hashlib.sha256(_FIRMWARE_BYTES).hexdigest()
@@ -180,6 +180,7 @@ def test_download_without_a_checksum_always_fetches(
     firmware.download_firmware(f"{base_url}/firmware.tar", dest, sha256=None, size=None)
 
     assert dest.read_bytes() == _FIRMWARE_BYTES
+    web.wait_for_requests(server, 1)
     assert [record.path for record in server.requests()] == ["/firmware.tar"]
 
 

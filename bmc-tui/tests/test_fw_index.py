@@ -74,13 +74,6 @@ def _get(url: str) -> bytes:
         return response.read()
 
 
-def _wait_for_requests(server: FwIndexServer, count: int) -> None:
-    deadline = time.monotonic() + 5
-    while len(server.requests()) < count and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert len(server.requests()) == count
-
-
 def test_index_document_matches_minimal_golden_shape(tmp_path: Path) -> None:
     firmware = tmp_path / "firmware.tar"
     _ = firmware.write_bytes(_FIRMWARE_BYTES)
@@ -285,7 +278,7 @@ def test_server_records_completed_index_and_firmware_fetches(tmp_path: Path) -> 
         base_url = f"http://127.0.0.1:{server.port}"
         assert _get(f"{base_url}/{INDEX_NAME}") == body
 
-        _wait_for_requests(server, 1)
+        web.wait_for_requests(server, 1)
         requests = server.requests()
         assert len(requests) == 1
         index_request = requests[0]
@@ -299,7 +292,7 @@ def test_server_records_completed_index_and_firmware_fetches(tmp_path: Path) -> 
         assert server.completed("/firmware.tar") is False
 
         assert _get(f"{base_url}/firmware.tar") == _FIRMWARE_BYTES
-        _wait_for_requests(server, 2)
+        web.wait_for_requests(server, 2)
         assert server.completed("/firmware.tar") is True
 
 
@@ -317,7 +310,7 @@ def test_keepalive_connection_records_bytes_per_request(
     with FwIndexServer(root, port=0, bind_ip="127.0.0.1") as server:
         client = socket.create_connection(("127.0.0.1", server.port))
         client.sendall(f"GET /{INDEX_NAME} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode())
-        _wait_for_requests(server, 1)
+        web.wait_for_requests(server, 1)
         client.sendall(
             b"GET /firmware.tar HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
         )
@@ -325,7 +318,7 @@ def test_keepalive_connection_records_bytes_per_request(
             pass
         client.close()
 
-        _wait_for_requests(server, 2)
+        web.wait_for_requests(server, 2)
         records = {record.path: record for record in server.requests()}
         index_record = records[f"/{INDEX_NAME}"]
         firmware_record = records["/firmware.tar"]
@@ -347,7 +340,7 @@ def test_fully_served_404_is_not_provenance(tmp_path: Path) -> None:
         with caught.value as response:
             assert response.read()
 
-        _wait_for_requests(server, 1)
+        web.wait_for_requests(server, 1)
         request = server.requests()[0]
         assert request.path == path
         assert request.status == 404
@@ -371,7 +364,7 @@ def test_aborted_transfer_is_not_complete(tmp_path: Path) -> None:
         client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         client.close()
 
-        _wait_for_requests(server, 1)
+        web.wait_for_requests(server, 1)
         request = server.requests()[0]
         assert request.path == "/firmware.tar"
         assert request.status == 200

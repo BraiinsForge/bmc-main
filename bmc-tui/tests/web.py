@@ -21,8 +21,11 @@
 """HTTP requests against the servers the tests start on localhost."""
 
 import http.client
+import time
 import urllib.request
 from typing import cast
+
+from bmc_tui.fw_index import FwIndexServer
 
 
 def open_url(
@@ -32,3 +35,15 @@ def open_url(
     if timeout is None:
         return cast("http.client.HTTPResponse", urllib.request.urlopen(url))
     return cast("http.client.HTTPResponse", urllib.request.urlopen(url, timeout=timeout))
+
+
+def wait_for_requests(server: FwIndexServer, count: int) -> None:
+    """Wait for `server` to record `count` requests.
+
+    It records a request once the response is sent,
+    so the client can have read it all before the record exists.
+    """
+    deadline = time.monotonic() + 5
+    while len(server.requests()) < count and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(server.requests()) == count
