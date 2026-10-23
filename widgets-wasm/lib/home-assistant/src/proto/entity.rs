@@ -303,7 +303,7 @@ impl<'a, J: JsonLookup> EntityEvent<'a, J> {
 
 /// The value at `path`, with text past its cap read as absent.
 /// Leaves `path` as it found it.
-fn read_value(event: &impl JsonLookup, path: &mut PointerBuf) -> Option<AttributeValue> {
+pub(crate) fn read_value(event: &impl JsonLookup, path: &mut PointerBuf) -> Option<AttributeValue> {
     if let Some(text) = event.str_max(path.as_str(), MAX_ATTRIBUTE_TEXT_BYTES) {
         return Some(AttributeValue::Text(text));
     }

@@ -22,12 +22,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::check::{check_entity_ids, distinct, is_entity_id, is_name};
+use super::check::{check_entity_ids, distinct, is_entity_id, is_free_name, is_name, is_pointer};
 use super::effects::{Closed, Command, Effects, Output, Wake};
 use super::entity::{Entity, EntityEvent};
 use super::json::{JsonLookup, ObjectWriter};
-use super::reply::{CallFailure, Event, HaError, PendingCall, UNKNOWN_ERROR};
-use super::service_data::ServiceData;
+use super::reply::{CallFailure, Event, HaError, PendingCall, UNKNOWN_ERROR, Wanted};
+use super::service_data::{CheckedData, ServiceData};
 
 /// Connect timeout, from the connect until `auth_ok`,
 /// as the Home Assistant JS client applies it.
@@ -46,10 +46,13 @@ pub const MAX_SUBSCRIPTIONS: usize = 8;
 pub const MAX_ENTITIES_PER_SUBSCRIPTION: usize = 32;
 pub const MAX_ATTRIBUTES_PER_SUBSCRIPTION: usize = 16;
 pub const MAX_PENDING_CALLS: usize = 8;
+pub const MAX_REPLY_VALUES: usize = 16;
 /// Home Assistant's own cap on an entity id.
 pub const MAX_ENTITY_ID_BYTES: usize = 255;
 pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_SERVICE_DATA_TEXT_BYTES: usize = 1024;
+/// The same cap as an entity id, which a pointer may name.
+pub const MAX_POINTER_BYTES: usize = 255;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SubscriptionId(usize);
@@ -95,12 +98,16 @@ pub enum RequestError {
     TooManyAttributes,
     /// Not shaped `domain.object_id`, or over [`MAX_ENTITY_ID_BYTES`].
     InvalidEntityId,
-    /// A domain or service that is not slug-shaped, a data key or attribute name that is empty,
-    /// or any of them over [`MAX_NAME_BYTES`].
+    /// A domain or service that is not slug-shaped, a command, data key or attribute name that is empty,
+    /// any of them over [`MAX_NAME_BYTES`], a data key a command reserves,
+    /// or a command the session sends itself.
     InvalidName,
     /// A service data text over [`MAX_SERVICE_DATA_TEXT_BYTES`].
-    /// Also a data key or text the transport reserves, as [`Setup::reserved`] says.
+    /// Also a command, data key or text the transport reserves, as [`Setup::reserved`] says.
     InvalidData,
+    TooManyReplyValues,
+    /// A pointer neither empty nor starting with `/`, or over [`MAX_POINTER_BYTES`].
+    InvalidPointer,
     NotConnected,
     TooManyPendingCalls,
 }
@@ -512,7 +519,7 @@ impl Session {
         if !is_entity_id(entity_id) {
             return Err(RequestError::InvalidEntityId);
         }
-        let (call, request) = self.start_call()?;
+        let (call, request) = self.start_call(Wanted::Nothing)?;
         let mut message = ObjectWriter::new()
             .uint("id", request.0)
             .string("type", "call_service")
@@ -526,7 +533,64 @@ impl Session {
         Ok((call, Effects::send(message.finish())))
     }
 
-    fn start_call(&mut self) -> Result<(CallId, RequestId), RequestError> {
+    /// Send the one-off command `command`, with `data` beside its id and type,
+    /// such as `config/entity_registry/get` with the `entity_id` to look up.
+    /// The result arrives as [`Event::CallFinished`], its [`Reply`](super::Reply) holding the values found at `wanted`:
+    /// JSON Pointers into the command's `result`, as a lookup cannot list its keys.
+    /// Like a service call, a command is never sent twice, and times out as one does.
+    ///
+    /// For one-off requests only.
+    /// A command that streams, such as `subscribe_events` or `render_template`, is not supported:
+    /// the client drops its events, and Home Assistant keeps sending them until the connection ends.
+    /// `auth` and `ping` are the session's own, so they are refused:
+    /// it logs in and keeps the connection alive by itself.
+    pub fn command(
+        &mut self,
+        command: &str,
+        data: &ServiceData,
+        wanted: &[&str],
+    ) -> Result<(CallId, Effects), RequestError> {
+        if !is_free_name(command)
+            || matches!(command, "auth" | "ping")
+            || data.has_key("id")
+            || data.has_key("type")
+        {
+            return Err(RequestError::InvalidName);
+        }
+        if (self.setup.reserved)(command) {
+            return Err(RequestError::InvalidData);
+        }
+        let data = data.checked(self.setup.reserved)?;
+        if wanted.len() > MAX_REPLY_VALUES {
+            return Err(RequestError::TooManyReplyValues);
+        }
+        if !wanted.iter().all(|pointer| is_pointer(pointer)) {
+            return Err(RequestError::InvalidPointer);
+        }
+        self.send_command(
+            command,
+            &data,
+            Wanted::Values(owned(wanted.iter().copied())),
+        )
+    }
+
+    fn send_command(
+        &mut self,
+        command: &str,
+        data: &CheckedData<'_>,
+        wanted: Wanted,
+    ) -> Result<(CallId, Effects), RequestError> {
+        let (call, request) = self.start_call(wanted)?;
+        let message = data.write_into(
+            ObjectWriter::new()
+                .uint("id", request.0)
+                .string("type", command),
+        );
+
+        Ok((call, Effects::send(message.finish())))
+    }
+
+    fn start_call(&mut self, wanted: Wanted) -> Result<(CallId, RequestId), RequestError> {
         if !matches!(self.phase, Phase::Ready { .. }) {
             return Err(RequestError::NotConnected);
         }
@@ -544,6 +608,7 @@ impl Session {
         let request = self.requests.start(Pending::Call(PendingCall {
             id: call,
             ticks_waited: 0,
+            wanted,
         }));
         Ok((call, request))
     }
@@ -641,9 +706,13 @@ impl Session {
                 });
             }
             (Pending::Call(call), result) => {
+                let result = match result {
+                    Ok(()) => Ok(call.reply(message)),
+                    Err(error) => Err(CallFailure::Rejected(error)),
+                };
                 out.events.push(Event::CallFinished {
                     call: call.id,
-                    result: result.map_err(CallFailure::Rejected),
+                    result,
                 });
             }
         }

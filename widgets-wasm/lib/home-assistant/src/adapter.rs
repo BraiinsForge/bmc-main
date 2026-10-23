@@ -142,6 +142,17 @@ impl Client {
         self.request(|core| core.call_service(domain, service, entity_id, data))
     }
 
+    /// Send the one-off command `command`; the values found at `wanted`
+    /// in its result arrive as [`Event::CallFinished`].
+    pub fn command(
+        &self,
+        command: &str,
+        data: &ServiceData,
+        wanted: &[&str],
+    ) -> Result<CallId, RequestError> {
+        self.request(|core| core.command(command, data, wanted))
+    }
+
     /// Start again after a stop, or start over an attempt still opening,
     /// as [`proto::Session::resume`] says.
     ///

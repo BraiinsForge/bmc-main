@@ -30,6 +30,7 @@
 //! let client = home_assistant::connect("ha", on_ha_event)?;
 //! let sensor = client.subscribe(&["sensor.outdoor"], &["friendly_name", "unit_of_measurement"])?;
 //! let call = client.call_service("button", "press", "button.gate", &ServiceData::new())?;
+//! let config = client.command("get_config", &ServiceData::new(), &["/time_zone"])?;
 //! ```
 //!
 //! Every type a widget handles is re-exported here; [`proto`] holds the engine behind them.
@@ -47,6 +48,7 @@ pub use adapter::{Client, ConnectError, EventCallback, Subscription, connect};
 pub use proto::{
     AttributeValue, CallFailure, CallId, Entity, Event, HaError, MAX_ATTRIBUTE_TEXT_BYTES,
     MAX_ATTRIBUTES_PER_SUBSCRIPTION, MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES,
-    MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, Presence,
-    RequestError, ServiceData, Status, SubscriptionId, UNKNOWN_ERROR, is_entity_id,
+    MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_POINTER_BYTES, MAX_REPLY_VALUES,
+    MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, Presence, Reply, RequestError, ServiceData,
+    Status, SubscriptionId, UNKNOWN_ERROR, Values, is_entity_id,
 };

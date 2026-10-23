@@ -23,8 +23,8 @@ use serde_json::{Value, json};
 use bmc_wasm_sdk::wasm_test;
 
 use super::*;
-use crate::proto::Presence;
 use crate::proto::json::test_support::Message;
+use crate::proto::{Presence, Reply, Values};
 
 const URL: &str = "ws://ha.test/api/websocket";
 const TOKEN: &str = "token-as-the-transport-takes-it";
@@ -410,7 +410,7 @@ fn a_service_call_is_sent_with_its_target_and_its_result_reported() {
         done.events,
         [Event::CallFinished {
             call,
-            result: Ok(())
+            result: Ok(Reply::Done)
         }]
     );
 }
@@ -473,6 +473,12 @@ fn text_the_transport_reserves_is_refused_and_only_that_request_fails() {
             "{data:?}"
         );
     }
+    assert_eq!(
+        client
+            .command("RESERVED/get", &ServiceData::new(), &[])
+            .err(),
+        Some(RequestError::InvalidData)
+    );
     assert_eq!(client.status(), Status::Ready);
     assert!(
         client
@@ -626,6 +632,244 @@ fn a_late_answer_to_a_failed_call_is_ignored() {
         &json!({"id": id, "type": "result", "success": true}),
     );
     assert!(late.events.is_empty());
+}
+
+const PRECISION: &str = "/options/sensor/display_precision";
+const SUGGESTED: &str = "/options/sensor/suggested_display_precision";
+
+fn look_up_registry_entry(client: &mut Session) -> (CallId, Effects) {
+    client
+        .command(
+            "config/entity_registry/get",
+            &ServiceData::new().text("entity_id", "sensor.outdoor"),
+            &[PRECISION, SUGGESTED],
+        )
+        .expect("BUG: the test command is valid while connected")
+}
+
+#[wasm_test]
+fn a_command_is_sent_with_its_fields_beside_its_id_and_type() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let (_, out) = look_up_registry_entry(&mut client);
+
+    assert_eq!(
+        sent(&out),
+        [json!({"id": 1, "type": "config/entity_registry/get", "entity_id": "sensor.outdoor"})]
+    );
+}
+
+#[wasm_test]
+fn a_command_reply_holds_the_wanted_values_its_result_has() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let (call, _) = look_up_registry_entry(&mut client);
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {
+            "entity_id": "sensor.outdoor",
+            "options": {"sensor": {"suggested_display_precision": 1}},
+        }}),
+    );
+
+    let [
+        Event::CallFinished {
+            call: finished,
+            result: Ok(Reply::Values(reply)),
+        },
+    ] = out.events.as_slice()
+    else {
+        panic!("BUG: expected one finished call, got {:?}", out.events);
+    };
+    assert_eq!(*finished, call);
+    assert_eq!(reply.number(SUGGESTED), Some(1.0));
+    assert_eq!(
+        reply.get(PRECISION),
+        None,
+        "a value the result lacks is absent"
+    );
+    assert_eq!(
+        reply.get("/entity_id"),
+        None,
+        "a value not asked for is not kept"
+    );
+}
+
+#[wasm_test]
+fn a_command_reply_reads_text_too() {
+    const UNIT: &str = "/unit_system/temperature";
+
+    let mut client = client();
+    let _ = ready(&mut client);
+    let _ = client
+        .command("get_config", &ServiceData::new(), &[UNIT])
+        .expect("BUG: the test command is valid while connected");
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {
+            "unit_system": {"temperature": "°C"},
+        }}),
+    );
+
+    let reply = only_values(&out);
+    assert_eq!(reply.text(UNIT), Some("°C"));
+    assert_eq!(reply.number(UNIT), None);
+}
+
+#[wasm_test]
+fn a_rejected_command_reports_home_assistants_code() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let (call, _) = look_up_registry_entry(&mut client);
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": false,
+               "error": {"code": "not_found", "message": "Entity not found"}}),
+    );
+
+    assert_eq!(
+        out.events,
+        [Event::CallFinished {
+            call,
+            result: Err(CallFailure::Rejected(HaError {
+                code: "not_found".to_owned(),
+                message: "Entity not found".to_owned(),
+            })),
+        }]
+    );
+}
+
+#[wasm_test]
+fn a_command_shares_the_bound_on_pending_calls() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    for _ in 0..MAX_PENDING_CALLS {
+        let _ = press(&mut client);
+    }
+
+    assert_eq!(
+        client
+            .command("config/entity_registry/get", &ServiceData::new(), &[])
+            .err(),
+        Some(RequestError::TooManyPendingCalls)
+    );
+}
+
+#[wasm_test]
+fn a_command_is_refused_while_disconnected() {
+    let mut client = client();
+    let _ = client.start();
+
+    assert_eq!(
+        client
+            .command("config/entity_registry/get", &ServiceData::new(), &[])
+            .err(),
+        Some(RequestError::NotConnected)
+    );
+}
+
+#[wasm_test]
+fn the_sessions_own_commands_are_refused() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    for command in ["auth", "ping"] {
+        assert_eq!(
+            client.command(command, &ServiceData::new(), &[]).err(),
+            Some(RequestError::InvalidName),
+            "{command}: the session sends it itself",
+        );
+    }
+}
+
+#[wasm_test]
+fn a_command_type_is_any_text_within_the_name_cap() {
+    let mut client = client();
+    let _ = ready(&mut client);
+
+    for command in [
+        "dynalite/get-config",
+        "hacs/repository/info",
+        "zwave_js/node_status",
+    ] {
+        assert!(
+            client.command(command, &ServiceData::new(), &[]).is_ok(),
+            "{command:?}"
+        );
+    }
+}
+
+#[wasm_test]
+fn commands_are_checked() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let empty = ServiceData::new();
+    let too_many: Vec<String> = (0..=MAX_REPLY_VALUES)
+        .map(|index| {
+            let mut pointer = String::from("/v");
+            pointer.push_str(&index.to_string());
+            pointer
+        })
+        .collect();
+    let too_many: Vec<&str> = too_many.iter().map(String::as_str).collect();
+    let too_long = "c".repeat(MAX_NAME_BYTES + 1);
+
+    let cases: [(&str, &ServiceData, &[&str], RequestError); 6] = [
+        ("", &empty, &[], RequestError::InvalidName),
+        (&too_long, &empty, &[], RequestError::InvalidName),
+        (
+            "get_config",
+            &ServiceData::new().integer("id", 7),
+            &[],
+            RequestError::InvalidName,
+        ),
+        (
+            "get_config",
+            &ServiceData::new().text("type", "auth"),
+            &[],
+            RequestError::InvalidName,
+        ),
+        (
+            "get_config",
+            &empty,
+            &too_many,
+            RequestError::TooManyReplyValues,
+        ),
+        (
+            "get_config",
+            &empty,
+            &["options"],
+            RequestError::InvalidPointer,
+        ),
+    ];
+    for (command, data, wanted, error) in cases {
+        assert_eq!(
+            client.command(command, data, wanted).err(),
+            Some(error),
+            "{command:?} {data:?} {wanted:?}"
+        );
+    }
+}
+
+fn only_reply(out: &Output) -> &Reply {
+    let [
+        Event::CallFinished {
+            result: Ok(reply), ..
+        },
+    ] = out.events.as_slice()
+    else {
+        panic!("BUG: expected one finished call, got {:?}", out.events);
+    };
+    reply
+}
+
+fn only_values(out: &Output) -> &Values {
+    let Reply::Values(values) = only_reply(out) else {
+        panic!("BUG: expected values, got {:?}", out.events);
+    };
+    values
 }
 
 /// `count` distinct, well-formed entity ids.

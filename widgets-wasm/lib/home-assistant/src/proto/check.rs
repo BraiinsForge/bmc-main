@@ -23,7 +23,8 @@
 use std::collections::BTreeSet;
 
 use super::client::{
-    MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES, MAX_NAME_BYTES, RequestError,
+    MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES, MAX_NAME_BYTES, MAX_POINTER_BYTES,
+    RequestError,
 };
 
 /// Home Assistant's slug shape, which domains, services and both halves of an entity id share:
@@ -65,6 +66,11 @@ pub(super) fn is_name(text: &str) -> bool {
 /// A command type or a service data key, which Home Assistant takes as any text.
 pub(super) fn is_free_name(text: &str) -> bool {
     !text.is_empty() && text.len() <= MAX_NAME_BYTES
+}
+
+/// An RFC 6901 JSON Pointer, which `JsonLookup` resolves; the empty one names the whole result.
+pub(super) fn is_pointer(text: &str) -> bool {
+    text.len() <= MAX_POINTER_BYTES && (text.is_empty() || text.starts_with('/'))
 }
 
 /// Whether `text` has the shape of an entity id, such as `sensor.outdoor_temperature`.

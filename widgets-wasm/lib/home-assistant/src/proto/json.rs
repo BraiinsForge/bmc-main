@@ -84,6 +84,11 @@ impl PointerBuf {
         &self.0
     }
 
+    /// Append `pointer`, already escaped, such as one a caller named.
+    pub(crate) fn push_escaped(&mut self, pointer: &str) {
+        self.0.push_str(pointer);
+    }
+
     /// Append element `index` of the array the pointer names.
     pub(crate) fn push_index(&mut self, index: usize) -> &str {
         self.0.push('/');

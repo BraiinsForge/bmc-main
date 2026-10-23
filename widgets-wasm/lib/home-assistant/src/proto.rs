@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The protocol core: login, keepalive, reconnect, entity subscriptions and service calls.
+//! The protocol core: login, keepalive, reconnect, entity subscriptions,
+//! service calls and commands.
 //!
 //! The caller owns the socket and the timer.
 //! It reports what happened to them through the [`Session`] methods,
@@ -41,11 +42,12 @@ mod service_data;
 pub use check::is_entity_id;
 pub use client::{
     CallId, MAX_ATTRIBUTES_PER_SUBSCRIPTION, MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES,
-    MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS,
-    RequestError, Session, Setup, Status, SubscriptionId,
+    MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_POINTER_BYTES, MAX_REPLY_VALUES,
+    MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, RequestError, Session, Setup, Status,
+    SubscriptionId,
 };
 pub use effects::{Closed, Command, Effects, Output, Wake};
 pub use entity::{AttributeValue, Entity, MAX_ATTRIBUTE_TEXT_BYTES, Presence};
 pub use json::JsonLookup;
-pub use reply::{CallFailure, Event, HaError, UNKNOWN_ERROR};
+pub use reply::{CallFailure, Event, HaError, Reply, UNKNOWN_ERROR, Values};
 pub use service_data::ServiceData;

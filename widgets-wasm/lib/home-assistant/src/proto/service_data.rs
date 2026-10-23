@@ -94,6 +94,10 @@ impl ServiceData {
         }
         Ok(CheckedData(checked))
     }
+
+    pub(super) fn has_key(&self, key: &str) -> bool {
+        self.0.iter().any(|(name, _)| name == key)
+    }
 }
 
 /// [`ServiceData`] that passed every request rule, in the form the writer takes,
