@@ -36,12 +36,14 @@ use crate::screens::bmm101::{
     value_row,
 };
 use crate::screens::dashboard::DashboardViewData;
-use crate::screens::parts::{LABEL, UNAVAILABLE, auth_failures, scaled_area_chart, status_counts};
+use crate::screens::parts::{
+    CountSlot, CountStyle, LABEL, UNAVAILABLE, auth_failures, scaled_area_chart, status_count_font,
+    status_counts,
+};
 
 const TILES_H: f32 = 100.0;
 const STATUS_W: f32 = 262.0;
 const STATUS_ICON: f32 = 22.0;
-const STATUS_SLOT: f32 = 64.0;
 
 #[must_use]
 pub fn dashboard_view(m: Bmm101, data: &DashboardViewData) -> Node {
@@ -69,10 +71,20 @@ fn fleet_status(m: Bmm101, data: &DashboardViewData) -> Node {
             data.ok,
             data.degraded,
             data.off,
-            m.px(STATUS_ICON),
-            m.font(VALUE_FONT),
-            m.px(STATUS_SLOT),
-            FontWeight::SEMIBOLD,
+            CountStyle {
+                icon: m.px(STATUS_ICON),
+                font: m.font(status_count_font(
+                    data.ok,
+                    data.degraded,
+                    data.off,
+                    VALUE_FONT,
+                    18,
+                )),
+                weight: FontWeight::SEMIBOLD,
+                slot: CountSlot::Fit,
+                gap: m.px(6.0),
+            },
+            m.px(16.0),
         ),
     ];
     if data.auth > 0 {

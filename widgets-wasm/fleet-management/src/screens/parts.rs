@@ -84,23 +84,15 @@ const PAGER_W: f32 = 72.0;
 // all flex-shrink and collapses onto its own label (no min-width prop to pin it).
 pub const TABLE_MAX_W: f32 = FRAME_W - 2.0 * PAD - PAGER_W - GAP;
 
-// Table-card row geometry, shared by the list and model-detail screens.
-pub const ROW_PAD: f32 = 20.0;
+// Table-card geometry, shared by the list and model-detail screens.
 // A full page of rows must fit the body height.
 // Overflow clamps the flex row up to min-content and shifts the pinned pager.
-pub const HEAD_H: f32 = 56.0;
-pub const DATA_H: f32 = 78.0;
-
-// Only a canvas takes taps, so a whole row is made tappable
-// by laying a transparent one over it (absolute via insets).
-#[must_use]
-pub fn row_tap(click_id: &str) -> Node {
-    touchable(
-        click_id,
-        props!(inset_top: 0.0, inset_right: 0.0, inset_bottom: 0.0, inset_left: 0.0),
-        Vec::<Draw>::new(),
-    )
-}
+pub const DECK_TABLE: TableMetrics = TableMetrics {
+    head_h: 56.0,
+    row_h: 78.0,
+    edge: 20.0,
+    gutter: 0.0,
+};
 
 // A tinted icon of `size`, on its own square canvas.
 #[must_use]
@@ -225,32 +217,51 @@ pub fn status_glyph(status: DeviceStatus) -> (&'static Svg, Color, &'static str)
     }
 }
 
-// The ok / degraded / off counts, always all three (even zeros). Auth failures
-// show on their own line (see `auth_failures`), not a fourth count column.
+/// How one status count is drawn: its icon, the count's type,
+/// the slot it sits in and the gap between icon and count.
+#[derive(Clone, Copy, Debug)]
+pub struct CountStyle {
+    pub icon: f32,
+    pub font: u32,
+    pub weight: FontWeight,
+    pub slot: CountSlot,
+    pub gap: f32,
+}
+
+/// A fixed slot lines the icons up across table rows; a fitted one hugs its count.
+#[derive(Clone, Copy, Debug)]
+pub enum CountSlot {
+    Fixed(f32),
+    Fit,
+}
+
+/// `font`, or `stepped` once a count reaches four digits,
+/// so a lone row of counts still fits the tile it is centred in.
+#[must_use]
+pub fn status_count_font(ok: usize, degraded: usize, off: usize, font: u32, stepped: u32) -> u32 {
+    if ok.max(degraded).max(off) >= 1_000 {
+        stepped
+    } else {
+        font
+    }
+}
+
+// The ok / degraded / off counts, always all three (even zeros), `spacing` apart.
+// Auth failures show on their own line (see `auth_failures`), not a fourth count column.
 #[must_use]
 pub fn status_counts(
     ok: usize,
     degraded: usize,
     off: usize,
-    icon_px: f32,
-    font: u32,
-    slot_w: f32,
-    weight: FontWeight,
+    style: CountStyle,
+    spacing: f32,
 ) -> Node {
     row(
-        props!(cross_align: CrossAlign::Center),
+        props!(gap: spacing, cross_align: CrossAlign::Center),
         [
-            status_item(&icons::PERF_OK, ok, OK, icon_px, font, slot_w, weight),
-            status_item(
-                &icons::PERF_LOW,
-                degraded,
-                DEGRADED,
-                icon_px,
-                font,
-                slot_w,
-                weight,
-            ),
-            status_item(&icons::PERF_OFF, off, OFF, icon_px, font, slot_w, weight),
+            status_item(&icons::PERF_OK, ok, OK, style),
+            status_item(&icons::PERF_LOW, degraded, DEGRADED, style),
+            status_item(&icons::PERF_OFF, off, OFF, style),
         ],
     )
 }
@@ -304,23 +315,21 @@ pub fn status_tag_catalog() -> Node {
     )
 }
 
-// Fixed-width slot so the icons line up in a column across table rows.
-fn status_item(
-    svg: &Svg,
-    count: usize,
-    color: Color,
-    icon_px: f32,
-    font: u32,
-    slot_w: f32,
-    weight: FontWeight,
-) -> Node {
+#[must_use]
+pub fn status_item(svg: &Svg, count: usize, color: Color, style: CountStyle) -> Node {
+    let props = match style.slot {
+        CountSlot::Fixed(width) => {
+            props!(width: width, gap: style.gap, cross_align: CrossAlign::Center)
+        }
+        CountSlot::Fit => props!(gap: style.gap, cross_align: CrossAlign::Center),
+    };
     row(
-        props!(width: slot_w, gap: 6.0, cross_align: CrossAlign::Center),
+        props,
         [
-            icon(svg, icon_px, color),
+            icon(svg, style.icon, color),
             text(
                 count_str(count),
-                style!(size: font, weight: weight, color: WHITE),
+                style!(size: style.font, weight: style.weight, color: WHITE),
             ),
         ],
     )
@@ -680,6 +689,188 @@ fn pager_button(svg: &Svg, enabled: bool, click_id: &str, chip: f32) -> Node {
         touchable(click_id, chip_props(chip), draws)
     } else {
         canvas(chip_props(chip), draws)
+    }
+}
+
+// ── Column tables ────────────────────────────────────────────────────
+
+/// How a column takes its width and places its cells.
+#[derive(Clone, Copy, Debug)]
+pub enum Fit {
+    /// Takes what the other columns leave.
+    Grow,
+    /// As wide as its widest cell, cells to the left.
+    Start,
+    /// As wide as its widest cell, cells to the right, as figures read.
+    End,
+    /// Exactly this wide, cells to the left.
+    Fixed(f32),
+}
+
+/// What one table cell holds.
+#[derive(Debug)]
+pub enum Cell {
+    Node(Node),
+    Empty,
+    /// Laid over the columns after it without widening its own:
+    /// a message that stands in for a row's figures.
+    Overflow(Node),
+}
+
+/// A table column: one head over a cell per row,
+/// or one head over sub-columns that each fit their own cells.
+pub enum Column<'a, R> {
+    Single {
+        head: Node,
+        fit: Fit,
+        cell: &'a dyn Fn(&R) -> Cell,
+    },
+    Group {
+        head: Node,
+        spacing: f32,
+        cells: &'a [&'a dyn Fn(&R) -> Cell],
+    },
+    /// Empty space this wide between two columns, for a table with no gutter.
+    Gap(f32),
+}
+
+impl<'a, R> Column<'a, R> {
+    #[must_use]
+    pub fn single(head: Node, fit: Fit, cell: &'a dyn Fn(&R) -> Cell) -> Self {
+        Self::Single { head, fit, cell }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TableMetrics {
+    pub head_h: f32,
+    pub row_h: f32,
+    pub edge: f32,
+    pub gutter: f32,
+}
+
+#[must_use]
+pub fn head_label(label: &str, font: u32) -> Node {
+    text(label, style!(size: font, color: LABEL))
+}
+
+/// A table laid out by column, each column sized by its `Fit`;
+/// an overflow cell never widens its own.
+/// Rows exist only as fixed offsets, so the header band, the separators
+/// and the tap catchers are layered over the columns at them.
+#[must_use]
+pub fn column_table<R>(
+    rows: &[R],
+    columns: Vec<Column<'_, R>>,
+    row_id: impl Fn(&R) -> String,
+    width: f32,
+    m: TableMetrics,
+) -> Node {
+    // A row's slot also spans the separator line above it.
+    let slot_h = m.row_h + 1.0;
+    let top = |i: usize| m.head_h + idx_f32(i) * slot_h;
+    let band = |top: f32, height: f32, background: Color| {
+        col(
+            props!(inset_top: top, inset_left: 0.0, inset_right: 0.0, height: height, background: background),
+            Vec::<Node>::new(),
+        )
+    };
+    let edge = || col(props!(width: m.edge), Vec::<Node>::new());
+
+    let mut layers = vec![band(0.0, m.head_h, HEADER_BG)];
+    layers.extend((0..rows.len()).map(|i| band(top(i), 1.0, BORDER)));
+    let columns: Vec<Node> = columns
+        .into_iter()
+        .map(|c| table_column(rows, c, m))
+        .collect();
+    layers.push(row(
+        props!(),
+        [
+            edge(),
+            row(props!(flex: 1.0, gap: m.gutter), columns),
+            edge(),
+        ],
+    ));
+    layers.extend(rows.iter().enumerate().map(|(i, r)| {
+        touchable(
+            &row_id(r),
+            props!(inset_top: top(i), inset_left: 0.0, inset_right: 0.0, height: slot_h),
+            Vec::<Draw>::new(),
+        )
+    }));
+    col(
+        props!(background: BORDER, width: width, padding: 1.0),
+        [col(props!(background: CARD_BG, flex: 1.0), layers)],
+    )
+}
+
+fn table_column<R>(rows: &[R], column: Column<'_, R>, m: TableMetrics) -> Node {
+    let head = |node, align| table_slot(m.head_h, align, Cell::Node(node));
+    // A row's slot holds the separator line, then the row.
+    let cells = |cell: &dyn Fn(&R) -> Cell, align| {
+        rows.iter()
+            .map(move |r| {
+                col(
+                    props!(height: m.row_h + 1.0, cross_align: CrossAlign::Stretch),
+                    [
+                        col(props!(height: 1.0), Vec::<Node>::new()),
+                        table_slot(m.row_h, align, cell(r)),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    match column {
+        Column::Single {
+            head: label,
+            fit,
+            cell,
+        } => {
+            let align = match fit {
+                Fit::Grow | Fit::Start | Fit::Fixed(_) => CrossAlign::Start,
+                Fit::End => CrossAlign::End,
+            };
+            let mut children = vec![head(label, align)];
+            children.extend(cells(cell, align));
+            let props = match fit {
+                Fit::Grow => props!(flex: 1.0, cross_align: CrossAlign::Stretch),
+                Fit::Start | Fit::End => props!(cross_align: CrossAlign::Stretch),
+                Fit::Fixed(width) => props!(width: width, cross_align: CrossAlign::Stretch),
+            };
+            col(props, children)
+        }
+        Column::Group {
+            head: label,
+            spacing,
+            cells: subs,
+        } => col(
+            props!(),
+            [
+                head(label, CrossAlign::Start),
+                row(
+                    props!(gap: spacing),
+                    subs.iter()
+                        .map(|cell| col(props!(), cells(*cell, CrossAlign::Start)))
+                        .collect::<Vec<_>>(),
+                ),
+            ],
+        ),
+        Column::Gap(width) => col(props!(width: width), Vec::<Node>::new()),
+    }
+}
+
+fn table_slot(height: f32, align: CrossAlign, cell: Cell) -> Node {
+    let props = props!(height: height, justify_content: Justify::Center, cross_align: align);
+    match cell {
+        Cell::Node(node) => col(props, [node]),
+        Cell::Empty => col(props, Vec::<Node>::new()),
+        Cell::Overflow(node) => col(
+            props,
+            [col(
+                props!(inset_top: 0.0, inset_bottom: 0.0, inset_left: 0.0, justify_content: Justify::Center),
+                [node],
+            )],
+        ),
     }
 }
 

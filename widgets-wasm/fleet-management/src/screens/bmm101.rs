@@ -33,7 +33,7 @@ use bmc_wasm_sdk::*;
 use crate::history::{ChartPoint, ChartWindow};
 use crate::screens::SEARCHING_HINT;
 use crate::screens::parts::{
-    BORDER, CARD_BG, HEADER_BG, LABEL, PagerSize, area_chart, back_button, toggle,
+    BORDER, CARD_BG, LABEL, PagerSize, TableMetrics, area_chart, back_button, head_label, toggle,
 };
 
 pub mod dashboard;
@@ -238,106 +238,55 @@ const HEAD_H: f32 = 38.0;
 // Four rows a page fit under the head, matching the Deck's page size.
 const DATA_H: f32 = 48.0;
 const ROW_PAD: f32 = 12.0;
+const COL_GAP: f32 = 12.0;
 const PAGER_GAP: f32 = 8.0;
+const SPARK_W: f32 = 44.0;
 
-fn paged_table(m: Bmm101, head: Node, rows: Vec<Node>, pager: Node) -> Node {
-    let width = m.body_width() - m.px(PAGER_GAP) - m.pager().width;
-    let mut children = vec![head];
-    for r in rows {
-        children.push(col(
-            props!(height: 1.0, background: BORDER),
-            Vec::<Node>::new(),
-        ));
-        children.push(r);
+impl Bmm101 {
+    fn table(self) -> TableMetrics {
+        TableMetrics {
+            head_h: self.px(HEAD_H),
+            row_h: self.px(DATA_H),
+            edge: self.px(ROW_PAD),
+            gutter: self.px(COL_GAP),
+        }
     }
-    row(
-        props!(gap: m.px(PAGER_GAP), flex: 1.0),
-        [
-            col(
-                props!(background: BORDER, width: width, padding: 1.0),
-                [col(
-                    props!(background: CARD_BG, flex: 1.0, cross_align: CrossAlign::Stretch),
-                    children,
-                )],
-            ),
-            pager,
-        ],
+
+    // The card's width, leaving the pager its strip.
+    fn table_width(self) -> f32 {
+        self.body_width() - self.px(PAGER_GAP) - self.pager().width
+    }
+}
+
+fn head(m: Bmm101, label: &str) -> Node {
+    head_label(label, m.font(UNIT_FONT))
+}
+
+fn paged(m: Bmm101, table: Node, pager: Node) -> Node {
+    row(props!(gap: m.px(PAGER_GAP), flex: 1.0), [table, pager])
+}
+
+// A row's leading name, cut short with an ellipsis by the column it grows in.
+fn name_text(m: Bmm101, name: &str, weight: FontWeight) -> Node {
+    text(
+        name,
+        style!(size: m.font(ROW_FONT), weight: weight, color: WHITE, text_overflow: TextOverflow::Ellipsis),
     )
 }
 
-fn head_row(m: Bmm101, cells: Vec<Node>) -> Node {
-    row(
-        props!(
-            background: HEADER_BG,
-            height: m.px(HEAD_H),
-            padding: m.px(ROW_PAD),
-            cross_align: CrossAlign::Center,
-        ),
-        cells,
+// A figure with its unit, never broken over two lines.
+fn value_text(m: Bmm101, number: &str, unit: &str) -> Node {
+    text(
+        typography::unbroken(fmt!("{number} {unit}")),
+        style!(size: m.font(ROW_FONT), color: WHITE),
     )
 }
 
-fn data_row(m: Bmm101, cells: Vec<Node>) -> Node {
-    row(
-        props!(height: m.px(DATA_H), padding: m.px(ROW_PAD), cross_align: CrossAlign::Center),
-        cells,
-    )
-}
-
-fn head_cell(m: Bmm101, width: f32, label: &str) -> Node {
-    cell(
-        m,
-        width,
-        text(label, style!(size: m.font(UNIT_FONT), color: LABEL)),
-    )
-}
-
-fn cell(m: Bmm101, width: f32, node: Node) -> Node {
-    col(
-        props!(width: m.px(width), cross_align: CrossAlign::Start),
-        [node],
-    )
-}
-
-// A row's leading name, cut short with an ellipsis rather than pushing the columns,
-// and short of its cell so the cut never touches the next column.
-fn name_cell(m: Bmm101, width: f32, name: &str, weight: FontWeight) -> Node {
-    cell(
-        m,
-        width,
-        text(
-            name,
-            style!(
-                size: m.font(ROW_FONT),
-                weight: weight,
-                color: WHITE,
-                max_width: m.text_width(width - 8.0),
-                text_overflow: TextOverflow::Ellipsis,
-            ),
-        ),
-    )
-}
-
-fn value_cell(m: Bmm101, width: f32, number: &str, unit: &str) -> Node {
-    cell(
-        m,
-        width,
-        text(
-            fmt!("{number} {unit}"),
-            style!(size: m.font(ROW_FONT), color: WHITE),
-        ),
-    )
-}
-
-fn spark_cell(m: Bmm101, width: f32, series: &[Vec<ChartPoint>], window: ChartWindow) -> Node {
-    let (w, h) = (m.px(width - 10.0), m.px(24.0));
-    cell(
-        m,
-        width,
-        canvas(
-            props!(width: w, height: h),
-            area_chart(series, window, w, h, 0.15),
-        ),
+fn sparkline(m: Bmm101, series: &[Vec<ChartPoint>], window: ChartWindow) -> Node {
+    let (w, h) = (m.px(SPARK_W), m.px(24.0));
+    canvas(
+        props!(width: w, height: h),
+        area_chart(series, window, w, h, 0.15),
     )
 }
 
