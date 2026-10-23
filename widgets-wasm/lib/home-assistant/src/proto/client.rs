@@ -102,7 +102,8 @@ pub enum RequestError {
     /// any of them over [`MAX_NAME_BYTES`], a data key a command reserves,
     /// or a command the session sends itself.
     InvalidName,
-    /// A service data text over [`MAX_SERVICE_DATA_TEXT_BYTES`].
+    /// A service data value past its bounds: a text over [`MAX_SERVICE_DATA_TEXT_BYTES`],
+    /// or a decimal a JSON number cannot spell exactly.
     /// Also a command, data key or text the transport reserves, as [`Setup::reserved`] says.
     InvalidData,
     TooManyReplyValues,

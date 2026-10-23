@@ -434,6 +434,35 @@ fn service_data_is_sent_beside_the_target() {
 }
 
 #[wasm_test]
+fn a_decimal_is_sent_as_a_json_number() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let data = ServiceData::new().decimal("temperature", 21.5, 1);
+    let (_, out) = client
+        .call_service("climate", "set_temperature", "climate.living_room", &data)
+        .expect("BUG: a valid call");
+
+    assert_eq!(sent(&out)[0]["service_data"], json!({"temperature": 21.5}));
+}
+
+#[wasm_test]
+fn a_decimal_json_cannot_spell_is_refused_before_sending() {
+    let mut client = client();
+    let _ = ready(&mut client);
+
+    for value in [f64::NAN, f64::INFINITY, 1e300] {
+        let data = ServiceData::new().decimal("temperature", value, 1);
+        assert_eq!(
+            client
+                .call_service("climate", "set_temperature", "climate.living_room", &data)
+                .err(),
+            Some(RequestError::InvalidData),
+            "{value}"
+        );
+    }
+}
+
+#[wasm_test]
 fn a_data_key_is_any_text_within_the_name_cap() {
     let mut client = client();
     let _ = ready(&mut client);

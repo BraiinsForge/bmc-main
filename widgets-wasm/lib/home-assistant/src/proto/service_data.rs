@@ -22,7 +22,7 @@
 
 use super::check::is_free_name;
 use super::client::{MAX_SERVICE_DATA_TEXT_BYTES, RequestError};
-use super::json::ObjectWriter;
+use super::json::{Decimal, ObjectWriter};
 
 /// Extra fields of a service call beside its target, or of a command beside its id and type.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -35,6 +35,7 @@ pub struct ServiceData(
 enum DataValue {
     Text(String),
     Integer(i64),
+    Decimal { value: f64, decimals: u32 },
     Bool(bool),
 }
 
@@ -57,6 +58,16 @@ impl ServiceData {
         self
     }
 
+    /// `value` rounded to `decimals` decimal places, such as a temperature of `21.5` with one.
+    /// A call or command carrying a NaN, an infinity, more places than [`f64::DIGITS`],
+    /// or a value too large to write exactly is refused.
+    #[must_use]
+    pub fn decimal(mut self, key: &str, value: f64, decimals: u32) -> Self {
+        self.0
+            .push((key.to_owned(), DataValue::Decimal { value, decimals }));
+        self
+    }
+
     #[must_use]
     pub fn boolean(mut self, key: &str, value: bool) -> Self {
         self.0.push((key.to_owned(), DataValue::Bool(value)));
@@ -74,6 +85,8 @@ impl ServiceData {
                 .then_some(())
                 .ok_or(RequestError::InvalidData)
         };
+        let decimal =
+            |value: f64, decimals| Decimal::new(value, decimals).ok_or(RequestError::InvalidData);
         let mut checked = Vec::with_capacity(self.0.len());
         for (key, value) in &self.0 {
             if !is_free_name(key) {
@@ -88,6 +101,9 @@ impl ServiceData {
                     WireValue::Text(value)
                 }
                 DataValue::Integer(number) => WireValue::Integer(*number),
+                DataValue::Decimal { value, decimals } => {
+                    WireValue::Decimal(decimal(*value, *decimals)?)
+                }
                 DataValue::Bool(flag) => WireValue::Bool(*flag),
             };
             checked.push((key.as_str(), value));
@@ -107,6 +123,7 @@ pub(super) struct CheckedData<'a>(Vec<(&'a str, WireValue<'a>)>);
 enum WireValue<'a> {
     Text(&'a str),
     Integer(i64),
+    Decimal(Decimal),
     Bool(bool),
 }
 
@@ -121,6 +138,7 @@ impl CheckedData<'_> {
             .fold(object, |object, (key, value)| match value {
                 WireValue::Text(text) => object.string(key, text),
                 WireValue::Integer(number) => object.int(key, *number),
+                WireValue::Decimal(decimal) => object.decimal(key, *decimal),
                 WireValue::Bool(flag) => object.bool(key, *flag),
             })
     }

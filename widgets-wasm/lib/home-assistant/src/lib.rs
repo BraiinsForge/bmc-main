@@ -41,6 +41,7 @@
 mod adapter;
 #[cfg(any(target_arch = "wasm32", test))]
 mod credential;
+pub mod format;
 pub mod proto;
 
 #[cfg(target_arch = "wasm32")]

@@ -23,6 +23,8 @@
 //! Writing avoids the `std` formatting macros,
 //! which the widget build bans for their code size.
 
+use crate::format::MAX_EXACT_INTEGER;
+
 /// Read access to one received message by RFC 6901 JSON Pointer.
 ///
 /// The widget reads through the host's `JsonDoc`, which answers lookups
@@ -163,6 +165,12 @@ impl ObjectWriter {
         self
     }
 
+    pub(crate) fn decimal(mut self, key: &str, value: Decimal) -> Self {
+        self.member(key);
+        push_decimal(&mut self.out, value);
+        self
+    }
+
     pub(crate) fn bool(mut self, key: &str, value: bool) -> Self {
         self.member(key);
         self.out.push_str(if value { "true" } else { "false" });
@@ -195,6 +203,57 @@ impl ObjectWriter {
     pub(crate) fn finish(mut self) -> String {
         self.out.push('}');
         self.out
+    }
+}
+
+/// A number rounded to its decimal places, which a JSON number spells exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Decimal {
+    /// The number times 10 to the `decimals`, below [`MAX_EXACT_INTEGER`] in magnitude.
+    scaled: i64,
+    decimals: u32,
+}
+
+impl Decimal {
+    /// `value` rounded to `decimals` places, `None` for a NaN, an infinity,
+    /// more places than [`f64::DIGITS`], or a value too large to write exactly.
+    pub(crate) fn new(value: f64, decimals: u32) -> Option<Self> {
+        if decimals > f64::DIGITS {
+            return None;
+        }
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "decimals is at most f64::DIGITS, so the factor is exact"
+        )]
+        let scaled = (value * 10_u64.pow(decimals) as f64).round();
+        if scaled.is_nan() || scaled.abs() >= MAX_EXACT_INTEGER {
+            return None;
+        }
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a whole number below 2^53 in magnitude, checked above"
+        )]
+        let scaled = scaled as i64;
+        Some(Self { scaled, decimals })
+    }
+}
+
+fn push_decimal(out: &mut String, Decimal { scaled, decimals }: Decimal) {
+    if scaled < 0 {
+        out.push('-');
+    }
+    let factor = 10_u64.pow(decimals);
+    let magnitude = scaled.unsigned_abs();
+    push_uint(out, magnitude / factor);
+    if decimals > 0 {
+        out.push('.');
+        let fraction = magnitude % factor;
+        for place in (0..decimals).rev() {
+            let digit = fraction / 10_u64.pow(place) % 10;
+            out.push(char::from(
+                b'0' + u8::try_from(digit).expect("BUG: a decimal digit fits u8"),
+            ));
+        }
     }
 }
 
@@ -296,6 +355,10 @@ mod tests {
     use super::*;
     use bmc_wasm_sdk::wasm_test;
 
+    fn decimal(value: f64, places: u32) -> Decimal {
+        Decimal::new(value, places).expect("BUG: the test decimal is exact")
+    }
+
     #[wasm_test]
     fn a_pointer_escapes_tilde_and_slash() {
         let mut path = PointerBuf::new(Pointer::root().key("event").key("a/b~c"));
@@ -328,6 +391,7 @@ mod tests {
             .uint("id", 18_446_744_073_709_551_615)
             .string("type", "call_service")
             .int("offset", -42)
+            .decimal("temperature", decimal(21.5, 1))
             .bool("flag", false)
             .strings("entity_ids", ["light.a", "sensor.b"])
             .object(
@@ -344,6 +408,7 @@ mod tests {
                 "id": 18_446_744_073_709_551_615_u64,
                 "type": "call_service",
                 "offset": -42,
+                "temperature": 21.5,
                 "flag": false,
                 "entity_ids": ["light.a", "sensor.b"],
                 "target": { "entity_id": "button.gate" },
@@ -359,6 +424,38 @@ mod tests {
         let read: serde_json::Value =
             serde_json::from_str(&text).expect("BUG: the writer emits valid JSON");
         assert_eq!(read["v"], awkward);
+    }
+
+    #[wasm_test]
+    fn a_decimal_is_rounded_to_its_places() {
+        let written = |value: f64, places: u32| {
+            ObjectWriter::new()
+                .decimal("v", decimal(value, places))
+                .finish()
+        };
+
+        assert_eq!(written(21.5, 1), r#"{"v":21.5}"#);
+        assert_eq!(written(21.0, 1), r#"{"v":21.0}"#);
+        assert_eq!(
+            written(21.05, 2),
+            r#"{"v":21.05}"#,
+            "a leading zero is kept"
+        );
+        assert_eq!(written(21.46, 1), r#"{"v":21.5}"#);
+        assert_eq!(written(-3.5, 1), r#"{"v":-3.5}"#);
+        assert_eq!(written(-0.04, 1), r#"{"v":0.0}"#, "no sign on a zero");
+        assert_eq!(written(70.7, 0), r#"{"v":71}"#);
+    }
+
+    #[wasm_test]
+    fn a_decimal_exists_only_while_it_is_exact() {
+        assert!(Decimal::new(21.5, 1).is_some());
+        assert!(Decimal::new(0.0, f64::DIGITS).is_some());
+        assert_eq!(Decimal::new(1.0, f64::DIGITS + 1), None);
+        assert_eq!(Decimal::new(1e16, 0), None, "past 2^53");
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(Decimal::new(value, 1), None, "{value}");
+        }
     }
 
     #[wasm_test]
