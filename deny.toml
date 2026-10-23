@@ -17,21 +17,11 @@ highlight = "all"
 # Transitive duplicates we can't resolve (ecosystem version migrations).
 # Revisit periodically — remove entries once the ecosystem catches up.
 skip = [
-    # reqwest 0.11 → hyper 0.14 ecosystem (remove after upgrading to reqwest 0.12+)
-    { crate = "base64@0.21" },
-    { crate = "h2@0.3" },
-    { crate = "headers@0.3" },
-    { crate = "headers-core@0.2" },
-    { crate = "http@0.2" },
-    { crate = "http-body@0.4" },
-    { crate = "hyper@0.14" },
+    # sysfs_gpio 0.6.2 requires mio 0.8; tokio is on mio 1.
     { crate = "mio@0.8" },
-    { crate = "rustls@0.21" },
-    { crate = "rustls-webpki@0.101" },
+
+    # ping 0.4.1 requires socket2 0.4; the workspace line is 0.6.
     { crate = "socket2@0.4" },
-    { crate = "socket2@0.5" },
-    { crate = "sync_wrapper@0.1" },
-    { crate = "webpki-roots@0.25" },
 
     # zip 9 requires nix 0.31 on macOS and the BSDs only; the workspace line is 0.30.
     { crate = "nix@0.31" },

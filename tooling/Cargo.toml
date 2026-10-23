@@ -25,7 +25,7 @@ hex = "0.4.3"
 itertools = "0.14.0"
 rand = "0.9.0"
 regex = "1.11.1"
-reqwest = { version = "=0.11", default-features = false, features = ["gzip", "json", "multipart", "rustls-tls", "stream"] } # TODO: upgrade hyper to v1
+reqwest = { version = "0.12", default-features = false, features = ["gzip", "http2", "json", "multipart", "rustls-tls", "stream"] }
 serde = { version = "1.0.218", features = ["derive", "rc"] }
 serde_json = { version = "1.0.140", features = ["raw_value"] }
 sha2 = "0.10.8"
