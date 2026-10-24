@@ -2210,6 +2210,30 @@ mod tests {
     }
 
     #[test]
+    fn build_widget_params_seeds_a_26_09_empty_required_default() {
+        use bmc_widget_manifest::ParamValue as PV;
+        let manifest = single_param_manifest(
+            "url",
+            ParamKind::String(StringParam {
+                format: None,
+                min_length: None,
+                max_length: None,
+                enum_values: vec![],
+                enum_control: EnumControl::Dropdown,
+                default_value: Some(String::new()),
+                placeholder: None,
+            }),
+            false,
+        );
+        let resolved =
+            validate_widget_params(&manifest, &web::FieldValues::default(), ValidateMode::Add)
+                .expect(
+                    "BUG: the UI adds the 26.09 image widget with no params, then opens its form",
+                );
+        assert_eq!(resolved.get("url"), Some(&PV::String(String::new())));
+    }
+
+    #[test]
     fn build_widget_params_seeds_optional_no_default_with_null() {
         use bmc_widget_manifest::ParamValue as PV;
         let manifest = single_param_manifest(
