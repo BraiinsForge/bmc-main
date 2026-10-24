@@ -37,8 +37,8 @@ skip = [
     { crate = "rand_chacha@0.3" },
     { crate = "rand_core@0.6" },
 
-    # proptest already sits on rand 0.10;
-    # the workspace, fake, hickory and smithay are on 0.9.
+    # proptest and hickory already sit on rand 0.10;
+    # the workspace, fake and smithay are on 0.9.
     { crate = "rand@0.10" },
     { crate = "rand_core@0.10" },
     { crate = "cpufeatures@0.3" },

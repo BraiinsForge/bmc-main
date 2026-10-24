@@ -1,8 +1,8 @@
 # Dependency audit and intentional pins
 
-Audit date: 2026-10-23, on the BDK-1007 relock with wasmi 2.0 (BDK-1012), reqwest 0.12 (BDK-1013) and zip 9 applied;
-every claim re-checked against the crate sources, the lock files and crates.io on 2026-10-26. Ticket: BDK-471. The
-commands are listed at the end so the audit can be re-run.
+Audit date: 2026-10-23, on the BDK-1007 relock with wasmi 2.0 (BDK-1012), reqwest 0.12 (BDK-1013), hickory-resolver 0.26
+and zip 9 applied; every claim re-checked against the crate sources, the lock files and crates.io on 2026-10-26. Ticket:
+BDK-471. The commands are listed at the end so the audit can be re-run.
 
 BDK-1007 (2026-10-22/23) relocked every workspace, nixpkgs, the Rust toolchain and mesa, so semver-compatible updates
 are already in the lock files. This document records only what a relock cannot do: major bumps, pins and their reasons.
@@ -11,7 +11,7 @@ are already in the lock files. This document records only what a relock cannot d
 
 | Workspace               | Lock file                          | Notes                                                                                               |
 | ----------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------- |
-| root (`Cargo.toml`)     | `Cargo.lock`                       | 972 crates; 65 `[workspace.dependencies]` entries have a newer major                                |
+| root (`Cargo.toml`)     | `Cargo.lock`                       | 975 crates; 64 `[workspace.dependencies]` entries have a newer major                                |
 | `bmc-gallery`           | `bmc-gallery/Cargo.lock`           | own egui via rs-gallery `v0.14.0`; own copy of the femtovg fork pin                                 |
 | `tooling`               | `tooling/Cargo.lock`               | `index-bmc`, `index-common`; `reqwest = "0.12"`                                                     |
 | `widgets-wasm`          | `widgets-wasm/Cargo.lock`          | bincode 2, sgp4 2.4, form_urlencoded 1.2                                                            |
@@ -32,14 +32,14 @@ gallery), rs-gallery (gallery).
 
 ### RustSec advisories (`cargo audit 0.22.2`, advisory-db of 2026-10-24)
 
-| Lock                  | Vulnerabilities | Advisory, crate, locked version → fix                              | Pulled by                             |
-| --------------------- | --------------- | ------------------------------------------------------------------ | ------------------------------------- |
-| root                  | 2               | RUSTSEC-2026-0119 hickory-proto 0.25.2 → ≥0.26.1; -0118 has no fix | hickory-resolver 0.25.2 (bmc-net-dns) |
-| bmc-gallery           | 0               |                                                                    |                                       |
-| tooling               | 0               |                                                                    |                                       |
-| widgets-wasm          | 0               |                                                                    |                                       |
-| widgets-wasm-examples | 0               |                                                                    |                                       |
-| bmc-render/skin/tools | 0               |                                                                    |                                       |
+| Lock                  | Vulnerabilities |
+| --------------------- | --------------- |
+| root                  | 0               |
+| bmc-gallery           | 0               |
+| tooling               | 0               |
+| widgets-wasm          | 0               |
+| widgets-wasm-examples | 0               |
+| bmc-render/skin/tools | 0               |
 
 Warnings (unmaintained / unsound), no fixed version unless stated:
 
@@ -61,11 +61,10 @@ Warnings (unmaintained / unsound), no fixed version unless stated:
 ### Bump now
 
 Single-crate majors: no other dependency holds the old line and no type crosses a crate boundary, so one hygiene MR can
-take them all except hickory-resolver and tungstenite, which touch a wire format and get their own.
+take them all except tungstenite, which touches a wire format and gets its own.
 
 | Dependency                              | Locked → latest              | Used by                                            | Note                                                                                                                                                                                                                   |
 | --------------------------------------- | ---------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| hickory-resolver                        | 0.25.2 → 0.26.3              | bmc-net-dns                                        | RUSTSEC-2026-0119                                                                                                                                                                                                      |
 | tungstenite                             | 0.24.0 → 0.30.0              | bmc-wasm-runtime                                   | the ticket's observation; `Message::Text` carries `Utf8Bytes`; rand 0.8 stays through ping 0.4 and pw_hash 0.1.1, and sha1 0.11 joins the 0.10 headers and pw_hash use; `tokio-tungstenite` is unreferenced, remove it |
 | askama                                  | 0.14 → 0.16.1                | bmc-wasm-runtime                                   | drops basic-toml only with `default-features = false, features = ["derive", "std", "urlencode"]`; the default `config` feature keeps it                                                                                |
 | axum-extra                              | 0.10.3 → 0.12.6              | bmc, bmc-mock, bmc-openwrt                         | still on axum 0.8                                                                                                                                                                                                      |
@@ -108,7 +107,7 @@ ships, so neither waits for an `@rsbuild/core` bump.
 
 | Batch                                   | Members                                                                                                                                                                                                  | Why together                                                                                                                                                                                                                                                                                                                                                                                 |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| rand 0.10                               | rand 0.9 → 0.10 (bmc, bmc-mock, bmc-scheduler, bmc-net-dns, bmc-net-mdns, tooling), fake 4 → 5 (bmc-netsim), pw_hash 0.1.1 → 0.1.2 (rand 0.10, still sha2 0.10)                                          | fake re-exports rand and bmc-netsim seeds through `fake::rand`; proptest is on 0.10 already. hickory 0.25, smithay and ping keep a 0.9 line, so the `rand@0.10` skips become `rand@0.9` ones; the 0.8 line (ping 0.4, tungstenite 0.24) and the getrandom skips (ring, ahash) stay                                                                                                           |
+| rand 0.10                               | rand 0.9 → 0.10 (bmc, bmc-mock, bmc-scheduler, bmc-net-dns, bmc-net-mdns, tooling), fake 4 → 5 (bmc-netsim), pw_hash 0.1.1 → 0.1.2 (rand 0.10, still sha2 0.10)                                          | fake re-exports rand and bmc-netsim seeds through `fake::rand`; proptest and hickory are on 0.10 already. smithay and ping keep a 0.9 line, so the `rand@0.10` skips become `rand@0.9` ones; the 0.8 line (ping 0.4, tungstenite 0.24) and the getrandom skips (ring, ahash) stay                                                                                                            |
 | egui 0.36                               | eframe, egui, egui_glow 0.34 → 0.36.2; egui-notify 0.22 → 0.23; egui_autocomplete 13 → 15; egui_sgr 0.3 → 0.4; egui_virtual_list 0.10 → 0.12 (bmc-virt/console, bmc-wasm-runtime testbed, bmc-render/ui) | one egui version per binary; egui-notify, egui_autocomplete and egui_sgr have no egui 0.37 release yet, and 0.36 matches the gallery's rs-gallery egui. Drops vello's hashbrown 0.16; eframe up to 0.37 stays on winit 0.30 and glow 0.17, so those skips stay                                                                                                                               |
 | resvg 0.49                              | resvg 0.47 → 0.49, usvg 0.45 → 0.49 (svg-compiler; resvg in bmc-virt/console and the bmc-wasm-runtime testbed), roxmltree 0.20 → 0.21; drops the `usvg@0.45`, `svgtypes@0.15` and `imagesize@0.13` skips | no type crosses: svg-compiler writes its own byte format, but one usvg line is what the skips wait for. usvg 0.48+ text adds skrifa 0.44, harfrust and fontdb 0.24 beside cosmic-text's lines unless usvg drops its default features (svg-compiler discards text nodes). The tiny-skia 0.11 skips stay with winit 0.30's sctk-adwaita, `roxmltree@0.20` with fontdb 0.23's fontconfig-parser |
 | console + similar-asserts               | console 0.15.11 → 0.16.6 (bmc-wasm-runtime, bmc-widget-codegen), similar-asserts 1.7.0 → 2.0.0 (bmc, tests)                                                                                              | similar-asserts 1.7 requires console 0.15 and 2.0 requires 0.16; console 0.16 needs `std` added to the workspace features                                                                                                                                                                                                                                                                    |

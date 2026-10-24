@@ -23,12 +23,13 @@
 use std::{fmt::Debug, io::Error, net::SocketAddr, time::Duration};
 
 use hickory_resolver::{
-    Resolver,
+    Resolver, TokioResolver,
     config::{
-        LookupIpStrategy, ResolveHosts, ResolverConfig, ResolverOpts, ServerOrderingStrategy,
+        GOOGLE, LookupIpStrategy, ResolveHosts, ResolverConfig, ResolverOpts,
+        ServerOrderingStrategy,
     },
-    name_server::{GenericConnector, TokioConnectionProvider},
-    proto::runtime::TokioRuntimeProvider,
+    net::{NetError, runtime::TokioRuntimeProvider},
+    system_conf::read_system_conf,
 };
 use log::error;
 use rand::rng;
@@ -39,7 +40,7 @@ use crate::ToHostAndPortTuple;
 /// Holds the hickory system resolver (built from `/etc/resolv.conf`) and builds
 /// the Google-DNS fallback resolver on demand.
 pub struct HickoryResolverBuilder {
-    system_resolver: Option<Resolver<GenericConnector<TokioRuntimeProvider>>>,
+    system_resolver: Option<TokioResolver>,
 }
 
 impl Default for HickoryResolverBuilder {
@@ -68,9 +69,16 @@ impl HickoryResolverBuilder {
         opts
     }
 
-    fn build_system_resolver() -> Option<Resolver<GenericConnector<TokioRuntimeProvider>>> {
-        match Resolver::builder_tokio() {
-            Ok(resolver) => Some(resolver.with_options(Self::get_resolver_options()).build()),
+    fn build_system_resolver() -> Option<TokioResolver> {
+        match read_system_conf().and_then(|(config, _)| {
+            Resolver::builder_with_config(
+                Self::distrust_negative_responses(config),
+                TokioRuntimeProvider::default(),
+            )
+            .with_options(Self::get_resolver_options())
+            .build()
+        }) {
+            Ok(resolver) => Some(resolver),
             Err(e) => {
                 error!("Cannot initialize system DNS resolver: {e}");
                 None
@@ -78,13 +86,24 @@ impl HickoryResolverBuilder {
         }
     }
 
-    fn build_google_resolver() -> Resolver<GenericConnector<TokioRuntimeProvider>> {
-        Resolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioConnectionProvider::default(),
-        )
-        .with_options(Self::get_resolver_options())
-        .build()
+    // hickory 0.26 trusts an NXDOMAIN from a resolv.conf server and asks no other;
+    // 0.25 did not trust it and went on to the next server.
+    fn distrust_negative_responses(mut config: ResolverConfig) -> ResolverConfig {
+        for server in &mut config.name_servers {
+            server.trust_negative_responses = false;
+        }
+        config
+    }
+
+    // Since hickory 0.26 `ResolverConfig::default()` lists no name servers.
+    fn google_config() -> ResolverConfig {
+        ResolverConfig::udp_and_tcp(&GOOGLE)
+    }
+
+    fn build_google_resolver() -> Result<TokioResolver, NetError> {
+        Resolver::builder_with_config(Self::google_config(), TokioRuntimeProvider::default())
+            .with_options(Self::get_resolver_options())
+            .build()
     }
 
     pub async fn lookup_host_google<T>(
@@ -94,8 +113,8 @@ impl HickoryResolverBuilder {
     where
         T: ToHostAndPortTuple + Debug + Clone + Send + Sync,
     {
-        self.lookup_host_internal(Self::build_google_resolver(), host)
-            .await
+        let resolver = Self::build_google_resolver().map_err(Error::other)?;
+        self.lookup_host_internal(resolver, host).await
     }
 
     pub async fn lookup_host_system<T>(
@@ -114,7 +133,7 @@ impl HickoryResolverBuilder {
 
     async fn lookup_host_internal<T>(
         &self,
-        resolver: Resolver<GenericConnector<TokioRuntimeProvider>>,
+        resolver: TokioResolver,
         host: T,
     ) -> Result<impl Iterator<Item = SocketAddr> + Send + use<T>, Error>
     where
@@ -132,5 +151,50 @@ impl HickoryResolverBuilder {
         result.shuffle(&mut rng());
 
         Ok(result.into_iter())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use hickory_resolver::system_conf::parse_resolv_conf;
+
+    use super::HickoryResolverBuilder;
+
+    #[test]
+    fn google_fallback_queries_google_dns() {
+        let servers: Vec<IpAddr> = HickoryResolverBuilder::google_config()
+            .name_servers
+            .iter()
+            .map(|server| server.ip)
+            .collect();
+
+        assert!(
+            servers.contains(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))),
+            "the Google fallback must list Google DNS; an empty server list \
+             resolves nothing, got {servers:?}"
+        );
+    }
+
+    #[test]
+    fn system_servers_pass_an_nxdomain_on_to_the_next_server() {
+        let (config, _) = parse_resolv_conf("nameserver 127.0.0.1\nnameserver ::1\n")
+            .expect("BUG: a two-server resolv.conf parses");
+        let config = HickoryResolverBuilder::distrust_negative_responses(config);
+
+        assert_eq!(
+            config.name_servers.len(),
+            2,
+            "both resolv.conf servers are kept"
+        );
+        assert!(
+            config
+                .name_servers
+                .iter()
+                .all(|server| !server.trust_negative_responses),
+            "an NXDOMAIN from one resolv.conf server must let the next one answer, \
+             as hickory 0.25 did"
+        );
     }
 }
