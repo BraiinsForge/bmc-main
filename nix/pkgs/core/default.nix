@@ -369,7 +369,7 @@ let
     test -f ${package}/special/copy/etc/bmc_system.json
     ${testBusybox}/bin/grep -F '["/run/current-profile/bin/bmc-wasm-host"]' ${package}/special/copy/etc/bmc_system.json
 
-    for file in cldr.postcard units.postcard info.json flag.svg flag.bin LICENSE; do
+    for file in cldr.postcard units.postcard info.json flag.svg flag.bin LICENSE web.json; do
       test -f "${package}/languages/zh/$file"
     done
     for file in cldr.postcard units.postcard flag.bin; do

@@ -1,0 +1,1919 @@
+{
+  "++FVOVUwj7": {
+    "source": "5 minutes",
+    "translation": "5 分钟"
+  },
+  "+CwN9C/QFk": {
+    "source": "System",
+    "translation": "系统"
+  },
+  "+Fq+uiG9o4": {
+    "source": "Failed to enable automatic updates!",
+    "translation": "启用自动更新失败！"
+  },
+  "+Ie90xdrnE": {
+    "source": "Failed to add scene!",
+    "translation": "添加场景失败！"
+  },
+  "+U6ozcnv4r": {
+    "source": "Type",
+    "translation": "类型"
+  },
+  "+iflmHcgdG": {
+    "source": "Are you sure you want to delete this alarm?",
+    "translation": "确定要删除此闹钟吗？"
+  },
+  "+rza1dO42W": {
+    "source": "Failed to add widget!",
+    "translation": "添加小组件失败！"
+  },
+  "+vVZ/G11Zg": {
+    "source": "Connect",
+    "translation": "连接"
+  },
+  "+xzXEbUQHs": {
+    "source": "Upgrades",
+    "translation": "升级"
+  },
+  "+yM5CCcNxI": {
+    "source": "Restarting…",
+    "translation": "正在重启…"
+  },
+  "/06iwcQHPz": {
+    "source": "Large",
+    "translation": "大"
+  },
+  "/0AXxSDrrR": {
+    "source": "Drag and Drop your File Here",
+    "translation": "将文件拖放到此处"
+  },
+  "/6iExgDC34": {
+    "source": "Invalid time format",
+    "translation": "时间格式无效"
+  },
+  "/8eVbWgyJF": {
+    "source": "Night mode brightness saved",
+    "translation": "夜间模式亮度已保存"
+  },
+  "/9nk8Wab4P": {
+    "source": "Device Setup",
+    "translation": "设备设置向导"
+  },
+  "/BsylLdsrR": {
+    "source": "{count, plural, one {+{count} Older Update} other {+{count} Older Updates}}",
+    "translation": "{count, plural, one {+{count} 个更早的更新} other {+{count} 个更早的更新}}"
+  },
+  "/Hem87bEbl": {
+    "source": "Could not list the widgets using this account.",
+    "translation": "无法列出使用此账户的小组件。"
+  },
+  "/P26rKYjCj": {
+    "source": "Failed to remove scene!",
+    "translation": "移除场景失败！"
+  },
+  "/RqouoHUXX": {
+    "source": "{name} {version} was reinstalled.",
+    "translation": "已重新安装 {name} {version}。"
+  },
+  "/VnDMl81rh": {
+    "source": "Other",
+    "translation": "其他"
+  },
+  "/hZOvEruoS": {
+    "source": "Display Widgets",
+    "translation": "显示小组件"
+  },
+  "/hv08Ikekx": {
+    "source": "{name} {version} was already installed.",
+    "translation": "{name} {version} 此前已安装。"
+  },
+  "/j7GSsWreI": {
+    "source": "Remove Widget",
+    "translation": "移除小组件"
+  },
+  "0AXMjjEUXt": {
+    "source": "24-hour",
+    "translation": "24 小时制"
+  },
+  "0O2C6Wx1sx": {
+    "source": "WEP Shared",
+    "translation": "WEP 共享"
+  },
+  "0QLzxohl4D": {
+    "source": "Protocol",
+    "translation": "协议"
+  },
+  "0VQ/N07D8f": {
+    "source": "Invalid state, cannot move widget without combined scene!",
+    "translation": "状态无效：没有组合场景，无法移动小组件！"
+  },
+  "0YiaLrW4UW": {
+    "source": "Sound",
+    "translation": "声音"
+  },
+  "0ah2udCSKF": {
+    "source": "Space",
+    "translation": "空格"
+  },
+  "0c4/C8Va7J": {
+    "source": "No Connected Accounts Yet.",
+    "translation": "尚未连接任何账户。"
+  },
+  "0h/lPMeYkq": {
+    "source": "Upgrade",
+    "translation": "升级"
+  },
+  "0mIjkY4pgU": {
+    "source": "Alarm Sound",
+    "translation": "闹钟铃声"
+  },
+  "0otzmrvQrQ": {
+    "source": "3 snoozes",
+    "translation": "贪睡 3 次"
+  },
+  "0sOHRSE46E": {
+    "source": "Fade",
+    "translation": "淡入淡出"
+  },
+  "0tc/9YxCIn": {
+    "source": "Upgrade & reboot",
+    "translation": "升级并重启"
+  },
+  "1Aday2s3it": {
+    "source": "Sun",
+    "translation": "周日"
+  },
+  "1Fwe4lt9St": {
+    "source": "Add New Account",
+    "translation": "添加新账户"
+  },
+  "1MZGBfDJ6f": {
+    "source": "Boot Sound",
+    "translation": "开机音效"
+  },
+  "1OK0Tyma4D": {
+    "source": "Downloading firmware",
+    "translation": "正在下载固件"
+  },
+  "1UlEAXGW0C": {
+    "source": "Netmask",
+    "translation": "子网掩码"
+  },
+  "1WwMZP3Z2/": {
+    "source": "Select a Wi-Fi Network…",
+    "translation": "选择 Wi-Fi 网络…"
+  },
+  "1aH4BWz5x/": {
+    "source": "Braiins Deck is restarting…",
+    "translation": "Braiins Deck 正在重启…"
+  },
+  "1eJ3yKy9wd": {
+    "source": "Install a Third-Party Widget",
+    "translation": "安装第三方小组件"
+  },
+  "1iEPTMDqmi": {
+    "source": "General",
+    "translation": "常规"
+  },
+  "1r9uaKTER1": {
+    "source": "Clone {scene}",
+    "translation": "复制“{scene}”"
+  },
+  "1z9Wn8gnFk": {
+    "source": "Download Support Archive",
+    "translation": "下载支持存档"
+  },
+  "2/2yg+qAwp": {
+    "source": "Add",
+    "translation": "添加"
+  },
+  "2/nV0r0AXx": {
+    "source": "Unknown connection error",
+    "translation": "未知连接错误"
+  },
+  "2NqUghZFW1": {
+    "source": "Wed",
+    "translation": "周三"
+  },
+  "2Rb7NuJWUu": {
+    "source": "Enable Screen Cycling",
+    "translation": "启用屏幕轮播"
+  },
+  "2YcWO70nn6": {
+    "source": "The device didn't answer in time.",
+    "translation": "设备未能及时响应。"
+  },
+  "2e/mPZwi27": {
+    "source": "Failed to move widget!",
+    "translation": "移动小组件失败！"
+  },
+  "2jVWOHc9qn": {
+    "source": "Screen Brightness",
+    "translation": "屏幕亮度"
+  },
+  "2kBrtfEhBU": {
+    "source": "Passwords must match!",
+    "translation": "两次输入的密码必须一致！"
+  },
+  "2m+pAldxBC": {
+    "source": "Finishing up…",
+    "translation": "即将完成…"
+  },
+  "3/x9lBGo11": {
+    "source": "Add New Widget",
+    "translation": "添加新小组件"
+  },
+  "38Me3kUFe1": {
+    "source": "Date format changed",
+    "translation": "日期格式已更改"
+  },
+  "3Hv4FbI9Kl": {
+    "source": "Sat",
+    "translation": "周六"
+  },
+  "3S2fPSV+r5": {
+    "source": "First day of the week changed",
+    "translation": "每周首日已更改"
+  },
+  "3WkdVPzexe": {
+    "source": "Account Name",
+    "translation": "账户名称"
+  },
+  "3XWwCpGTuD": {
+    "source": "The widget package was installed.",
+    "translation": "小组件软件包已安装。"
+  },
+  "3ojzO1+QQ0": {
+    "source": "Account deletion failed!",
+    "translation": "删除账户失败！"
+  },
+  "3qWhLpVmMJ": {
+    "source": "Widget moved!",
+    "translation": "小组件已移动！"
+  },
+  "40TKTxkJcZ": {
+    "source": "Save and Continue",
+    "translation": "保存并继续"
+  },
+  "44r4J4aTog": {
+    "source": "Failed to save firs week day",
+    "translation": "保存每周首日失败"
+  },
+  "450Fty8ldn": {
+    "source": "None",
+    "translation": "无"
+  },
+  "47FYwba+bI": {
+    "source": "Cancel",
+    "translation": "取消"
+  },
+  "4ADCb5CROg": {
+    "source": "Other…",
+    "translation": "其他…"
+  },
+  "4GbFNA1bYh": {
+    "source": "Confirm New Password",
+    "translation": "确认新密码"
+  },
+  "4NpzK+fv33": {
+    "source": "No matching account",
+    "translation": "没有匹配的账户"
+  },
+  "4Oks/z3gRz": {
+    "source": "Failed to save screen auto-off timeout!",
+    "translation": "保存自动熄屏时间失败！"
+  },
+  "4VPIXtykhw": {
+    "source": "Alarms",
+    "translation": "闹钟"
+  },
+  "4fa8lmNc5i": {
+    "source": "Scene has no widget configured.",
+    "translation": "此场景尚未配置小组件。"
+  },
+  "4g30pbZpx7": {
+    "source": "Hide Older Updates",
+    "translation": "隐藏更早的更新"
+  },
+  "4onmuJxEo0": {
+    "source": "Enter Wi-Fi details manually",
+    "translation": "手动输入 Wi-Fi 信息"
+  },
+  "4pJVaSn3tl": {
+    "source": "Select row",
+    "translation": "选择行"
+  },
+  "55k4TtPFCa": {
+    "source": "Factory reset",
+    "translation": "恢复出厂设置"
+  },
+  "56Ld4uAyYb": {
+    "source": "Change the password used to access device settings.",
+    "translation": "更改用于访问设备设置的密码。"
+  },
+  "5MHgr85l1L": {
+    "source": "Failed to clone the widget!",
+    "translation": "克隆小组件失败！"
+  },
+  "5NNCMEOsZn": {
+    "source": "This account isn’t used in any display widgets. You can safely delete {name} now.",
+    "translation": "此账户未被任何显示小组件使用。现在可以放心删除 {name}。"
+  },
+  "5OteMImbhA": {
+    "source": "Knowledge",
+    "translation": "知识"
+  },
+  "5OzDRN7DaT": {
+    "source": "Enable Night Mode",
+    "translation": "启用夜间模式"
+  },
+  "5nQKjImifb": {
+    "source": "Failed to load LED settings!",
+    "translation": "加载 LED 设置失败！"
+  },
+  "5o1fLY9oqK": {
+    "source": "Night Mode - First widget stays displayed during the night mode, when the rotation is disabled.",
+    "translation": "夜间模式 - 关闭轮播后，夜间模式期间将一直显示第一个小组件。"
+  },
+  "5q3qC0sC3r": {
+    "source": "Download",
+    "translation": "下载"
+  },
+  "5sg7KCrrLg": {
+    "source": "Password",
+    "translation": "密码"
+  },
+  "5smd8ZaF0D": {
+    "source": "Remove Password",
+    "translation": "移除密码"
+  },
+  "62nsdyMyIO": {
+    "source": "Retry",
+    "translation": "重试"
+  },
+  "64NAinTqss": {
+    "source": "Display",
+    "translation": "显示"
+  },
+  "6BrZqItPa/": {
+    "source": "Edit Combined Scene",
+    "translation": "编辑组合场景"
+  },
+  "6RFmTPnch5": {
+    "source": "Your system and packages are up to date",
+    "translation": "您的系统和软件包已是最新版本"
+  },
+  "6U8Js1j4xh": {
+    "source": "Failed to load credential types!",
+    "translation": "加载凭据类型失败！"
+  },
+  "6ZE7d2DVYF": {
+    "source": "Boot sound disabled",
+    "translation": "开机音效已关闭"
+  },
+  "6k7YW7/BgE": {
+    "source": "Snooze Limit",
+    "translation": "贪睡次数上限"
+  },
+  "6pFt8xDblI": {
+    "source": "Timezone changed",
+    "translation": "时区已更改"
+  },
+  "6zRFuL43iT": {
+    "source": "No {type} account exists yet — <a>add one in Accounts</a>.",
+    "translation": "尚无 {type} 账户 — <a>前往“账户”添加一个</a>。"
+  },
+  "70xp2mezFn": {
+    "source": "Invalid state, can't create alarm when create dialog is not open!",
+    "translation": "状态无效：创建对话框未打开，无法创建闹钟！"
+  },
+  "753yX5necH": {
+    "source": "Label",
+    "translation": "标签"
+  },
+  "7OW8BTDziy": {
+    "source": "Configuration",
+    "translation": "配置"
+  },
+  "7nUCu9PCvd": {
+    "source": "Timezone",
+    "translation": "时区"
+  },
+  "89U3XmXMGH": {
+    "source": "Sound & Light",
+    "translation": "声音与灯光"
+  },
+  "8B04tJq/Lm": {
+    "source": "WPA",
+    "translation": "WPA"
+  },
+  "8GCvb689bL": {
+    "source": "Delete {scene}",
+    "translation": "删除“{scene}”"
+  },
+  "8GOiJst7oC": {
+    "source": "Combined Scene",
+    "translation": "组合场景"
+  },
+  "8KdPmeHGkx": {
+    "source": "We couldn't find the page or file you're looking for.",
+    "translation": "找不到您要访问的页面或文件。"
+  },
+  "8gpgar5ojS": {
+    "source": "12-Hour",
+    "translation": "12 小时制"
+  },
+  "8lf7Gok71M": {
+    "source": "Running widgets: {running} / {maximum}",
+    "translation": "运行中的小组件：{running} / {maximum}"
+  },
+  "9BBNEzxnNi": {
+    "source": "Metric (km, kg)",
+    "translation": "公制（km、kg）"
+  },
+  "9SAv6hjlSC": {
+    "source": "Screen Auto-Off",
+    "translation": "自动熄屏"
+  },
+  "9U4hUqRFI3": {
+    "source": "Please wait for the device to restart.",
+    "translation": "请等待设备重启。"
+  },
+  "9U7nURYOdU": {
+    "source": "Reboot",
+    "translation": "重启"
+  },
+  "9VTzdj7tS7": {
+    "source": "System Timezone",
+    "translation": "系统时区"
+  },
+  "9Xi1jY8vEk": {
+    "source": "Automatically switch to red light theme after dark to preserve night vision.",
+    "translation": "天黑后自动切换为红光主题，保护夜间视力。"
+  },
+  "9a3FKhxIG0": {
+    "source": "Failed to save the sound volume!",
+    "translation": "保存音量失败！"
+  },
+  "9aTc/6lwDs": {
+    "source": "Use LED lights for notifications and alerts during Night Mode.",
+    "translation": "夜间模式期间使用 LED 灯提示通知和警报。"
+  },
+  "9qc7BXrqrf": {
+    "source": "Snooze",
+    "translation": "贪睡"
+  },
+  "A97Uu0JdVs": {
+    "source": "Packages updated",
+    "translation": "软件包已更新"
+  },
+  "ALTo8Sekfo": {
+    "source": "Widget Package Installed",
+    "translation": "小组件软件包已安装"
+  },
+  "AOpaouJV7E": {
+    "source": "WPA2",
+    "translation": "WPA2"
+  },
+  "APcOSiy5Je": {
+    "source": "Snooze Duration",
+    "translation": "贪睡时长"
+  },
+  "AYXyukWL5P": {
+    "source": "Downloading",
+    "translation": "正在下载"
+  },
+  "AhQdiCzbWT": {
+    "source": "If you forget this password, you'll need to reset the device to regain access.",
+    "translation": "如果忘记此密码，您需要重置设备才能重新获得访问权限。"
+  },
+  "AmRwcWcZAS": {
+    "source": "Allowed destinations (optional)",
+    "translation": "允许的目标地址（可选）"
+  },
+  "AniU1R459l": {
+    "source": "Upgrade the System",
+    "translation": "升级系统"
+  },
+  "AxkJv1TcEW": {
+    "source": "Failed to upgrade the system!",
+    "translation": "系统升级失败！"
+  },
+  "AyGauyc55S": {
+    "source": "Login",
+    "translation": "登录"
+  },
+  "AzAl/plMkU": {
+    "source": "Failed to save SecondsInStatusbar",
+    "translation": "保存状态栏秒数显示设置失败"
+  },
+  "BG9UOWuEog": {
+    "source": "Forever",
+    "translation": "永久"
+  },
+  "BOXNKj1bEj": {
+    "source": "Mining Pool",
+    "translation": "矿池"
+  },
+  "BPnT3TVya+": {
+    "source": "Small",
+    "translation": "小"
+  },
+  "BRdveaWxa+": {
+    "source": "{item} is outside the list.",
+    "translation": "{item} 不在列表内。"
+  },
+  "BYsiHiCbMG": {
+    "source": "{name} ({unit}, optional)",
+    "translation": "{name}（{unit}，可选）"
+  },
+  "BeT3j933EU": {
+    "source": "WPA3",
+    "translation": "WPA3"
+  },
+  "BnoW5VAdUi": {
+    "source": "DNS Servers",
+    "translation": "DNS 服务器"
+  },
+  "Bpaoa6Zflc": {
+    "source": "Failed to delete alarm!",
+    "translation": "删除闹钟失败！"
+  },
+  "Bt4GHVbIbC": {
+    "source": "Edit {account}",
+    "translation": "编辑“{account}”"
+  },
+  "C4ENlvYIEr": {
+    "source": "Tue",
+    "translation": "周二"
+  },
+  "C81/uGekIK": {
+    "source": "Logout",
+    "translation": "退出登录"
+  },
+  "CA24+j3ogx": {
+    "source": "System reboot triggered",
+    "translation": "已触发系统重启"
+  },
+  "CBgx6wbEkO": {
+    "source": "Number format changed",
+    "translation": "数字格式已更改"
+  },
+  "CDT3TuAZaA": {
+    "source": "Account \"{name}\" saved",
+    "translation": "账户“{name}”已保存"
+  },
+  "CNaG5SBORy": {
+    "source": "10 minutes",
+    "translation": "10 分钟"
+  },
+  "CaZ2W20Icy": {
+    "source": "Failed to delete widget!",
+    "translation": "删除小组件失败！"
+  },
+  "CcEB2qq85P": {
+    "source": "Download system diagnostics and logs for troubleshooting.",
+    "translation": "下载系统诊断信息和日志以排查问题。"
+  },
+  "CjIxKgl2tD": {
+    "source": "Widget updated!",
+    "translation": "小组件已更新！"
+  },
+  "CmlT0+QJd9": {
+    "source": "Whats new in this Upgrade?",
+    "translation": "此次升级有哪些新内容？"
+  },
+  "Coy6SHGifn": {
+    "source": "Calendar",
+    "translation": "日历"
+  },
+  "Cs6TWMDMUO": {
+    "source": "WPA2 / WPA3",
+    "translation": "WPA2 / WPA3"
+  },
+  "D34tusvKSb": {
+    "source": "Screen Cycling",
+    "translation": "屏幕轮播"
+  },
+  "D3idYvSLF9": {
+    "source": "Settings",
+    "translation": "设置"
+  },
+  "DY1jOLKpiw": {
+    "source": "New firmware version available",
+    "translation": "有新的固件版本可用"
+  },
+  "DuOxNPp/me": {
+    "source": "{count, plural, one {{count} package update available} other {{count} package updates available}}",
+    "translation": "{count, plural, one {有 {count} 个软件包更新可用} other {有 {count} 个软件包更新可用}}"
+  },
+  "EGe5tCAxZi": {
+    "source": "{name} was upgraded from {previous} to {version}.",
+    "translation": "{name} 已从 {previous} 升级到 {version}。"
+  },
+  "Ev6SEFBkdw": {
+    "source": "New Password",
+    "translation": "新密码"
+  },
+  "EwRIOmjuqR": {
+    "source": "User",
+    "translation": "用户"
+  },
+  "F/Yedquj8Z": {
+    "source": "To remove your password, please enter your current password.",
+    "translation": "要移除密码，请输入当前密码。"
+  },
+  "F5407kPK6u": {
+    "source": "Sound Volume in Night Mode",
+    "translation": "夜间模式音量"
+  },
+  "FC0AP4JIua": {
+    "source": "Thu",
+    "translation": "周四"
+  },
+  "FDWa/3tu5m": {
+    "source": "Failed to delete scene with an unknown error!",
+    "translation": "删除场景失败，原因未知！"
+  },
+  "FFZ6+pC8NU": {
+    "source": "All {selected, plural, =1 {{selected} item} other {{selected} items}} on this page are selected. <a>Select all {available, plural, =1 {{available} item} other {{available} items}}</a>",
+    "translation": "已选择本页全部 {selected, plural, =1 {{selected} 个} other {{selected} 个}}项目。<a>选择全部 {available, plural, =1 {{available} 个} other {{available} 个}}项目</a>"
+  },
+  "Fg65lXT4B2": {
+    "source": "Move cancelled, {item} is back at position {position} of {count}.",
+    "translation": "已取消移动，{item} 回到第 {position} 位（共 {count} 项）。"
+  },
+  "Fm3M+yFIbr": {
+    "source": "Finance",
+    "translation": "金融"
+  },
+  "GJwREVlv5b": {
+    "source": "Failed to load accounts!",
+    "translation": "加载账户失败！"
+  },
+  "GQvqkI1lyL": {
+    "source": "Weekdays",
+    "translation": "工作日"
+  },
+  "GTyKt+zd0k": {
+    "source": "Top level navigation",
+    "translation": "顶级导航"
+  },
+  "GYoIyTRzA5": {
+    "source": "Configure Widget",
+    "translation": "配置小组件"
+  },
+  "GbD/jtYw9J": {
+    "source": "Reset to Defaults",
+    "translation": "恢复默认设置"
+  },
+  "Ge9e7TvlRp": {
+    "source": "Remove {row}",
+    "translation": "移除“{row}”"
+  },
+  "GretYfMDAh": {
+    "source": "Current Password",
+    "translation": "当前密码"
+  },
+  "H5+7kJZSt4": {
+    "source": "Wi-Fi connection: Unknown error!",
+    "translation": "Wi-Fi 连接：未知错误！"
+  },
+  "HLZ9CCz32R": {
+    "source": "Credentials",
+    "translation": "凭据"
+  },
+  "HRnS4bKmua": {
+    "source": "Reload {scene}",
+    "translation": "重新加载“{scene}”"
+  },
+  "HVe69RMKpZ": {
+    "source": "The device did not answer in time. The install may still finish; check the widget list in a moment.",
+    "translation": "设备未及时响应。安装可能仍会完成，请稍后查看小组件列表。"
+  },
+  "HW39/g3o6g": {
+    "source": "Failed to save TemperatureUnits",
+    "translation": "保存温度单位失败"
+  },
+  "HcMCsgsQYb": {
+    "source": "Scanning for networks…",
+    "translation": "正在扫描网络…"
+  },
+  "HfjuVieGvU": {
+    "source": "{row}, {field}",
+    "translation": "{row}，{field}"
+  },
+  "HgTldytn+Q": {
+    "source": "Verifying firmware",
+    "translation": "正在校验固件"
+  },
+  "Hik1D1+qcq": {
+    "source": "Enable Boot Sound",
+    "translation": "启用开机音效"
+  },
+  "HpqIzCxBjE": {
+    "source": "Failed to save DateFormat",
+    "translation": "保存日期格式失败"
+  },
+  "HwloAb5Dhs": {
+    "source": "Language saved; reload the page to see it",
+    "translation": "语言已保存；请重新加载页面以查看",
+    "description": "Settings error toast when the device saved the new language but the page could not load its translation; the page stays in its current language until reloaded"
+  },
+  "I+NzfLjj7o": {
+    "source": "Alarm Name (optional)",
+    "translation": "闹钟名称（可选）"
+  },
+  "I3JhPSOAlX": {
+    "source": "Network",
+    "translation": "网络"
+  },
+  "IQlKPF5j+y": {
+    "source": "Select a File",
+    "translation": "选择文件"
+  },
+  "IqBkBltijz": {
+    "source": "DHCP",
+    "translation": "DHCP"
+  },
+  "IqlxFbmoO5": {
+    "source": "Reset to Factory Defaults",
+    "translation": "恢复出厂设置"
+  },
+  "J1aHyWGu76": {
+    "source": "Widget cycling: {status}",
+    "translation": "小组件轮播：{status}"
+  },
+  "JCebdsA/Mm": {
+    "source": "One per line: host / \"*.example.com\" wildcard / CIDR range.{br}Leave empty to allow any destination.",
+    "translation": "每行一项：主机 / “*.example.com” 通配符 / CIDR 网段。{br}留空则允许任何目标地址。"
+  },
+  "JM1RKrlz+4": {
+    "source": "{selected, plural, =1 {{selected} item} other {{selected} items}} selected",
+    "translation": "已选择 {selected, plural, =1 {{selected} 项} other {{selected} 项}}"
+  },
+  "JXdbo8Vnlw": {
+    "source": "Done",
+    "translation": "完成"
+  },
+  "Jbgu7fFUrf": {
+    "source": "Upgrade info not available!",
+    "translation": "升级信息不可用！"
+  },
+  "JeVWXz9ma9": {
+    "source": "Edit Widget",
+    "translation": "编辑小组件"
+  },
+  "JkSSY7O18o": {
+    "source": "Configure your mining pool and network to get your miner online.",
+    "translation": "配置矿池和网络，让您的矿机上线。"
+  },
+  "JpuxyvnBVd": {
+    "source": "{label} (required)",
+    "translation": "{label}（必填）"
+  },
+  "JysiHXF5Ew": {
+    "source": "First Day of the Week",
+    "translation": "每周首日"
+  },
+  "Jz8GKSuiax": {
+    "source": "Use LED lights for notifications and alerts.",
+    "translation": "使用 LED 灯提示通知和警报。"
+  },
+  "K0zjRZQeqc": {
+    "source": "Automatically install firmware updates when available.",
+    "translation": "有可用的固件更新时自动安装。"
+  },
+  "K2DDr1Ji/l": {
+    "source": "Fahrenheit",
+    "translation": "华氏度"
+  },
+  "K3r6DQW7h+": {
+    "source": "Delete",
+    "translation": "删除"
+  },
+  "KFgd4bAFhh": {
+    "source": "This widget has no parameters to configure",
+    "translation": "此小组件没有可配置的参数"
+  },
+  "KN7zKn8z4F": {
+    "source": "Error",
+    "translation": "错误"
+  },
+  "KS6WuePUU0": {
+    "source": "LED notifications in night mode enabled",
+    "translation": "已启用夜间模式 LED 通知"
+  },
+  "Knv5mnobZb": {
+    "source": "Please follow up instructions on the device screen to continue.",
+    "translation": "请按照设备屏幕上的说明继续操作。"
+  },
+  "KrJB4VGD1A": {
+    "source": "Checking for updates…",
+    "translation": "正在检查更新…"
+  },
+  "LMNOdP7nhY": {
+    "source": "Time, Date and Regional Settings",
+    "translation": "时间、日期与区域设置"
+  },
+  "LPxYNwTIK9": {
+    "source": "Verifying",
+    "translation": "正在校验"
+  },
+  "LmZmQy1UMy": {
+    "source": "Failed to save the Night Mode!",
+    "translation": "保存夜间模式失败！"
+  },
+  "Lo38iy8/VE": {
+    "source": "Device Password",
+    "translation": "设备密码"
+  },
+  "Lt4OBpG8iT": {
+    "source": "Download size:",
+    "translation": "下载大小："
+  },
+  "MdbO645xRR": {
+    "source": "Failed to load sound settings!",
+    "translation": "加载声音设置失败！"
+  },
+  "Mirphk5bbO": {
+    "source": "Network Configuration",
+    "translation": "网络配置"
+  },
+  "Mz/gsaLDvA": {
+    "source": "Page Not Found",
+    "translation": "页面未找到"
+  },
+  "N03g5tFdW6": {
+    "source": "Install Widget",
+    "translation": "安装小组件"
+  },
+  "N0eaIbNmoY": {
+    "source": "Confirm Changes",
+    "translation": "确认更改"
+  },
+  "N2IrpMDHDB": {
+    "source": "Confirm",
+    "translation": "确认"
+  },
+  "NCOaGdiOid": {
+    "source": "Failed to load general settings!",
+    "translation": "加载常规设置失败！"
+  },
+  "NLj70mm7Oj": {
+    "source": "Delete Alarm",
+    "translation": "删除闹钟"
+  },
+  "NOryR7jM7l": {
+    "source": "Alarm has been successfully toggled.",
+    "translation": "闹钟状态已切换。"
+  },
+  "NuJ+vlDJ2V": {
+    "source": "LED Notification Lights",
+    "translation": "LED 通知灯"
+  },
+  "NxoPuwTtM4": {
+    "source": "Downloading packages",
+    "translation": "正在下载软件包"
+  },
+  "O2sqh9Nj5X": {
+    "source": "Weather",
+    "translation": "天气"
+  },
+  "O6TzPNzw67": {
+    "source": "Verifying packages",
+    "translation": "正在校验软件包"
+  },
+  "OLVyHLE2VH": {
+    "source": "WEP",
+    "translation": "WEP"
+  },
+  "OOIqa+VSgl": {
+    "source": "Wi-Fi scan: Unknown error!",
+    "translation": "Wi-Fi 扫描：未知错误！"
+  },
+  "OUIFSP71gj": {
+    "source": "Automatic Updates",
+    "translation": "自动更新"
+  },
+  "ObjU4OMvI8": {
+    "source": "Mining",
+    "translation": "挖矿"
+  },
+  "Ol7jyfc/aV": {
+    "source": "Failed to save the brightness!",
+    "translation": "保存亮度失败！"
+  },
+  "Oly+qTRQkb": {
+    "source": "SSID (network name)",
+    "translation": "SSID（网络名称）"
+  },
+  "OnVBfY2Jqm": {
+    "source": "Manage your API credentials and service accounts.",
+    "translation": "管理您的 API 凭据和服务账户。"
+  },
+  "Or+NmhSRMY": {
+    "source": "Failed to load scene!",
+    "translation": "加载场景失败！"
+  },
+  "Os/StIOY+6": {
+    "source": "Start the upgrade?",
+    "translation": "开始升级？"
+  },
+  "OvzONl52rs": {
+    "source": "Off",
+    "translation": "关"
+  },
+  "P6PLpip+L0": {
+    "source": "Join",
+    "translation": "加入"
+  },
+  "PcBtrgfx1Z": {
+    "source": "Upload the widget as a .nar archive of its package. See the <a>bmc-main repository</a> for instructions.",
+    "translation": "请以小组件软件包的 .nar 归档上传小组件。操作说明请参阅 <a>bmc-main 仓库</a>。"
+  },
+  "PeYyCLgn2e": {
+    "source": "Failed to save LED notifications night mode setting!",
+    "translation": "保存夜间模式 LED 通知设置失败！"
+  },
+  "Py189GY9df": {
+    "source": "Security",
+    "translation": "安全"
+  },
+  "PzevgpbqT7": {
+    "source": "Alarm has been deleted.",
+    "translation": "闹钟已删除。"
+  },
+  "Q4tXfw4c63": {
+    "source": "Passwords have to match!",
+    "translation": "两次输入的密码必须一致！"
+  },
+  "Q6ICnmpaJn": {
+    "source": "{done} downloaded",
+    "translation": "已下载 {done}"
+  },
+  "QMUuIJvBmO": {
+    "source": "Unknown widget ({id})",
+    "translation": "未知小组件（{id}）"
+  },
+  "QiKKFzEENt": {
+    "source": "Change Password",
+    "translation": "更改密码"
+  },
+  "QlsDcroITH": {
+    "source": "Action",
+    "translation": "操作"
+  },
+  "QrihTZnk0x": {
+    "source": "Friday",
+    "translation": "星期五"
+  },
+  "QyXIfLqwDE": {
+    "source": "Failed to update widget duration! Please try again!",
+    "translation": "更新小组件显示时长失败！请重试！"
+  },
+  "R2OqnWvv5S": {
+    "source": "Delete Account",
+    "translation": "删除账户"
+  },
+  "R9A/SYzgqu": {
+    "source": "Default Display Duration",
+    "translation": "默认显示时长"
+  },
+  "RI2CsW84g7": {
+    "source": "Weekends",
+    "translation": "周末"
+  },
+  "Rix4MaINp4": {
+    "source": "Move Widget",
+    "translation": "移动小组件"
+  },
+  "Ro7cbvfVzK": {
+    "source": "Do you really want to reboot the device?",
+    "translation": "确定要重启设备吗？"
+  },
+  "RspokqfaHp": {
+    "source": "Enable sound during splash screen animation played at every startup of the Deck.",
+    "translation": "Deck 每次启动播放开机动画时启用音效。"
+  },
+  "SC8+tLYfi3": {
+    "source": "Password for {ssid}",
+    "translation": "{ssid} 的密码"
+  },
+  "SDajU6uhn5": {
+    "source": "Night mode time interval saved",
+    "translation": "夜间模式时间段已保存"
+  },
+  "SP7AGQeYkz": {
+    "source": "Create your first alarm to get started",
+    "translation": "创建您的第一个闹钟以开始使用"
+  },
+  "Sadv9ep2vs": {
+    "source": "No Alarms Yet",
+    "translation": "尚无闹钟"
+  },
+  "T8JZHei06V": {
+    "source": "Mon",
+    "translation": "周一"
+  },
+  "TFnbe20MHH": {
+    "source": "{name} ({unit})",
+    "translation": "{name}（{unit}）"
+  },
+  "TKmub+jF8a": {
+    "source": "This field is required",
+    "translation": "此字段为必填项"
+  },
+  "TwyMauNL3r": {
+    "source": "Account",
+    "translation": "账户"
+  },
+  "UILcXulI13": {
+    "source": "Unit system changed",
+    "translation": "单位制已更改"
+  },
+  "UTWdjErGLJ": {
+    "source": "Configure the content displayed on your Deck. Enable, order, and set durations for each widget to control what’s shown.",
+    "translation": "配置 Deck 上显示的内容。启用、排序并设置每个小组件的显示时长，以控制显示内容。"
+  },
+  "UpN2gsF1KK": {
+    "source": "Drag and drop widgets to organize your screen layout. You'll see a live preview on your device as you make changes. Changes are saved automatically.",
+    "translation": "拖放小组件来安排屏幕布局。更改时可在设备上实时预览。更改会自动保存。"
+  },
+  "UqjScD3V9N": {
+    "source": "Duration (s)",
+    "translation": "时长（秒）"
+  },
+  "V1+/awQkXv": {
+    "source": "Find and join a Wi-Fi network",
+    "translation": "查找并加入 Wi-Fi 网络"
+  },
+  "V3RA+WWpRe": {
+    "source": "Unknown widget type — no matching manifest installed.",
+    "translation": "未知小组件类型 — 未安装匹配的清单。"
+  },
+  "VPtfWY4Ix4": {
+    "source": "Brightness",
+    "translation": "亮度"
+  },
+  "Vuh1Db/8tr": {
+    "source": "24-Hour",
+    "translation": "24 小时制"
+  },
+  "W4YHJMVlCJ": {
+    "source": "15 minutes",
+    "translation": "15 分钟"
+  },
+  "W7FByj/i8r": {
+    "source": "— Invalid —",
+    "translation": "— 无效 —"
+  },
+  "WMNHPhDie+": {
+    "source": "Saturday",
+    "translation": "星期六"
+  },
+  "WZBZ4Ay6rr": {
+    "source": "Failed to add manifest widget!",
+    "translation": "添加清单小组件失败！"
+  },
+  "WbZTz4Hgt1": {
+    "source": "Bind a {label} for this widget to work.",
+    "translation": "绑定一个{label}，此小组件才能工作。"
+  },
+  "Wca/V/Lj9c": {
+    "source": "Date Format",
+    "translation": "日期格式"
+  },
+  "XGOpYiYCX+": {
+    "source": "Failed to load initial values!",
+    "translation": "加载初始值失败！"
+  },
+  "XWu7Z5IYJY": {
+    "source": "Latest system version:",
+    "translation": "最新系统版本："
+  },
+  "XqQbkDMjPz": {
+    "source": "Account deleted",
+    "translation": "账户已删除"
+  },
+  "XsWGveVWP1": {
+    "source": "Delete Scene",
+    "translation": "删除场景"
+  },
+  "XvZXZgXX6o": {
+    "source": "LED notifications in night mode disabled",
+    "translation": "已关闭夜间模式 LED 通知"
+  },
+  "YAgYL60fLm": {
+    "source": "Tuesday",
+    "translation": "星期二"
+  },
+  "YEeUZJzlqw": {
+    "source": "Failed to install the widget package!",
+    "translation": "安装小组件软件包失败！"
+  },
+  "YKWofizr24": {
+    "source": "Picked up {item}, position {position} of {count}.",
+    "translation": "已拿起 {item}，位于第 {position} 位（共 {count} 项）。"
+  },
+  "YeB6C1r2TZ": {
+    "source": "Transition Effect",
+    "translation": "过渡效果"
+  },
+  "YtxGgOZEIf": {
+    "source": "Connecting…",
+    "translation": "正在连接…"
+  },
+  "ZGZEMNAA8T": {
+    "source": "{name} {version} can now be added to a scene.",
+    "translation": "现在可以将 {name} {version} 添加到场景中。"
+  },
+  "ZJyow0buty": {
+    "source": "Edit Alarm",
+    "translation": "编辑闹钟"
+  },
+  "ZK1d6fQ6/I": {
+    "source": "SSID",
+    "translation": "SSID"
+  },
+  "Zh+5A6yahu": {
+    "source": "On",
+    "translation": "开"
+  },
+  "ZvTCxcMw2z": {
+    "source": "{name}, item {n}",
+    "translation": "{name}，第 {n} 项"
+  },
+  "a0eWVoPXF7": {
+    "source": "WPA / WPA2",
+    "translation": "WPA / WPA2"
+  },
+  "aP+kh2b2GB": {
+    "source": "{elapsed}s elapsed",
+    "translation": "已用时 {elapsed} 秒"
+  },
+  "aSAPwRymvY": {
+    "source": "Time Format",
+    "translation": "时间格式"
+  },
+  "aY+gjepQSQ": {
+    "source": "Times alarm can be snoozed before dismissal",
+    "translation": "闹钟在关闭前可贪睡的次数"
+  },
+  "amAEbRkrtN": {
+    "source": "Add New Alarm",
+    "translation": "添加新闹钟"
+  },
+  "azMsfMtNvt": {
+    "source": "Monday",
+    "translation": "星期一"
+  },
+  "b0jvOiDjyn": {
+    "source": "You are up to date",
+    "translation": "已是最新版本"
+  },
+  "b3QB1rD4Oj": {
+    "source": "Select a sound…",
+    "translation": "选择铃声…"
+  },
+  "bRjypXFEXV": {
+    "source": "Full Screen",
+    "translation": "全屏"
+  },
+  "bWjdfaXOzU": {
+    "source": "URL",
+    "translation": "URL"
+  },
+  "bbcNCXdzeQ": {
+    "source": "Upgrading the system",
+    "translation": "正在升级系统"
+  },
+  "bgf7JdBM45": {
+    "source": "The device did not describe itself",
+    "translation": "设备未提供自身信息"
+  },
+  "binyphTCPZ": {
+    "source": "Enable LED Notifications in Night Mode",
+    "translation": "在夜间模式中启用 LED 通知"
+  },
+  "c+hShrz7Cs": {
+    "source": "Alarm has been updated",
+    "translation": "闹钟已更新"
+  },
+  "c8uKl6Uqjw": {
+    "source": "Wi-Fi",
+    "translation": "Wi-Fi"
+  },
+  "cG0Q8MnYSg": {
+    "source": "Temperature",
+    "translation": "温度"
+  },
+  "cLG1C/r6oY": {
+    "source": "On, {duration}, {limit}",
+    "translation": "开，{duration}，{limit}"
+  },
+  "cLoYgmcbyy": {
+    "source": "Failed to update widget!",
+    "translation": "更新小组件失败！"
+  },
+  "cek5PsWl65": {
+    "source": "Failed to load data for alarms!",
+    "translation": "加载闹钟数据失败！"
+  },
+  "cfZgTMi4zO": {
+    "source": "Failed to save the night mode time interval!",
+    "translation": "保存夜间模式时间段失败！"
+  },
+  "cnX85PQqDF": {
+    "source": "Failed to save LED notifications setting!",
+    "translation": "保存 LED 通知设置失败！"
+  },
+  "cyR7KhiuaU": {
+    "source": "Back",
+    "translation": "返回"
+  },
+  "d/Gpx21dxG": {
+    "source": "Widget cloned!",
+    "translation": "小组件已克隆！"
+  },
+  "d20WLcNS8q": {
+    "source": "Automatic updates enabled",
+    "translation": "自动更新已启用"
+  },
+  "d3r+1u7D/1": {
+    "source": "Failed to load scene cycling settings!",
+    "translation": "加载场景轮播设置失败！"
+  },
+  "dI4IXz/8W0": {
+    "source": "Failed to save NumberFormat",
+    "translation": "保存数字格式失败"
+  },
+  "dbxs1yxF03": {
+    "source": "Select snooze limit…",
+    "translation": "选择贪睡次数上限…"
+  },
+  "e+KIbbJVo0": {
+    "source": "This Deck runs up to {max} widgets at once. Turn off or delete a scene to free a slot before adding another.",
+    "translation": "此 Deck 最多同时运行 {max} 个小组件。请先关闭或删除一个场景以腾出位置，再添加新的。"
+  },
+  "eK57EzWaF5": {
+    "source": "Sound volume in night mode saved",
+    "translation": "夜间模式音量已保存"
+  },
+  "eOJyfZiR7Q": {
+    "source": "— None —",
+    "translation": "— 无 —"
+  },
+  "ePaAfAmzJ2": {
+    "source": "Your system version:",
+    "translation": "您的系统版本："
+  },
+  "es7ci2x2yE": {
+    "source": "30 minutes",
+    "translation": "30 分钟"
+  },
+  "f8BVkPiX/X": {
+    "source": "Time elapsed: {time}",
+    "translation": "已用时：{time}"
+  },
+  "fBk8Jlutx3": {
+    "source": "Display widget has been successfully added.",
+    "translation": "显示小组件已添加。"
+  },
+  "fCu/+nE6Za": {
+    "source": "Static",
+    "translation": "静态"
+  },
+  "fK3IL8V9tc": {
+    "source": "Start and end time cannot be the same!",
+    "translation": "开始时间和结束时间不能相同！"
+  },
+  "fKD/v9nEKb": {
+    "source": "Failed to update widget state!",
+    "translation": "更新小组件状态失败！"
+  },
+  "fL4CRF11la": {
+    "source": "Night Mode",
+    "translation": "夜间模式"
+  },
+  "fN1xj1dGam": {
+    "source": "Failed to save boot sound setting!",
+    "translation": "保存开机音效设置失败！"
+  },
+  "fNH+GNUv5F": {
+    "source": "Display Widget Added",
+    "translation": "已添加显示小组件"
+  },
+  "fPyUaCQJug": {
+    "source": "The DHCP or static address configuration applies to the ethernet port.",
+    "translation": "DHCP 或静态地址配置应用于以太网端口。"
+  },
+  "fV5Xr4T7bz": {
+    "source": "Configure essential settings like time, network, and access to prepare your clock for use.",
+    "translation": "配置时间、网络和访问等基本设置，让您的时钟做好使用准备。"
+  },
+  "fVO6CYenwq": {
+    "source": "Time must be in HH:MM format!",
+    "translation": "时间必须为 HH:MM 格式！"
+  },
+  "fs2vLGEYKg": {
+    "source": "Sound volume saved",
+    "translation": "音量已保存"
+  },
+  "g1WnkhGz7l": {
+    "source": "Do you really want to reset the device to factory settings?",
+    "translation": "确定要将设备恢复出厂设置吗？"
+  },
+  "gEYUSsamWk": {
+    "source": "Imperial (mi, lb)",
+    "translation": "英制（mi、lb）"
+  },
+  "gJUhDBplXf": {
+    "source": "Turn off the screen after a period of inactivity during night mode. Touch to wake.",
+    "translation": "夜间模式期间，一段时间无操作后关闭屏幕。触摸即可唤醒。"
+  },
+  "gnJyZ1YE4o": {
+    "source": "No “Display widget” yet",
+    "translation": "尚无“显示小组件”"
+  },
+  "gvpP3D9o8i": {
+    "source": "The Braiins Deck will reboot to finish, and be unavailable for a few minutes.",
+    "translation": "Braiins Deck 将重启以完成升级，其间几分钟内无法使用。"
+  },
+  "hDDA1JhyK5": {
+    "source": "Takes a {type} account — pick another, or clear it.",
+    "translation": "需要 {type} 账户 — 请另选一个，或清除。"
+  },
+  "hFYE2MSlqH": {
+    "source": "Fri",
+    "translation": "周五"
+  },
+  "hNjc6nt/8q": {
+    "source": "Scene deleted!",
+    "translation": "场景已删除！"
+  },
+  "hYTNfCKVsr": {
+    "source": "Encryption Type",
+    "translation": "加密类型"
+  },
+  "hhvAMDdsdB": {
+    "source": "Failed to save the sound volume in night mode!",
+    "translation": "保存夜间模式音量失败！"
+  },
+  "hmZ3BzBbwt": {
+    "source": "Media",
+    "translation": "媒体"
+  },
+  "ho+kbzcz/c": {
+    "source": "<b>Note</b>: Check your device screen to see live preview",
+    "translation": "<b>注意</b>：请查看设备屏幕以获取实时预览"
+  },
+  "hzSNj4+sgs": {
+    "source": "Dashboard",
+    "translation": "仪表盘"
+  },
+  "iNtUkuk4tv": {
+    "source": "Unknown scene!",
+    "translation": "未知场景！"
+  },
+  "ij24tjgCOV": {
+    "source": "Password is already set!",
+    "translation": "密码已设置！"
+  },
+  "ipb90Od6xP": {
+    "source": "Password Repeat",
+    "translation": "重复密码"
+  },
+  "isGKnzG5uL": {
+    "source": "Documentation",
+    "translation": "文档"
+  },
+  "j8vTk/IsNn": {
+    "source": "Enter your current password and a new password to update your credentials.",
+    "translation": "输入当前密码和新密码以更新您的登录凭据。"
+  },
+  "jE808XpltQ": {
+    "source": "Utility",
+    "translation": "实用工具"
+  },
+  "jN1RBpuT7o": {
+    "source": "Failed to save unit system",
+    "translation": "保存单位制失败"
+  },
+  "jdhiiiFvmK": {
+    "source": "Language changed",
+    "translation": "语言已更改",
+    "description": "Settings toast after the device language is saved, worded in the language just chosen"
+  },
+  "jm/spnRSn+": {
+    "source": "Reset",
+    "translation": "重置"
+  },
+  "jm3rkcpJd6": {
+    "source": "Language",
+    "translation": "语言",
+    "description": "Settings field label; picks the language of the device and its web UI"
+  },
+  "jmd2a35up4": {
+    "source": "Are you sure you want to delete this scene?",
+    "translation": "确定要删除此场景吗？"
+  },
+  "jvo0vs3nF0": {
+    "source": "Save",
+    "translation": "保存"
+  },
+  "k0/uvWEOGb": {
+    "source": "Boot sound enabled",
+    "translation": "开机音效已启用"
+  },
+  "k4qGTkAl2p": {
+    "source": "Toggle changelog for {name}",
+    "translation": "展开或收起 {name} 的更新日志"
+  },
+  "kGyxuq/Uj2": {
+    "source": "All days",
+    "translation": "每天"
+  },
+  "kgDclasOl9": {
+    "source": "Night Mode Saved",
+    "translation": "夜间模式已保存"
+  },
+  "kkKi1pmaD3": {
+    "source": "Screen auto-off timeout saved",
+    "translation": "自动熄屏时间已保存"
+  },
+  "klMbtIhsCF": {
+    "source": "It is only ever sent to {hosts}.",
+    "translation": "它只会发送到 {hosts}。"
+  },
+  "krT6JyvdFH": {
+    "source": "Failed to play the sound!",
+    "translation": "播放铃声失败！"
+  },
+  "l87iylhrfN": {
+    "source": "All widget slots are in use",
+    "translation": "所有小组件位置均已占用"
+  },
+  "lEMUo8XFPi": {
+    "source": "Regional Settings",
+    "translation": "区域设置"
+  },
+  "lxblglMBAV": {
+    "source": "Wednesday",
+    "translation": "星期三"
+  },
+  "mAkYaQQoNL": {
+    "source": "{item} moved to position {position} of {count}.",
+    "translation": "{item} 已移到第 {position} 位（共 {count} 项）。"
+  },
+  "mJR06Pgp0X": {
+    "source": "Sunday",
+    "translation": "星期日"
+  },
+  "mTRdyHDEbW": {
+    "source": "Delete {account}",
+    "translation": "删除“{account}”"
+  },
+  "mtdIQYUcGI": {
+    "source": "Widget added, but its settings could not be opened.",
+    "translation": "小组件已添加，但无法打开其设置。"
+  },
+  "mu8xcWo2Ew": {
+    "source": "Let’s make sure your alarm wakes you just right – not too loud, not too chill.",
+    "translation": "让闹钟以恰到好处的方式唤醒您 – 不太吵，也不太轻。"
+  },
+  "n2LnG7mrhM": {
+    "source": "Night Mode Brightness",
+    "translation": "夜间模式亮度"
+  },
+  "nFzA0isnPs": {
+    "source": "Applying",
+    "translation": "正在应用"
+  },
+  "nRcPOLhC3o": {
+    "source": "Accounts not loaded",
+    "translation": "账户未加载"
+  },
+  "ncad+6OuMM": {
+    "source": "Slide",
+    "translation": "滑动"
+  },
+  "nd8oP8M80r": {
+    "source": "Temperature units changed",
+    "translation": "温度单位已更改"
+  },
+  "neGa+mSx96": {
+    "source": "System Settings",
+    "translation": "系统设置"
+  },
+  "nnTDy2H+X0": {
+    "source": "Move {scene}",
+    "translation": "移动“{scene}”"
+  },
+  "o4UE9ZNe3H": {
+    "source": "System Actions",
+    "translation": "系统操作"
+  },
+  "o8xuT90FkD": {
+    "source": "Factory reset complete",
+    "translation": "恢复出厂设置完成"
+  },
+  "oS/naeSX/F": {
+    "source": "Building",
+    "translation": "正在构建"
+  },
+  "olRvTFoZAp": {
+    "source": "Password must be at least 6 characters long",
+    "translation": "密码长度至少为 6 个字符"
+  },
+  "ovDuWcoNAA": {
+    "source": "5 snoozes",
+    "translation": "贪睡 5 次"
+  },
+  "ovJ26CKo4Q": {
+    "source": "Medium",
+    "translation": "中"
+  },
+  "ow4ny+CfIN": {
+    "source": "Ethernet Network",
+    "translation": "以太网"
+  },
+  "p7VmgosJJM": {
+    "source": "Time format changed",
+    "translation": "时间格式已更改"
+  },
+  "p8p49fQ/4q": {
+    "source": "Widget deleted!",
+    "translation": "小组件已删除！"
+  },
+  "pMcQckggwt": {
+    "source": "Gateway",
+    "translation": "网关"
+  },
+  "pXjKUB8Zer": {
+    "source": "Unknown error!",
+    "translation": "未知错误！"
+  },
+  "pojGrj/L/O": {
+    "source": "Failed to revert widget!",
+    "translation": "还原小组件失败！"
+  },
+  "pqVMeByDIl": {
+    "source": "Failed to load automatic updates setting!",
+    "translation": "加载自动更新设置失败！"
+  },
+  "pu+LcqsJhh": {
+    "source": "Display preview connection lost!",
+    "translation": "显示预览连接已断开！"
+  },
+  "q+Q148Vao1": {
+    "source": "Widget cycling settings updated!",
+    "translation": "小组件轮播设置已更新！"
+  },
+  "q1E3nnQ04k": {
+    "source": "Warning: This will delete all your custom configurations and display widgets.",
+    "translation": "警告：这将删除您的所有自定义配置和显示小组件。"
+  },
+  "q3L+O2lMwX": {
+    "source": "Invalid state, widget seems not to fit!",
+    "translation": "状态无效：小组件似乎放不下！"
+  },
+  "qAhUUOIWbF": {
+    "source": "Thursday",
+    "translation": "星期四"
+  },
+  "qCyPKfisKN": {
+    "source": "Clock",
+    "translation": "时钟"
+  },
+  "qEuXjx1B4z": {
+    "source": "Sports",
+    "translation": "体育"
+  },
+  "qFlSSB49+c": {
+    "source": "No account bound",
+    "translation": "未绑定账户"
+  },
+  "qJIygmfSym": {
+    "source": "Alarm has been added",
+    "translation": "闹钟已添加"
+  },
+  "qTmm9R1dAe": {
+    "source": "All {selected, plural, =1 {{selected} item} other {{selected} items}} available items are selected",
+    "translation": "已选择全部 {selected, plural, =1 {{selected} 个} other {{selected} 个}}可用项目"
+  },
+  "qlTe+eC7Ec": {
+    "source": "new",
+    "translation": "新增"
+  },
+  "qqlyYMNHnF": {
+    "source": "Running widget limit reached.",
+    "translation": "已达到运行中小组件的数量上限。"
+  },
+  "r/nIyIvLvj": {
+    "source": "removed",
+    "translation": "已移除"
+  },
+  "rCZGMBufoH": {
+    "source": "Select snooze duration…",
+    "translation": "选择贪睡时长…"
+  },
+  "rELDbByu8U": {
+    "source": "Refresh",
+    "translation": "刷新"
+  },
+  "rWD3607/k1": {
+    "source": "Go to Homepage",
+    "translation": "前往首页"
+  },
+  "rXTgTqrJXy": {
+    "source": "Time & Date",
+    "translation": "时间与日期"
+  },
+  "rclAAmG7Gz": {
+    "source": "Number Format",
+    "translation": "数字格式"
+  },
+  "re9SasmZF8": {
+    "source": "Password is not set!",
+    "translation": "尚未设置密码！"
+  },
+  "ris6V67rM0": {
+    "source": "Connected Accounts",
+    "translation": "已连接的账户"
+  },
+  "rnA57TlMWt": {
+    "source": "Invalid state, widget data not found!",
+    "translation": "状态无效：未找到小组件数据！"
+  },
+  "rosBxTUr2A": {
+    "source": "No widgets are installed.",
+    "translation": "未安装任何小组件。"
+  },
+  "rtKsfVHhjU": {
+    "source": "The upgrade ended unexpectedly.",
+    "translation": "升级意外终止。"
+  },
+  "s30llJGEgl": {
+    "source": "Failed to update widget cycling settings!",
+    "translation": "更新小组件轮播设置失败！"
+  },
+  "sMAAlNmCJt": {
+    "source": "Add New",
+    "translation": "新增"
+  },
+  "sVCrGAa2dh": {
+    "source": "Reboot Device",
+    "translation": "重启设备"
+  },
+  "saNv0u72vI": {
+    "source": "{name} (optional)",
+    "translation": "{name}（可选）"
+  },
+  "sarXeRvcZa": {
+    "source": "Add to {list}",
+    "translation": "添加到“{list}”"
+  },
+  "sf72ybTg6t": {
+    "source": "Failed to check for upgrade!",
+    "translation": "检查升级失败！"
+  },
+  "sjSEXT1XSi": {
+    "source": "Side navigation",
+    "translation": "侧边导航"
+  },
+  "ssL153Y+fz": {
+    "source": "Enable LED Notifications",
+    "translation": "启用 LED 通知"
+  },
+  "sv/rpClw+A": {
+    "source": "Widget packages installed from a file are not checked by Braiins Forge. A malicious package can take over this device and anything it can reach on your network. Install only packages from a source you trust.",
+    "translation": "从文件安装的小组件软件包未经 Braiins Forge 检查。恶意软件包可能控制此设备，以及它在您网络中能访问的一切。请只安装来自可信来源的软件包。"
+  },
+  "t24w8RMlYf": {
+    "source": "Failed to save the night mode brightness!",
+    "translation": "保存夜间模式亮度失败！"
+  },
+  "tC2qpKg7rE": {
+    "source": "Braiins DECK",
+    "translation": "Braiins DECK"
+  },
+  "tHi5lfQuKw": {
+    "source": "Failed to toggle alarm!",
+    "translation": "切换闹钟状态失败！"
+  },
+  "tW6rkQ3J7V": {
+    "source": "{item} dropped at position {position} of {count}.",
+    "translation": "{item} 已放在第 {position} 位（共 {count} 项）。"
+  },
+  "tXea4KOYWN": {
+    "source": "Password (optional)",
+    "translation": "密码（可选）"
+  },
+  "tw5j2+ZRIB": {
+    "source": "Repeat",
+    "translation": "重复"
+  },
+  "tzMNF3jWoU": {
+    "source": "Status",
+    "translation": "状态"
+  },
+  "u2EPPJoCNT": {
+    "source": "Deleting {name} will unbind it from <b>{count, plural, one {{count} widget} other {{count} widgets}}</b>, which will stop using it.",
+    "translation": "删除 {name} 会将其与 <b>{count, plural, one {{count} 个小组件} other {{count} 个小组件}}</b>解除绑定，这些小组件将不再使用它。"
+  },
+  "uJV0wUU6rg": {
+    "source": "IP Address",
+    "translation": "IP 地址"
+  },
+  "uPDgthpqmr": {
+    "source": "Hostname",
+    "translation": "主机名"
+  },
+  "uYDYVRXelb": {
+    "source": "Widget duration updated!",
+    "translation": "小组件显示时长已更新！"
+  },
+  "ug01MkZy2v": {
+    "source": "Time",
+    "translation": "时间"
+  },
+  "uhx3NcomO0": {
+    "source": "Accept the Risk and Install",
+    "translation": "接受风险并安装"
+  },
+  "uiFoFmfuC9": {
+    "source": "Password is required",
+    "translation": "必须输入密码"
+  },
+  "v+ng25gutv": {
+    "source": "{item} dropped outside the list, back at position {position} of {count}.",
+    "translation": "{item} 放在了列表外，已回到第 {position} 位（共 {count} 项）。"
+  },
+  "v27vrZkq1S": {
+    "source": "Night Mode Time Interval",
+    "translation": "夜间模式时间段"
+  },
+  "v5J239jcRm": {
+    "source": "Edit {scene}",
+    "translation": "编辑“{scene}”"
+  },
+  "vBScEAvc3M": {
+    "source": "Building packages",
+    "translation": "正在构建软件包"
+  },
+  "vKXxSljc6J": {
+    "source": "Failed to remove widget!",
+    "translation": "移除小组件失败！"
+  },
+  "vR7ekU1U49": {
+    "source": "Required field!",
+    "translation": "必填字段！"
+  },
+  "va3qnMlzeB": {
+    "source": "Unit System",
+    "translation": "单位制"
+  },
+  "vtaxH+XeV2": {
+    "source": "Failed to play the sound {name}",
+    "translation": "播放铃声 {name} 失败"
+  },
+  "vuLI07G2N7": {
+    "source": "Your device is being set up, the setup continues here shortly.",
+    "translation": "设备正在设置中，稍后将在此继续。"
+  },
+  "wEQDC6Wv3/": {
+    "source": "Edit",
+    "translation": "编辑"
+  },
+  "wG2x/1KAk3": {
+    "source": "Invalid file type",
+    "translation": "文件类型无效"
+  },
+  "wH++OeQZY7": {
+    "source": "Invalid state, cannot edit widget without combined scene!",
+    "translation": "状态无效：没有组合场景，无法编辑小组件！"
+  },
+  "wHoQlHHTQH": {
+    "source": "Brightness Saved",
+    "translation": "亮度已保存"
+  },
+  "wL7VAE/fRX": {
+    "source": "Actions",
+    "translation": "操作"
+  },
+  "wVsPjYtMjP": {
+    "source": "It may be sent to any host.",
+    "translation": "它可能会发送到任何主机。"
+  },
+  "wX0ZJlx3oe": {
+    "source": "Time interval must be set!",
+    "translation": "必须设置时间段！"
+  },
+  "whj3AtXd2e": {
+    "source": "Download & Upgrade",
+    "translation": "下载并升级"
+  },
+  "wittYyIpaf": {
+    "source": "Created At",
+    "translation": "创建时间"
+  },
+  "wjB0LJJ6k2": {
+    "source": "Edit Account",
+    "translation": "编辑账户"
+  },
+  "wnqVvgY0Xz": {
+    "source": "LED notifications disabled",
+    "translation": "已关闭 LED 通知"
+  },
+  "wtdY6GA76K": {
+    "source": "Please wait for the app to restart.",
+    "translation": "请等待应用重启。"
+  },
+  "wz3ar7+Agy": {
+    "source": "Failed to load the languages",
+    "translation": "加载语言列表失败",
+    "description": "Settings error toast when the device does not list the languages it offers"
+  },
+  "wzxIwY6j0B": {
+    "source": "Move {row}",
+    "translation": "移动“{row}”"
+  },
+  "x+67sPei+f": {
+    "source": "Back to Scenes List",
+    "translation": "返回场景列表"
+  },
+  "xGb4YfSMXf": {
+    "source": "Expand row",
+    "translation": "展开行"
+  },
+  "xQ6aNcwuOd": {
+    "source": "Create Password",
+    "translation": "创建密码"
+  },
+  "xcbt8/90d+": {
+    "source": "Failed to save the language",
+    "translation": "保存语言失败",
+    "description": "Settings error toast when saving the device language fails"
+  },
+  "xn0iThoKdA": {
+    "source": "12-hour",
+    "translation": "12 小时制"
+  },
+  "xzSwWXzv/8": {
+    "source": "Sound Volume",
+    "translation": "音量"
+  },
+  "y/PhoM9SbF": {
+    "source": "Celsius",
+    "translation": "摄氏度"
+  },
+  "y867VsgbzT": {
+    "source": "Volume",
+    "translation": "音量"
+  },
+  "y87+TNTw0B": {
+    "source": "Activating",
+    "translation": "正在激活"
+  },
+  "yGW47+VBZ+": {
+    "source": "Check for a new version",
+    "translation": "检查新版本"
+  },
+  "yLMog6i2hb": {
+    "source": "Latest packages version:",
+    "translation": "最新软件包版本："
+  },
+  "yR5aTqCnaJ": {
+    "source": "Your packages version:",
+    "translation": "您的软件包版本："
+  },
+  "ySElrrqDXl": {
+    "source": "Remove the file",
+    "translation": "移除文件"
+  },
+  "yb+ZynwpTp": {
+    "source": "LED notifications enabled",
+    "translation": "已启用 LED 通知"
+  },
+  "z327f5gKGl": {
+    "source": "The app may restart to finish the upgrade.",
+    "translation": "应用可能会重启以完成升级。"
+  },
+  "z8M0Ad2Ss3": {
+    "source": "This widget has no size that fits this cell.",
+    "translation": "此小组件没有适合该单元格的尺寸。"
+  },
+  "zGpUqV5W/y": {
+    "source": "The device did not come back online after the upgrade. It may still be restarting — reload the page to check.",
+    "translation": "升级后设备未重新上线。它可能仍在重启 — 请重新加载页面以确认。"
+  },
+  "zeOegLHTsi": {
+    "source": "Failed to load display settings!",
+    "translation": "加载显示设置失败！"
+  },
+  "zgw2I8nSaM": {
+    "source": "Installing…",
+    "translation": "正在安装…"
+  }
+}
