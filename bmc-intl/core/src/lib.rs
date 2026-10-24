@@ -54,9 +54,10 @@ mod formatter;
 mod localized;
 pub mod packs;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, RwLock};
 
@@ -352,6 +353,12 @@ fn log_report(what: &str, report: &LoadReport) {
     }
 }
 
+fn read_flag(path: Option<&PathBuf>) -> std::io::Result<Option<Cow<'static, [u8]>>> {
+    path.map(std::fs::read)
+        .transpose()
+        .map(|bytes| bytes.map(Cow::Owned))
+}
+
 fn next_version() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     NEXT.fetch_add(1, Ordering::Relaxed)
@@ -510,24 +517,28 @@ impl Translations {
     }
 
     /// At most [`packs::MAX_FLAG_BYTES`] long.
-    #[must_use]
-    pub fn flag_svg(&self, language: Language) -> Option<&Path> {
+    ///
+    /// # Errors
+    /// The filesystem's, when the pack's file can no longer be read.
+    pub fn flag_svg(&self, language: Language) -> std::io::Result<Option<Cow<'static, [u8]>>> {
         self.flag(&self.presentation.flags_svg, language)
     }
 
     /// The flag compiled to the icon format the device draws.
-    #[must_use]
-    pub fn flag_bin(&self, language: Language) -> Option<&Path> {
+    ///
+    /// # Errors
+    /// The filesystem's, when the pack's file can no longer be read.
+    pub fn flag_bin(&self, language: Language) -> std::io::Result<Option<Cow<'static, [u8]>>> {
         self.flag(&self.presentation.flags_bin, language)
     }
 
     /// The flag of the pack it resolves to: a flag names a region, so a parent's never fills in.
-    fn flag<'a>(
+    fn flag(
         &self,
-        flags: &'a BTreeMap<Language, PathBuf>,
+        flags: &BTreeMap<Language, PathBuf>,
         language: Language,
-    ) -> Option<&'a Path> {
-        flags.get(&self.pack_for(language)?).map(PathBuf::as_path)
+    ) -> std::io::Result<Option<Cow<'static, [u8]>>> {
+        read_flag(self.pack_for(language).and_then(|pack| flags.get(&pack)))
     }
 
     #[must_use]

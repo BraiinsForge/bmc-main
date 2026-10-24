@@ -214,8 +214,14 @@ fn the_offered_languages_are_english_then_every_accepted_pack() {
         "the profile pack's unit patterns"
     );
     assert!(
-        translations.flag_svg(Language::ZH).is_some()
-            && translations.flag_bin(Language::ZH).is_some(),
+        translations
+            .flag_svg(Language::ZH)
+            .expect("BUG: the profile's flag reads")
+            .is_some()
+            && translations
+                .flag_bin(Language::ZH)
+                .expect("BUG: the profile's flag reads")
+                .is_some(),
         "the profile pack's flag, as drawn and compiled"
     );
 }
@@ -470,8 +476,11 @@ fn a_compiled_flag_is_taken_only_whole() {
         let (translations, report) = Translations::load(&[profile(), root.path()]);
         assert!(skipped(&report).contains(problem), "{name}: {report}");
         assert_eq!(
-            translations.flag_bin(Language::ZH),
-            Some(profile().join("zh/flag.bin").as_path()),
+            translations
+                .flag_bin(Language::ZH)
+                .expect("BUG: the profile's flag reads")
+                .as_deref(),
+            Some(compiled.as_slice()),
             "{name}: the profile's flag stays"
         );
     }
@@ -537,8 +546,15 @@ fn what_a_pack_brings_beside_its_translations_is_skipped_when_it_does_not_parse(
         "a bad file is skipped, the language stays"
     );
     assert_eq!(
-        translations.flag_bin(Language::ZH),
-        Some(profile().join("zh/flag.bin").as_path()),
+        translations
+            .flag_bin(Language::ZH)
+            .expect("BUG: the profile's flag reads")
+            .as_deref(),
+        Some(
+            std::fs::read(profile().join("zh/flag.bin"))
+                .expect("BUG: the profile's flag reads")
+                .as_slice()
+        ),
         "the profile's compiled flag stays where the later root's does not open"
     );
     assert!(
@@ -649,7 +665,8 @@ fn reading_the_facts_opens_no_translation_or_cldr_data() -> R {
     assert_eq!(translations.languages(), [Language::EN, cs]);
     assert_eq!(translations.info(cs).native_name, "Čeština");
     assert!(
-        translations.flag_svg(cs).is_some() && translations.flag_bin(cs).is_some(),
+        matches!(translations.flag_svg(cs), Ok(Some(_)))
+            && matches!(translations.flag_bin(cs), Ok(Some(_))),
         "the pack's flags"
     );
     assert_eq!(translations.loads(cs), 0, "the facts load no pack");
@@ -829,7 +846,7 @@ fn a_regional_pack_layers_over_its_parent_per_entry() -> R {
         "a name is a pack's own, never its parent's"
     );
     assert!(
-        translations.flag_svg(Language::ZH).is_some() && translations.flag_svg(zh_sg).is_none(),
+        translations.flag_svg(Language::ZH)?.is_some() && translations.flag_svg(zh_sg)?.is_none(),
         "a flag names a region, so none comes from the parent"
     );
     Ok(())
