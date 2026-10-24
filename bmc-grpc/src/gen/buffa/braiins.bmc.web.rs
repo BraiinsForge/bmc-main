@@ -11660,6 +11660,187 @@ impl ::buffa::Message for ListLanguagesResponse {
         self.languages.clear();
     }
 }
+#[derive(Clone, PartialEq, Default)]
+pub struct GetWebCatalogRequest {
+    /// One of the tags `ListLanguages` lists, exactly as it lists it.
+    ///
+    /// Field 1: `language`
+    pub language: ::buffa::alloc::string::String,
+}
+impl ::core::fmt::Debug for GetWebCatalogRequest {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("GetWebCatalogRequest").field("language", &self.language).finish()
+    }
+}
+impl GetWebCatalogRequest {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.GetWebCatalogRequest";
+}
+::buffa::impl_default_instance!(GetWebCatalogRequest);
+impl ::buffa::MessageName for GetWebCatalogRequest {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "GetWebCatalogRequest";
+    const FULL_NAME: &'static str = "braiins.bmc.web.GetWebCatalogRequest";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.GetWebCatalogRequest";
+}
+impl ::buffa::Message for GetWebCatalogRequest {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if !self.language.is_empty() {
+            size += 1u64 + ::buffa::types::string_encoded_len(&self.language) as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if !self.language.is_empty() {
+            ::buffa::types::put_string_field(1u32, &self.language, buf);
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(&mut self.language, buf)?;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.language.clear();
+    }
+}
+#[derive(Clone, PartialEq, Default)]
+pub struct GetWebCatalogResponse {
+    /// Message id to ICU MessageFormat pattern;
+    /// empty for English, which the web is written in.
+    ///
+    /// Field 1: `messages`
+    pub messages: ::buffa::__private::HashMap<
+        ::buffa::alloc::string::String,
+        ::buffa::alloc::string::String,
+    >,
+}
+impl ::core::fmt::Debug for GetWebCatalogResponse {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("GetWebCatalogResponse")
+            .field("messages", &self.messages)
+            .finish()
+    }
+}
+impl GetWebCatalogResponse {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.GetWebCatalogResponse";
+}
+::buffa::impl_default_instance!(GetWebCatalogResponse);
+impl ::buffa::MessageName for GetWebCatalogResponse {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "GetWebCatalogResponse";
+    const FULL_NAME: &'static str = "braiins.bmc.web.GetWebCatalogResponse";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.GetWebCatalogResponse";
+}
+impl ::buffa::Message for GetWebCatalogResponse {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        size
+            += ::buffa::map_codec::field_len::<
+                ::buffa::map_codec::Str,
+                ::buffa::map_codec::Str,
+                _,
+            >(&self.messages, 1u64);
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        ::buffa::map_codec::write_field::<
+            ::buffa::map_codec::Str,
+            ::buffa::map_codec::Str,
+            _,
+        >(&self.messages, 1u32, buf);
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::map_codec::merge_entry::<
+                    ::buffa::map_codec::Str,
+                    ::buffa::map_codec::Str,
+                    _,
+                >(&mut self.messages, buf, ctx)?;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.messages.clear();
+    }
+}
 /// Effect type matching bmc_led::data::LedEffect variants.
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -41206,6 +41387,537 @@ pub mod __buffa {
             type View<'a> = ListLanguagesResponseView<'a>;
             type ViewHandle = ListLanguagesResponseOwnedView;
         }
+        #[derive(Clone, Debug, Default)]
+        pub struct GetWebCatalogRequestView<'a> {
+            /// One of the tags `ListLanguages` lists, exactly as it lists it.
+            ///
+            /// Field 1: `language`
+            pub language: &'a str,
+        }
+        impl<'a> ::buffa::MessageView<'a> for GetWebCatalogRequestView<'a> {
+            type Owned = super::super::GetWebCatalogRequest;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.language = ::buffa::types::borrow_str(&mut cur)?;
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<
+                super::super::GetWebCatalogRequest,
+                ::buffa::DecodeError,
+            > {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<
+                super::super::GetWebCatalogRequest,
+                ::buffa::DecodeError,
+            > {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::GetWebCatalogRequest {
+                    language: self.language.to_string(),
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for GetWebCatalogRequestView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                if !self.language.is_empty() {
+                    size
+                        += 1u64
+                            + ::buffa::types::string_encoded_len(&self.language) as u64;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                _cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                if !self.language.is_empty() {
+                    ::buffa::types::put_string_field(1u32, &self.language, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for GetWebCatalogRequestView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "GetWebCatalogRequest";
+            const FULL_NAME: &'static str = "braiins.bmc.web.GetWebCatalogRequest";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.GetWebCatalogRequest";
+        }
+        ::buffa::impl_default_view_instance!(GetWebCatalogRequestView);
+        ::buffa::impl_view_reborrow!(GetWebCatalogRequestView);
+        /** Self-contained, `'static` owned view of a `GetWebCatalogRequest` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`GetWebCatalogRequestView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`GetWebCatalogRequestView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct GetWebCatalogRequestOwnedView(
+            ::buffa::OwnedView<GetWebCatalogRequestView<'static>>,
+        );
+        impl GetWebCatalogRequestOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    GetWebCatalogRequestOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    GetWebCatalogRequestOwnedView(
+                        ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+                    ),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::GetWebCatalogRequest,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    GetWebCatalogRequestOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`GetWebCatalogRequestView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &GetWebCatalogRequestView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::GetWebCatalogRequest {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// One of the tags `ListLanguages` lists, exactly as it lists it.
+            ///
+            /// Field 1: `language`
+            #[must_use]
+            pub fn language(&self) -> &'_ str {
+                self.0.reborrow().language
+            }
+        }
+        impl ::core::convert::From<::buffa::OwnedView<GetWebCatalogRequestView<'static>>>
+        for GetWebCatalogRequestOwnedView {
+            fn from(
+                inner: ::buffa::OwnedView<GetWebCatalogRequestView<'static>>,
+            ) -> Self {
+                GetWebCatalogRequestOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<GetWebCatalogRequestOwnedView>
+        for ::buffa::OwnedView<GetWebCatalogRequestView<'static>> {
+            fn from(wrapper: GetWebCatalogRequestOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<
+            ::buffa::OwnedView<GetWebCatalogRequestView<'static>>,
+        > for GetWebCatalogRequestOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<GetWebCatalogRequestView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::GetWebCatalogRequest {
+            type View<'a> = GetWebCatalogRequestView<'a>;
+            type ViewHandle = GetWebCatalogRequestOwnedView;
+        }
+        #[derive(Clone, Debug, Default)]
+        pub struct GetWebCatalogResponseView<'a> {
+            /// Message id to ICU MessageFormat pattern;
+            /// empty for English, which the web is written in.
+            ///
+            /// Field 1: `messages` (map)
+            pub messages: ::buffa::MapView<'a, &'a str, &'a str>,
+        }
+        impl<'a> ::buffa::MessageView<'a> for GetWebCatalogResponseView<'a> {
+            type Owned = super::super::GetWebCatalogResponse;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        let entry_bytes = ::buffa::types::borrow_bytes(&mut cur)?;
+                        let mut entry_cur: &'a [u8] = entry_bytes;
+                        let mut key = "";
+                        let mut val = "";
+                        ctx.register_element_memory(
+                            ::buffa::__private::element_footprint(&key)
+                                + ::buffa::__private::element_footprint(&val),
+                        )?;
+                        while !entry_cur.is_empty() {
+                            let entry_tag = ::buffa::encoding::Tag::decode(
+                                &mut entry_cur,
+                            )?;
+                            match entry_tag.field_number() {
+                                1 => {
+                                    ::buffa::encoding::check_wire_type(
+                                        entry_tag,
+                                        ::buffa::encoding::WireType::LengthDelimited,
+                                    )?;
+                                    key = ::buffa::types::borrow_str(&mut entry_cur)?;
+                                }
+                                2 => {
+                                    ::buffa::encoding::check_wire_type(
+                                        entry_tag,
+                                        ::buffa::encoding::WireType::LengthDelimited,
+                                    )?;
+                                    val = ::buffa::types::borrow_str(&mut entry_cur)?;
+                                }
+                                _ => {
+                                    ::buffa::encoding::skip_field_depth(
+                                        entry_tag,
+                                        &mut entry_cur,
+                                        ctx.depth(),
+                                    )?;
+                                }
+                            }
+                        }
+                        view.messages.push(key, val);
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<
+                super::super::GetWebCatalogResponse,
+                ::buffa::DecodeError,
+            > {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<
+                super::super::GetWebCatalogResponse,
+                ::buffa::DecodeError,
+            > {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::GetWebCatalogResponse {
+                    messages: self
+                        .messages
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for GetWebCatalogResponseView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                #[allow(clippy::for_kv_map)]
+                for (k, v) in &self.messages {
+                    let entry_size: u64 = 1u64
+                        + ::buffa::types::string_encoded_len(k) as u64 + 1u64
+                        + ::buffa::types::string_encoded_len(v) as u64;
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(entry_size) as u64
+                            + entry_size;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                _cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                for (k, v) in &self.messages {
+                    let entry_size: u64 = 1u64
+                        + ::buffa::types::string_encoded_len(k) as u64 + 1u64
+                        + ::buffa::types::string_encoded_len(v) as u64;
+                    ::buffa::encoding::Tag::new(
+                            1u32,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )
+                        .encode(buf);
+                    ::buffa::encoding::encode_varint(entry_size, buf);
+                    ::buffa::encoding::Tag::new(
+                            1u32,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )
+                        .encode(buf);
+                    ::buffa::types::encode_string(k, buf);
+                    ::buffa::encoding::Tag::new(
+                            2u32,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )
+                        .encode(buf);
+                    ::buffa::types::encode_string(v, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for GetWebCatalogResponseView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "GetWebCatalogResponse";
+            const FULL_NAME: &'static str = "braiins.bmc.web.GetWebCatalogResponse";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.GetWebCatalogResponse";
+        }
+        ::buffa::impl_default_view_instance!(GetWebCatalogResponseView);
+        ::buffa::impl_view_reborrow!(GetWebCatalogResponseView);
+        /** Self-contained, `'static` owned view of a `GetWebCatalogResponse` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`GetWebCatalogResponseView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`GetWebCatalogResponseView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct GetWebCatalogResponseOwnedView(
+            ::buffa::OwnedView<GetWebCatalogResponseView<'static>>,
+        );
+        impl GetWebCatalogResponseOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    GetWebCatalogResponseOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    GetWebCatalogResponseOwnedView(
+                        ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+                    ),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::GetWebCatalogResponse,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    GetWebCatalogResponseOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`GetWebCatalogResponseView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &GetWebCatalogResponseView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::GetWebCatalogResponse {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// Message id to ICU MessageFormat pattern;
+            /// empty for English, which the web is written in.
+            ///
+            /// Field 1: `messages` (map)
+            #[must_use]
+            pub fn messages(&self) -> &::buffa::MapView<'_, &'_ str, &'_ str> {
+                &self.0.reborrow().messages
+            }
+        }
+        impl ::core::convert::From<
+            ::buffa::OwnedView<GetWebCatalogResponseView<'static>>,
+        > for GetWebCatalogResponseOwnedView {
+            fn from(
+                inner: ::buffa::OwnedView<GetWebCatalogResponseView<'static>>,
+            ) -> Self {
+                GetWebCatalogResponseOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<GetWebCatalogResponseOwnedView>
+        for ::buffa::OwnedView<GetWebCatalogResponseView<'static>> {
+            fn from(wrapper: GetWebCatalogResponseOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<
+            ::buffa::OwnedView<GetWebCatalogResponseView<'static>>,
+        > for GetWebCatalogResponseOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<GetWebCatalogResponseView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::GetWebCatalogResponse {
+            type View<'a> = GetWebCatalogResponseView<'a>;
+            type ViewHandle = GetWebCatalogResponseOwnedView;
+        }
         /// RGB color (each component 0–255).
         #[derive(Clone, Debug, Default)]
         pub struct RgbColorView<'a> {
@@ -56842,6 +57554,14 @@ pub use self::__buffa::view::LanguageInfoOwnedView;
 pub use self::__buffa::view::ListLanguagesResponseView;
 #[doc(inline)]
 pub use self::__buffa::view::ListLanguagesResponseOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::GetWebCatalogRequestView;
+#[doc(inline)]
+pub use self::__buffa::view::GetWebCatalogRequestOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::GetWebCatalogResponseView;
+#[doc(inline)]
+pub use self::__buffa::view::GetWebCatalogResponseOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::RgbColorView;
 #[doc(inline)]

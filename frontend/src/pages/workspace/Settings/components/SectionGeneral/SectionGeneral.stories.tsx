@@ -46,6 +46,14 @@ export default {
             ...getArg('timezone', gen.randomItem(gen.timezones)),
             items: gen.timezones,
         },
+        language: {
+            ...getArg('language', 'en-GB'),
+            items: [
+                pb.create(pb.LanguageInfoSchema, { tag: 'en-GB', nativeName: 'English (UK)' }),
+                pb.create(pb.LanguageInfoSchema, { tag: 'en-US', nativeName: 'English (US)' }),
+                pb.create(pb.LanguageInfoSchema, { tag: 'zh', nativeName: '简体中文' }),
+            ],
+        },
         dateFormat: getArg('dateFormat', pb.DateFormat.DD_MM_YYYY_DASH),
         firstWeekDay: getArg('dateFormat', pb.Weekday.THURSDAY),
         temperatureUnits: getArg('temperatureUnits', pb.TemperatureUnit.CELSIUS),

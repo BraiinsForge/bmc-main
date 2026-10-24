@@ -29,7 +29,7 @@ import Settings from './Settings';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import { store } from '@/store';
-import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
+import { deckCapabilities, deckSystemWire } from '@/pages/workspace/Display/capabilities.fixture';
 import { Toaster } from '@/lib/toast';
 import AppContext, { getAppContextDefault } from '@/context';
 import type { ServiceMocks } from '@/lib/proto';
@@ -742,5 +742,46 @@ describe('Settings automatic updates (BDK-926)', () => {
         await advance(2000);
 
         expect(screen.queryByText(/Automatic updates enabled/)).toBeNull();
+    });
+});
+
+describe('Settings language picker', () => {
+    afterEach(() => {
+        rstest.restoreAllMocks();
+        Object.assign(window, { SYSTEM: deckSystemWire() });
+        store.boot();
+        Reflect.deleteProperty(window, 'SYSTEM');
+    });
+
+    test('a language the device saved but the page could not load asks for a reload', async () => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n: true } });
+        store.boot();
+        registerMocks(pb.services.ConfigurationService, {
+            getGeneralSettingsData: () => pb.create(pb.GeneralSettingsDataResponseSchema, { language: 'en-GB' }),
+            setLanguage: () => ({}),
+        });
+        registerMocks(pb.services.LanguageService, {
+            listLanguages: () => ({
+                languages: [
+                    pb.create(pb.LanguageInfoSchema, { tag: 'en-GB', nativeName: 'English (UK)' }),
+                    pb.create(pb.LanguageInfoSchema, { tag: 'cs', nativeName: 'Čeština' }),
+                ],
+            }),
+            getWebCatalog: () => {
+                throw new ConnectError('mock: catalog unavailable', Code.Unavailable);
+            },
+        });
+        rstest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        renderPage('#general');
+        await advance(300);
+        fireEvent.click(screen.getByText('English (UK)'));
+        await advance(0);
+        fireEvent.click(screen.getByText('Čeština'));
+        await advance(300);
+
+        expect(screen.queryByText('Language saved; reload the page to see it')).not.toBeNull();
+        expect(screen.queryByText('Language changed')).toBeNull();
     });
 });

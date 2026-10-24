@@ -51,6 +51,8 @@ export interface SectionGeneralProps {
     timeFormat: iField<pb.TimeFormat>;
     // secondsInStatusbar: iField<boolean>;
     timezone: null | (iField<pb.Timezone> & { items: ReadonlyArray<pb.Timezone> });
+    /** Absent on a device that does not offer its languages. */
+    language: null | (iField<string> & { items: ReadonlyArray<pb.LanguageInfo> });
     dateFormat: iField<pb.DateFormat>;
     firstWeekDay: iField<pb.Weekday>;
 
@@ -124,6 +126,22 @@ class View extends Component<Props> {
         if (x.selectedItem) this.props.timezone?.onChange?.(x.selectedItem);
     };
 
+    #languageToString = (x: null | pb.LanguageInfo): string => x?.nativeName ?? '';
+    #languageRenderElement = (x: null | pb.LanguageInfo): NonNullable<ReactNode> =>
+        x ? (
+            <span className={css.languageElement} lang={x.tag}>
+                {x.flag ? (
+                    <img className={css.languageFlag} src={`data:${x.flag.mimeType};base64,${x.flag.data}`} alt="" />
+                ) : null}
+                <span children={x.nativeName} />
+            </span>
+        ) : (
+            ''
+        );
+    #languageChange: DropdownProps<null | pb.LanguageInfo>['onChange'] = x => {
+        if (x.selectedItem) this.props.language?.onChange?.(x.selectedItem.tag);
+    };
+
     #reset = async (): Promise<void> => {
         const { intl, onFactoryReset } = this.props;
         const { confirm } = this.context;
@@ -157,6 +175,7 @@ class View extends Component<Props> {
             timeFormat,
             // secondsInStatusbar,
             timezone,
+            language,
             dateFormat,
             firstWeekDay,
 
@@ -286,6 +305,34 @@ class View extends Component<Props> {
                 </FieldSet>
 
                 <FieldSet title={formatMessage({ defaultMessage: 'Regional Settings' })}>
+                    {language != null ? (
+                        <Field
+                            variant="dark"
+                            title={formatMessage({
+                                defaultMessage: 'Language',
+                                description: 'Settings field label; picks the language of the device and its web UI',
+                            })}
+                            disabled={language.disabled}
+                        >
+                            <Dropdown<null | pb.LanguageInfo>
+                                id={$('language')}
+                                size="md"
+                                label=""
+                                titleText=""
+                                hideLabel
+                                items={Array.from(language.items)}
+                                selectedItem={language.items.find(x => x.tag === language.value) ?? null}
+                                onChange={this.#languageChange}
+                                itemToString={this.#languageToString}
+                                itemToElement={this.#languageRenderElement}
+                                renderSelectedItem={this.#languageRenderElement}
+                                disabled={language.disabled}
+                                invalid={!!language.error}
+                                invalidText={language.error}
+                            />
+                        </Field>
+                    ) : null}
+
                     <Field
                         variant="dark"
                         title={formatMessage({ defaultMessage: 'Temperature' })}

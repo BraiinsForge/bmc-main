@@ -30,6 +30,7 @@ export * from './gen/web/configuration_pb';
 export * from './gen/web/credential_management_pb';
 export * from './gen/web/field_schema_pb';
 export * from './gen/web/initial_setup_pb';
+export * from './gen/web/language_pb';
 export * from './gen/web/metadata_pb';
 export * from './gen/web/network_pb';
 export * from './gen/web/scene_management_pb';

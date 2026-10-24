@@ -19,10 +19,12 @@
 // the grant above.
 
 import { useState, useEffect } from 'react';
+import type { IntlShape } from 'react-intl';
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
 import { boserChrome, loginOwned } from '@/lib/capabilities';
 import { readBrand, type Brand } from '@/lib/brand';
+import { bootLocale, intlFor, type Locale, SOURCE_LOCALE } from '@/lib/intl';
 import { readSystem, type Capabilities } from '@/lib/system';
 
 export type Listener<R> = (store: Store) => R;
@@ -38,7 +40,12 @@ interface State {
     sessionInfo: SessionInfo;
     hardwareCapabilities: Capabilities;
     brand: null | Brand;
+    /** Whether the device offers its languages. */
+    i18n: boolean;
+    // English until the page's language is spoken, before the first render.
+    locale: Locale;
 }
+
 // Capabilities exist only after `boot()`; the public `state` hides that gap.
 type StoreState = Omit<State, 'hardwareCapabilities'> & { hardwareCapabilities: null | State['hardwareCapabilities'] };
 
@@ -50,6 +57,8 @@ class Store {
         },
         hardwareCapabilities: null,
         brand: null,
+        i18n: false,
+        locale: { tag: SOURCE_LOCALE },
     });
     #setState<Key extends keyof StoreState>(
         key: Key,
@@ -64,6 +73,10 @@ class Store {
             throw new Error('BUG: store read before boot() loaded the capabilities');
         }
         return this.#state as Readonly<State>;
+    }
+    /** Unlike `state`, readable before `boot()`. */
+    get locale(): Locale {
+        return this.#state.locale;
     }
 
     #listeners = new Set<Listener<any>>();
@@ -137,6 +150,48 @@ class Store {
         this.#setState('sessionInfo', res);
     };
 
+    #speakAbort = pb.abort.get();
+    /**
+     * Speak `tag` here, its catalog loaded first, so whatever follows is already worded in it.
+     * A catalog that does not load leaves the current language in place and returns `false`;
+     * a later call wins over one whose catalog is still loading, which then returns `true`.
+     */
+    speak = async (tag: string): Promise<boolean> => {
+        const { signal } = this.#speakAbort.replace();
+        if (tag === this.#state.locale.tag) return true;
+        let messages: Locale['messages'];
+        if (this.#state.i18n) {
+            try {
+                ({ messages } = await pb.rpc.language.getWebCatalog({ language: tag }, { signal }));
+            } catch (error) {
+                if (signal.aborted) return true;
+                console.warn(`No web catalog for ${tag}; staying in ${this.#state.locale.tag}`, error);
+                return false;
+            }
+            if (signal.aborted) return true;
+        }
+        this.#setState('locale', { tag, messages });
+        return true;
+    };
+
+    /** Speak the language the device boots the web in; it came with the page, so nothing waits on a request. */
+    speakBootLanguage = (): void => {
+        const locale = bootLocale();
+        if (locale) this.#setState('locale', locale);
+    };
+
+    /** The `IntlShape` of the current locale, for text formatted outside the React tree. */
+    intl = (): IntlShape => intlFor(this.#state.locale);
+
+    /**
+     * Persist `tag` as the device language and speak it here once its catalog is loaded;
+     * `false` when the device took it but the catalog did not load, so the page speaks it only after a reload.
+     */
+    setLanguage = async (tag: string, signal?: AbortSignal): Promise<boolean> => {
+        await pb.rpc.config.setLanguage({ language: tag }, { signal });
+        return this.speak(tag);
+    };
+
     setHardwareCapabilities = (caps: null | Capabilities): void => {
         this.#setState('hardwareCapabilities', caps);
     };
@@ -146,7 +201,8 @@ class Store {
 
     /** Reads what the whole UI is keyed on; throws when the device cannot be described. */
     boot = (): void => {
-        const { capabilities: caps } = readSystem();
+        const { capabilities: caps, i18n } = readSystem();
+        this.#setState('i18n', i18n);
         this.setHardwareCapabilities(caps);
         // system.js carries the brand script only where boser manages the device.
         this.setBrand(boserChrome(caps) ? readBrand() : null);

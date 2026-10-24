@@ -19,7 +19,6 @@
 // the grant above.
 
 import { StrictMode, type ReactNode } from 'react';
-import { IntlProvider } from 'react-intl';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
@@ -28,6 +27,7 @@ import router from '@/routes';
 import { store } from '@/store';
 import { BootError } from '@/components';
 import { AppHead } from '@/components/AppHead';
+import { LocaleProvider } from '@/components/LocaleProvider';
 import '@/styles/carbon/carbon.global.scss';
 
 function boot(rootEl: HTMLElement): void {
@@ -35,18 +35,22 @@ function boot(rootEl: HTMLElement): void {
     let tree: ReactNode;
     try {
         store.boot();
+        // Before the first render, so the page never starts in another language.
+        store.speakBootLanguage();
         tree = (
-            <HelmetProvider>
+            <>
                 <AppHead />
                 <RouterProvider router={router} />
-            </HelmetProvider>
+            </>
         );
     } catch (error) {
         tree = <BootError error={error} />;
     }
     root.render(
         <StrictMode>
-            <IntlProvider locale="en">{tree}</IntlProvider>
+            <HelmetProvider>
+                <LocaleProvider>{tree}</LocaleProvider>
+            </HelmetProvider>
         </StrictMode>,
     );
 }

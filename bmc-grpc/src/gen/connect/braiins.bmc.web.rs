@@ -9146,6 +9146,14 @@ where
 pub type OwnedListLanguagesResponseView = ::buffa::view::OwnedView<
     crate::proto::braiins::bmc::web::__buffa::view::ListLanguagesResponseView<'static>,
 >;
+///Shorthand for `OwnedView<GetWebCatalogRequestView<'static>>`.
+pub type OwnedGetWebCatalogRequestView = ::buffa::view::OwnedView<
+    crate::proto::braiins::bmc::web::__buffa::view::GetWebCatalogRequestView<'static>,
+>;
+///Shorthand for `OwnedView<GetWebCatalogResponseView<'static>>`.
+pub type OwnedGetWebCatalogResponseView = ::buffa::view::OwnedView<
+    crate::proto::braiins::bmc::web::__buffa::view::GetWebCatalogResponseView<'static>,
+>;
 impl ::connectrpc::Encodable<crate::proto::braiins::bmc::web::ListLanguagesResponse>
 for crate::proto::braiins::bmc::web::__buffa::view::ListLanguagesResponseView<'_> {
     fn encode(
@@ -9180,6 +9188,40 @@ for ::buffa::view::OwnedView<
         )
     }
 }
+impl ::connectrpc::Encodable<crate::proto::braiins::bmc::web::GetWebCatalogResponse>
+for crate::proto::braiins::bmc::web::__buffa::view::GetWebCatalogResponseView<'_> {
+    fn encode(
+        &self,
+        codec: ::connectrpc::CodecFormat,
+    ) -> ::std::result::Result<::buffa::bytes::Bytes, ::connectrpc::ConnectError> {
+        ::connectrpc::__codegen::encode_view_body(self, codec)
+    }
+}
+impl ::connectrpc::Encodable<crate::proto::braiins::bmc::web::GetWebCatalogResponse>
+for ::buffa::view::OwnedView<
+    crate::proto::braiins::bmc::web::__buffa::view::GetWebCatalogResponseView<'static>,
+> {
+    fn encode(
+        &self,
+        codec: ::connectrpc::CodecFormat,
+    ) -> ::std::result::Result<::buffa::bytes::Bytes, ::connectrpc::ConnectError> {
+        ::connectrpc::__codegen::encode_view_body(self.reborrow(), codec)
+    }
+    /// An `OwnedView` still holds the buffer it was decoded from, so
+    /// its large fields can be handed to the response body by
+    /// reference count instead of copied. The bare view impl above
+    /// cannot do this: it has borrows but no buffer to name.
+    fn encode_segments(
+        &self,
+        codec: ::connectrpc::CodecFormat,
+    ) -> ::std::result::Result<::connectrpc::EncodedBody, ::connectrpc::ConnectError> {
+        ::connectrpc::__codegen::encode_view_body_segments(
+            self.reborrow(),
+            self.bytes(),
+            codec,
+        )
+    }
+}
 /// Full service name for this service.
 pub const LANGUAGE_SERVICE_SERVICE_NAME: &str = "braiins.bmc.web.LanguageService";
 /// Static [`Spec`](::connectrpc::Spec) for the `ListLanguages` RPC, as seen by the server; the generated client passes it with [`origin`](::connectrpc::Spec::origin) `Client` (compare across sides with [`Spec::same_method`](::connectrpc::Spec::same_method)).
@@ -9188,7 +9230,13 @@ pub const LANGUAGE_SERVICE_LIST_LANGUAGES_SPEC: ::connectrpc::Spec = ::connectrp
         ::connectrpc::StreamType::Unary,
     )
     .with_idempotency_level(::connectrpc::IdempotencyLevel::Unknown);
-/// The languages the device speaks.
+/// Static [`Spec`](::connectrpc::Spec) for the `GetWebCatalog` RPC, as seen by the server; the generated client passes it with [`origin`](::connectrpc::Spec::origin) `Client` (compare across sides with [`Spec::same_method`](::connectrpc::Spec::same_method)).
+pub const LANGUAGE_SERVICE_GET_WEB_CATALOG_SPEC: ::connectrpc::Spec = ::connectrpc::Spec::server(
+        "/braiins.bmc.web.LanguageService/GetWebCatalog",
+        ::connectrpc::StreamType::Unary,
+    )
+    .with_idempotency_level(::connectrpc::IdempotencyLevel::Unknown);
+/// The languages the device speaks, and their words for the web UI.
 /// Public, so a page can offer them before anyone logs in.
 ///
 /// # Implementing handlers
@@ -9260,6 +9308,29 @@ pub trait LanguageService: Send + Sync + 'static {
             > + Send + use<'a, Self>,
         >,
     > + Send;
+    /// Handle the GetWebCatalog RPC.
+    ///
+    /// `'a` lets the response body borrow from `&self` (e.g. server-resident state).
+    ///
+    /// `request` is borrowed from the request body and is valid for the
+    /// duration of the call; message fields are read directly on it
+    /// (zero-copy). The response cannot borrow from `request` — use
+    /// `.to_owned_message()` (or copy the specific fields) for anything
+    /// returned, stored, or moved into `tokio::spawn`.
+    fn get_web_catalog<'a>(
+        &'a self,
+        ctx: ::connectrpc::RequestContext,
+        request: ::connectrpc::ServiceRequest<
+            '_,
+            crate::proto::braiins::bmc::web::GetWebCatalogRequest,
+        >,
+    ) -> impl ::std::future::Future<
+        Output = ::connectrpc::ServiceResult<
+            impl ::connectrpc::Encodable<
+                crate::proto::braiins::bmc::web::GetWebCatalogResponse,
+            > + Send + use<'a, Self>,
+        >,
+    > + Send;
 }
 /// Extension trait for registering a service implementation with a Router.
 ///
@@ -9321,6 +9392,35 @@ impl<S: LanguageService> LanguageServiceExt for S {
                 },
             )
             .with_spec(LANGUAGE_SERVICE_LIST_LANGUAGES_SPEC)
+            .route_view(
+                LANGUAGE_SERVICE_SERVICE_NAME,
+                "GetWebCatalog",
+                {
+                    let svc = ::std::sync::Arc::clone(&self);
+                    ::connectrpc::view_handler_fn(move |
+                        ctx,
+                        req: ::buffa::view::OwnedView<
+                            crate::proto::braiins::bmc::web::__buffa::view::GetWebCatalogRequestView<
+                                'static,
+                            >,
+                        >,
+                        format|
+                    {
+                        let svc = ::std::sync::Arc::clone(&svc);
+                        async move {
+                            let sreq = ::connectrpc::ServiceRequest::<
+                                crate::proto::braiins::bmc::web::GetWebCatalogRequest,
+                            >::from_parts(req.reborrow(), req.bytes());
+                            svc.get_web_catalog(ctx, sreq)
+                                .await?
+                                .encode::<
+                                    crate::proto::braiins::bmc::web::GetWebCatalogResponse,
+                                >(format)
+                        }
+                    })
+                },
+            )
+            .with_spec(LANGUAGE_SERVICE_GET_WEB_CATALOG_SPEC)
     }
 }
 /// Type-inference marker used by [`Router::add_service`](::connectrpc::Router::add_service).
@@ -9381,6 +9481,12 @@ impl<T: LanguageService> ::connectrpc::Dispatcher for LanguageServiceServer<T> {
                         .with_spec(LANGUAGE_SERVICE_LIST_LANGUAGES_SPEC),
                 )
             }
+            "GetWebCatalog" => {
+                Some(
+                    ::connectrpc::dispatcher::codegen::MethodDescriptor::unary(false)
+                        .with_spec(LANGUAGE_SERVICE_GET_WEB_CATALOG_SPEC),
+                )
+            }
             _ => None,
         }
     }
@@ -9415,6 +9521,28 @@ impl<T: LanguageService> ::connectrpc::Dispatcher for LanguageServiceServer<T> {
                         .await?
                         .encode::<
                             crate::proto::braiins::bmc::web::ListLanguagesResponse,
+                        >(format)
+                })
+            }
+            "GetWebCatalog" => {
+                let svc = ::std::sync::Arc::clone(&self.inner);
+                Box::pin(async move {
+                    let body = ::connectrpc::dispatcher::codegen::request_proto_bytes::<
+                        crate::proto::braiins::bmc::web::GetWebCatalogRequest,
+                    >(request.encoded()?, format)?;
+                    let req: crate::proto::braiins::bmc::web::__buffa::view::GetWebCatalogRequestView<
+                        '_,
+                    > = ::connectrpc::dispatcher::codegen::decode_borrowed_request_view(
+                        &body,
+                        ctx.decode_options(),
+                    )?;
+                    let req = ::connectrpc::ServiceRequest::<
+                        crate::proto::braiins::bmc::web::GetWebCatalogRequest,
+                    >::from_parts(&req, &body);
+                    svc.get_web_catalog(ctx, req)
+                        .await?
+                        .encode::<
+                            crate::proto::braiins::bmc::web::GetWebCatalogResponse,
                         >(format)
                 })
             }
@@ -9587,6 +9715,51 @@ where
                 &self.transport,
                 &self.config,
                 LANGUAGE_SERVICE_LIST_LANGUAGES_SPEC
+                    .with_origin(::connectrpc::SpecOrigin::Client),
+                request,
+                options,
+            )
+            .await
+    }
+    /// Call the GetWebCatalog RPC. Sends a request to /braiins.bmc.web.LanguageService/GetWebCatalog.
+    pub async fn get_web_catalog(
+        &self,
+        request: crate::proto::braiins::bmc::web::GetWebCatalogRequest,
+    ) -> Result<
+        ::connectrpc::client::UnaryResponse<
+            ::buffa::view::OwnedView<
+                crate::proto::braiins::bmc::web::__buffa::view::GetWebCatalogResponseView<
+                    'static,
+                >,
+            >,
+        >,
+        ::connectrpc::ConnectError,
+    > {
+        self.get_web_catalog_with_options(
+                request,
+                ::connectrpc::client::CallOptions::default(),
+            )
+            .await
+    }
+    /// Call the GetWebCatalog RPC with explicit per-call options. Options override [`ClientConfig`](::connectrpc::client::ClientConfig) defaults.
+    pub async fn get_web_catalog_with_options(
+        &self,
+        request: crate::proto::braiins::bmc::web::GetWebCatalogRequest,
+        options: ::connectrpc::client::CallOptions,
+    ) -> Result<
+        ::connectrpc::client::UnaryResponse<
+            ::buffa::view::OwnedView<
+                crate::proto::braiins::bmc::web::__buffa::view::GetWebCatalogResponseView<
+                    'static,
+                >,
+            >,
+        >,
+        ::connectrpc::ConnectError,
+    > {
+        ::connectrpc::client::call_unary(
+                &self.transport,
+                &self.config,
+                LANGUAGE_SERVICE_GET_WEB_CATALOG_SPEC
                     .with_origin(::connectrpc::SpecOrigin::Client),
                 request,
                 options,

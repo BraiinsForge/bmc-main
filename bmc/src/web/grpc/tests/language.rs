@@ -153,6 +153,7 @@ fn set_language(tag: &str) -> SetLanguageRequest {
 fn the_marker_gates_the_language_list_and_setting_alone() {
     let gated_procedures = [
         "/braiins.bmc.web.LanguageService/ListLanguages",
+        "/braiins.bmc.web.LanguageService/GetWebCatalog",
         "/braiins.bmc.web.ConfigurationService/SetLanguage",
     ];
     for path in gated_procedures {

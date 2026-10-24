@@ -157,6 +157,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         let session_manager = self.session_manager.clone();
         let widget_registry = self.widget_registry.clone();
         let hardware_capabilities = self.hardware_capabilities;
+        let device_config = self.config_handle.clone();
         let widget_upload = widget_upload::router(
             session_manager.clone(),
             Arc::new(self.system_upgrade_service.clone()),
@@ -168,6 +169,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             manager.clone(),
             widget_registry,
             hardware_capabilities,
+            device_config,
         )
         .build(widget_upload);
         let grpc_router = grpc_web

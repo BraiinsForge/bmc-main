@@ -139,6 +139,7 @@ interface State {
     data: {
         metadata: null | pb.Metadata;
         timezones: ReadonlyArray<pb.Timezone>;
+        languages: ReadonlyArray<pb.LanguageInfo>;
         upgradeInfo: null | pb.CheckForUpgradeResponse;
         displayNightmodeIntervalBackendValue: null | pb.TimeInterval;
     };
@@ -156,6 +157,7 @@ interface State {
         temperatureUnit: FieldState<pb.TemperatureUnit>;
         unitSystem: FieldState<pb.UnitSystem>;
         timezone: FieldState<pb.Timezone>;
+        language: FieldState<string>;
 
         // Sound & Light
         volume: FieldState<pb.SoundVolume>;
@@ -189,6 +191,7 @@ const getInitialState = (): State => ({
     data: {
         metadata: null,
         timezones: [],
+        languages: [],
         upgradeInfo: null,
         displayNightmodeIntervalBackendValue: null,
     },
@@ -203,6 +206,7 @@ const getInitialState = (): State => ({
         temperatureUnit: getFieldStateDefault(),
         unitSystem: getFieldStateDefault(),
         timezone: getFieldStateDefault(),
+        language: getFieldStateDefault(),
 
         // Sound & Light
         volume: getFieldStateDefault(),
@@ -227,6 +231,9 @@ const getInitialState = (): State => ({
 });
 
 const noop = (): void => {};
+
+// A reload request; the default 3 s takes it away before it is read.
+const LANGUAGE_RELOAD_TOAST_SECONDS = 10;
 
 // Exhaustive so a new proto phase forces a terminal/not-terminal decision here,
 // rather than silently mis-classifying the "stream closed = success" path.
@@ -289,6 +296,7 @@ class View extends Component<Props, State> {
     #fetchData = async (): Promise<void> => {
         const { capabilities } = this.props;
         const q = [this.#generalFetch(), this.#fetchSystemInfo(), this.#displayFetch()];
+        if (store.state.i18n) q.push(this.#languagesFetch());
         if (soundConfigurable(capabilities)) q.push(this.#soundFetch());
         if (ledConfigurable(capabilities)) q.push(this.#ledFetch());
         if (!upgradesManaged(capabilities)) q.push(this.#upgradesFeedCheck(), this.#upgradesAutoFetch());
@@ -416,6 +424,10 @@ class View extends Component<Props, State> {
                     unitSystem: getFieldStateDefault({
                         value: d.unitSystem,
                         errors: s.values.unitSystem.errors,
+                    }),
+                    language: getFieldStateDefault({
+                        value: d.language,
+                        errors: s.values.language.errors,
                     }),
                 },
             }));
@@ -566,6 +578,71 @@ class View extends Component<Props, State> {
         } finally {
             await this.#generalFetch();
             this.#setField('dateFormat', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
+        }
+    };
+
+    private languagesFetchAbort = pb.abort.get();
+    #languagesFetch = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        try {
+            const { signal } = this.languagesFetchAbort.replace();
+            const { languages } = await pb.rpc.language.listLanguages({}, { signal });
+            this.setState(s => ({ data: { ...s.data, languages } }));
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({
+                defaultMessage: 'Failed to load the languages',
+                description: 'Settings error toast when the device does not list the languages it offers',
+            });
+            toast.error(message);
+        }
+    };
+
+    private generalSetLanguageAbort = pb.abort.get();
+    #generalSetLanguage = async (value: string): Promise<void> => {
+        try {
+            this.#setField('language', s => ({ ...s, value, isSaving: true, errors: [] }));
+
+            const { signal } = this.generalSetLanguageAbort.replace();
+            const spoken = await store.setLanguage(value, signal);
+            if (signal.aborted) return;
+            if (!spoken) {
+                toast.error(
+                    this.props.intl.formatMessage({
+                        defaultMessage: 'Language saved; reload the page to see it',
+                        description:
+                            'Settings error toast when the device saved the new language but the page could not load its translation; the page stays in its current language until reloaded',
+                    }),
+                    { duration: LANGUAGE_RELOAD_TOAST_SECONDS },
+                );
+                return;
+            }
+
+            // The store's, already in the language just chosen;
+            // the props' is still the previous one.
+            const { formatMessage } = store.intl();
+            toast.success(
+                formatMessage({
+                    defaultMessage: 'Language changed',
+                    description:
+                        'Settings toast after the device language is saved, worded in the language just chosen',
+                }),
+            );
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            const { formatMessage } = this.props.intl;
+            let message = pb.collectAllErrorsAsFormattedList($);
+            message ||= formatMessage({
+                defaultMessage: 'Failed to save the language',
+                description: 'Settings error toast when saving the device language fails',
+            });
+            toast.error(message);
+        } finally {
+            await this.#generalFetch();
+            this.#setField('language', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
     };
 
@@ -742,6 +819,7 @@ class View extends Component<Props, State> {
                 unitSystem,
                 // showSecondsStatusBar,
                 timezone,
+                language,
                 // dataCollection,
             },
         } = this.state;
@@ -755,6 +833,11 @@ class View extends Component<Props, State> {
                 timezone={
                     timezoneConfigurable(this.props.capabilities)
                         ? this.#getFieldStruct(timezone, this.#generalSetTimezone, { items: data.timezones })
+                        : null
+                }
+                language={
+                    store.state.i18n
+                        ? this.#getFieldStruct(language, this.#generalSetLanguage, { items: data.languages })
                         : null
                 }
                 dateFormat={this.#getFieldStruct(dateFormat, this.#generalSetDateFormat)}

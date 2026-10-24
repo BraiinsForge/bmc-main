@@ -20,7 +20,8 @@
 
 use base64::Engine as _;
 use bmc_grpc::web::{
-    self, Icon, LanguageInfo, LanguageService as GrpcLanguageService, ListLanguagesResponse,
+    self, GetWebCatalogRequest, GetWebCatalogResponse, Icon, LanguageInfo,
+    LanguageService as GrpcLanguageService, ListLanguagesResponse,
 };
 use bmc_intl::{Language, TextDirection, Translations};
 use buffa_types::google::protobuf::Empty;
@@ -39,6 +40,28 @@ impl GrpcLanguageService for LanguageService {
     ) -> ServiceResult<ListLanguagesResponse> {
         Response::ok(list(&Translations::shared()))
     }
+
+    async fn get_web_catalog(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, GetWebCatalogRequest>,
+    ) -> ServiceResult<GetWebCatalogResponse> {
+        Response::ok(web_catalog(&Translations::shared(), request.language)?)
+    }
+}
+
+fn web_catalog(
+    translations: &Translations,
+    tag: &str,
+) -> Result<GetWebCatalogResponse, ConnectError> {
+    let language = offered_language(translations, tag)?;
+    Ok(GetWebCatalogResponse {
+        messages: translations
+            .web(language)
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+    })
 }
 
 fn list(translations: &Translations) -> ListLanguagesResponse {
@@ -106,7 +129,7 @@ mod tests {
     use bmc_intl::{Language, Translations};
     use connectrpc::ErrorCode;
 
-    use super::{list, listed_tag, offered_language};
+    use super::{list, listed_tag, offered_language, web_catalog};
 
     fn profile() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/intl/profile-languages")
@@ -178,6 +201,25 @@ mod tests {
                 .expect_err("only a listed spelling of a listed language is taken");
             assert_eq!(error.code, ErrorCode::InvalidArgument, "{tag:?}");
         }
+    }
+
+    #[test]
+    fn the_web_catalog_is_the_packs_and_english_has_none() {
+        let root = tempfile::tempdir().expect("BUG: a temporary directory");
+        std::fs::write(
+            copy_profile_zh(root.path()).join("web.json"),
+            r#"{"save": {"source": "Save", "translation": "保存"}}"#,
+        )
+        .expect("BUG: a writable temporary directory");
+        let (translations, report) = Translations::load(&[root.path().to_owned()]);
+        assert!(report.is_clean(), "{report}");
+
+        let zh = web_catalog(&translations, "zh").expect("BUG: zh is listed");
+        assert_eq!(zh.messages.get("save").map(String::as_str), Some("保存"));
+        let english = web_catalog(&translations, "en-GB").expect("BUG: en-GB is listed");
+        assert!(english.messages.is_empty());
+        let error = web_catalog(&translations, "de").expect_err("de is not listed");
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
     }
 
     /// The profile's `zh` pack copied under `root`, for a test to take a file away.

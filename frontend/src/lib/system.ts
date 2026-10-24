@@ -25,6 +25,8 @@ import { isPlainObject } from 'es-toolkit';
 
 export interface System {
     capabilities: Capabilities;
+    /** Whether the device offers its languages; a device without them sends no `i18n` at all. */
+    i18n: boolean;
 }
 export interface Capabilities {
     combinedScenesSupported: boolean;
@@ -71,7 +73,7 @@ function parseCapabilities(caps: unknown): Capabilities {
 
 export function parseSystem(raw: unknown): System {
     if (!isPlainObject(raw)) throw new Error('system.js: `window.SYSTEM` is not set');
-    return { capabilities: parseCapabilities(raw.capabilities) };
+    return { capabilities: parseCapabilities(raw.capabilities), i18n: raw.i18n === true };
 }
 
 /** Reads the global the blocking `system.js` script in index.html assigns before the bundle runs. */

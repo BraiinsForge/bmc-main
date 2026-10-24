@@ -100,6 +100,12 @@ export default defineConfig({
                 head: true,
                 append: false,
             },
+            // The device language and its catalog: deferred, so it downloads beside the bundle,
+            // which runs after it. The Wi-Fi setup entry is not localized and goes without.
+            (tags, { entryName }) =>
+                entryName === 'index'
+                    ? [{ tag: 'script', attrs: { defer: true, src: '/language.js' }, head: true }, ...tags]
+                    : tags,
         ],
     },
 
@@ -165,6 +171,8 @@ export default defineConfig({
         proxy: {
             // Capabilities depend on the backend's selected hardware profile.
             '/system.js': proxyConf,
+            // The device language follows the backend's setting.
+            '/language.js': proxyConf,
             // gRPC-web api endpoints
             '/braiins.bmc': proxyConf,
             // REST API endpoints

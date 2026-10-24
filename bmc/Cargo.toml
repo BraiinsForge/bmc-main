@@ -103,6 +103,7 @@ nix = { workspace = true, features = ["time"] }
 async-stream.workspace = true
 bmc-grpc = { workspace = true, features = ["client"] }
 bytes.workspace = true
+indoc.workspace = true
 proptest.workspace = true
 similar-asserts.workspace = true
 tempfile.workspace = true

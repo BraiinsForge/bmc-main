@@ -39,7 +39,12 @@ describe('parseSystem', () => {
                 boserManaged: false,
                 productName: 'Braiins Deck',
             },
+            i18n: false,
         });
+    });
+
+    test('offers the languages only when the device says so', () => {
+        expect(parseSystem({ ...bmc100, i18n: true }).i18n).toBe(true);
     });
 
     test('derives combined scenes from the slot grid', () => {

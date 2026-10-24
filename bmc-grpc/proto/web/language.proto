@@ -47,8 +47,20 @@ message ListLanguagesResponse {
   repeated LanguageInfo languages = 1;
 }
 
-// The languages the device speaks.
+message GetWebCatalogRequest {
+  // One of the tags `ListLanguages` lists, exactly as it lists it.
+  string language = 1;
+}
+
+message GetWebCatalogResponse {
+  // Message id to ICU MessageFormat pattern;
+  // empty for English, which the web is written in.
+  map<string, string> messages = 1;
+}
+
+// The languages the device speaks, and their words for the web UI.
 // Public, so a page can offer them before anyone logs in.
 service LanguageService {
   rpc ListLanguages(google.protobuf.Empty) returns (ListLanguagesResponse);
+  rpc GetWebCatalog(GetWebCatalogRequest) returns (GetWebCatalogResponse);
 }

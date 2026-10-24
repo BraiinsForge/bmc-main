@@ -34,7 +34,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file web/language.proto.
  */
 export const file_web_language: GenFile = /*@__PURE__*/
-  fileDesc("ChJ3ZWIvbGFuZ3VhZ2UucHJvdG8SD2JyYWlpbnMuYm1jLndlYiKbAQoMTGFuZ3VhZ2VJbmZvEgsKA3RhZxgBIAEoCRITCgtuYXRpdmVfbmFtZRgCIAEoCRI2Cg50ZXh0X2RpcmVjdGlvbhgDIAEoDjIeLmJyYWlpbnMuYm1jLndlYi5UZXh0RGlyZWN0aW9uEigKBGZsYWcYBCABKAsyFS5icmFpaW5zLmJtYy53ZWIuSWNvbkgAiAEBQgcKBV9mbGFnIkkKFUxpc3RMYW5ndWFnZXNSZXNwb25zZRIwCglsYW5ndWFnZXMYASADKAsyHS5icmFpaW5zLmJtYy53ZWIuTGFuZ3VhZ2VJbmZvKl8KDVRleHREaXJlY3Rpb24SHgoaVEVYVF9ESVJFQ1RJT05fVU5TUEVDSUZJRUQQABIWChJURVhUX0RJUkVDVElPTl9MVFIQARIWChJURVhUX0RJUkVDVElPTl9SVEwQAjJiCg9MYW5ndWFnZVNlcnZpY2USTwoNTGlzdExhbmd1YWdlcxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRomLmJyYWlpbnMuYm1jLndlYi5MaXN0TGFuZ3VhZ2VzUmVzcG9uc2ViBnByb3RvMw", [file_google_protobuf_empty, file_web_shared]);
+  fileDesc("ChJ3ZWIvbGFuZ3VhZ2UucHJvdG8SD2JyYWlpbnMuYm1jLndlYiKbAQoMTGFuZ3VhZ2VJbmZvEgsKA3RhZxgBIAEoCRITCgtuYXRpdmVfbmFtZRgCIAEoCRI2Cg50ZXh0X2RpcmVjdGlvbhgDIAEoDjIeLmJyYWlpbnMuYm1jLndlYi5UZXh0RGlyZWN0aW9uEigKBGZsYWcYBCABKAsyFS5icmFpaW5zLmJtYy53ZWIuSWNvbkgAiAEBQgcKBV9mbGFnIkkKFUxpc3RMYW5ndWFnZXNSZXNwb25zZRIwCglsYW5ndWFnZXMYASADKAsyHS5icmFpaW5zLmJtYy53ZWIuTGFuZ3VhZ2VJbmZvIigKFEdldFdlYkNhdGFsb2dSZXF1ZXN0EhAKCGxhbmd1YWdlGAEgASgJIpABChVHZXRXZWJDYXRhbG9nUmVzcG9uc2USRgoIbWVzc2FnZXMYASADKAsyNC5icmFpaW5zLmJtYy53ZWIuR2V0V2ViQ2F0YWxvZ1Jlc3BvbnNlLk1lc3NhZ2VzRW50cnkaLwoNTWVzc2FnZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBKl8KDVRleHREaXJlY3Rpb24SHgoaVEVYVF9ESVJFQ1RJT05fVU5TUEVDSUZJRUQQABIWChJURVhUX0RJUkVDVElPTl9MVFIQARIWChJURVhUX0RJUkVDVElPTl9SVEwQAjLCAQoPTGFuZ3VhZ2VTZXJ2aWNlEk8KDUxpc3RMYW5ndWFnZXMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJi5icmFpaW5zLmJtYy53ZWIuTGlzdExhbmd1YWdlc1Jlc3BvbnNlEl4KDUdldFdlYkNhdGFsb2cSJS5icmFpaW5zLmJtYy53ZWIuR2V0V2ViQ2F0YWxvZ1JlcXVlc3QaJi5icmFpaW5zLmJtYy53ZWIuR2V0V2ViQ2F0YWxvZ1Jlc3BvbnNlYgZwcm90bzM", [file_google_protobuf_empty, file_web_shared]);
 
 /**
  * A language the device speaks, as its pickers show it.
@@ -96,6 +96,45 @@ export const ListLanguagesResponseSchema: GenMessage<ListLanguagesResponse> = /*
   messageDesc(file_web_language, 1);
 
 /**
+ * @generated from message braiins.bmc.web.GetWebCatalogRequest
+ */
+export type GetWebCatalogRequest = Message<"braiins.bmc.web.GetWebCatalogRequest"> & {
+  /**
+   * One of the tags `ListLanguages` lists, exactly as it lists it.
+   *
+   * @generated from field: string language = 1;
+   */
+  language: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.GetWebCatalogRequest.
+ * Use `create(GetWebCatalogRequestSchema)` to create a new message.
+ */
+export const GetWebCatalogRequestSchema: GenMessage<GetWebCatalogRequest> = /*@__PURE__*/
+  messageDesc(file_web_language, 2);
+
+/**
+ * @generated from message braiins.bmc.web.GetWebCatalogResponse
+ */
+export type GetWebCatalogResponse = Message<"braiins.bmc.web.GetWebCatalogResponse"> & {
+  /**
+   * Message id to ICU MessageFormat pattern;
+   * empty for English, which the web is written in.
+   *
+   * @generated from field: map<string, string> messages = 1;
+   */
+  messages: { [key: string]: string };
+};
+
+/**
+ * Describes the message braiins.bmc.web.GetWebCatalogResponse.
+ * Use `create(GetWebCatalogResponseSchema)` to create a new message.
+ */
+export const GetWebCatalogResponseSchema: GenMessage<GetWebCatalogResponse> = /*@__PURE__*/
+  messageDesc(file_web_language, 3);
+
+/**
  * @generated from enum braiins.bmc.web.TextDirection
  */
 export enum TextDirection {
@@ -122,7 +161,7 @@ export const TextDirectionSchema: GenEnum<TextDirection> = /*@__PURE__*/
   enumDesc(file_web_language, 0);
 
 /**
- * The languages the device speaks.
+ * The languages the device speaks, and their words for the web UI.
  * Public, so a page can offer them before anyone logs in.
  *
  * @generated from service braiins.bmc.web.LanguageService
@@ -135,6 +174,14 @@ export const LanguageService: GenService<{
     methodKind: "unary";
     input: typeof EmptySchema;
     output: typeof ListLanguagesResponseSchema;
+  },
+  /**
+   * @generated from rpc braiins.bmc.web.LanguageService.GetWebCatalog
+   */
+  getWebCatalog: {
+    methodKind: "unary";
+    input: typeof GetWebCatalogRequestSchema;
+    output: typeof GetWebCatalogResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_web_language, 0);

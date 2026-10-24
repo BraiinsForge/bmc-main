@@ -20,6 +20,7 @@
 // the grant above.
 
 use std::{
+    collections::BTreeMap,
     net::SocketAddr,
     path::{Component, PathBuf},
     sync::Arc,
@@ -35,6 +36,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{any, get},
 };
+use bmc_intl::{Language, Translations};
 use bmc_platform::HardwareCapabilities;
 use http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use hyper::{
@@ -44,14 +46,17 @@ use hyper::{
 use mime_guess::from_path;
 use serde::Serialize;
 use tokio::fs::File;
+use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 use tower_http::compression::CompressionLayer;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::{BmcManager, manager::BmcState, widget::WidgetRegistry};
+use crate::{
+    BmcManager, config::ConfigHandle, i18n::I18nMarker, manager::BmcState, widget::WidgetRegistry,
+};
 
-use super::{ServerConfig, captive_portal::CaptivePortalLayer};
+use super::{ServerConfig, captive_portal::CaptivePortalLayer, grpc::listed_tag};
 
 const ZERO: &str = "0";
 /// Original peer of a request forwarded to boser, the way boser's own
@@ -76,11 +81,36 @@ pub(crate) struct HttpServer<T: BmcManager> {
     manager: Arc<T>,
     widget_registry: Arc<WidgetRegistry>,
     hardware_capabilities: HardwareCapabilities,
+    device_config: Arc<RwLock<ConfigHandle>>,
 }
 
 #[derive(Serialize)]
 struct SystemInfo {
     capabilities: HardwareCapabilities,
+    /// Written only with the [`I18nMarker`], so without it `system.js` is what it was before the languages.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    i18n: bool,
+}
+
+/// The language the web boots in, with its catalog,
+/// so the first render needs no request of its own.
+#[derive(Serialize)]
+struct BootLanguage {
+    tag: String,
+    /// Absent for a built-in English, which the web is written in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    messages: Option<BTreeMap<String, String>>,
+}
+
+/// `None` once the device no longer offers `language`,
+/// so the web boots in English rather than in a language it has no catalog for.
+fn boot_language(translations: &Translations, language: Language) -> Option<BootLanguage> {
+    listed_tag(translations, language).map(|tag| BootLanguage {
+        tag,
+        messages: translations
+            .web(language)
+            .map(|messages| messages.into_iter().collect()),
+    })
 }
 
 pub(crate) const WIFI_SETUP_URL_ENDPOINT: &str = "/init_connect";
@@ -263,18 +293,21 @@ impl<T: BmcManager> HttpServer<T> {
     const SUPPORT_ARCHIVE: &str = "/api/get_support_archive";
     const WIDGET_ICON: &str = "/widgets/{uid}/icon";
     const SYSTEM_SCRIPT: &str = "/system.js";
+    const LANGUAGE_SCRIPT: &str = "/language.js";
 
     pub(crate) fn new(
         config: ServerConfig,
         manager: Arc<T>,
         widget_registry: Arc<WidgetRegistry>,
         hardware_capabilities: HardwareCapabilities,
+        device_config: Arc<RwLock<ConfigHandle>>,
     ) -> Self {
         Self {
             config,
             manager,
             widget_registry,
             hardware_capabilities,
+            device_config,
         }
     }
 
@@ -294,6 +327,7 @@ impl<T: BmcManager> HttpServer<T> {
         let boser = self.config.boser.map(BoserProxy::new);
         let router = Router::new()
             .merge(self.system_router(boser.clone()))
+            .merge(self.language_router())
             .merge(self.static_file_router(boser.clone()))
             .merge(self.general_api_router())
             .merge(self.widget_icon_router());
@@ -402,14 +436,48 @@ impl<T: BmcManager> HttpServer<T> {
     fn system_router(&self, boser: Option<BoserProxy>) -> Router {
         Router::new()
             .route(Self::SYSTEM_SCRIPT, get(Self::handle_system))
-            .with_state((self.hardware_capabilities, boser))
+            .with_state((self.hardware_capabilities, boser, self.i18n()))
+    }
+
+    fn language_router(&self) -> Router {
+        Router::new()
+            .route(Self::LANGUAGE_SCRIPT, get(Self::handle_language))
+            .with_state((self.i18n(), self.device_config.clone()))
+    }
+
+    fn i18n(&self) -> I18nMarker {
+        I18nMarker::new(self.config.i18n_marker.clone())
+    }
+
+    /// `window.LANGUAGE`: `null` without the [`I18nMarker`]
+    /// or once the setting is no longer offered.
+    async fn handle_language(
+        State((i18n, device_config)): State<(I18nMarker, Arc<RwLock<ConfigHandle>>)>,
+    ) -> impl IntoResponse {
+        let boot = if i18n.is_set() {
+            let language = device_config.read().await.localization_config().language();
+            boot_language(&Translations::shared(), language)
+        } else {
+            None
+        };
+        let json = serde_json::to_string(&boot).expect("BUG: a tag and strings serialize to JSON");
+        (
+            [
+                (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            format!("window.LANGUAGE = {json};\n"),
+        )
     }
 
     async fn handle_system(
-        State((caps, boser)): State<(HardwareCapabilities, Option<BoserProxy>)>,
+        State((caps, boser, i18n)): State<(HardwareCapabilities, Option<BoserProxy>, I18nMarker)>,
     ) -> impl IntoResponse {
-        let json = serde_json::to_string(&SystemInfo { capabilities: caps })
-            .expect("BUG: hardware capabilities contain only JSON-serializable values");
+        let json = serde_json::to_string(&SystemInfo {
+            capabilities: caps,
+            i18n: i18n.is_set(),
+        })
+        .expect("BUG: hardware capabilities contain only JSON-serializable values");
         let mut script = format!("window.SYSTEM = {json};\n");
         if let Some(boser) = boser {
             match boser.brand_script().await {
@@ -1129,6 +1197,39 @@ mod tests {
     use crate::widget::{WidgetInfo, WidgetRegistry};
     use tower::ServiceExt as _;
 
+    fn profile_translations() -> Translations {
+        let profile =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/intl/profile-languages");
+        let (translations, report) = Translations::load(&[profile]);
+        assert!(report.is_clean(), "{report}");
+        translations
+    }
+
+    #[test]
+    fn the_web_boots_in_a_pack_language_with_its_catalog() {
+        let boot = boot_language(&profile_translations(), Language::ZH)
+            .expect("BUG: the profile offers zh");
+        assert_eq!(boot.tag, "zh");
+        assert!(
+            boot.messages.is_some_and(|messages| !messages.is_empty()),
+            "zh's web catalog comes with it"
+        );
+    }
+
+    #[test]
+    fn the_web_boots_in_a_built_in_english_without_a_catalog() {
+        let boot = boot_language(&profile_translations(), Language::EN_US)
+            .expect("BUG: every device offers en-US");
+        assert_eq!(boot.tag, "en-US");
+        assert!(boot.messages.is_none(), "the web is written in English");
+    }
+
+    #[test]
+    fn a_language_no_longer_offered_boots_the_web_in_english() {
+        let gone = Language::parse("cs").expect("BUG: `cs` is a tag");
+        assert!(boot_language(&profile_translations(), gone).is_none());
+    }
+
     /// boser's REST API must not be shadowed by the SPA fallback: answering
     /// it with index.html returns HTML under status 200, which the fleet widget
     /// reads as a miner doing 0 TH/s.
@@ -1531,18 +1632,32 @@ mod tests {
         /// holds `index.html` and one asset of ours. The directory is returned
         /// so it lives as long as the router.
         async fn proxy_router() -> (Router, tempfile::TempDir) {
-            router_for(bmc_platform::Product::Bmc100, Some(stub_boser().await))
+            router_for(bmc_platform::Product::Bmc100, Some(stub_boser().await)).await
         }
 
-        fn router_for(
+        async fn router_for(
             product: bmc_platform::Product,
             boser: Option<SocketAddr>,
         ) -> (Router, tempfile::TempDir) {
-            let (server, www) = server_for(product, boser, StubManager::default());
+            let (server, www) = server_for(product, boser, StubManager::default()).await;
             (server.routes(), www)
         }
 
-        fn server_for<M: BmcManager>(
+        async fn device_config(dir: &std::path::Path) -> Arc<RwLock<ConfigHandle>> {
+            let (handle, _accounts) = ConfigHandle::init(
+                dir.join("bmc-config.json"),
+                50,
+                50,
+                50,
+                50,
+                bmc_platform::Product::Bmc100,
+            )
+            .await;
+            Arc::new(RwLock::new(handle))
+        }
+
+        /// The device config lives in the `www` root too, and so does the i18n marker once a test writes it.
+        async fn server_for<M: BmcManager>(
             product: bmc_platform::Product,
             boser: Option<SocketAddr>,
             manager: M,
@@ -1566,6 +1681,7 @@ mod tests {
                 Arc::new(manager),
                 Arc::new(WidgetRegistry::new(Vec::new())),
                 bmc_platform::HardwareProfile::for_product(product).capabilities(),
+                device_config(www.path()).await,
             );
             (server, www)
         }
@@ -1603,12 +1719,16 @@ mod tests {
                     .await
                     .expect("BUG: branding server stopped serving");
             });
+            let config_dir = tempfile::tempdir().expect("BUG: create the config dir");
             HttpServer::new(
-                ServerConfig::default().set_boser(Some(address)),
+                ServerConfig::default()
+                    .set_boser(Some(address))
+                    .set_i18n_marker(config_dir.path().join("i18n")),
                 Arc::new(StubManager::default()),
                 Arc::new(WidgetRegistry::new(Vec::new())),
                 bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
                     .capabilities(),
+                device_config(config_dir.path()).await,
             )
             .routes()
         }
@@ -1772,6 +1892,7 @@ mod tests {
                         Arc::new(StubManager::default()),
                         Arc::new(WidgetRegistry::new(Vec::new())),
                         caps,
+                        device_config(www.path()).await,
                     );
                     let (status, headers, body) =
                         send(&server.routes(), request("GET", "/system.js", "")).await;
@@ -1881,7 +2002,7 @@ mod tests {
                 bmc_platform::Product::Bmm101,
                 bmc_platform::Product::Bfm100,
             ] {
-                let (router, _www) = router_for(product, Some(stub_boser().await));
+                let (router, _www) = router_for(product, Some(stub_boser().await)).await;
                 let (status, headers, _) = send(&router, request("GET", "/", "")).await;
                 assert_eq!(
                     status,
@@ -1906,7 +2027,7 @@ mod tests {
         #[tokio::test]
         async fn a_clock_keeps_its_own_frontend_at_the_root() {
             let (router, _www) =
-                router_for(bmc_platform::Product::Bmc100, Some(stub_boser().await));
+                router_for(bmc_platform::Product::Bmc100, Some(stub_boser().await)).await;
             let (status, _, body) = send(&router, request("GET", "/", "")).await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(body, b"<html>bmc</html>");
@@ -1915,10 +2036,74 @@ mod tests {
         /// Redirecting would land on a `/bos` nothing serves.
         #[tokio::test]
         async fn a_miner_mock_without_a_boser_address_keeps_its_own_frontend_at_the_root() {
-            let (router, _www) = router_for(bmc_platform::Product::Bmm101, None);
+            let (router, _www) = router_for(bmc_platform::Product::Bmm101, None).await;
             let (status, _, body) = send(&router, request("GET", "/", "")).await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(body, b"<html>bmc</html>");
+        }
+
+        #[tokio::test]
+        async fn the_language_script_names_the_device_language_only_with_the_marker() {
+            let (server, www) =
+                server_for(bmc_platform::Product::Bmc100, None, StubManager::default()).await;
+            let router = server.routes();
+
+            let (status, headers, body) = send(&router, request("GET", "/language.js", "")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+            assert_eq!(
+                body, b"window.LANGUAGE = null;\n",
+                "English, as before the languages"
+            );
+
+            std::fs::write(www.path().join("i18n"), "").expect("BUG: write the marker");
+            let (_, _, body) = send(&router, request("GET", "/language.js", "")).await;
+            assert_eq!(
+                body,
+                indoc::indoc! {br#"
+                    window.LANGUAGE = {"tag":"en-GB"};
+                "#},
+                "a fresh device's setting"
+            );
+
+            server
+                .device_config
+                .write()
+                .await
+                .set_language(Language::EN_US);
+            let (_, _, body) = send(&router, request("GET", "/language.js", "")).await;
+            assert_eq!(
+                body,
+                indoc::indoc! {br#"
+                    window.LANGUAGE = {"tag":"en-US"};
+                "#},
+                "the setting at request time"
+            );
+        }
+
+        #[tokio::test]
+        async fn the_system_script_names_the_languages_only_with_the_marker() {
+            async fn i18n(router: &Router) -> serde_json::Value {
+                let (_, _, body) = send(router, request("GET", "/system.js", "")).await;
+                let script = String::from_utf8(body).expect("BUG: the script is UTF-8");
+                let json = script
+                    .strip_prefix("window.SYSTEM = ")
+                    .and_then(|rest| rest.strip_suffix(";\n"))
+                    .expect("BUG: the script assigns the global");
+                serde_json::from_str::<serde_json::Value>(json).expect("BUG: valid JSON")["i18n"]
+                    .clone()
+            }
+
+            let (server, www) =
+                server_for(bmc_platform::Product::Bmc100, None, StubManager::default()).await;
+            let router = server.routes();
+            assert_eq!(
+                i18n(&router).await,
+                serde_json::Value::Null,
+                "absent, as before the languages"
+            );
+            std::fs::write(www.path().join("i18n"), "").expect("BUG: write the marker");
+            assert_eq!(i18n(&router).await, serde_json::Value::Bool(true));
         }
 
         #[tokio::test]
@@ -1957,7 +2142,8 @@ mod tests {
                     bmc_platform::Product::Bmm101,
                     Some(boser),
                     StubManager::with_network(network),
-                );
+                )
+                .await;
                 let (status, headers, _) =
                     send(&server.build(Router::new()), request("GET", "/", "")).await;
                 assert!(status.is_redirection(), "{state}: {status}");
