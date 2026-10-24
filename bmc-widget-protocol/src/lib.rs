@@ -92,6 +92,7 @@ pub use json_fd::read_json_fd;
 
 // Re-export common types for convenience
 pub use bmc_shared_time::time::{DateFormat, TimeSystem, WeekDay};
+pub use bmc_shared_utils::language::Language;
 pub use bmc_shared_utils::number_format::NumberFormat;
 pub use bmc_shared_utils::temperature::TemperatureUnit;
 pub use bmc_shared_utils::unit_system::UnitSystem;

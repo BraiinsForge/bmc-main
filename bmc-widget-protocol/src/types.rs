@@ -391,6 +391,10 @@ pub enum SettingUpdate {
     FirstDayOfWeek(WeekDay),
     UnitSystem(UnitSystem),
     NextAlarm(Option<NextAlarm>),
+    /// `None` when the device no longer offers the language its setting carries.
+    Language(Option<crate::Language>),
+    /// What a language picker offers;
+    Languages(Vec<crate::Language>),
 }
 
 impl SettingUpdate {

@@ -24,13 +24,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use bmc_intl::{Language, Translations};
+
 pub(crate) const MARKER_PATH: &str = "/etc/bmc/i18n";
 
 #[derive(Clone, Debug)]
-pub(crate) struct I18nMarker(Arc<Path>);
+pub struct I18nMarker(Arc<Path>);
 
 impl I18nMarker {
-    pub(crate) fn new(path: PathBuf) -> Self {
+    #[must_use]
+    pub fn new(path: PathBuf) -> Self {
         Self(path.into())
     }
 
@@ -41,7 +44,22 @@ impl I18nMarker {
     }
 
     /// Looked up on every call, so creating or removing the file takes effect at once.
-    pub(crate) fn is_set(&self) -> bool {
+    #[must_use]
+    pub fn is_set(&self) -> bool {
         self.0.exists()
     }
+}
+
+/// The language `tag` names, when the device offers it, spelled as it lists it:
+/// a picker sends back what it was given, so any other spelling is a client's mistake.
+pub(crate) fn offered(translations: &Translations, tag: &str) -> Option<Language> {
+    Language::parse(tag)
+        .ok()
+        .filter(|language| language.tag() == tag && translations.languages().contains(language))
+}
+
+/// `language` while the device offers it: none once it no longer does,
+/// so a picker never shows as current a language its list lacks.
+pub(crate) fn listed(offered: &[Language], language: Language) -> Option<Language> {
+    offered.contains(&language).then_some(language)
 }

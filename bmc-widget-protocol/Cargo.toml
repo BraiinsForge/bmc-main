@@ -13,7 +13,7 @@ include = ["protocol/deck-widget.xml"]
 
 [dependencies]
 bmc-shared-time.workspace = true
-bmc-shared-utils.workspace = true
+bmc-shared-utils = { workspace = true, features = ["language"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

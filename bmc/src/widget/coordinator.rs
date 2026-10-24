@@ -708,8 +708,9 @@ impl Coordinator {
                 tokio::select! {
                     res = localization_rx.recv() => match res {
                         Ok(config) => {
-                            let proto_loc = Self::build_localization(&config);
-                            for update in SettingUpdate::from_localization(&proto_loc) {
+                            let updates =
+                                Self::localization_updates(&config, Self::offered_languages(&*compositor));
+                            for update in updates {
                                 if let Err(e) = compositor.broadcast_setting(update.clone()) {
                                     warn!(error = %e, "failed to broadcast {update:?} to widgets");
                                 }
@@ -855,8 +856,9 @@ impl Coordinator {
         let _ = self
             .compositor
             .broadcast_setting(SettingUpdate::NextAlarm(next_alarm));
-        let loc = Self::build_localization(localization);
-        for setting in SettingUpdate::from_localization(&loc) {
+        for setting in
+            Self::localization_updates(localization, Self::offered_languages(&*self.compositor))
+        {
             let _ = self.compositor.broadcast_setting(setting);
         }
 
@@ -1791,6 +1793,29 @@ impl Coordinator {
         scene_to_layout_with_registry(&self.widget_registry, &self.hardware_capabilities, scene)
     }
 
+    /// The display's view of `config`, with the languages only on a device that `offered` them:
+    /// without them the display hears what it always has.
+    fn localization_updates(
+        config: &LocalizationConfig,
+        offered: Option<Vec<bmc_intl::Language>>,
+    ) -> Vec<SettingUpdate> {
+        let mut updates =
+            SettingUpdate::from_localization(&Self::build_localization(config)).to_vec();
+        if let Some(offered) = offered {
+            let language = crate::i18n::listed(&offered, config.language());
+            updates.push(SettingUpdate::Languages(offered));
+            updates.push(SettingUpdate::Language(language));
+        }
+        updates
+    }
+
+    /// The languages bmc put in effect, on a device that offers them.
+    fn offered_languages(compositor: &dyn Compositor) -> Option<Vec<bmc_intl::Language>> {
+        compositor
+            .offers_languages()
+            .then(|| bmc_intl::Translations::shared().languages())
+    }
+
     fn build_localization(config: &LocalizationConfig) -> Localization {
         Localization {
             date_format: config.date_format,
@@ -1888,6 +1913,43 @@ mod tests {
     use bmc_widget_manifest::ViewportShape;
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
+
+    #[test]
+    fn the_display_hears_the_languages_only_from_a_device_that_offers_them() {
+        let config = LocalizationConfig::default();
+        let before = Coordinator::localization_updates(&config, None);
+        assert!(
+            !before.iter().any(|update| matches!(
+                update,
+                SettingUpdate::Language(_) | SettingUpdate::Languages(_)
+            )),
+            "{before:?}"
+        );
+        let offered = vec![bmc_intl::Language::EN_GB, bmc_intl::Language::ZH];
+        let updates = Coordinator::localization_updates(&config, Some(offered.clone()));
+        assert_eq!(updates[..before.len()], before[..]);
+        assert_eq!(
+            updates[before.len()..],
+            [
+                SettingUpdate::Languages(offered),
+                SettingUpdate::Language(Some(bmc_intl::Language::EN_GB)),
+            ],
+            "the offered languages come before the language"
+        );
+    }
+
+    #[test]
+    fn a_stored_language_the_device_no_longer_offers_reaches_the_display_as_none() {
+        let mut stored = serde_json::to_value(LocalizationConfig::default())
+            .expect("BUG: the default section serialises");
+        stored["language"] = serde_json::json!("zh");
+        let config: LocalizationConfig =
+            serde_json::from_value(stored).expect("BUG: a stored zh section parses");
+        assert_eq!(config.language(), bmc_intl::Language::ZH);
+        let offered = vec![bmc_intl::Language::EN_GB, bmc_intl::Language::EN_US];
+        let updates = Coordinator::localization_updates(&config, Some(offered));
+        assert_eq!(updates.last(), Some(&SettingUpdate::Language(None)));
+    }
 
     fn bmc100_capabilities() -> HardwareCapabilities {
         HardwareCapabilities {

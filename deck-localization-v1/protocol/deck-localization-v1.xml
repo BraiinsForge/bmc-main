@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="deck_localization_v1">
+  <copyright>
+    Copyright (C) 2026  Braiins Forge s.r.o.
+    SPDX-License-Identifier: MIT
+  </copyright>
+
+  <interface name="deck_localization_v1" version="1">
+    <description summary="the language the device speaks">
+      What every system overlay needs to render its copy: the device language.
+      One global, bound by the overlay framework for every overlay,
+      so no per-feature protocol has to carry it.
+      An overlay can ask for a language too, so the device switches it without a browser.
+      A compositor of a device that does not offer its languages advertises no such global.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="release the object">
+        Release the binding. No further events are sent.
+      </description>
+    </request>
+
+    <event name="language">
+      <description summary="language setting">
+        The language of every user-facing text,
+        as the BCP-47 tag the device setting carries ("en-GB", "zh").
+        A string rather than an enum: the languages are the packs the device loads,
+        which no list could name.
+        Null when the device no longer offers the language its setting carries:
+        it then speaks English and no offered language is current.
+        An overlay falls back to English on a tag it does not know.
+        Sent on bind and whenever the language changes.
+      </description>
+      <arg name="value" type="string" allow-null="true" summary="BCP-47 language tag"/>
+    </event>
+
+    <request name="set_language">
+      <description summary="make the device speak a language">
+        Ask the compositor to persist `value` as the device language:
+        one of the tags the device offers, exactly as it offers it.
+        The answer is a `language` event to every binding, this one included:
+        the new language once it is saved,
+        or the language in effect when the request changes nothing,
+        being a tag the device does not offer or the one it already speaks.
+      </description>
+      <arg name="value" type="string" summary="BCP-47 language tag"/>
+    </request>
+
+    <event name="languages">
+      <description summary="languages the device offers">
+        Every language `set_language` accepts, as BCP-47 tags separated by single spaces,
+        the device's own order kept: the list a language picker shows.
+        Sent on bind and whenever the list changes, always before `language`.
+      </description>
+      <arg name="tags" type="string" summary="space-separated BCP-47 language tags"/>
+    </event>
+  </interface>
+</protocol>

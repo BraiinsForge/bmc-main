@@ -85,15 +85,12 @@ fn list(translations: &Translations) -> ListLanguagesResponse {
     ListLanguagesResponse { languages }
 }
 
-/// The language `tag` names, when it is one [`list`] offers, spelled as it lists it:
-/// a picker sends back what it was given, so any other spelling is a client's mistake.
+/// [`crate::i18n::offered`], refused as the request's mistake.
 pub(crate) fn offered_language(
     translations: &Translations,
     tag: &str,
 ) -> Result<Language, ConnectError> {
-    Language::parse(tag)
-        .ok()
-        .filter(|language| language.tag() == tag && translations.languages().contains(language))
+    crate::i18n::offered(translations, tag)
         .ok_or_else(|| invalid_field("language", "not a language this device offers"))
 }
 
@@ -111,13 +108,9 @@ fn flag(translations: &Translations, language: Language) -> Option<Icon> {
     }
 }
 
-/// The tag the settings report for `language`: none once the device no longer offers it,
-/// so a picker never selects a language its list lacks.
+/// [`crate::i18n::listed`], as the settings report it.
 pub(crate) fn listed_tag(translations: &Translations, language: Language) -> Option<String> {
-    translations
-        .languages()
-        .contains(&language)
-        .then(|| language.tag())
+    crate::i18n::listed(&translations.languages(), language).map(Language::tag)
 }
 
 #[cfg(test)]

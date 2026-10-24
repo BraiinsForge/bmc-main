@@ -166,6 +166,7 @@ pub struct CompositorState {
     pub screen_edge_sessions: Vec<crate::compositor::screen_edge::ScreenEdgeSession>,
     pub settings: crate::compositor::settings::SettingsState,
     pub alarm: crate::compositor::alarm::AlarmState,
+    pub localization: crate::compositor::localization::LocalizationState,
     pub upgrade: crate::compositor::upgrade::UpgradeState,
     pub device_info: crate::compositor::device_info::DeviceInfoState,
     pub platform: crate::compositor::platform::PlatformState,
@@ -342,6 +343,10 @@ impl CompositorState {
         clippy::too_many_arguments,
         reason = "compositor construction threads display geometry, seat, and the hardware profile"
     )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one initialiser line per protocol's state, each of which the compositor owns"
+    )]
     pub fn new(
         display: &Display<Self>,
         width: u32,
@@ -433,6 +438,7 @@ impl CompositorState {
             screen_edge_sessions: Vec::new(),
             settings: SettingsState::new(caps_for_profile(profile, &hardware_capabilities)),
             alarm: crate::compositor::alarm::AlarmState::default(),
+            localization: crate::compositor::localization::LocalizationState::default(),
             upgrade: crate::compositor::upgrade::UpgradeState::default(),
             device_info: crate::compositor::device_info::DeviceInfoState::default(),
             platform: crate::compositor::platform::PlatformState::new(profile),
@@ -1558,9 +1564,11 @@ mod compositor_protocol_test {
         deck_widget_manager_v3::{self, DeckWidgetManagerV3},
         deck_widget_surface_v2::{self, DeckWidgetSurfaceV2},
     };
-    use bmc_widget_protocol::{CredentialSecrets, ViewportShape, WidgetInitialConfig};
+    use bmc_widget_protocol::{
+        CredentialSecrets, Language, SettingUpdate, ViewportShape, WidgetInitialConfig,
+    };
     use smithay::reexports::wayland_server::{Display, Resource as _, backend::ClientId};
-    use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
+    use wayland_client::protocol::{wl_callback, wl_compositor, wl_registry, wl_surface};
     use wayland_client::{Connection, Dispatch, EventQueue, Proxy as _, QueueHandle};
 
     use super::{ClientState, CompositorState};
@@ -1572,11 +1580,14 @@ mod compositor_protocol_test {
 
     #[derive(Default)]
     struct TestClient {
+        /// The manager version to bind at; 1 unless a test asks for a later one.
+        manager_version: Option<u32>,
         compositor: Option<wl_compositor::WlCompositor>,
         manager: Option<DeckWidgetManagerV3>,
         params: Option<String>,
         credentials: Option<String>,
         credential_secrets: Option<String>,
+        languages: Vec<Option<String>>,
         configure_done: bool,
     }
 
@@ -1600,7 +1611,8 @@ mod compositor_protocol_test {
                         state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
                     }
                     "deck_widget_manager_v3" => {
-                        state.manager = Some(registry.bind(name, version.min(1), qh, ()));
+                        let wanted = state.manager_version.unwrap_or(1);
+                        state.manager = Some(registry.bind(name, version.min(wanted), qh, ()));
                     }
                     _ => {}
                 }
@@ -1644,6 +1656,18 @@ mod compositor_protocol_test {
         }
     }
 
+    impl Dispatch<wl_callback::WlCallback, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_callback::WlCallback,
+            _: wl_callback::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
     impl Dispatch<DeckWidgetSurfaceV2, ()> for TestClient {
         fn event(
             state: &mut Self,
@@ -1659,9 +1683,10 @@ mod compositor_protocol_test {
             };
             #[expect(
                 clippy::wildcard_enum_match_arm,
-                reason = "the test client records only the JSON payloads and configure_done"
+                reason = "the test client records only the JSON payloads, the language and configure_done"
             )]
             match event {
+                deck_widget_surface_v2::Event::Language { value } => state.languages.push(value),
                 deck_widget_surface_v2::Event::Params { fd, size } => {
                     state.params = Some(read(fd, size));
                 }
@@ -1718,6 +1743,14 @@ mod compositor_protocol_test {
         display: &mut Display<CompositorState>,
         compositor: &mut CompositorState,
     ) -> (Connection, EventQueue<TestClient>, TestClient, ClientId) {
+        connect(display, compositor, TestClient::default())
+    }
+
+    fn connect(
+        display: &mut Display<CompositorState>,
+        compositor: &mut CompositorState,
+        mut client: TestClient,
+    ) -> (Connection, EventQueue<TestClient>, TestClient, ClientId) {
         let (server_stream, client_stream) =
             UnixStream::pair().expect("BUG: Unix socket pair should initialize");
         let server_client = display
@@ -1728,7 +1761,6 @@ mod compositor_protocol_test {
             .expect("BUG: test client socket should form a Wayland connection");
         let mut queue = conn.new_event_queue();
         let qh = queue.handle();
-        let mut client = TestClient::default();
         conn.display().get_registry(&qh, ());
         pump(display, compositor, &conn, &mut queue, &mut client);
         (conn, queue, client, server_client.id())
@@ -1882,6 +1914,70 @@ mod compositor_protocol_test {
         );
         conn.protocol_error()
             .expect("BUG: rejected client must retain its protocol error")
+    }
+
+    #[test]
+    fn only_a_v2_widget_surface_hears_the_language() {
+        for (manager_version, heard) in [(1, vec![]), (2, vec![Some("zh"), None])] {
+            let (mut display, mut compositor) = new_server();
+            let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+            register_keyed_widget(
+                &mut compositor,
+                key,
+                WidgetInitialConfig {
+                    width: 100,
+                    height: 100,
+                    viewport_shape: ViewportShape::Rectangular,
+                    display: bmc_widget_protocol::DisplayInfo::BMC100,
+                    params: serde_json::Map::new(),
+                    credentials: serde_json::Map::new(),
+                    credential_secrets: CredentialSecrets::new(serde_json::Map::new()),
+                    token: "language-test".to_owned(),
+                },
+            );
+            compositor
+                .deck_widget_state
+                .broadcast_setting(&SettingUpdate::Language(Some(Language::ZH)));
+
+            let client = TestClient {
+                manager_version: Some(manager_version),
+                ..TestClient::default()
+            };
+            let (conn, mut queue, mut client, _) = connect(&mut display, &mut compositor, client);
+            let qh = queue.handle();
+            let surface = request_keyed_surface(&client, &qh, key.to_string());
+            assert_eq!(surface.version(), manager_version);
+            pump(
+                &mut display,
+                &mut compositor,
+                &conn,
+                &mut queue,
+                &mut client,
+            );
+
+            compositor
+                .deck_widget_state
+                .broadcast_setting(&SettingUpdate::Language(None));
+            conn.display().sync(&qh, ());
+            pump(
+                &mut display,
+                &mut compositor,
+                &conn,
+                &mut queue,
+                &mut client,
+            );
+
+            assert!(conn.protocol_error().is_none(), "v{manager_version}");
+            assert_eq!(
+                client
+                    .languages
+                    .iter()
+                    .map(Option::as_deref)
+                    .collect::<Vec<_>>(),
+                heard,
+                "v{manager_version}: replayed, then live"
+            );
+        }
     }
 
     #[test]

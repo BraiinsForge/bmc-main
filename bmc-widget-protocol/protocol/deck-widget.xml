@@ -5,7 +5,7 @@
     SPDX-License-Identifier: MIT
   </copyright>
 
-  <interface name="deck_widget_manager_v3" version="1">
+  <interface name="deck_widget_manager_v3" version="2">
     <description summary="keyed Deck widget manager">
       Global interface for creating a widget surface identified by its
       configured widget instance key.
@@ -38,7 +38,7 @@
     </enum>
   </interface>
 
-  <interface name="deck_widget_surface_v2" version="1">
+  <interface name="deck_widget_surface_v2" version="2">
     <description summary="Deck widget surface">
       Interface for a widget surface. On surface creation, the compositor
       emits initial configuration as a sequence of events, terminated by
@@ -378,6 +378,21 @@
            summary="operator-typed display name (max 256 UTF-8 bytes;
                     compositor truncates over-long inputs with a trailing
                     '…' on a char boundary). Empty when absent."/>
+    </event>
+
+    <event name="language" since="2">
+      <description summary="language setting update">
+        The language of every user-facing text,
+        as the BCP-47 tag the device setting carries ("en-GB", "zh").
+        A string rather than an enum: the languages are the packs the device loads,
+        which no list could name.
+        Null when the device no longer offers the language its setting carries:
+        it then speaks English.
+        A widget falls back to English on a tag it does not know.
+        Sent on connect and whenever the language changes,
+        only by a compositor of a device that offers its languages.
+      </description>
+      <arg name="value" type="string" allow-null="true" summary="BCP-47 language tag"/>
     </event>
 
     <!-- Touch input is handled via standard wl_seat/wl_touch rather than

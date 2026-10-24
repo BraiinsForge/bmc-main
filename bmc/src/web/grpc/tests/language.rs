@@ -126,6 +126,33 @@ async fn with_the_marker_a_set_language_is_the_one_the_settings_report() {
 }
 
 #[tokio::test]
+async fn setting_the_language_in_effect_saves_nothing() {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let (dir, router) = production_router(Product::Bmc100).await;
+    std::fs::write(dir.path().join(I18N_MARKER), "").expect("BUG: a writable tempdir");
+    let client = ConfigurationServiceClient::new(transport(with_session(router)), grpc());
+    let config = dir.path().join("config.json");
+    let inode = || {
+        std::fs::metadata(&config)
+            .expect("BUG: the first setting saved the config")
+            .ino()
+    };
+
+    client
+        .set_language(set_language("en-US"))
+        .await
+        .expect("BUG: an offered language is taken");
+    let saved = inode();
+    client
+        .set_language(set_language("en-US"))
+        .await
+        .expect("BUG: the language in effect is taken");
+
+    assert_eq!(inode(), saved, "a save replaces the file; none happened");
+}
+
+#[tokio::test]
 async fn without_the_marker_the_settings_name_no_language_and_none_is_set() {
     let (_dir, router) = production_router(Product::Bmc100).await;
     let client = ConfigurationServiceClient::new(transport(with_session(router)), grpc());

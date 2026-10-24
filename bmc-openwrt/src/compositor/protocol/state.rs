@@ -612,8 +612,17 @@ fn emit_credentials<S: WidgetSurface>(surface: &S, config: &WidgetInitialConfig)
     );
 }
 
+/// Mirrors `since="2"` on `deck_widget_surface_v2.language`.
+const LANGUAGE_EVENT_SINCE: u32 = 2;
+
 fn emit_setting(surface: &DeckWidgetSurfaceV2, setting: &SettingUpdate) {
     match setting {
+        SettingUpdate::Language(language) => {
+            if surface.version() >= LANGUAGE_EVENT_SINCE {
+                surface.language(language.map(bmc_widget_protocol::Language::tag));
+            }
+        }
+        SettingUpdate::Languages(_) => {}
         SettingUpdate::Timezone(tz) => surface.timezone(tz.clone()),
         SettingUpdate::NightMode(enabled) => surface.night_mode(night_mode_to_protocol(*enabled)),
         SettingUpdate::DateFormat(d) => surface.date_format(date_format_to_protocol(*d)),

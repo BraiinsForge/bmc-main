@@ -31,7 +31,7 @@ use tracing::{info, warn};
 use super::led_state::LedSceneManager;
 use crate::backlight::MIN_BRIGHTNESS_PCT;
 use crate::compositor::{
-    ActiveScene, Compositor, LedRequestStatusEvent, SettingsCommand, WidgetAction,
+    ActiveScene, Compositor, LedRequestStatusEvent, SettingUpdate, SettingsCommand, WidgetAction,
 };
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::BmcManager;
@@ -243,6 +243,35 @@ async fn dispatch_settings_command<T, U>(
                 }
             } else {
                 warn!("settings overlay reconfigure_wifi: no WiFi on this platform");
+            }
+        }
+        SettingsCommand::SetLanguage(tag) => {
+            let translations = bmc_intl::Translations::shared();
+            let changed = if let Some(language) = crate::i18n::offered(&translations, &tag) {
+                system_manager
+                    .set_language(language)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("overlay set_language failed: {e:#}");
+                        false
+                    })
+            } else {
+                warn!(
+                    tag,
+                    "overlay asked for a language this device does not offer"
+                );
+                false
+            };
+            // A request that changes nothing is answered with the language in effect,
+            // so the overlay that asked stops showing its choice as current.
+            if !changed {
+                let language = SettingUpdate::Language(crate::i18n::listed(
+                    &translations.languages(),
+                    system_manager.language().await,
+                ));
+                if let Err(e) = compositor.broadcast_setting(language) {
+                    warn!("answering overlay set_language failed: {e}");
+                }
             }
         }
     }

@@ -300,6 +300,8 @@ pub enum SettingsCommand {
     Restart,
     /// WiFi-reconfiguration entry requested by the settings-tray overlay.
     ReconfigureWifi,
+    /// Device language picked on an overlay, as the BCP-47 tag it sent; bmc refuses one it does not offer.
+    SetLanguage(String),
 }
 
 /// Lossless alarm commands routed through the compositor-owned mpsc channel
@@ -380,6 +382,11 @@ pub trait Compositor: Send + Sync {
     /// Hardware-neutral display and feature capabilities for the active
     /// product, mapped from the hardware profile by the compositor.
     fn hardware_capabilities(&self) -> HardwareCapabilities;
+
+    /// Whether the display offers the device's languages, settled once before it starts.
+    fn offers_languages(&self) -> bool {
+        false
+    }
 
     /// Publish the latest complete upgrade presentation snapshot.
     fn set_upgrade_state(&self, _state: UpgradeRunSnapshot) -> Result<(), CompositorError> {

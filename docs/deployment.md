@@ -238,8 +238,9 @@ reaches `Dormant`. With 2–3 enabled scenes nothing ever goes dormant, and the 
 
 Until their designs are approved, the device's languages are off: it behaves as the BMC application did before them,
 with no language picker and no language APIs. The marker file `/etc/bmc/i18n` turns them on, and removing it turns them
-off again, both at once and without a restart. A factory reset removes it; a sysupgrade keeps it, as it does all of
-`/etc/bmc`. The mock reads the same file under its `--mockfs-path`.
+off again. The web and its APIs follow at once; the display follows when bmc next starts, as its compositor advertises
+the languages only at start. A factory reset removes it; a sysupgrade keeps it, as it does all of `/etc/bmc`. The mock
+reads the same file under its `--mockfs-path`.
 
 ```sh
 ssh root@192.168.1.2 'touch /etc/bmc/i18n'   # on

@@ -62,6 +62,7 @@ members = [
     "bmc-widget-protocol",
     "deck-alarm-v1",
     "deck-device-info-v1",
+    "deck-localization-v1",
     "deck-platform-v1",
     "deck-screen-edge-v1",
     "deck-settings-v1",
@@ -287,6 +288,7 @@ croner = "3.0.0"
 data-encoding = "2.6.0"
 deck-alarm-v1 = { path = "deck-alarm-v1" }
 deck-device-info-v1 = { path = "deck-device-info-v1" }
+deck-localization-v1 = { path = "deck-localization-v1" }
 deck-platform-v1 = { path = "deck-platform-v1" }
 deck-screen-edge-v1 = { path = "deck-screen-edge-v1" }
 deck-settings-v1 = { path = "deck-settings-v1" }

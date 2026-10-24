@@ -502,13 +502,13 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
     ) -> ServiceResult<Empty> {
         let language = offered_language(&Translations::shared(), request.language)?;
 
-        let mut config = self.config_handle.write().await;
-        config.set_language(language);
-
-        config.save().await.map_err(|e| {
-            error!("Failed to save language, error {e}");
-            ConnectError::internal("Failed to save language")
-        })?;
+        self.system_manager
+            .set_language(language)
+            .await
+            .map_err(|e| {
+                error!("Failed to save language, error {e}");
+                ConnectError::internal("Failed to save language")
+            })?;
 
         Response::ok(Empty::default())
     }

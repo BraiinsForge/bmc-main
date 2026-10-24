@@ -1188,6 +1188,7 @@ dependencies = [
  "clap",
  "deck-alarm-v1",
  "deck-device-info-v1",
+ "deck-localization-v1",
  "deck-platform-v1",
  "deck-screen-edge-v1",
  "deck-settings-v1",
@@ -2798,6 +2799,16 @@ dependencies = [
 
 [[package]]
 name = "deck-device-info-v1"
+version = "0.1.0"
+dependencies = [
+ "wayland-backend",
+ "wayland-client",
+ "wayland-scanner",
+ "wayland-server",
+]
+
+[[package]]
+name = "deck-localization-v1"
 version = "0.1.0"
 dependencies = [
  "wayland-backend",

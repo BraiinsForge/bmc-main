@@ -36,7 +36,8 @@ use bmc_widget_protocol::client::{
     deck_widget_surface_v2::{self, DeckWidgetSurfaceV2},
 };
 use bmc_widget_protocol::{
-    ActionPayload, NextAlarm, SettingUpdate, ViewportShape, WidgetInstanceKey, widget_key_from_env,
+    ActionPayload, Language, NextAlarm, SettingUpdate, ViewportShape, WidgetInstanceKey,
+    widget_key_from_env,
 };
 use wayland_client::WEnum;
 
@@ -869,9 +870,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
                     state.compositor = Some(compositor);
                 }
                 "deck_widget_manager_v3" => {
+                    // Version 2 adds the `language` event.
+                    let version = version.min(2);
                     let widget_manager =
-                        registry.bind::<DeckWidgetManagerV3, _, _>(name, version.min(1), qh, ());
-                    tracing::debug!("Bound deck_widget_manager_v3 v{}", version.min(1));
+                        registry.bind::<DeckWidgetManagerV3, _, _>(name, version, qh, ());
+                    tracing::debug!("Bound deck_widget_manager_v3 v{version}");
                     state.widget_manager = Some(widget_manager);
                 }
                 "zwp_linux_dmabuf_v1" => {
@@ -1049,6 +1052,15 @@ impl Dispatch<DeckWidgetSurfaceV2, ()> for DeckWidgetSurfaceState {
                     };
                     push_setting(state, SettingUpdate::NextAlarm(next));
                 }
+            }
+            deck_widget_surface_v2::Event::Language { value } => {
+                let language = value.map(|tag| {
+                    Language::parse(&tag).unwrap_or_else(|error| {
+                        tracing::warn!(tag, %error, "not a language tag; speaking English");
+                        Language::default()
+                    })
+                });
+                push_setting(state, SettingUpdate::Language(language));
             }
             deck_widget_surface_v2::Event::Shutdown => {
                 tracing::info!("Shutdown requested by compositor");

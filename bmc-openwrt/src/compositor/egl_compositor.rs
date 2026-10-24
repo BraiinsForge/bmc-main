@@ -227,6 +227,7 @@ pub struct EglCompositor {
     profile: bmc_platform::HardwareProfile,
     headless: bool,
     screen_visibility: Option<Arc<dyn ScreenVisibility>>,
+    offers_languages: bool,
 }
 
 impl std::fmt::Debug for EglCompositor {
@@ -310,7 +311,15 @@ impl EglCompositor {
             profile,
             headless,
             screen_visibility: None,
+            offers_languages: false,
         }
+    }
+
+    /// Whether to advertise `deck_localization_v1`: only for a device that offers its languages.
+    #[must_use]
+    pub fn offering_languages(mut self, offers_languages: bool) -> Self {
+        self.offers_languages = offers_languages;
+        self
     }
 
     /// Attach the panel-visibility source consulted before a touch is
@@ -337,6 +346,7 @@ impl EglCompositor {
         profile: &bmc_platform::HardwareProfile,
         headless: bool,
         screen_visibility: Option<Arc<dyn ScreenVisibility>>,
+        offers_languages: bool,
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: broadcast::Sender<CompositorEvent>,
@@ -432,6 +442,9 @@ impl EglCompositor {
             seat_name,
             profile,
         );
+        if offers_languages {
+            super::localization::create_global(&display.handle());
+        }
         let listening_socket = try_init!(
             ListeningSocket::bind_auto("wayland", 0..33),
             "Failed to create Wayland socket"
@@ -2315,6 +2328,11 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         CompositorCommand::ResetToFirstScene => handle_reset_to_first_scene_command(state),
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
+            if let SettingUpdate::Language(language) = &setting {
+                state.compositor.localization.set_language(*language);
+            } else if let SettingUpdate::Languages(languages) = &setting {
+                state.compositor.localization.set_languages(languages);
+            }
             state
                 .compositor
                 .deck_widget_state
@@ -2530,6 +2548,12 @@ fn process_protocol_events(state: &mut AppState) {
         }
     }
 
+    if let Some(tag) = state.compositor.localization.take_request()
+        && let Err(e) = state.settings_tx.send(SettingsCommand::SetLanguage(tag))
+    {
+        tracing::error!(?e, "dropped set_language: action handler receiver closed");
+    }
+
     for action in state.compositor.alarm.drain_actions() {
         use crate::compositor::alarm::AlarmAction;
         let cmd = match action {
@@ -2590,6 +2614,7 @@ impl Compositor for EglCompositor {
         let profile = self.profile.clone();
         let headless = self.headless;
         let screen_visibility = self.screen_visibility.clone();
+        let offers_languages = self.offers_languages;
         let command_channel = self
             .command_channel
             .lock()
@@ -2622,6 +2647,7 @@ impl Compositor for EglCompositor {
                     &profile,
                     headless,
                     screen_visibility,
+                    offers_languages,
                     command_channel,
                     action_tx,
                     event_tx,
@@ -2664,6 +2690,10 @@ impl Compositor for EglCompositor {
 
     fn hardware_capabilities(&self) -> bmc_platform::HardwareCapabilities {
         self.profile.capabilities()
+    }
+
+    fn offers_languages(&self) -> bool {
+        self.offers_languages
     }
 
     fn set_upgrade_state(

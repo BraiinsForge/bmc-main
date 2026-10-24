@@ -33,6 +33,8 @@ use smithay::reexports::wayland_server::{
 use super::conversions::{led_effect_from_protocol, led_scope_from_protocol};
 use super::state::{DeckWidgetProtocolState, SurfaceDetach};
 
+const VERSION: u32 = 2;
+
 fn rgb_from_protocol(
     widget: &str,
     r: u32,
@@ -356,5 +358,5 @@ where
         + DeckWidgetHandler
         + 'static,
 {
-    display.create_global::<D, DeckWidgetManagerV3, ()>(1, ());
+    display.create_global::<D, DeckWidgetManagerV3, ()>(VERSION, ());
 }

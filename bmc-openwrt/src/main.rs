@@ -229,7 +229,10 @@ async fn main() -> Result<()> {
     // Initialize and start the EGL compositor
     let compositor = Arc::new(
         EglCompositor::new(profile.clone(), args.headless_compositor)
-            .with_screen_visibility(screen_visibility),
+            .with_screen_visibility(screen_visibility)
+            .offering_languages(
+                bmc::i18n::I18nMarker::new(config.server_config.i18n_marker.clone()).is_set(),
+            ),
     );
     let wayland_display = compositor
         .start()

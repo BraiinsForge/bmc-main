@@ -1326,6 +1326,8 @@ fn apply_setting_update(snap: &mut SystemSnapshot, update: &SettingUpdate) {
             snap.next_alarm = na.as_ref().map(next_alarm_to_runtime);
         }
         SettingUpdate::NightMode(active) => snap.night_mode = *active,
+        // The widget SDK has no language field yet.
+        SettingUpdate::Language(_) | SettingUpdate::Languages(_) => {}
     }
 }
 
