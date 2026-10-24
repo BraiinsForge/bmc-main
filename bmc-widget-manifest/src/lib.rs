@@ -1688,6 +1688,56 @@ mod tests {
         .expect("BUG: an optional string may default to empty");
     }
 
+    /// The 26.09 image widget's `url`, which installed widget builds still carry.
+    fn image_26_09_manifest() -> Result<Manifest, ManifestError> {
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(minimal_manifest_json()).expect("BUG: the fixture parses");
+        manifest["params"] = serde_json::json!({
+            "url": {
+                "name": "Image URL",
+                "description": "URL of the image to display",
+                "type": "string",
+                "default_value": "",
+            },
+        });
+        Manifest::from_str(&manifest.to_string())
+    }
+
+    #[test]
+    fn a_required_param_defaulting_to_empty_loads_as_on_26_09() {
+        image_26_09_manifest().expect("BUG: a 26.09 widget must stay loadable");
+    }
+
+    #[test]
+    fn a_required_param_defaulting_to_empty_seeds_a_new_instance() {
+        let manifest = image_26_09_manifest().expect("BUG: a 26.09 widget must stay loadable");
+        let typed = validate_values(
+            &manifest.params,
+            &std::collections::BTreeMap::new(),
+            MissingValues::Default,
+        )
+        .expect("BUG: the UI adds an instance from defaults, then asks for the value");
+        assert_eq!(typed["url"], ParamValue::String(String::new()));
+    }
+
+    #[test]
+    fn a_required_param_defaulting_to_empty_still_needs_a_value() {
+        let manifest = image_26_09_manifest().expect("BUG: a 26.09 widget must stay loadable");
+        let values = std::collections::BTreeMap::from([(
+            "url".to_owned(),
+            Ok(ParamValue::String(String::new())),
+        )]);
+        let violations = validate_values(&manifest.params, &values, MissingValues::Reject)
+            .expect_err("BUG: the empty default must not become a valid value");
+        assert_eq!(
+            violations,
+            [Violation {
+                path: r#"["url"]"#.to_owned(),
+                message: "Value is required".to_owned(),
+            }],
+        );
+    }
+
     #[test]
     fn a_string_param_rejects_a_default_over_the_length_cap() {
         let reason = array_rejection(serde_json::json!({
