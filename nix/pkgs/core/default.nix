@@ -290,6 +290,8 @@ let
     services = [ bmc-compositor ];
     out = [
       { src = ./scripts; dest = "bin"; }
+      # `/run/current-profile/languages`, the first of `bmc_intl::packs::DEFAULT_ROOTS`.
+      { src = ../../../assets/intl/profile-languages; dest = "languages"; }
     ];
     postBuild = ''
       chmod u+w $out/bin
@@ -366,6 +368,18 @@ let
     test -L ${package}/bin/bmc-wasm-host
     test -f ${package}/special/copy/etc/bmc_system.json
     ${testBusybox}/bin/grep -F '["/run/current-profile/bin/bmc-wasm-host"]' ${package}/special/copy/etc/bmc_system.json
+
+    for file in cldr.postcard units.postcard info.json flag.svg flag.bin LICENSE; do
+      test -f "${package}/languages/zh/$file"
+    done
+    for file in cldr.postcard units.postcard flag.bin; do
+      if ${testBusybox}/bin/grep -q 'git-lfs.github.com/spec' "${package}/languages/zh/$file"; then
+        echo "languages/zh/$file is an LFS pointer, not the blob" >&2
+        exit 1
+      fi
+    done
+    # The pack checker runs on the operator's computer; core carries none.
+    test ! -e ${package}/bin/bmc-languages
     first="$(${testBusybox}/bin/printf '%s\n' "$signal" "$boundary" | ${testBusybox}/bin/sort | ${testBusybox}/bin/head -n 1)"
     test "$first" = "$boundary"
 
