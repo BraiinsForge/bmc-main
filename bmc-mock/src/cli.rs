@@ -130,6 +130,7 @@ impl Config {
 impl From<Config> for Configuration {
     fn from(value: Config) -> Self {
         let server_config = ServerConfig::default()
+            .set_i18n_marker(value.mockfs_path.join("etc/bmc/i18n"))
             .set_boser(value.boser_address)
             .set_www_root_path(value.www_path.clone())
             .set_www_assets_path(value.www_path.join("assets"))

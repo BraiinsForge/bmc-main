@@ -88,16 +88,25 @@ fn flag(translations: &Translations, language: Language) -> Option<Icon> {
     }
 }
 
+/// The tag the settings report for `language`: none once the device no longer offers it,
+/// so a picker never selects a language its list lacks.
+pub(crate) fn listed_tag(translations: &Translations, language: Language) -> Option<String> {
+    translations
+        .languages()
+        .contains(&language)
+        .then(|| language.tag())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use base64::Engine as _;
     use bmc_grpc::web;
-    use bmc_intl::Translations;
+    use bmc_intl::{Language, Translations};
     use connectrpc::ErrorCode;
 
-    use super::{list, offered_language};
+    use super::{list, listed_tag, offered_language};
 
     fn profile() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/intl/profile-languages")
@@ -120,6 +129,17 @@ mod tests {
                 named("zh", "简体中文"),
             ]
         );
+    }
+
+    #[test]
+    fn a_stored_language_the_device_no_longer_offers_is_reported_as_none() {
+        let (translations, _) = Translations::load(&[profile()]);
+        assert_eq!(
+            listed_tag(&translations, Language::ZH).as_deref(),
+            Some("zh")
+        );
+        let czech = Language::parse("cs").expect("BUG: `cs` is a tag");
+        assert_eq!(listed_tag(&translations, czech), None);
     }
 
     #[test]

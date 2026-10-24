@@ -34,6 +34,7 @@ mod data;
 pub mod entry;
 mod file_token;
 pub mod firmware;
+mod i18n;
 mod initial_setup;
 pub mod installable_widgets;
 mod led;

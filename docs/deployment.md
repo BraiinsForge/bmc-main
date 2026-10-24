@@ -234,6 +234,18 @@ To exercise a widget's dormant/wake path (e.g. the image cache's RAM reclaim), t
 the compositor keeps the active scene `Visible` and both cycle neighbours `Prepared`, so only a non-neighbour scene
 reaches `Dormant`. With 2–3 enabled scenes nothing ever goes dormant, and the evict/restore path never fires.
 
+### Turning the device's languages on
+
+Until their designs are approved, the device's languages are off: it behaves as the BMC application did before them,
+with no language picker and no language APIs. The marker file `/etc/bmc/i18n` turns them on, and removing it turns them
+off again, both at once and without a restart. A factory reset removes it; a sysupgrade keeps it, as it does all of
+`/etc/bmc`. The mock reads the same file under its `--mockfs-path`.
+
+```sh
+ssh root@192.168.1.2 'touch /etc/bmc/i18n'   # on
+ssh root@192.168.1.2 'rm /etc/bmc/i18n'      # off
+```
+
 ### Measuring the widget host before and after a change
 
 Comparing `bmc-wasm-host` memory or startup against master follows the procedure and scripts in

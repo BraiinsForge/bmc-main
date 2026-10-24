@@ -24,6 +24,7 @@ use crate::backlight::DisplayBacklightDriver;
 use crate::bootloader_config::BootloaderConfig;
 use crate::compositor::SettingUpdate;
 use crate::compositor::testing::RecordingCompositor;
+use crate::i18n::I18nMarker;
 use crate::session;
 use crate::system_upgrade::boser::UpgradeRoute;
 use crate::{App, BmcManager, Configuration, UpgradeError, UpgradeMarker};
@@ -530,7 +531,12 @@ fn owned_services(system: RecordingSystemService, network: RecordingNetworkServi
 }
 
 fn gated_router(product: Product, router: Router) -> axum::Router {
-    gated(router, Arc::new(StubSessionManager), capabilities(product))
+    gated(
+        router,
+        Arc::new(StubSessionManager),
+        capabilities(product),
+        I18nMarker::unset(),
+    )
 }
 
 async fn stub_session(mut request: Request) -> Request {
@@ -574,7 +580,10 @@ fn service_method_paths(router: &Router, service_name: &str) -> Vec<String> {
         .collect()
 }
 
-async fn production_router(product: Product) -> (tempfile::TempDir, axum::Router) {
+/// Where the production app looks for the i18n marker, under the tempdir it returns.
+pub(super) const I18N_MARKER: &str = "i18n";
+
+pub(super) async fn production_router(product: Product) -> (tempfile::TempDir, axum::Router) {
     let (tempdir, app) = production_app(
         Arc::new(StubBmcManager::default()),
         Arc::new(RecordingCompositor::with_hardware_capabilities(
@@ -641,6 +650,8 @@ async fn production_app_with_boser(
     config.server_config.boser = boser;
     // Keeps the test off the host's token file.
     config.boser_token_path = tempdir.path().join("no-boser-token");
+    // Absent, so the languages are off until a test creates the file.
+    config.server_config.i18n_marker = tempdir.path().join(I18N_MARKER);
     let (command_sender, _command_receiver) = tokio::sync::mpsc::channel(4);
     let app = App::init(
         config,
@@ -1066,6 +1077,7 @@ fn the_gate_enforces_every_managed_rpc_owner() {
         )),
         session_manager: Arc::new(StubSessionManager),
         hardware_capabilities: capabilities(Product::Bfm100),
+        i18n: I18nMarker::unset(),
     };
     let session = session_extensions();
 

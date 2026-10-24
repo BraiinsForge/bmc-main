@@ -4129,7 +4129,8 @@ pub struct GeneralSettingsDataResponse {
     pub temperature_unit: ::buffa::EnumValue<TemperatureUnit>,
     /// Field 8: `unit_system`
     pub unit_system: ::buffa::EnumValue<UnitSystem>,
-    /// BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+    /// BCP-47, one of the tags `LanguageService.ListLanguages` lists;
+    /// absent when the device offers no languages, or no longer offers the one it was set to.
     ///
     /// Field 9: `language`
     pub language: ::core::option::Option<::buffa::alloc::string::String>,
@@ -26346,7 +26347,8 @@ pub mod __buffa {
             pub temperature_unit: ::buffa::EnumValue<super::super::TemperatureUnit>,
             /// Field 8: `unit_system`
             pub unit_system: ::buffa::EnumValue<super::super::UnitSystem>,
-            /// BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+            /// BCP-47, one of the tags `LanguageService.ListLanguages` lists;
+            /// absent when the device offers no languages, or no longer offers the one it was set to.
             ///
             /// Field 9: `language`
             pub language: ::core::option::Option<&'a str>,
@@ -26834,7 +26836,8 @@ pub mod __buffa {
             pub fn unit_system(&self) -> ::buffa::EnumValue<super::super::UnitSystem> {
                 self.0.reborrow().unit_system
             }
-            /// BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+            /// BCP-47, one of the tags `LanguageService.ListLanguages` lists;
+            /// absent when the device offers no languages, or no longer offers the one it was set to.
             ///
             /// Field 9: `language`
             #[must_use]

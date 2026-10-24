@@ -29,6 +29,7 @@ mod widget_upload;
 use crate::alarm::AlarmController;
 use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
+use crate::i18n::I18nMarker;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::led_coordinator::LedCoordinatorHandle;
@@ -145,6 +146,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.alarm_controller,
             self.hardware_capabilities,
             self.upgrade_route,
+            I18nMarker::new(self.config.i18n_marker.clone()),
         );
         (self.config, grpc_web)
     }
@@ -264,9 +266,17 @@ pub struct ServerConfig {
     /// anything it does not serve itself is forwarded there; `None` keeps the
     /// server standalone and unknown requests stay local.
     pub boser: Option<SocketAddr>,
+    /// See [`crate::i18n`].
+    pub i18n_marker: PathBuf,
 }
 
 impl ServerConfig {
+    #[must_use]
+    pub fn set_i18n_marker(mut self, i18n_marker: PathBuf) -> Self {
+        self.i18n_marker = i18n_marker;
+        self
+    }
+
     #[must_use]
     pub fn set_boser(mut self, boser: Option<SocketAddr>) -> Self {
         self.boser = boser;
@@ -303,6 +313,7 @@ impl Default for ServerConfig {
             www_assets_path: PathBuf::from(DEFAULT_ROOT).join("assets"),
             www_var_path: PathBuf::from(DEFAULT_ROOT).join("var"),
             boser: None,
+            i18n_marker: PathBuf::from(crate::i18n::MARKER_PATH),
         }
     }
 }

@@ -30,6 +30,7 @@ use connectrpc::{ConnectError, ErrorCode, Router};
 use super::super::{alarm::AlarmService, gated};
 use super::{grpc, grpc_web, transport};
 use crate::alarm::{AlarmController, tests::supported_alarm_controller};
+use crate::i18n::I18nMarker;
 use crate::test_support::StubSessionManager;
 
 fn alarm_router(alarm_controller: Option<AlarmController>) -> axum::Router {
@@ -41,6 +42,7 @@ fn alarm_router(alarm_controller: Option<AlarmController>) -> axum::Router {
         router,
         Arc::new(StubSessionManager),
         HardwareProfile::for_product(Product::Bmc100).capabilities(),
+        I18nMarker::unset(),
     )
 }
 

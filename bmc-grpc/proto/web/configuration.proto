@@ -76,7 +76,8 @@ message GeneralSettingsDataResponse {
   braiins.bmc.web.Weekday first_day_of_week = 6;
   braiins.bmc.web.TemperatureUnit temperature_unit = 7;
   braiins.bmc.web.UnitSystem unit_system = 8;
-  // BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+  // BCP-47, one of the tags `LanguageService.ListLanguages` lists;
+  // absent when the device offers no languages, or no longer offers the one it was set to.
   optional string language = 9;
 }
 

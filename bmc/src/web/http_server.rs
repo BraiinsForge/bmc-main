@@ -1559,6 +1559,7 @@ mod tests {
                 www_assets_path: www.path().join("assets"),
                 www_var_path: www.path().join("var"),
                 boser,
+                i18n_marker: www.path().join("i18n"),
             };
             let server = HttpServer::new(
                 config,
@@ -1766,6 +1767,7 @@ mod tests {
                             www_assets_path: www.path().join("assets"),
                             www_var_path: www.path().join("var"),
                             boser,
+                            i18n_marker: www.path().join("i18n"),
                         },
                         Arc::new(StubManager::default()),
                         Arc::new(WidgetRegistry::new(Vec::new())),

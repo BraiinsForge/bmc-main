@@ -23,6 +23,7 @@ use crate::BmcManager;
 use crate::alarm::AlarmController;
 use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
+use crate::i18n::I18nMarker;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::led_coordinator::LedCoordinatorHandle;
@@ -118,12 +119,24 @@ fn is_public(service: &str) -> bool {
     )
 }
 
+/// The procedures a device without the [`I18nMarker`] does not serve.
+fn needs_i18n(path: &str) -> bool {
+    matches!(
+        split_procedure(path),
+        Some(
+            (web::LANGUAGE_SERVICE_SERVICE_NAME, _)
+                | (web::CONFIGURATION_SERVICE_SERVICE_NAME, "SetLanguage")
+        )
+    )
+}
+
 /// What refuses a call before its body is read: a missing session on a
 /// non-public service, and Boser's ownership of a method on its platforms.
 pub(crate) struct AccessGate<S> {
     router: Arc<Router>,
     session_manager: Arc<S>,
     hardware_capabilities: HardwareCapabilities,
+    i18n: I18nMarker,
 }
 
 impl<S> Clone for AccessGate<S> {
@@ -132,6 +145,7 @@ impl<S> Clone for AccessGate<S> {
             router: self.router.clone(),
             session_manager: self.session_manager.clone(),
             hardware_capabilities: self.hardware_capabilities,
+            i18n: self.i18n.clone(),
         }
     }
 }
@@ -143,6 +157,14 @@ impl<S: SessionManager> AccessGate<S> {
         // nothing may rewrite the URI between them.
         if !self.router.has_method(path) {
             return Ok(());
+        }
+        // Before the session, and worded as the dispatcher refuses a procedure it lacks,
+        // so the answer is the BMC application's from before them.
+        if needs_i18n(path) && !self.i18n.is_set() {
+            let procedure = path.strip_prefix('/').unwrap_or(path);
+            return Err(ConnectError::unimplemented(format!(
+                "method not found: {procedure}"
+            )));
         }
         if !split_procedure(path).is_some_and(|(service, _)| is_public(service)) {
             extract_session::<S>(extensions)?;
@@ -190,6 +212,7 @@ pub(crate) struct GrpcWeb<
     alarm_controller: Option<AlarmController>,
     hardware_capabilities: HardwareCapabilities,
     upgrade_route: UpgradeRoute,
+    i18n: I18nMarker,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -212,6 +235,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         alarm_controller: Option<AlarmController>,
         hardware_capabilities: HardwareCapabilities,
         upgrade_route: UpgradeRoute,
+        i18n: I18nMarker,
     ) -> Self {
         Self {
             manager,
@@ -229,6 +253,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             alarm_controller,
             hardware_capabilities,
             upgrade_route,
+            i18n,
         }
     }
 
@@ -265,6 +290,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 self.system_manager,
                 self.sound_controller,
                 self.config_handle.clone(),
+                self.i18n.clone(),
             )))
             .add_service(Arc::new(scene_management::SceneManagementService::new(
                 self.widget_registry,
@@ -284,7 +310,12 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             router = router.add_service(Arc::new(alarm::AlarmService::new(alarm_controller)));
         }
 
-        gated(router, self.session_manager, self.hardware_capabilities)
+        gated(
+            router,
+            self.session_manager,
+            self.hardware_capabilities,
+            self.i18n,
+        )
     }
 }
 
@@ -293,12 +324,14 @@ fn gated<S: SessionManager>(
     router: Router,
     session_manager: Arc<S>,
     hardware_capabilities: HardwareCapabilities,
+    i18n: I18nMarker,
 ) -> axum::Router {
     let router = Arc::new(router);
     let gate = AccessGate {
         router: router.clone(),
         session_manager,
         hardware_capabilities,
+        i18n,
     };
     axum::Router::new()
         .fallback_service(ConnectRpcService::from_arc(router).with_interceptor(RpcLog))

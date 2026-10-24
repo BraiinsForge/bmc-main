@@ -265,7 +265,8 @@ export type GeneralSettingsDataResponse = Message<"braiins.bmc.web.GeneralSettin
   unitSystem: UnitSystem;
 
   /**
-   * BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+   * BCP-47, one of the tags `LanguageService.ListLanguages` lists;
+   * absent when the device offers no languages, or no longer offers the one it was set to.
    *
    * @generated from field: optional string language = 9;
    */

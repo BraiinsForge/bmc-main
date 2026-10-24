@@ -20,6 +20,7 @@
 // the grant above.
 
 use crate::config::ConfigHandle;
+use crate::i18n::I18nMarker;
 use crate::sound::Sounds;
 use crate::system_manager::SystemManager;
 
@@ -50,7 +51,7 @@ use tracing::{error, warn};
 
 use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
 use super::initial_setup::{try_from_date_time, try_from_time_format};
-use super::language::offered_language;
+use super::language::{listed_tag, offered_language};
 use super::network::bad_request;
 use super::shared::{
     invalid_field, naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format,
@@ -69,6 +70,7 @@ pub(crate) struct ConfigurationService<T: DisplayBacklightDriver> {
     system_manager: SystemManager<T>,
     sound_controller: SoundController,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    i18n: I18nMarker,
 }
 
 impl<T: DisplayBacklightDriver> ConfigurationService<T> {
@@ -76,11 +78,13 @@ impl<T: DisplayBacklightDriver> ConfigurationService<T> {
         system_manager: SystemManager<T>,
         sound_controller: SoundController,
         config_handle: Arc<RwLock<ConfigHandle>>,
+        i18n: I18nMarker,
     ) -> Self {
         Self {
             system_manager,
             sound_controller,
             config_handle,
+            i18n,
         }
     }
 }
@@ -337,7 +341,12 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             first_day_of_week: map_weekday_to_proto(localization.first_day_of_week).into(),
             temperature_unit: map_temperature_unit_to_proto(localization.temperature_unit).into(),
             unit_system: map_unit_system_to_proto(localization.unit_system).into(),
-            language: Some(localization.language().tag()),
+            // Absent without the marker, as the BMC application sent it before the setting.
+            language: if self.i18n.is_set() {
+                listed_tag(&Translations::shared(), localization.language())
+            } else {
+                None
+            },
             show_seconds_status_bar: BoolValue {
                 value: localization.show_seconds_in_status_bar,
                 ..Default::default()
