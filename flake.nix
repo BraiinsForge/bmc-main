@@ -333,6 +333,20 @@
 
         packages = workspace.packages // {
           inherit formatjs-cli icu4x-datagen;
+          # What `just validate` builds in one evaluation: the gates it runs on the tree,
+          # and, built for the system checks run on, the checks it only needs to pass.
+          validate-gates = pkgs.symlinkJoin {
+            name = "validate-gates";
+            paths = [ content-checks ast-grep-scan intl-apps.verify ];
+          };
+          validate-checks = pkgs.linkFarm "validate-checks" (map (name: { inherit name; path = checks.${name}; }) [
+            "intl-cldr-data"
+            "cargo-deny"
+            "cargo-deny-wasm"
+            "cargo-deny-wasm-examples"
+            "public-widget-assets"
+            "docs-wasm"
+          ]);
           deck-runtime-closure = checks.deck-runtime-closure;
           wasm-capture = capture.package;
           wasm-stack-usage-report = capture.stackUsageReport;

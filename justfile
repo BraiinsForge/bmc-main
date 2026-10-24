@@ -35,19 +35,16 @@ validate: format clippy python
     # `--workspace` run cannot build (bmc-wasm-sdk loses bmc_render_macros under
     # workspace-wide feature unification), so each has to be named.
     just test bmc-netsim
-    nix run ".#content-checks"
-    nix run ".#ast-grep"
-    # Translator files against the code; then what is cut from the pinned CLDR against the cut it gives now.
-    nix run ".#intl-verify"
-    nix build -L --log-lines 0 ".#checks.{{ NIX_SYSTEM }}.intl-cldr-data"
 
-    # Dependency policy, host and wasm.
-    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.cargo-deny"
-    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm"
-    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm-examples"
-
-    # Public widget asset contract (icon paths, extension allowlist).
-    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.public-widget-assets"
+    # One flake evaluation for every nix gate, each failing check reported.
+    # The gates read the tree, so they build for this host; the checks build for the system checks run on:
+    # the pinned CLDR cut, dependency policy (host and wasm), the public widget assets, the SDK docs.
+    mkdir -p .tmp/validate
+    nix build {{ NIX_LOG }} --keep-going --out-link .tmp/validate/gates ".#validate-gates" ".#packages.{{ NIX_SYSTEM }}.validate-checks"
+    .tmp/validate/gates/bin/braiinschk
+    .tmp/validate/gates/bin/ast-grep-scan
+    # Translator files against the code.
+    .tmp/validate/gates/bin/intl-verify
 
     # Wasm lint; production widgets are gated, examples only have to build.
     cargo clippy --profile fast -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
@@ -76,9 +73,8 @@ validate: format clippy python
 
     just test-wasm-widgets
 
-    # Slowest last: every widget workspace for wasm32, then the SDK docs.
+    # Slowest last: every widget workspace for wasm32.
     for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
-    nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
 
     @echo "validate: OK"
 
