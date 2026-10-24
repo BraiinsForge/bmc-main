@@ -141,8 +141,60 @@ pub fn extract(surface: &Surface, id_pattern: &str) -> Result<Extraction, String
 mod tests {
     use super::*;
 
+    /// Asserts the web build's id for its one message.
+    const ID_SPEC: &str = "frontend/src/intl-id.spec.ts";
+
+    const WEB_CONFIGS: [&str; 2] = ["frontend/rsbuild.config.ts", "frontend/rstest.config.ts"];
+
     fn checkout() -> &'static Path {
         Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+    }
+
+    fn read(file: &str) -> String {
+        std::fs::read_to_string(checkout().join(file))
+            .unwrap_or_else(|error| panic!("BUG: the checkout's {file}: {error}"))
+    }
+
+    #[test]
+    fn the_cli_extracts_the_id_the_web_build_is_held_to() {
+        let pattern = id_pattern(checkout()).expect("BUG: the checkout's message-id.json");
+        let extracted = extract(
+            &crate::surface::probe_surface(checkout(), ID_SPEC),
+            &pattern,
+        )
+        .expect("BUG: an extraction");
+        let ids: Vec<&String> = extracted.keys().collect();
+        let [id] = ids[..] else {
+            panic!("{ID_SPEC} declares one message, not {ids:?}");
+        };
+        assert!(
+            read(ID_SPEC).contains(&format!("EXTRACTED_ID = '{id}'")),
+            "{ID_SPEC} holds the web build to another id than the CLI extracts, {id}"
+        );
+    }
+
+    #[test]
+    fn the_web_build_hashes_ids_as_the_cli_extracts_them() {
+        for config in WEB_CONFIGS {
+            let text = read(config);
+            assert!(
+                text.contains("from './message-id.json'"),
+                "{config} reads no message-id.json"
+            );
+            let Some((options, _)) = text
+                .split_once("'@swc/plugin-formatjs',")
+                .and_then(|(_, rest)| rest.split_once('{')?.1.split_once('}'))
+            else {
+                panic!("{config} configures no @swc/plugin-formatjs");
+            };
+            let options = options.split_whitespace().collect::<Vec<_>>().join(" ");
+            // `ast` shapes `defaultMessage`, not the id; any other option could change ids unseen.
+            assert_eq!(
+                options.replace("ast: true, ", ""),
+                "idInterpolationPattern: MESSAGE_ID.idInterpolationPattern",
+                "{config} must hash ids as `intl extract` does, with no other option"
+            );
+        }
     }
 
     #[test]
