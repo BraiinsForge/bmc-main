@@ -37,6 +37,7 @@ bmc-audio.workspace = true
 bmc-button.workspace = true
 bmc-field-schema.workspace = true
 bmc-grpc = { workspace = true, features = ["server"] }
+bmc-intl.workspace = true
 bmc-ipc.workspace = true
 bmc-led = { workspace = true, features = ["driver"] }
 bmc-log.workspace = true

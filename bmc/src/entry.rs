@@ -22,7 +22,8 @@
 use crate::backlight::DisplayBacklightDriver;
 use crate::compositor::Compositor;
 use crate::{App, BmcManager, Configuration};
-use anyhow::Result;
+use anyhow::{Context, Result};
+use bmc_intl::Translations;
 use bmc_led::led_driver::LedDriver;
 use bmc_upgrade::firmware::FirmwareIndex;
 use bmc_upgrade::packages::PackageBackend;
@@ -44,6 +45,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
     compositor: Arc<dyn Compositor>,
     wayland_display: Option<String>,
 ) -> Result<()> {
+    load_languages().await?;
     let manager = Arc::new(manager);
     let session_manager = manager.session_manager();
 
@@ -61,4 +63,18 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
     )
     .await?;
     app.run().await
+}
+
+/// Load and check every language pack off the runtime before anything formats,
+/// so a pack the full check refuses is never offered, and the report reaches the log at boot.
+async fn load_languages() -> Result<()> {
+    let report = tokio::task::spawn_blocking(Translations::reload)
+        .await
+        .context("loading the language packs")?;
+    if report.is_clean() {
+        tracing::info!("language packs: {report}");
+    } else {
+        tracing::warn!("language packs: {report}");
+    }
+    Ok(())
 }

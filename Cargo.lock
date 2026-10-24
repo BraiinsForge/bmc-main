@@ -716,6 +716,7 @@ dependencies = [
  "bmc-button",
  "bmc-field-schema",
  "bmc-grpc",
+ "bmc-intl",
  "bmc-ipc",
  "bmc-led",
  "bmc-log",
