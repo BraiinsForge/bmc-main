@@ -49,6 +49,7 @@ use tokio::sync::RwLock;
 mod account_management;
 pub mod authentication;
 mod credential_management;
+mod language;
 mod logging;
 mod metadata;
 mod system;
@@ -113,6 +114,7 @@ fn is_public(service: &str) -> bool {
         web::AUTHENTICATION_SERVICE_SERVICE_NAME
             | web::METADATA_SERVICE_SERVICE_NAME
             | web::INITIAL_SETUP_SERVICE_SERVICE_NAME
+            | web::LANGUAGE_SERVICE_SERVICE_NAME
     )
 }
 
@@ -240,6 +242,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             .add_service(Arc::new(metadata::MetadataService::new(
                 self.manager.clone(),
             )))
+            .add_service(Arc::new(language::LanguageService))
             .add_service(Arc::new(initial_setup::InitialSetupService::new(
                 self.manager.clone(),
                 self.initial_setup,

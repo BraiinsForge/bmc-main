@@ -1,0 +1,54 @@
+// Copyright (C) 2026  Braiins Forge s.r.o.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+// to grant any party a license to this program, or any part thereof,
+// under any terms, and such a grant shall be considered distinct from
+// the grant above.
+
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+import "web/shared.proto";
+
+enum TextDirection {
+  TEXT_DIRECTION_UNSPECIFIED = 0;
+  TEXT_DIRECTION_LTR = 1;
+  TEXT_DIRECTION_RTL = 2;
+}
+
+// A language the device speaks, as its pickers show it.
+message LanguageInfo {
+  // BCP-47, the form the language setting takes.
+  string tag = 1;
+  // The language named in itself.
+  string native_name = 2;
+  TextDirection text_direction = 3;
+  // Absent for a language whose pack brings none; the picker names it alone.
+  optional Icon flag = 4;
+}
+
+message ListLanguagesResponse {
+  // British and American English first, then the language packs the device read.
+  repeated LanguageInfo languages = 1;
+}
+
+// The languages the device speaks.
+// Public, so a page can offer them before anyone logs in.
+service LanguageService {
+  rpc ListLanguages(google.protobuf.Empty) returns (ListLanguagesResponse);
+}

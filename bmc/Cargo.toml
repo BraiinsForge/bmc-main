@@ -33,6 +33,7 @@ axum-extra = { workspace = true, features = [
     "multipart",
     "typed-header",
 ] }
+base64.workspace = true
 bmc-audio.workspace = true
 bmc-button.workspace = true
 bmc-field-schema.workspace = true
@@ -100,7 +101,6 @@ nix = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 async-stream.workspace = true
-base64.workspace = true
 bmc-grpc = { workspace = true, features = ["client"] }
 bytes.workspace = true
 proptest.workspace = true

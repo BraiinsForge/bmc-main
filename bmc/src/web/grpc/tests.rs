@@ -33,6 +33,7 @@ use connectrpc::{ConnectError, Protocol, RequestContext};
 mod alarm;
 mod boser_managed;
 mod boser_upgrade;
+mod language;
 mod metadata;
 mod network;
 

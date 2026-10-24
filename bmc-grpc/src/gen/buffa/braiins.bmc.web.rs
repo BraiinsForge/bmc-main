@@ -11212,6 +11212,334 @@ impl ::buffa::Message for SettingsDataResponse {
         self.network = ::buffa::MessageField::none();
     }
 }
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(i32)]
+pub enum TextDirection {
+    TEXT_DIRECTION_UNSPECIFIED = 0i32,
+    TEXT_DIRECTION_LTR = 1i32,
+    TEXT_DIRECTION_RTL = 2i32,
+}
+impl TextDirection {
+    ///Idiomatic alias for [`Self::TEXT_DIRECTION_UNSPECIFIED`]; `Debug` prints the variant name.
+    #[allow(non_upper_case_globals)]
+    pub const Unspecified: Self = Self::TEXT_DIRECTION_UNSPECIFIED;
+    ///Idiomatic alias for [`Self::TEXT_DIRECTION_LTR`]; `Debug` prints the variant name.
+    #[allow(non_upper_case_globals)]
+    pub const Ltr: Self = Self::TEXT_DIRECTION_LTR;
+    ///Idiomatic alias for [`Self::TEXT_DIRECTION_RTL`]; `Debug` prints the variant name.
+    #[allow(non_upper_case_globals)]
+    pub const Rtl: Self = Self::TEXT_DIRECTION_RTL;
+}
+impl ::core::default::Default for TextDirection {
+    fn default() -> Self {
+        Self::TEXT_DIRECTION_UNSPECIFIED
+    }
+}
+impl ::buffa::Enumeration for TextDirection {
+    fn from_i32(value: i32) -> ::core::option::Option<Self> {
+        match value {
+            0i32 => ::core::option::Option::Some(Self::TEXT_DIRECTION_UNSPECIFIED),
+            1i32 => ::core::option::Option::Some(Self::TEXT_DIRECTION_LTR),
+            2i32 => ::core::option::Option::Some(Self::TEXT_DIRECTION_RTL),
+            _ => ::core::option::Option::None,
+        }
+    }
+    fn to_i32(&self) -> i32 {
+        *self as i32
+    }
+    fn proto_name(&self) -> &'static str {
+        match self {
+            Self::TEXT_DIRECTION_UNSPECIFIED => "TEXT_DIRECTION_UNSPECIFIED",
+            Self::TEXT_DIRECTION_LTR => "TEXT_DIRECTION_LTR",
+            Self::TEXT_DIRECTION_RTL => "TEXT_DIRECTION_RTL",
+        }
+    }
+    fn from_proto_name(name: &str) -> ::core::option::Option<Self> {
+        match name {
+            "TEXT_DIRECTION_UNSPECIFIED" => {
+                ::core::option::Option::Some(Self::TEXT_DIRECTION_UNSPECIFIED)
+            }
+            "TEXT_DIRECTION_LTR" => {
+                ::core::option::Option::Some(Self::TEXT_DIRECTION_LTR)
+            }
+            "TEXT_DIRECTION_RTL" => {
+                ::core::option::Option::Some(Self::TEXT_DIRECTION_RTL)
+            }
+            _ => ::core::option::Option::None,
+        }
+    }
+    fn values() -> &'static [Self] {
+        &[
+            Self::TEXT_DIRECTION_UNSPECIFIED,
+            Self::TEXT_DIRECTION_LTR,
+            Self::TEXT_DIRECTION_RTL,
+        ]
+    }
+}
+/// A language the device speaks, as its pickers show it.
+#[derive(Clone, PartialEq, Default)]
+pub struct LanguageInfo {
+    /// BCP-47, the form the language setting takes.
+    ///
+    /// Field 1: `tag`
+    pub tag: ::buffa::alloc::string::String,
+    /// The language named in itself.
+    ///
+    /// Field 2: `native_name`
+    pub native_name: ::buffa::alloc::string::String,
+    /// Field 3: `text_direction`
+    pub text_direction: ::buffa::EnumValue<TextDirection>,
+    /// Absent for a language whose pack brings none; the picker names it alone.
+    ///
+    /// Field 4: `flag`
+    pub flag: ::buffa::MessageField<Icon, ::buffa::Inline<Icon>>,
+}
+impl ::core::fmt::Debug for LanguageInfo {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("LanguageInfo")
+            .field("tag", &self.tag)
+            .field("native_name", &self.native_name)
+            .field("text_direction", &self.text_direction)
+            .field("flag", &self.flag)
+            .finish()
+    }
+}
+impl LanguageInfo {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.LanguageInfo";
+}
+::buffa::impl_default_instance!(LanguageInfo);
+impl ::buffa::MessageName for LanguageInfo {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "LanguageInfo";
+    const FULL_NAME: &'static str = "braiins.bmc.web.LanguageInfo";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.LanguageInfo";
+}
+impl ::buffa::Message for LanguageInfo {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if !self.tag.is_empty() {
+            size += 1u64 + ::buffa::types::string_encoded_len(&self.tag) as u64;
+        }
+        if !self.native_name.is_empty() {
+            size += 1u64 + ::buffa::types::string_encoded_len(&self.native_name) as u64;
+        }
+        {
+            let val = self.text_direction.to_i32();
+            if val != 0 {
+                size += 1u64 + ::buffa::types::int32_encoded_len(val) as u64;
+            }
+        }
+        if self.flag.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.flag.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        __cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if !self.tag.is_empty() {
+            ::buffa::types::put_string_field(1u32, &self.tag, buf);
+        }
+        if !self.native_name.is_empty() {
+            ::buffa::types::put_string_field(2u32, &self.native_name, buf);
+        }
+        {
+            let val = self.text_direction.to_i32();
+            if val != 0 {
+                ::buffa::types::put_int32_field(3u32, val, buf);
+            }
+        }
+        if self.flag.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                4u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.flag.write_to(__cache, buf);
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(&mut self.tag, buf)?;
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(&mut self.native_name, buf)?;
+            }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.text_direction = ::buffa::EnumValue::from(
+                    ::buffa::types::decode_int32(buf)?,
+                );
+            }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::Message::merge_length_delimited(
+                    self.flag.get_or_insert_default(),
+                    buf,
+                    ctx,
+                )?;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.tag.clear();
+        self.native_name.clear();
+        self.text_direction = ::buffa::EnumValue::from(0);
+        self.flag = ::buffa::MessageField::none();
+    }
+}
+#[derive(Clone, PartialEq, Default)]
+pub struct ListLanguagesResponse {
+    /// British and American English first, then the language packs the device read.
+    ///
+    /// Field 1: `languages`
+    pub languages: ::buffa::alloc::vec::Vec<LanguageInfo>,
+}
+impl ::core::fmt::Debug for ListLanguagesResponse {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("ListLanguagesResponse")
+            .field("languages", &self.languages)
+            .finish()
+    }
+}
+impl ListLanguagesResponse {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.ListLanguagesResponse";
+}
+::buffa::impl_default_instance!(ListLanguagesResponse);
+impl ::buffa::MessageName for ListLanguagesResponse {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "ListLanguagesResponse";
+    const FULL_NAME: &'static str = "braiins.bmc.web.ListLanguagesResponse";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.ListLanguagesResponse";
+}
+impl ::buffa::Message for ListLanguagesResponse {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        for v in &self.languages {
+            let __slot = __cache.reserve();
+            let inner_size = v.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        __cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        for v in &self.languages {
+            ::buffa::types::put_len_delimited_header(
+                1u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            v.write_to(__cache, buf);
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let mut elem = ::core::default::Default::default();
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&elem),
+                )?;
+                ::buffa::Message::merge_length_delimited(&mut elem, buf, ctx)?;
+                self.languages.push(elem);
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.languages.clear();
+    }
+}
 /// Effect type matching bmc_led::data::LedEffect variants.
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -39886,6 +40214,622 @@ pub mod __buffa {
             type View<'a> = SettingsDataResponseView<'a>;
             type ViewHandle = SettingsDataResponseOwnedView;
         }
+        /// A language the device speaks, as its pickers show it.
+        #[derive(Clone, Debug, Default)]
+        pub struct LanguageInfoView<'a> {
+            /// BCP-47, the form the language setting takes.
+            ///
+            /// Field 1: `tag`
+            pub tag: &'a str,
+            /// The language named in itself.
+            ///
+            /// Field 2: `native_name`
+            pub native_name: &'a str,
+            /// Field 3: `text_direction`
+            pub text_direction: ::buffa::EnumValue<super::super::TextDirection>,
+            /// Absent for a language whose pack brings none; the picker names it alone.
+            ///
+            /// Field 4: `flag`
+            pub flag: ::buffa::MessageFieldView<
+                super::super::__buffa::view::IconView<'a>,
+            >,
+        }
+        impl<'a> ::buffa::MessageView<'a> for LanguageInfoView<'a> {
+            type Owned = super::super::LanguageInfo;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.tag = ::buffa::types::borrow_str(&mut cur)?;
+                    }
+                    2u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.native_name = ::buffa::types::borrow_str(&mut cur)?;
+                    }
+                    3u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::Varint,
+                        )?;
+                        view.text_direction = ::buffa::EnumValue::from(
+                            ::buffa::types::decode_int32(&mut cur)?,
+                        );
+                    }
+                    4u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        let __sub_ctx = ctx.descend()?;
+                        let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                        match view.flag.as_mut() {
+                            Some(existing) => {
+                                ::buffa::MessageView::merge_into_view(
+                                    existing,
+                                    sub,
+                                    __sub_ctx,
+                                )?
+                            }
+                            None => {
+                                view.flag = ::buffa::MessageFieldView::set(
+                                    <super::super::__buffa::view::IconView as ::buffa::MessageView>::decode_view_ctx(
+                                        sub,
+                                        __sub_ctx,
+                                    )?,
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<
+                super::super::LanguageInfo,
+                ::buffa::DecodeError,
+            > {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<
+                super::super::LanguageInfo,
+                ::buffa::DecodeError,
+            > {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::LanguageInfo {
+                    tag: self.tag.to_string(),
+                    native_name: self.native_name.to_string(),
+                    text_direction: self.text_direction,
+                    flag: match self.flag.as_option() {
+                        Some(v) => {
+                            ::buffa::MessageField::<
+                                super::super::Icon,
+                                ::buffa::Inline<super::super::Icon>,
+                            >::some(v.to_owned_from_source(__buffa_src)?)
+                        }
+                        None => ::buffa::MessageField::none(),
+                    },
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for LanguageInfoView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                if !self.tag.is_empty() {
+                    size += 1u64 + ::buffa::types::string_encoded_len(&self.tag) as u64;
+                }
+                if !self.native_name.is_empty() {
+                    size
+                        += 1u64
+                            + ::buffa::types::string_encoded_len(&self.native_name)
+                                as u64;
+                }
+                {
+                    let val = self.text_direction.to_i32();
+                    if val != 0 {
+                        size += 1u64 + ::buffa::types::int32_encoded_len(val) as u64;
+                    }
+                }
+                if self.flag.is_set() {
+                    let __slot = __cache.reserve();
+                    let inner_size = self.flag.compute_size(__cache);
+                    __cache.set(__slot, inner_size);
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                            + inner_size as u64;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                __cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                if !self.tag.is_empty() {
+                    ::buffa::types::put_string_field(1u32, &self.tag, buf);
+                }
+                if !self.native_name.is_empty() {
+                    ::buffa::types::put_string_field(2u32, &self.native_name, buf);
+                }
+                {
+                    let val = self.text_direction.to_i32();
+                    if val != 0 {
+                        ::buffa::types::put_int32_field(3u32, val, buf);
+                    }
+                }
+                if self.flag.is_set() {
+                    ::buffa::types::put_len_delimited_header(
+                        4u32,
+                        u64::from(__cache.consume_next()),
+                        buf,
+                    );
+                    self.flag.write_to(__cache, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for LanguageInfoView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "LanguageInfo";
+            const FULL_NAME: &'static str = "braiins.bmc.web.LanguageInfo";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.LanguageInfo";
+        }
+        ::buffa::impl_default_view_instance!(LanguageInfoView);
+        ::buffa::impl_view_reborrow!(LanguageInfoView);
+        /** Self-contained, `'static` owned view of a `LanguageInfo` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`LanguageInfoView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`LanguageInfoView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct LanguageInfoOwnedView(::buffa::OwnedView<LanguageInfoView<'static>>);
+        impl LanguageInfoOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    LanguageInfoOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    LanguageInfoOwnedView(
+                        ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+                    ),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::LanguageInfo,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    LanguageInfoOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`LanguageInfoView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &LanguageInfoView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::LanguageInfo {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// BCP-47, the form the language setting takes.
+            ///
+            /// Field 1: `tag`
+            #[must_use]
+            pub fn tag(&self) -> &'_ str {
+                self.0.reborrow().tag
+            }
+            /// The language named in itself.
+            ///
+            /// Field 2: `native_name`
+            #[must_use]
+            pub fn native_name(&self) -> &'_ str {
+                self.0.reborrow().native_name
+            }
+            /// Field 3: `text_direction`
+            #[must_use]
+            pub fn text_direction(
+                &self,
+            ) -> ::buffa::EnumValue<super::super::TextDirection> {
+                self.0.reborrow().text_direction
+            }
+            /// Absent for a language whose pack brings none; the picker names it alone.
+            ///
+            /// Field 4: `flag`
+            #[must_use]
+            pub fn flag(
+                &self,
+            ) -> &::buffa::MessageFieldView<super::super::__buffa::view::IconView<'_>> {
+                &self.0.reborrow().flag
+            }
+        }
+        impl ::core::convert::From<::buffa::OwnedView<LanguageInfoView<'static>>>
+        for LanguageInfoOwnedView {
+            fn from(inner: ::buffa::OwnedView<LanguageInfoView<'static>>) -> Self {
+                LanguageInfoOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<LanguageInfoOwnedView>
+        for ::buffa::OwnedView<LanguageInfoView<'static>> {
+            fn from(wrapper: LanguageInfoOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<::buffa::OwnedView<LanguageInfoView<'static>>>
+        for LanguageInfoOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<LanguageInfoView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::LanguageInfo {
+            type View<'a> = LanguageInfoView<'a>;
+            type ViewHandle = LanguageInfoOwnedView;
+        }
+        #[derive(Clone, Debug, Default)]
+        pub struct ListLanguagesResponseView<'a> {
+            /// British and American English first, then the language packs the device read.
+            ///
+            /// Field 1: `languages`
+            pub languages: ::buffa::RepeatedView<
+                'a,
+                super::super::__buffa::view::LanguageInfoView<'a>,
+            >,
+        }
+        impl<'a> ::buffa::MessageView<'a> for ListLanguagesResponseView<'a> {
+            type Owned = super::super::ListLanguagesResponse;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        let __sub_ctx = ctx.descend()?;
+                        let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                        ctx.register_element_memory(
+                            ::core::mem::size_of::<
+                                super::super::__buffa::view::LanguageInfoView,
+                            >(),
+                        )?;
+                        view.languages
+                            .push(
+                                <super::super::__buffa::view::LanguageInfoView as ::buffa::MessageView>::decode_view_ctx(
+                                    sub,
+                                    __sub_ctx,
+                                )?,
+                            );
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<
+                super::super::ListLanguagesResponse,
+                ::buffa::DecodeError,
+            > {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<
+                super::super::ListLanguagesResponse,
+                ::buffa::DecodeError,
+            > {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::ListLanguagesResponse {
+                    languages: self
+                        .languages
+                        .iter()
+                        .map(|v| v.to_owned_from_source(__buffa_src))
+                        .collect::<::core::result::Result<_, ::buffa::DecodeError>>()?,
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for ListLanguagesResponseView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                for v in &self.languages {
+                    let __slot = __cache.reserve();
+                    let inner_size = v.compute_size(__cache);
+                    __cache.set(__slot, inner_size);
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                            + inner_size as u64;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                __cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                for v in &self.languages {
+                    ::buffa::types::put_len_delimited_header(
+                        1u32,
+                        u64::from(__cache.consume_next()),
+                        buf,
+                    );
+                    v.write_to(__cache, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for ListLanguagesResponseView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "ListLanguagesResponse";
+            const FULL_NAME: &'static str = "braiins.bmc.web.ListLanguagesResponse";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.ListLanguagesResponse";
+        }
+        ::buffa::impl_default_view_instance!(ListLanguagesResponseView);
+        ::buffa::impl_view_reborrow!(ListLanguagesResponseView);
+        /** Self-contained, `'static` owned view of a `ListLanguagesResponse` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`ListLanguagesResponseView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`ListLanguagesResponseView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct ListLanguagesResponseOwnedView(
+            ::buffa::OwnedView<ListLanguagesResponseView<'static>>,
+        );
+        impl ListLanguagesResponseOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    ListLanguagesResponseOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    ListLanguagesResponseOwnedView(
+                        ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+                    ),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::ListLanguagesResponse,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    ListLanguagesResponseOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`ListLanguagesResponseView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &ListLanguagesResponseView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::ListLanguagesResponse {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// British and American English first, then the language packs the device read.
+            ///
+            /// Field 1: `languages`
+            #[must_use]
+            pub fn languages(
+                &self,
+            ) -> &::buffa::RepeatedView<
+                '_,
+                super::super::__buffa::view::LanguageInfoView<'_>,
+            > {
+                &self.0.reborrow().languages
+            }
+        }
+        impl ::core::convert::From<
+            ::buffa::OwnedView<ListLanguagesResponseView<'static>>,
+        > for ListLanguagesResponseOwnedView {
+            fn from(
+                inner: ::buffa::OwnedView<ListLanguagesResponseView<'static>>,
+            ) -> Self {
+                ListLanguagesResponseOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<ListLanguagesResponseOwnedView>
+        for ::buffa::OwnedView<ListLanguagesResponseView<'static>> {
+            fn from(wrapper: ListLanguagesResponseOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<
+            ::buffa::OwnedView<ListLanguagesResponseView<'static>>,
+        > for ListLanguagesResponseOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<ListLanguagesResponseView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::ListLanguagesResponse {
+            type View<'a> = ListLanguagesResponseView<'a>;
+            type ViewHandle = ListLanguagesResponseOwnedView;
+        }
         /// RGB color (each component 0–255).
         #[derive(Clone, Debug, Default)]
         pub struct RgbColorView<'a> {
@@ -55510,6 +56454,14 @@ pub use self::__buffa::view::SettingsRequestOwnedView;
 pub use self::__buffa::view::SettingsDataResponseView;
 #[doc(inline)]
 pub use self::__buffa::view::SettingsDataResponseOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::LanguageInfoView;
+#[doc(inline)]
+pub use self::__buffa::view::LanguageInfoOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::ListLanguagesResponseView;
+#[doc(inline)]
+pub use self::__buffa::view::ListLanguagesResponseOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::RgbColorView;
 #[doc(inline)]
