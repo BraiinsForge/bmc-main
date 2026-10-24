@@ -55,9 +55,10 @@ dev: check-pnpm
 build-widgets:
     cd {{ dir }}/.. && nix build .#widgets --out-link result-widgets
 
-# Run mock backend against this frontend's built dist (`build` first).
+# Run mock backend against this frontend's built dist (`build` first),
+# with the language packs the device profile ships.
 serve EXTRA_ARGS="": build-widgets
-    cd {{ dir }}/.. && cargo run \
+    cd {{ dir }}/.. && BMC_LANGUAGES_PATH="{{ dir }}/../assets/intl/profile-languages" cargo run \
         --package bmc-mock -- \
         --address="0.0.0.0:6070" \
         --system-password="root" \
