@@ -31,6 +31,9 @@ export default defineConfig({
     globals: false,
     testEnvironment: 'jsdom',
     setupFiles: ['./rstest.setup.ts'],
+    // A file's first test pays the cold module load,
+    // which passed 5s on a loaded CI builder.
+    testTimeout: 15_000,
     root: '.',
     silent: 'passed-only',
 

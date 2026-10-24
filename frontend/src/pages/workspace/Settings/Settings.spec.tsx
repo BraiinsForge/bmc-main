@@ -19,7 +19,7 @@
 // the grant above.
 
 import { afterEach, describe, test, expect, rstest } from '@rstest/core';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react/pure';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react/pure';
 import { MemoryRouter } from 'react-router';
 import { IntlProvider } from 'react-intl';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
@@ -39,11 +39,6 @@ import type { ServiceMocks } from '@/lib/proto';
 let confirmAnswer = true;
 const confirmSpy = rstest.fn(() => Promise.resolve(confirmAnswer));
 const appContext = { ...getAppContextDefault(), confirm: confirmSpy };
-
-// Let the pending confirm→run branch run to completion. Needed for assert-a-negative
-// checks: a macrotask boundary drains the post-confirm microtasks, so a buggy path
-// that ignored a declined answer would already have called `startUpgrade` by the check.
-const flushTasks = (): Promise<void> => new Promise(resolve => setTimeout(resolve));
 
 // Fake-timer helper: advance and flush the RPC/debounce promise chain inside act().
 const advance = async (ms: number): Promise<void> => {
@@ -172,10 +167,6 @@ function renderPage(hash = '#updates') {
 
 const startButton = (): HTMLElement => screen.getByRole('button', { name: /Download & Upgrade/i });
 
-// The offer renders only after the debounced mount (150ms) plus the check RPC;
-// on a loaded CI runner that can exceed waitFor's 1s default, so give the wait more room.
-const awaitOffer = () => waitFor(() => expect(startButton()).toBeTruthy(), { timeout: 5_000 });
-
 afterEach(() => {
     cleanup();
     mocks.clear();
@@ -200,6 +191,7 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
     // so a stream error after it must surface as a failure
     // — not be masked as a reboot.
     test('a stream error after ACTIVATING surfaces as a failure, not "restarting"', async () => {
+        rstest.useFakeTimers();
         installMocks(() =>
             (async function* () {
                 yield pkgPhase(pb.PackageUpgradePhase.REALIZING);
@@ -211,18 +203,17 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
         );
 
         renderPage();
-        await awaitOffer();
-
+        await advance(300); // debounced mount (150ms) + initial fetches
         fireEvent.click(startButton());
+        await advance(1_000);
+        await advance(300); // the failure re-checks for the offer once React commits it
 
-        await waitFor(() => {
-            // Never entered the restart/reload overlay...
-            expect(screen.queryByText(/restarting/i)).toBeNull();
-            // ...the failure surfaced...
-            expect(screen.getByText(/mock: activation failed/)).toBeTruthy();
-            // ...and the offer is interactive again, not stuck behind a blocking overlay.
-            expect(startButton()).toBeTruthy();
-        });
+        // Never entered the restart/reload overlay...
+        expect(screen.queryByText(/restarting/i)).toBeNull();
+        // ...the failure surfaced...
+        expect(screen.getByText(/mock: activation failed/)).toBeTruthy();
+        // ...and the offer is interactive again, not stuck behind a blocking overlay.
+        expect(startButton()).toBeTruthy();
     });
 
     // A package `finished` with no server cycle settles in place:
@@ -447,6 +438,7 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
     // so they would pass before a buggy "ignore the decline"
     // path ever reached `startUpgrade`.
     test('a declined confirmation does not start the upgrade', async () => {
+        rstest.useFakeTimers();
         confirmAnswer = false;
         const startUpgrade = rstest.fn(() =>
             (async function* () {
@@ -456,14 +448,13 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
         installMocks(startUpgrade);
 
         renderPage();
-        await awaitOffer();
-
+        await advance(300); // debounced mount (150ms) + initial fetches
         fireEvent.click(startButton());
 
-        // The confirmation is asked and answered "no"; wait for that branch to settle so
-        // a path that ignored the answer would already have launched the run.
-        await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1));
-        await flushTasks();
+        // The confirmation is asked and answered "no"; advancing drains that branch,
+        // so a path that ignored the answer would already have launched the run.
+        await advance(1_000);
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
 
         expect(startUpgrade).not.toHaveBeenCalled();
         // ...and nothing surfaced: no progress overlay, no toast, offer still interactive.
@@ -476,6 +467,7 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
     // confirmation and launches the run exactly once — not twice, where the second run
     // would abort the first via `replace()`.
     test('a double click confirms and starts the upgrade only once', async () => {
+        rstest.useFakeTimers();
         const startUpgrade = rstest.fn(() =>
             (async function* () {
                 yield finished;
@@ -484,12 +476,12 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
         installMocks(startUpgrade);
 
         renderPage();
-        await awaitOffer();
-
+        await advance(300); // debounced mount (150ms) + initial fetches
         fireEvent.click(startButton());
         fireEvent.click(startButton());
+        await advance(1_000);
 
-        await waitFor(() => expect(startUpgrade).toHaveBeenCalledTimes(1));
+        expect(startUpgrade).toHaveBeenCalledTimes(1);
         expect(confirmSpy).toHaveBeenCalledTimes(1);
     });
 });
