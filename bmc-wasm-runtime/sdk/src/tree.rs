@@ -23,6 +23,7 @@
 //!
 //! The tree, its builders and its codec are `bmc-ui`'s, re-exported here.
 
+#[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
 
 #[cfg(target_arch = "wasm32")]
@@ -225,19 +226,9 @@ macro_rules! sphere {
     };
 }
 
+#[cfg(target_arch = "wasm32")]
 thread_local! {
     static TREE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(4096));
-}
-
-/// Begin building a tree (clears buffer)
-pub fn begin_tree() {
-    TREE_BUFFER.with(|buf| buf.borrow_mut().clear());
-}
-
-/// Submit the encoded tree to the host and clear the buffer.
-#[cfg(target_arch = "wasm32")]
-pub fn submit_and_clear(width: u32, height: u32) {
-    TREE_BUFFER.with(|buf| host::submit_tree(&buf.borrow(), width, height));
 }
 
 /// Render UI tree using host-side layout.
@@ -251,9 +242,12 @@ pub fn submit_and_clear(width: u32, height: u32) {
 pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     let keys = interaction_keys(&root);
 
-    begin_tree();
-    TREE_BUFFER.with(|buf| encode_into(&mut buf.borrow_mut(), &root));
-    submit_and_clear(width, height);
+    TREE_BUFFER.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        buf.clear();
+        encode_into(&mut buf, &root);
+        host::submit_tree(&buf, width, height);
+    });
 
     let mut result = TreeRenderResult::default();
     for key in keys {
