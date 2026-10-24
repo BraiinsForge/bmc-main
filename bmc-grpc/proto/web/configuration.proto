@@ -76,6 +76,13 @@ message GeneralSettingsDataResponse {
   braiins.bmc.web.Weekday first_day_of_week = 6;
   braiins.bmc.web.TemperatureUnit temperature_unit = 7;
   braiins.bmc.web.UnitSystem unit_system = 8;
+  // BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+  optional string language = 9;
+}
+
+message SetLanguageRequest {
+  // One of the tags `LanguageService.ListLanguages` lists, exactly as it lists it.
+  string language = 1;
 }
 
 message SetTimeFormatRequest {
@@ -137,4 +144,5 @@ service ConfigurationService {
   rpc GetBootSoundSettings(google.protobuf.Empty) returns (BootSoundSettingsResponse);
   rpc SetBootSoundEnabled(google.protobuf.BoolValue) returns (google.protobuf.Empty);
   rpc SetNightmodeScreenOffTimeout(google.protobuf.UInt32Value) returns (google.protobuf.Empty);
+  rpc SetLanguage(SetLanguageRequest) returns (google.protobuf.Empty);
 }

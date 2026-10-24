@@ -424,6 +424,19 @@ mod tests {
     }
 
     #[test]
+    fn a_set_language_is_the_one_the_next_boot_reads() {
+        let (mut config, _) = without_language("MDYyyySlash")
+            .parse::<LoadedConfig>()
+            .expect("BUG: the config parses")
+            .into_parts();
+        config.set_language(Language::ZH);
+        assert_eq!(
+            reloaded(&config).localization_config().language(),
+            Language::ZH
+        );
+    }
+
+    #[test]
     fn a_language_that_does_not_parse_settles_as_one_never_set() {
         for stored in [serde_json::json!("not a tag!"), serde_json::json!(42)] {
             let mut raw: serde_json::Value =

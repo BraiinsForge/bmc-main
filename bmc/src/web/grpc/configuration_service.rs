@@ -27,13 +27,14 @@ use crate::backlight::DisplayBacklightDriver;
 use bmc_grpc::web::{
     self, BootSoundSettingsResponse, GeneralSettingsDataResponse, LedSettingsResponse,
     ListSoundsResponse, PlaySoundRequest, SetDateFormatRequest, SetFirstDayOfWeekRequest,
-    SetNumberFormatRequest, SetTemperatureUnitRequest, SetTimeFormatRequest, SetUnitSystemRequest,
-    SoundInfo, SoundVolume,
+    SetLanguageRequest, SetNumberFormatRequest, SetTemperatureUnitRequest, SetTimeFormatRequest,
+    SetUnitSystemRequest, SoundInfo, SoundVolume,
 };
 use bmc_grpc::web::{
     BrightnessInfo, ConfigurationService as GrpcConfigurationService, DisplaySettingsResponse,
     SoundVolumeSettingsResponse, TimeInterval,
 };
+use bmc_intl::Translations;
 use bmc_shared_time::time::{DateFormat, TimeSystem};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
@@ -49,6 +50,7 @@ use tracing::{error, warn};
 
 use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
 use super::initial_setup::{try_from_date_time, try_from_time_format};
+use super::language::offered_language;
 use super::network::bad_request;
 use super::shared::{
     invalid_field, naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format,
@@ -335,6 +337,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             first_day_of_week: map_weekday_to_proto(localization.first_day_of_week).into(),
             temperature_unit: map_temperature_unit_to_proto(localization.temperature_unit).into(),
             unit_system: map_unit_system_to_proto(localization.unit_system).into(),
+            language: Some(localization.language().tag()),
             show_seconds_status_bar: BoolValue {
                 value: localization.show_seconds_in_status_bar,
                 ..Default::default()
@@ -478,6 +481,24 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         config.save().await.map_err(|e| {
             error!("Failed to save unit_system, error {e}");
             ConnectError::internal("Failed to save unit_system")
+        })?;
+
+        Response::ok(Empty::default())
+    }
+
+    async fn set_language(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetLanguageRequest>,
+    ) -> ServiceResult<Empty> {
+        let language = offered_language(&Translations::shared(), request.language)?;
+
+        let mut config = self.config_handle.write().await;
+        config.set_language(language);
+
+        config.save().await.map_err(|e| {
+            error!("Failed to save language, error {e}");
+            ConnectError::internal("Failed to save language")
         })?;
 
         Response::ok(Empty::default())

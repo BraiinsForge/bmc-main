@@ -24,8 +24,10 @@ use bmc_grpc::web::{
 };
 use bmc_intl::{Language, TextDirection, Translations};
 use buffa_types::google::protobuf::Empty;
-use connectrpc::{RequestContext, Response, ServiceRequest, ServiceResult};
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use tracing::warn;
+
+use super::shared::invalid_field;
 
 pub(crate) struct LanguageService;
 
@@ -60,6 +62,18 @@ fn list(translations: &Translations) -> ListLanguagesResponse {
     ListLanguagesResponse { languages }
 }
 
+/// The language `tag` names, when it is one [`list`] offers, spelled as it lists it:
+/// a picker sends back what it was given, so any other spelling is a client's mistake.
+pub(crate) fn offered_language(
+    translations: &Translations,
+    tag: &str,
+) -> Result<Language, ConnectError> {
+    Language::parse(tag)
+        .ok()
+        .filter(|language| language.tag() == tag && translations.languages().contains(language))
+        .ok_or_else(|| invalid_field("language", "not a language this device offers"))
+}
+
 /// Left out, with a warning, when the pack's flag cannot be read.
 fn flag(translations: &Translations, language: Language) -> Option<Icon> {
     match translations.flag_svg(language) {
@@ -81,8 +95,9 @@ mod tests {
     use base64::Engine as _;
     use bmc_grpc::web;
     use bmc_intl::Translations;
+    use connectrpc::ErrorCode;
 
-    use super::list;
+    use super::{list, offered_language};
 
     fn profile() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/intl/profile-languages")
@@ -127,6 +142,21 @@ mod tests {
                     assert!(svg.starts_with(b"<svg"), "{}", info.tag);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn only_a_listed_tag_spelled_as_listed_sets_the_language() {
+        let (translations, _) = Translations::load(&[profile()]);
+        for tag in ["en-GB", "en-US", "zh"] {
+            let language = offered_language(&translations, tag)
+                .unwrap_or_else(|error| panic!("BUG: {tag} is listed: {error:?}"));
+            assert_eq!(language.tag(), tag);
+        }
+        for tag in ["en", "en-gb", "zh-Hans", "de", "not a tag", ""] {
+            let error = offered_language(&translations, tag)
+                .expect_err("only a listed spelling of a listed language is taken");
+            assert_eq!(error.code, ErrorCode::InvalidArgument, "{tag:?}");
         }
     }
 

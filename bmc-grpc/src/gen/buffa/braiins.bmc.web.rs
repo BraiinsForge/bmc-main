@@ -4129,6 +4129,10 @@ pub struct GeneralSettingsDataResponse {
     pub temperature_unit: ::buffa::EnumValue<TemperatureUnit>,
     /// Field 8: `unit_system`
     pub unit_system: ::buffa::EnumValue<UnitSystem>,
+    /// BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+    ///
+    /// Field 9: `language`
+    pub language: ::core::option::Option<::buffa::alloc::string::String>,
 }
 impl ::core::fmt::Debug for GeneralSettingsDataResponse {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
@@ -4141,6 +4145,7 @@ impl ::core::fmt::Debug for GeneralSettingsDataResponse {
             .field("first_day_of_week", &self.first_day_of_week)
             .field("temperature_unit", &self.temperature_unit)
             .field("unit_system", &self.unit_system)
+            .field("language", &self.language)
             .finish()
     }
 }
@@ -4150,6 +4155,18 @@ impl GeneralSettingsDataResponse {
     ///
     /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
     pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.GeneralSettingsDataResponse";
+}
+impl GeneralSettingsDataResponse {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::language`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_language(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.language = Some(value.into());
+        self
+    }
 }
 ::buffa::impl_default_instance!(GeneralSettingsDataResponse);
 impl ::buffa::MessageName for GeneralSettingsDataResponse {
@@ -4223,6 +4240,9 @@ impl ::buffa::Message for GeneralSettingsDataResponse {
                 size += 1u64 + ::buffa::types::int32_encoded_len(val) as u64;
             }
         }
+        if let Some(ref v) = self.language {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         ::buffa::saturate_size(size)
     }
     fn write_to(
@@ -4283,6 +4303,9 @@ impl ::buffa::Message for GeneralSettingsDataResponse {
             if val != 0 {
                 ::buffa::types::put_int32_field(8u32, val, buf);
             }
+        }
+        if let Some(ref v) = self.language {
+            ::buffa::types::put_string_field(9u32, v, buf);
         }
     }
     fn merge_field(
@@ -4372,6 +4395,18 @@ impl ::buffa::Message for GeneralSettingsDataResponse {
                     ::buffa::types::decode_int32(buf)?,
                 );
             }
+            9u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self
+                        .language
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
             }
@@ -4387,6 +4422,90 @@ impl ::buffa::Message for GeneralSettingsDataResponse {
         self.first_day_of_week = ::buffa::EnumValue::from(0);
         self.temperature_unit = ::buffa::EnumValue::from(0);
         self.unit_system = ::buffa::EnumValue::from(0);
+        self.language = ::core::option::Option::None;
+    }
+}
+#[derive(Clone, PartialEq, Default)]
+pub struct SetLanguageRequest {
+    /// One of the tags `LanguageService.ListLanguages` lists, exactly as it lists it.
+    ///
+    /// Field 1: `language`
+    pub language: ::buffa::alloc::string::String,
+}
+impl ::core::fmt::Debug for SetLanguageRequest {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("SetLanguageRequest").field("language", &self.language).finish()
+    }
+}
+impl SetLanguageRequest {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.SetLanguageRequest";
+}
+::buffa::impl_default_instance!(SetLanguageRequest);
+impl ::buffa::MessageName for SetLanguageRequest {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "SetLanguageRequest";
+    const FULL_NAME: &'static str = "braiins.bmc.web.SetLanguageRequest";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.SetLanguageRequest";
+}
+impl ::buffa::Message for SetLanguageRequest {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if !self.language.is_empty() {
+            size += 1u64 + ::buffa::types::string_encoded_len(&self.language) as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if !self.language.is_empty() {
+            ::buffa::types::put_string_field(1u32, &self.language, buf);
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(&mut self.language, buf)?;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.language.clear();
     }
 }
 #[derive(Clone, PartialEq, Default)]
@@ -26227,6 +26346,10 @@ pub mod __buffa {
             pub temperature_unit: ::buffa::EnumValue<super::super::TemperatureUnit>,
             /// Field 8: `unit_system`
             pub unit_system: ::buffa::EnumValue<super::super::UnitSystem>,
+            /// BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+            ///
+            /// Field 9: `language`
+            pub language: ::core::option::Option<&'a str>,
         }
         impl<'a> ::buffa::MessageView<'a> for GeneralSettingsDataResponseView<'a> {
             type Owned = super::super::GeneralSettingsDataResponse;
@@ -26368,6 +26491,13 @@ pub mod __buffa {
                             ::buffa::types::decode_int32(&mut cur)?,
                         );
                     }
+                    9u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.language = Some(::buffa::types::borrow_str(&mut cur)?);
+                    }
                     _ => {
                         ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     }
@@ -26421,6 +26551,7 @@ pub mod __buffa {
                     first_day_of_week: self.first_day_of_week,
                     temperature_unit: self.temperature_unit,
                     unit_system: self.unit_system,
+                    language: self.language.map(|s| s.to_string()),
                     ..::core::default::Default::default()
                 })
             }
@@ -26483,6 +26614,9 @@ pub mod __buffa {
                         size += 1u64 + ::buffa::types::int32_encoded_len(val) as u64;
                     }
                 }
+                if let Some(ref v) = self.language {
+                    size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+                }
                 ::buffa::saturate_size(size)
             }
             #[allow(clippy::needless_borrow)]
@@ -26544,6 +26678,9 @@ pub mod __buffa {
                     if val != 0 {
                         ::buffa::types::put_int32_field(8u32, val, buf);
                     }
+                }
+                if let Some(ref v) = self.language {
+                    ::buffa::types::put_string_field(9u32, v, buf);
                 }
             }
         }
@@ -26697,6 +26834,13 @@ pub mod __buffa {
             pub fn unit_system(&self) -> ::buffa::EnumValue<super::super::UnitSystem> {
                 self.0.reborrow().unit_system
             }
+            /// BCP-47, one of the tags `LanguageService.ListLanguages` lists.
+            ///
+            /// Field 9: `language`
+            #[must_use]
+            pub fn language(&self) -> ::core::option::Option<&'_ str> {
+                self.0.reborrow().language
+            }
         }
         impl ::core::convert::From<
             ::buffa::OwnedView<GeneralSettingsDataResponseView<'static>>,
@@ -26725,6 +26869,235 @@ pub mod __buffa {
         impl ::buffa::HasMessageView for super::super::GeneralSettingsDataResponse {
             type View<'a> = GeneralSettingsDataResponseView<'a>;
             type ViewHandle = GeneralSettingsDataResponseOwnedView;
+        }
+        #[derive(Clone, Debug, Default)]
+        pub struct SetLanguageRequestView<'a> {
+            /// One of the tags `LanguageService.ListLanguages` lists, exactly as it lists it.
+            ///
+            /// Field 1: `language`
+            pub language: &'a str,
+        }
+        impl<'a> ::buffa::MessageView<'a> for SetLanguageRequestView<'a> {
+            type Owned = super::super::SetLanguageRequest;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.language = ::buffa::types::borrow_str(&mut cur)?;
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<
+                super::super::SetLanguageRequest,
+                ::buffa::DecodeError,
+            > {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<
+                super::super::SetLanguageRequest,
+                ::buffa::DecodeError,
+            > {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::SetLanguageRequest {
+                    language: self.language.to_string(),
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for SetLanguageRequestView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                if !self.language.is_empty() {
+                    size
+                        += 1u64
+                            + ::buffa::types::string_encoded_len(&self.language) as u64;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                _cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                if !self.language.is_empty() {
+                    ::buffa::types::put_string_field(1u32, &self.language, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for SetLanguageRequestView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "SetLanguageRequest";
+            const FULL_NAME: &'static str = "braiins.bmc.web.SetLanguageRequest";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.SetLanguageRequest";
+        }
+        ::buffa::impl_default_view_instance!(SetLanguageRequestView);
+        ::buffa::impl_view_reborrow!(SetLanguageRequestView);
+        /** Self-contained, `'static` owned view of a `SetLanguageRequest` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`SetLanguageRequestView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`SetLanguageRequestView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct SetLanguageRequestOwnedView(
+            ::buffa::OwnedView<SetLanguageRequestView<'static>>,
+        );
+        impl SetLanguageRequestOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    SetLanguageRequestOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    SetLanguageRequestOwnedView(
+                        ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+                    ),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::SetLanguageRequest,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    SetLanguageRequestOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`SetLanguageRequestView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &SetLanguageRequestView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::SetLanguageRequest {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// One of the tags `LanguageService.ListLanguages` lists, exactly as it lists it.
+            ///
+            /// Field 1: `language`
+            #[must_use]
+            pub fn language(&self) -> &'_ str {
+                self.0.reborrow().language
+            }
+        }
+        impl ::core::convert::From<::buffa::OwnedView<SetLanguageRequestView<'static>>>
+        for SetLanguageRequestOwnedView {
+            fn from(inner: ::buffa::OwnedView<SetLanguageRequestView<'static>>) -> Self {
+                SetLanguageRequestOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<SetLanguageRequestOwnedView>
+        for ::buffa::OwnedView<SetLanguageRequestView<'static>> {
+            fn from(wrapper: SetLanguageRequestOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<::buffa::OwnedView<SetLanguageRequestView<'static>>>
+        for SetLanguageRequestOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<SetLanguageRequestView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::SetLanguageRequest {
+            type View<'a> = SetLanguageRequestView<'a>;
+            type ViewHandle = SetLanguageRequestOwnedView;
         }
         #[derive(Clone, Debug, Default)]
         pub struct SetTimeFormatRequestView<'a> {
@@ -56290,6 +56663,10 @@ pub use self::__buffa::view::PlaySoundRequestOwnedView;
 pub use self::__buffa::view::GeneralSettingsDataResponseView;
 #[doc(inline)]
 pub use self::__buffa::view::GeneralSettingsDataResponseOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::SetLanguageRequestView;
+#[doc(inline)]
+pub use self::__buffa::view::SetLanguageRequestOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::SetTimeFormatRequestView;
 #[doc(inline)]

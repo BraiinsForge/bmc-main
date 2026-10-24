@@ -236,6 +236,10 @@ impl Config {
         self.localization.get_or_insert_default().date_format = date_format;
     }
 
+    pub fn set_language(&mut self, language: Language) {
+        self.localization.get_or_insert_default().language = language;
+    }
+
     pub fn data_collection(&self) -> bool {
         self.data_collection.unwrap_or_default()
     }
@@ -777,6 +781,11 @@ impl ConfigHandle {
         self.localization_dirty = true;
     }
 
+    pub fn set_language(&mut self, language: Language) {
+        self.config.set_language(language);
+        self.localization_dirty = true;
+    }
+
     pub fn set_first_day_of_week(&mut self, day: WeekDay) {
         self.config.set_first_day_of_week(day);
         self.localization_dirty = true;
@@ -1074,6 +1083,21 @@ mod tests {
             .await
             .expect("BUG: subscriber must receive change");
         assert_eq!(cfg.unit_system, UnitSystem::Imperial);
+    }
+
+    #[tokio::test]
+    async fn set_language_via_handle_notifies_subscribers() {
+        let (_tmp, mut handle) = fresh_handle().await;
+        let mut rx = handle.subscribe_localization_change();
+
+        handle.set_language(Language::ZH);
+        handle.save().await.expect("BUG: save must succeed");
+
+        let cfg = rx
+            .recv()
+            .await
+            .expect("BUG: subscriber must receive change");
+        assert_eq!(cfg.language(), Language::ZH);
     }
 
     #[tokio::test]
