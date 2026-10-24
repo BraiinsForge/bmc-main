@@ -30,6 +30,7 @@
   "localization": {
     "date_format": "DdMmYyyyDot",
     "first_day_of_week": "Monday",
+    "language": "en-GB",
     "number_format": "SpaceGroupCommaDecimal",
     "show_seconds_in_status_bar": false,
     "temperature_unit": "Celsius",

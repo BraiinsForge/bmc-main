@@ -326,6 +326,8 @@ fn backup_path_for(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bmc_intl::Language;
+    use bmc_shared_time::time::DateFormat;
 
     #[test]
     fn current_version_parses_as_already_current() {
@@ -338,6 +340,107 @@ mod tests {
             .expect("BUG: current-version parse must succeed");
         assert!(!loaded.was_migrated());
         assert!(loaded.report().is_none());
+    }
+
+    /// A current config whose localization a BMC application without the language setting wrote.
+    fn without_language(date_format: &str) -> String {
+        format!(
+            r#"{{"version":{CONFIG_VERSION},"scenes":[],"localization":{{
+                "time_system":"Hour24","number_format":"SpaceGroupCommaDecimal",
+                "date_format":"{date_format}","first_day_of_week":"Monday",
+                "show_seconds_in_status_bar":false,"temperature_unit":"Celsius",
+                "unit_system":"Metric"}}}}"#
+        )
+    }
+
+    /// `config` as the next boot reads it back.
+    fn reloaded(config: &Config) -> Config {
+        serde_json::to_string(config)
+            .expect("BUG: a config serializes")
+            .parse::<LoadedConfig>()
+            .expect("BUG: a saved config loads")
+            .into_parts()
+            .0
+    }
+
+    #[test]
+    fn a_section_without_a_language_speaks_the_english_its_dates_were_written_in() {
+        for (date_format, english) in [
+            ("MDYyyySlash", Language::EN_US),
+            ("DdMmYyyyDot", Language::EN_GB),
+            ("YyyyMmDdDash", Language::EN_GB),
+        ] {
+            let loaded: LoadedConfig = without_language(date_format)
+                .parse()
+                .expect("BUG: the config parses");
+            assert_eq!(
+                loaded.current().localization_config().language(),
+                english,
+                "{date_format}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_settled_language_holds_when_the_date_layout_changes_later() {
+        let (mut config, _) = without_language("MDYyyySlash")
+            .parse::<LoadedConfig>()
+            .expect("BUG: the config parses")
+            .into_parts();
+        config.set_date_format(DateFormat::DdMmYyyyDot);
+        assert_eq!(
+            reloaded(&config).localization_config().language(),
+            Language::EN_US
+        );
+    }
+
+    #[test]
+    fn settling_the_language_leaves_every_other_setting_as_read() {
+        let raw = without_language("MDYyyySlash");
+        let loaded: LoadedConfig = raw.parse().expect("BUG: the config parses");
+        let mut written = serde_json::to_value(loaded.current()).expect("BUG: serializes");
+        let language = written["localization"]
+            .as_object_mut()
+            .expect("BUG: the section is kept")
+            .remove("language");
+        assert_eq!(language, Some(serde_json::json!("en-US")));
+        let read: serde_json::Value = serde_json::from_str(&raw).expect("BUG: the fixture is JSON");
+        assert_eq!(written["localization"], read["localization"]);
+    }
+
+    #[test]
+    fn a_config_without_a_section_is_british_and_stays_so_once_one_is_made() {
+        let (mut config, _) = format!(r#"{{"version":{CONFIG_VERSION},"scenes":[]}}"#)
+            .parse::<LoadedConfig>()
+            .expect("BUG: the config parses")
+            .into_parts();
+        assert_eq!(config.localization_config().language(), Language::EN_GB);
+        config.set_date_format(DateFormat::MDYyyySlash);
+        assert_eq!(
+            reloaded(&config).localization_config().language(),
+            Language::EN_GB,
+            "the section made for the date layout carries the language it had"
+        );
+    }
+
+    #[test]
+    fn a_language_that_does_not_parse_settles_as_one_never_set() {
+        for stored in [serde_json::json!("not a tag!"), serde_json::json!(42)] {
+            let mut raw: serde_json::Value =
+                serde_json::from_str(&without_language("MDYyyySlash")).expect("BUG: JSON");
+            raw["localization"]["language"] = stored.clone();
+            let loaded: LoadedConfig = raw
+                .to_string()
+                .parse()
+                .expect("BUG: a bad language must not fail the config load");
+            let localization = loaded.current().localization_config();
+            assert_eq!(localization.language(), Language::EN_US, "{stored}");
+            assert_eq!(
+                localization.date_format,
+                DateFormat::MDYyyySlash,
+                "{stored}"
+            );
+        }
     }
 
     #[test]

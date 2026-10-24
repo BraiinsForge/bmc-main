@@ -26,6 +26,7 @@ use crate::{
     utils::replace_file,
 };
 use anyhow::{Context, Result, bail};
+use bmc_intl::Language;
 use bmc_shared_time::time::{DateFormat, TimeSystem, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
@@ -478,6 +479,7 @@ impl Config {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(from = "RawLocalizationConfig")]
 pub struct LocalizationConfig {
     pub time_system: TimeSystem,
     pub number_format: NumberFormat,
@@ -485,8 +487,72 @@ pub struct LocalizationConfig {
     pub first_day_of_week: WeekDay,
     pub show_seconds_in_status_bar: bool,
     pub temperature_unit: TemperatureUnit,
-    #[serde(default)]
     pub unit_system: UnitSystem,
+    language: Language,
+}
+
+/// [`LocalizationConfig`] as stored, before a section without a language is given one.
+#[derive(Deserialize)]
+struct RawLocalizationConfig {
+    time_system: TimeSystem,
+    number_format: NumberFormat,
+    date_format: DateFormat,
+    first_day_of_week: WeekDay,
+    show_seconds_in_status_bar: bool,
+    temperature_unit: TemperatureUnit,
+    #[serde(default)]
+    unit_system: UnitSystem,
+    #[serde(default, deserialize_with = "deserialize_language")]
+    language: Option<Language>,
+}
+
+impl From<RawLocalizationConfig> for LocalizationConfig {
+    /// A section from a BMC application without the setting speaks the English its dates imply,
+    /// settled here so a later change of its date layout cannot move the language.
+    fn from(raw: RawLocalizationConfig) -> Self {
+        Self {
+            time_system: raw.time_system,
+            number_format: raw.number_format,
+            date_format: raw.date_format,
+            first_day_of_week: raw.first_day_of_week,
+            show_seconds_in_status_bar: raw.show_seconds_in_status_bar,
+            temperature_unit: raw.temperature_unit,
+            unit_system: raw.unit_system,
+            language: raw.language.unwrap_or_else(|| english_for(raw.date_format)),
+        }
+    }
+}
+
+impl LocalizationConfig {
+    #[must_use]
+    pub fn language(&self) -> Language {
+        self.language
+    }
+}
+
+/// A stored language that does not parse is dropped with a warning instead of failing the load,
+/// and settles as on a BMC application without the setting.
+fn deserialize_language<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Language>, D::Error> {
+    let raw = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(raw.and_then(|value| match Language::deserialize(&value) {
+        Ok(language) => Some(language),
+        Err(error) => {
+            warn!(%value, %error, "dropping a stored language that does not parse");
+            None
+        }
+    }))
+}
+
+/// The English a device upgraded from a BMC application without the setting speaks:
+/// American where it wrote dates as M/D/YYYY, British for every other layout.
+fn english_for(date_format: DateFormat) -> Language {
+    if date_format == DateFormat::MDYyyySlash {
+        Language::EN_US
+    } else {
+        Language::EN_GB
+    }
 }
 
 #[derive(Clone, Debug)]
