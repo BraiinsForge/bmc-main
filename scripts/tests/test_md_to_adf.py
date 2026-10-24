@@ -20,6 +20,10 @@
 
 """Cover the ADF shapes Jira rejects and the ones it silently renders wrong."""
 
+import json
+from pathlib import Path
+from typing import cast
+
 import md_to_adf
 import pytest
 from md_to_adf import AdfDoc, AdfNode
@@ -99,6 +103,26 @@ def test_marks_nest_through_a_link():
     assert {'type': 'link', 'attrs': {'href': 'https://example.test'}} in marks
 
 
+def test_code_inside_emphasis_carries_only_the_code_mark():
+    """Jira refuses a document whose code mark shares a node with strong, em or strike."""
+    document = convert('**bold `a`** _em `b`_ ~~gone `c`~~')
+
+    codes = [
+        node for node in text_nodes(document) if node.get('text') in {'a', 'b', 'c'}
+    ]
+    assert [node.get('marks') for node in codes] == [[{'type': 'code'}]] * 3
+
+
+def test_code_inside_a_link_keeps_the_link():
+    document = convert('[**see `x`**](https://example.test)')
+
+    (code,) = [node for node in text_nodes(document) if node.get('text') == 'x']
+    assert code.get('marks') == [
+        {'type': 'link', 'attrs': {'href': 'https://example.test'}},
+        {'type': 'code'},
+    ]
+
+
 def test_bullet_list_wraps_items_in_paragraphs():
     document = convert('- one\n- two')
 
@@ -168,3 +192,16 @@ def test_an_unmapped_construct_raises_rather_than_dropping_content():
 def test_a_link_with_no_text_raises_rather_than_dropping_its_href():
     with pytest.raises(md_to_adf.Unmapped):
         _ = convert('[](https://example.test)')
+
+
+def test_output_takes_the_adf_and_leaves_stdout_empty(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    source, target = tmp_path / 'ticket.md', tmp_path / 'ticket.json'
+    _ = source.write_text('## Goal\n\n- 中文 — done\n', encoding='utf-8')
+
+    assert md_to_adf.main(str(source), output=str(target)) == 0
+
+    assert capsys.readouterr().out == ''
+    written = cast('AdfDoc', json.loads(target.read_text(encoding='utf-8')))
+    assert written == convert(source.read_text(encoding='utf-8'))

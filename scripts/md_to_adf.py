@@ -19,7 +19,7 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-"""Translate CommonMark into Atlassian Document Format, on stdout.
+"""Translate CommonMark into Atlassian Document Format, on stdout or into a file.
 
 Parses with markdown-it-py, what mdformat normalises these files with, so the
 conversion agrees with the formatter. An unmapped construct raises: a ticket
@@ -27,7 +27,7 @@ that quietly loses a paragraph is worse than one that fails to upload.
 
 Run through uv, which supplies markdown-it-py:
 
-  uv run scripts/md_to_adf.py FILE [--skip-title]
+  uv run scripts/md_to_adf.py FILE [--skip-title] [--output OUT]
   uv run scripts/md_to_adf.py -
 """
 
@@ -166,7 +166,10 @@ def marked_nodes(nodes: list[SyntaxTreeNode], *, marks: list[AdfMark]) -> list[A
             case 'text':
                 append_text(out, node.content, marks)
             case 'code_inline':
-                append_text(out, node.content, [*marks, {'type': 'code'}])
+                # ADF lets `code` share a node only with `link`; Jira refuses
+                # the whole document over a code span that is also bold.
+                kept = [mark for mark in marks if mark['type'] == 'link']
+                append_text(out, node.content, [*kept, {'type': 'code'}])
             case 'strong':
                 out.extend(
                     marked_nodes(node.children, marks=[*marks, {'type': 'strong'}])
@@ -234,12 +237,14 @@ def merge_adjacent(nodes: list[AdfNode]) -> list[AdfNode]:
 def main(
     file: Annotated[Positional[str], arg(metavar='FILE')],
     skip_title: bool = False,
+    output: str | None = None,
 ) -> int:
     """Translate CommonMark into Atlassian Document Format.
 
     Args:
         file: markdown file, or '-' for stdin
         skip_title: drop a leading level-1 heading
+        output: file to write the ADF to, instead of stdout
     """
     # Pinned to UTF-8, or the locale decides and em dashes break it.
     markdown = (
@@ -253,8 +258,11 @@ def main(
         print(f'{file}: no ADF mapping for {unmapped}', file=sys.stderr)
         return 1
 
-    body = json.dumps(document, indent=2, ensure_ascii=False)
-    _ = sys.stdout.buffer.write(f'{body}\n'.encode('utf-8'))
+    body = f'{json.dumps(document, indent=2, ensure_ascii=False)}\n'
+    if output is None:
+        _ = sys.stdout.buffer.write(body.encode('utf-8'))
+    else:
+        _ = Path(output).write_text(body, encoding='utf-8')
     return 0
 
 

@@ -102,11 +102,10 @@ clippy:
       --all-targets -- \
         -D warnings
 
-# Convert a markdown file to Atlassian Document Format on stdout (for Jira descriptions).
-md-to-adf FILE *ARGS:
-    # Silent: the ADF is meant to be redirected into a file, so nothing else may
-    # reach stdout.
-    @{{ NIX_DEV }} uv run scripts/md_to_adf.py {{ FILE }} {{ ARGS }}
+# Convert a markdown file to Atlassian Document Format, on stdout or `--output FILE` (for Jira descriptions).
+@md-to-adf FILE *ARGS:
+    # Quiet as a whole, comments included, so stdout carries the ADF alone.
+    {{ NIX_DEV }} uv run scripts/md_to_adf.py {{ FILE }} {{ ARGS }}
 
 # Lint, type-check and test the Python uv workspace (bmc-tui + harness).
 python:

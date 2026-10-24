@@ -101,7 +101,7 @@ parent key as `parent` and the type as `issueType`.
 **literally** and readers see `## Goal` and `**bold**` as characters:
 
 ```bash
-just md-to-adf .tmp/jira/PROJ-123.md --skip-title > .tmp/jira/PROJ-123.json
+just md-to-adf .tmp/jira/PROJ-123.md --skip-title --output .tmp/jira/PROJ-123.json
 
 # onto an issue that exists
 acli jira workitem edit --key PROJ-123 --description-file .tmp/jira/PROJ-123.json --yes
@@ -136,6 +136,21 @@ Check that `blocks` contains `heading` and `bulletList`, `links` contains each i
 `acli` cannot upload attachments — `create`, `edit` and `--from-json` have no attachment field, and
 `acli jira workitem attachment` offers only `list` and `delete`. The MCP lists an `uploadAttachmentToJiraIssue`
 operation, untested here. Otherwise images have to be attached by hand.
+
+## Linking tickets
+
+With acli, `--out` takes the ticket that is blocked and `--in` the one that blocks it. To record that BDK-1 blocks
+BDK-2, run `acli jira workitem link create --out BDK-2 --in BDK-1 --type Blocks --yes`. Its success message prints the
+pair the other way round ("BDK-2 Blocks BDK-1"), so do not take it as the result. Check the stored direction in Jira's
+own wording instead:
+
+```bash
+acli jira workitem view BDK-1 --json --fields issuelinks \
+  | jq -r '.fields.issuelinks[] | if .inwardIssue then "\(.type.inward) \(.inwardIssue.key)" else "\(.type.outward) \(.outwardIssue.key)" end'
+```
+
+A link stored the wrong way round is removed with `acli jira workitem link delete --id <id>`; the id is each entry's
+`.id` in the same JSON.
 
 ## Jira clients
 
