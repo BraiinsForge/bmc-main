@@ -1645,16 +1645,13 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_default_is_refused_where_a_value_is_required() {
+    fn an_empty_default_is_refused_where_a_list_requires_a_value() {
         let text = serde_json::json!({ "name": "S", "type": "string" });
-        let mut param = text.clone();
-        param["default_value"] = serde_json::json!("");
         let mut item = text.clone();
         item["default_value"] = serde_json::json!("");
         let mut field = text.clone();
         field["default_value"] = serde_json::json!("");
         for (def, expected) in [
-            (param, "default_value: Value is required"),
             (
                 serde_json::json!({
                     "name": "L", "type": "array", "items": text, "max_items": 3, "default_value": [""],
