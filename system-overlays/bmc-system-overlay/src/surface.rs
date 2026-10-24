@@ -35,6 +35,7 @@ use ::deck_alarm_v1::client::deck_alarm_v1::{self, DeckAlarmV1, Snooze};
 use ::deck_device_info_v1::client::deck_device_info_v1::{
     self, DeckDeviceInfoV1, DeviceState as WireDeviceState, SetupState as WireSetupState,
 };
+use ::deck_localization_v1::client::deck_localization_v1::{self, DeckLocalizationV1};
 use ::deck_platform_v1::client::deck_platform_v1::{
     self, Capability as PlatformCapability, DeckPlatformV1,
     DisplayShape as WirePlatformDisplayShape,
@@ -42,6 +43,7 @@ use ::deck_platform_v1::client::deck_platform_v1::{
 use ::deck_upgrade_v1::UpgradeDecoder;
 use ::deck_upgrade_v1::client::deck_upgrade_v1::{self, DeckUpgradeV1};
 use anyhow::Context;
+use bmc_shared_utils::language::Language;
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_region, wl_registry, wl_seat, wl_surface, wl_touch,
@@ -125,6 +127,13 @@ struct State {
     /// (not separate ring/stop flags) so a `stop` then `ring` arriving in one
     /// round keeps the ring — the trailing event wins, preserving wire order.
     pending_alarm_event: Option<AlarmEvent>,
+
+    #[expect(
+        clippy::option_option,
+        reason = "outer Option latches event-arrived; inner None means no offered language is current"
+    )]
+    pending_language: Option<Option<Language>>,
+    pending_languages: Option<Vec<Language>>,
 
     /// Whether this overlay opted into `deck_upgrade_v1` (its
     /// `SystemOverlay::uses_upgrade`).
@@ -218,6 +227,8 @@ impl Default for State {
             wants_alarm: false,
             alarm: None,
             pending_alarm_event: None,
+            pending_language: None,
+            pending_languages: None,
             wants_upgrade: false,
             upgrade: None,
             upgrade_decoder: UpgradeDecoder::default(),
@@ -285,6 +296,30 @@ impl State {
     /// Record an `alarm_stopped` into the single latest-wins alarm slot.
     fn note_alarm_stop(&mut self) {
         self.pending_alarm_event = Some(AlarmEvent::Stop);
+    }
+
+    fn note_language(&mut self, tag: Option<&str>) {
+        let language = tag.map(|tag| {
+            Language::parse(tag).unwrap_or_else(|error| {
+                tracing::warn!(tag, %error, "not a language tag; speaking English");
+                Language::default()
+            })
+        });
+        self.pending_language = Some(language);
+    }
+
+    fn note_languages(&mut self, tags: &str) {
+        let languages = tags
+            .split_whitespace()
+            .filter_map(|tag| {
+                Language::parse(tag)
+                    .inspect_err(
+                        |error| tracing::warn!(tag, %error, "not a language tag; left out"),
+                    )
+                    .ok()
+            })
+            .collect();
+        self.pending_languages = Some(languages);
     }
 
     fn on_upgrade_event(&mut self, event: &deck_upgrade_v1::Event) {
@@ -747,6 +782,14 @@ impl LayerSurfaceClient {
         self.state.pending_alarm_event.take()
     }
 
+    /// The offered languages and the language, each as received since the last take.
+    pub fn take_localization(&mut self) -> (Option<Vec<Language>>, Option<Option<Language>>) {
+        (
+            self.state.pending_languages.take(),
+            self.state.pending_language.take(),
+        )
+    }
+
     pub fn take_upgrade_update(&mut self) -> Option<crate::overlay::UpgradeUpdate> {
         self.state.pending_upgrade_update.take()
     }
@@ -945,6 +988,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     let alarm = registry.bind::<DeckAlarmV1, _, _>(name, version.min(1), qh, ());
                     state.alarm = Some(alarm);
                 }
+                // Not opt-in like the protocols around it: every overlay renders copy.
+                "deck_localization_v1" => {
+                    let _ = registry.bind::<DeckLocalizationV1, _, _>(name, version.min(1), qh, ());
+                }
                 "deck_upgrade_v1" if state.wants_upgrade => {
                     let upgrade =
                         registry.bind::<DeckUpgradeV1, _, _>(name, version.min(3), qh, ());
@@ -1129,6 +1176,25 @@ impl Dispatch<DeckPlatformV1, ()> for State {
                 });
             }
             other => tracing::debug!(?other, "unhandled deck_platform_v1 event"),
+        }
+    }
+}
+
+impl Dispatch<DeckLocalizationV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &DeckLocalizationV1,
+        event: deck_localization_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            deck_localization_v1::Event::Language { value } => {
+                state.note_language(value.as_deref());
+            }
+            deck_localization_v1::Event::Languages { tags } => state.note_languages(&tags),
+            other => tracing::debug!(?other, "unhandled deck_localization_v1 event"),
         }
     }
 }
@@ -1453,6 +1519,27 @@ mod tests {
         assert!(
             client.commit_position(0).is_err(),
             "an unchanged offset must not bypass the remap invariant"
+        );
+    }
+
+    #[test]
+    fn a_language_arrives_as_its_tag_a_broken_tag_as_english_and_null_as_none() {
+        let mut state = State::default();
+        state.note_language(Some("zh"));
+        assert_eq!(state.pending_language, Some(Some(Language::ZH)));
+        state.note_language(Some("not a tag"));
+        assert_eq!(state.pending_language, Some(Some(Language::default())));
+        state.note_language(None);
+        assert_eq!(state.pending_language, Some(None));
+    }
+
+    #[test]
+    fn the_offered_languages_arrive_in_order_and_a_broken_tag_is_left_out() {
+        let mut state = State::default();
+        state.note_languages("en-GB zh not_a_tag");
+        assert_eq!(
+            state.pending_languages,
+            Some(vec![Language::EN_GB, Language::ZH])
         );
     }
 

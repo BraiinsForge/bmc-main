@@ -26,10 +26,10 @@ use bmc_widget::egl::{DmaBufInfo, EglContext};
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
     AlarmEvent, FenceState, FrameKind, HideFenceAction, HideFenceGate, MIN_INTER_FRAME,
-    OverlayFrames, PollGate, RenderGate, RenderOutcome, SystemOverlay, deliver_platform_events,
-    deliver_upgrade_update_and_tick, hide_fence_action, hide_fence_after_tick, overlay_needs_hide,
-    overlay_needs_render, overlay_poll_timeout, resize_transition, resolved_configured_size,
-    screen_edge_visible, whole_millis_up,
+    OverlayFrames, PollGate, RenderGate, RenderOutcome, SystemOverlay, deliver_localization,
+    deliver_platform_events, deliver_upgrade_update_and_tick, hide_fence_action,
+    hide_fence_after_tick, overlay_needs_hide, overlay_needs_render, overlay_poll_timeout,
+    resize_transition, resolved_configured_size, screen_edge_visible, whole_millis_up,
 };
 use crate::surface::LayerSurfaceClient;
 
@@ -167,6 +167,7 @@ impl HostedOverlay {
             }
         }
         deliver_platform_events(&mut *self.overlay, self.client.take_platform_events());
+        deliver_localization(&mut *self.overlay, self.client.take_localization());
         if self.overlay.uses_settings() {
             // Capabilities go first: the wire sends them first on bind, and
             // the trait promises them before any other settings event.

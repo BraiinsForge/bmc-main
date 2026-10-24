@@ -12,9 +12,11 @@ bmc-gpu-render-lock.workspace = true
 bmc-net-observe.workspace = true
 bmc-platform.workspace = true
 bmc-render.workspace = true
+bmc-shared-utils = { workspace = true, features = ["language"] }
 bmc-widget = { workspace = true, features = ["gpu"] }
 deck-alarm-v1 = { workspace = true }
 deck-device-info-v1 = { workspace = true }
+deck-localization-v1 = { workspace = true }
 deck-platform-v1 = { workspace = true }
 deck-screen-edge-v1 = { workspace = true }
 deck-settings-v1 = { workspace = true }

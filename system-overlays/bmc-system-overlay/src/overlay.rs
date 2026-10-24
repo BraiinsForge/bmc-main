@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use bmc_platform::DisplayShape;
 use bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS;
 use bmc_render::renderer::Renderer;
+use bmc_shared_utils::language::Language;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
 
@@ -810,6 +811,16 @@ pub trait SystemOverlay {
     /// Called before `tick`. Default: no-op.
     fn on_night_mode(&mut self, _active: bool, _until: Option<&str>) {}
 
+    /// The device language: once on connect and again on every change, before `tick`,
+    /// and only on a device that offers its languages.
+    /// `None` when the device no longer offers the one its setting carries, so none is current.
+    /// Default: no-op.
+    fn on_language(&mut self, _language: Option<Language>) {}
+
+    /// The languages the device offers, in its order: on connect
+    /// and on every change, before `on_language`. Default: no-op.
+    fn on_languages(&mut self, _offered: &[Language]) {}
+
     /// One-shot notification that a restart request was declined. Called
     /// before `tick`. Default: no-op.
     fn on_restart_declined(&mut self, _reason: &str) {}
@@ -909,6 +920,22 @@ pub(crate) fn deliver_platform_events(overlay: &mut dyn SystemOverlay, events: P
     }
     if let Some(name) = events.product_name {
         overlay.on_platform_product_name(&name);
+    }
+}
+
+#[expect(
+    clippy::option_option,
+    reason = "the surface's language latch, as `take_localization` hands it over"
+)]
+pub(crate) fn deliver_localization(
+    overlay: &mut dyn SystemOverlay,
+    (offered, language): (Option<Vec<Language>>, Option<Option<Language>>),
+) {
+    if let Some(offered) = offered {
+        overlay.on_languages(&offered);
+    }
+    if let Some(language) = language {
+        overlay.on_language(language);
     }
 }
 
@@ -1062,6 +1089,13 @@ mod tests {
         enabled: bool,
         caps: Option<PlatformCaps>,
         product_name: Option<String>,
+        #[expect(
+            clippy::option_option,
+            reason = "outer Option records a delivery; inner Option is what it carried"
+        )]
+        language: Option<Option<Language>>,
+        /// The offered languages, and whether they came before any language.
+        offered: Option<(Vec<Language>, bool)>,
     }
 
     impl SystemOverlay for RecordingPlatformOverlay {
@@ -1092,6 +1126,14 @@ mod tests {
 
         fn on_platform_product_name(&mut self, name: &str) {
             self.product_name = Some(name.to_owned());
+        }
+
+        fn on_language(&mut self, language: Option<Language>) {
+            self.language = Some(language);
+        }
+
+        fn on_languages(&mut self, offered: &[Language]) {
+            self.offered = Some((offered.to_vec(), self.language.is_none()));
         }
     }
 
@@ -1126,6 +1168,35 @@ mod tests {
         deliver_platform_events(&mut overlay, miner_events());
         assert_eq!(overlay.caps, None);
         assert_eq!(overlay.product_name, None);
+    }
+
+    #[test]
+    fn a_received_language_reaches_an_overlay_that_never_opted_in() {
+        let mut overlay = RecordingPlatformOverlay::default();
+        deliver_localization(&mut overlay, (None, None));
+        assert_eq!(
+            overlay.language, None,
+            "nothing received, nothing delivered"
+        );
+        deliver_localization(
+            &mut overlay,
+            (
+                Some(vec![Language::EN_GB, Language::ZH]),
+                Some(Some(Language::ZH)),
+            ),
+        );
+        assert_eq!(overlay.language, Some(Some(Language::ZH)));
+        assert_eq!(
+            overlay.offered,
+            Some((vec![Language::EN_GB, Language::ZH], true)),
+            "the offered languages come first"
+        );
+        deliver_localization(&mut overlay, (None, Some(None)));
+        assert_eq!(
+            overlay.language,
+            Some(None),
+            "a language no longer offered is delivered as none"
+        );
     }
 
     #[test]

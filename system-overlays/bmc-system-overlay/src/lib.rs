@@ -32,6 +32,7 @@ pub(crate) mod test_support;
 mod tree;
 
 pub use bmc_platform::DisplayShape;
+pub use bmc_shared_utils::language::Language;
 pub use connectivity::{Snapshot, SnapshotVersion, VersionedSnapshot, snapshot_if_changed};
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
