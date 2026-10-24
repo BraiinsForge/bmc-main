@@ -31,8 +31,12 @@ formatjs_icu_messageformat.workspace = true
 formatjs_icu_messageformat_parser.workspace = true
 icu_locale = { workspace = true, features = ["compiled_data"] }
 icu_locale_core.workspace = true
+semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
 bmc-intl-message.workspace = true

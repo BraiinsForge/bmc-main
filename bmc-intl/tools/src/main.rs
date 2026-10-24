@@ -27,6 +27,10 @@
 //!  - intl cldr-units
 //!  - intl show-units
 //!
+//! and the upstream releases the pipeline pins, moved with everything in step:
+//!  - intl bump-icu4x
+//!  - intl bump-formatjs
+//!
 //! A *surface* is a source tree whose message sites are one extraction,
 //! with a translator file in each of the firmware's language packs (`assets/intl/profile-languages/<key>/`):
 //! `system.json` for `host`, every crate that can declare copy, and `web.json` for `web`, the web app.
@@ -34,10 +38,12 @@
 //!
 //! `formatjs` is the CLI `nix/intl/formatjs-cli.nix` builds, on PATH in the dev shell.
 
+mod bump;
 mod check;
 mod cldr;
 mod extract;
 mod formatjs;
+mod nix_pin;
 mod surface;
 mod translator;
 mod untranslated;
@@ -60,7 +66,7 @@ const HELP: Styles = clap_cargo::style::CLAP_STYLING.error(AnsiColor::Red.on_def
 #[command(
     name = "intl",
     about = "Translator files of every surface: extract, verify, and list what waits for a translator; \
-             and the unit patterns of a language pack",
+             the unit patterns of a language pack; and the upstream releases the pipeline pins",
     styles = HELP
 )]
 struct Cli {
@@ -119,6 +125,20 @@ enum Command {
         /// A language with a profile pack, such as `zh`, else a pack's directory, such as `./zh`.
         pack: PathBuf,
     },
+    /// Move ICU4X to another minor: the workspace's requirements and every locked ICU4X crate,
+    /// `icu4x-datagen`, and the CLDR release the datagen of that minor is tested against.
+    ///
+    /// The blobs cut from them change with it; `just intl::bump-icu4x` writes them again after.
+    BumpIcu4x {
+        /// The minor, such as `2.4`.
+        minor: String,
+    },
+    /// Move FormatJS to another CLI release: the CLI and the workspace's formatjs crates,
+    /// at the versions that release ships.
+    BumpFormatjs {
+        /// The CLI release, such as `1.9.0`.
+        version: String,
+    },
 }
 
 #[derive(Args)]
@@ -139,6 +159,8 @@ fn main() -> ExitCode {
         } => untranslated::run(surfaces, since.as_deref(), &repo),
         Command::CldrUnits { pack } => cldr::cut(pack),
         Command::ShowUnits { pack } => cldr::show(pack, &repo),
+        Command::BumpIcu4x { minor } => bump::icu4x(minor, &repo),
+        Command::BumpFormatjs { version } => bump::formatjs(version, &repo),
     })
 }
 
@@ -184,7 +206,9 @@ mod tests {
                 "verify",
                 "untranslated",
                 "cldr-units",
-                "show-units"
+                "show-units",
+                "bump-icu4x",
+                "bump-formatjs"
             ]
         );
     }

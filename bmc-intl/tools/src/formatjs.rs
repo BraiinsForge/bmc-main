@@ -30,7 +30,7 @@ use crate::translator::Extraction;
 const FORMATJS: &str = "formatjs";
 
 /// Pins the `formatjs` release.
-const CLI_PIN: &str = "nix/intl/formatjs-cli.nix";
+pub const CLI_PIN: &str = "nix/intl/formatjs-cli.nix";
 
 /// The file holding how a message's id is hashed, which the web build reads too.
 const MESSAGE_ID: &str = "frontend/message-id.json";
@@ -65,17 +65,7 @@ fn pinned_or_refused(printed: &str, repo: &Path) -> Result<(), String> {
 
 /// The `name = "…";` binding of [`CLI_PIN`].
 fn cli_pin(repo: &Path, name: &str) -> Result<String, String> {
-    let path = repo.join(CLI_PIN);
-    let text = std::fs::read_to_string(&path).map_err(|error| console::at(&path, error))?;
-    text.lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix(name)?
-                .strip_prefix(" = \"")?
-                .strip_suffix("\";")
-        })
-        .map(str::to_owned)
-        .ok_or_else(|| format!("{} binds no `{name}`", console::path(&path)))
+    crate::nix_pin::get(&repo.join(CLI_PIN), name)
 }
 
 #[derive(serde::Deserialize)]

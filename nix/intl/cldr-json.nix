@@ -19,7 +19,8 @@
 # the grant above.
 
 # The cldr-json release every language's data is cut from.
-# Its tag is the locked ICU4X minor's `TESTED_CLDR_TAG` (`icu_provider_source`), so blobs and crates agree.
+# Its tag is the `TESTED_CLDR_TAG` of datagen's `icu_provider_source`, so blobs and crates agree;
+# `just intl::bump-icu4x` moves it with them.
 { fetchzip }:
 
 let

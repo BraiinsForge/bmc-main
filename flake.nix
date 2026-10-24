@@ -332,7 +332,7 @@
         lib = { inherit (workspace) mkInitArtifacts; };
 
         packages = workspace.packages // {
-          inherit formatjs-cli;
+          inherit formatjs-cli icu4x-datagen;
           deck-runtime-closure = checks.deck-runtime-closure;
           wasm-capture = capture.package;
           wasm-stack-usage-report = capture.stackUsageReport;

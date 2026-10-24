@@ -19,7 +19,7 @@
 # the grant above.
 
 # Fails when a committed file cut from the pinned CLDR differs from what the tooling writes now:
-# the base blob every binary embeds, and each profile pack's blob and unit patterns.
+# the base blob every binary embeds, each profile pack's blob and unit patterns, and the tests' `es-MX` blob.
 { lib, runCommand, delta, intl-cldr-blob, intl-tools, cldr-json }:
 
 runCommand "intl-cldr-data"
@@ -29,6 +29,7 @@ runCommand "intl-cldr-data"
     fileset = lib.fileset.unions [
       ../../assets/intl/cldr-base.postcard
       ../../assets/intl/profile-languages
+      ../../bmc-intl/core/fixtures/es-MX/cldr.postcard
     ];
   };
   nativeBuildInputs = [ delta intl-cldr-blob intl-tools ];
@@ -71,6 +72,9 @@ runCommand "intl-cldr-data"
 
     quiet intl-cldr-blob en "$TMPDIR/base.postcard"
     compare assets/intl/cldr-base.postcard "$TMPDIR/base.postcard" cldr-data
+
+    quiet intl-cldr-blob es-MX "$TMPDIR/es-MX.postcard"
+    compare bmc-intl/core/fixtures/es-MX/cldr.postcard "$TMPDIR/es-MX.postcard" fixture-data
 
     for pack in "$src"/assets/intl/profile-languages/*/; do
       key="$(basename "$pack")"

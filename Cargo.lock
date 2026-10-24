@@ -894,10 +894,14 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
+ "semver",
  "serde",
  "serde_json",
  "syn 2.0.119",
  "tempfile",
+ "toml",
+ "toml_edit",
+ "ureq",
 ]
 
 [[package]]

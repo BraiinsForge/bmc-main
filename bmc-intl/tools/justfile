@@ -7,6 +7,7 @@ import '../../common.justfile'
 ROOT := source_directory() / "../.."
 BASE_BLOB := ROOT / "assets/intl/cldr-base.postcard"
 PROFILE_PACKS := ROOT / "assets/intl/profile-languages"
+ES_MX_FIXTURE := ROOT / "bmc-intl/core/fixtures/es-MX/cldr.postcard"
 
 # The dev shell entered by the flake's own path, so a recipe runs from wherever it was called.
 DEV_SHELL := if env("IN_NIX_SHELL", "") == "" { "nix develop " + quote(ROOT) + " --command " } else { "" }
@@ -39,6 +40,10 @@ untranslated *ARGS:
 cldr-data:
     nix run {{ quote(ROOT) }}#intl-cldr-blob -- en {{ quote(BASE_BLOB) }}
 
+# Write the `es-MX` blob `bmc-intl`'s tests read a three-step chain through.
+fixture-data:
+    nix run {{ quote(ROOT) }}#intl-cldr-blob -- es-MX {{ quote(ES_MX_FIXTURE) }}
+
 # Write a language pack's CLDR data, unit patterns and compiled flag, for the language DIR is named after.
 [no-cd]
 [positional-arguments]
@@ -59,3 +64,15 @@ show-units PACK:
 [positional-arguments]
 check-packs +ROOTS:
     {{ CARGO }} bmc-languages -- check {{ quote(PROFILE_PACKS) }} "$@"
+
+# Move ICU4X to MINOR, such as `2.4`, with datagen and CLDR in step; then re-cut every blob from them.
+bump-icu4x MINOR:
+    {{ INTL }} bump-icu4x {{ quote(MINOR) }}
+    just --justfile {{ source_file() }} cldr-data
+    for pack in {{ quote(PROFILE_PACKS) }}/*/; do just --justfile {{ source_file() }} pack-data "$pack" || exit 1; done
+    just --justfile {{ source_file() }} fixture-data
+
+# Move FormatJS to the CLI release VERSION, such as `1.9.0`, with the crates it ships; then extract, as ids may hash anew.
+bump-formatjs VERSION:
+    {{ INTL }} bump-formatjs {{ quote(VERSION) }}
+    just --justfile {{ source_file() }} extract
