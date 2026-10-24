@@ -20,7 +20,9 @@
 
 use std::fmt;
 
-use icu_locale_core::subtags::{Language as LanguageSubtag, Region, Script, Variants, language};
+use icu_locale_core::subtags::{
+    Language as LanguageSubtag, Region, Script, Variants, language, region,
+};
 use icu_locale_core::{LanguageIdentifier, Locale, ParseError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -36,8 +38,13 @@ pub struct Language {
 }
 
 impl Language {
-    /// English, the source every catalog translates.
+    /// English as the messages are written: the source every catalog translates.
+    /// The device speaks it as [`Self::EN_GB`] or [`Self::EN_US`], never as plain `en`.
     pub const EN: Self = Self::bare(language!("en"));
+    /// British English, what a device speaks until its owner picks another language.
+    pub const EN_GB: Self = Self::regional(language!("en"), region!("GB"));
+    /// American English.
+    pub const EN_US: Self = Self::regional(language!("en"), region!("US"));
     /// Simplified Chinese, spelled as its pack is filed: Han simplified is `zh`'s default script.
     pub const ZH: Self = Self::bare(language!("zh"));
 
@@ -46,6 +53,14 @@ impl Language {
             primary,
             script: None,
             region: None,
+        }
+    }
+
+    const fn regional(primary: LanguageSubtag, region: Region) -> Self {
+        Self {
+            primary,
+            script: None,
+            region: Some(region),
         }
     }
 
@@ -93,9 +108,10 @@ impl From<Language> for LanguageIdentifier {
     }
 }
 
+/// The language a fresh device speaks.
 impl Default for Language {
     fn default() -> Self {
-        Self::EN
+        Self::EN_GB
     }
 }
 
@@ -156,6 +172,19 @@ mod tests {
         let primary = |tag| Language::parse(tag).expect("BUG: a tag").primary();
         assert_eq!(primary("zh-Hant-TW"), Language::ZH);
         assert_eq!(primary("cs"), czech());
+    }
+
+    #[test]
+    fn both_englishes_are_their_regional_tags() {
+        for (tag, language) in [("en-GB", Language::EN_GB), ("en-US", Language::EN_US)] {
+            assert_eq!(Language::parse(tag).expect("BUG: a tag"), language);
+            assert_eq!(language.tag(), tag);
+        }
+        assert_eq!(
+            Language::default(),
+            Language::EN_GB,
+            "a fresh device is British"
+        );
     }
 
     #[test]

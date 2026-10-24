@@ -32,7 +32,7 @@ pub struct Localized {
 }
 
 impl Localized {
-    /// English, as every surface starts before the device's language is announced.
+    /// British English, as every surface starts before the device's language is announced.
     #[must_use]
     pub fn new() -> Self {
         let language = Language::default();
@@ -98,9 +98,9 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut localized = Localized::new();
-        assert_eq!(localized.language(), Language::EN);
+        assert_eq!(localized.language(), Language::EN_GB);
         assert!(
-            !localized.set(Language::EN),
+            !localized.set(Language::EN_GB),
             "the starting language again is not a change"
         );
         assert!(localized.set(Language::ZH));

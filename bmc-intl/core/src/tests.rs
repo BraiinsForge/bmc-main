@@ -112,9 +112,11 @@ fn skipped(report: &LoadReport) -> String {
 fn a_message_speaks_english_with_no_pack() {
     let (translations, report) = Translations::load(&[]);
     assert!(report.is_clean(), "{report}");
-    let intl = translations.formatter(Language::ZH);
-    let text = format_message!(intl, id: "probe", default_message: "Connect to {ssid}", values: { ssid: "deck" });
-    assert_eq!(text, "Connect to deck");
+    for language in [Language::ZH, Language::EN_GB, Language::EN_US] {
+        let intl = translations.formatter(language);
+        let text = format_message!(intl, id: "probe", default_message: "Connect to {ssid}", values: { ssid: "deck" });
+        assert_eq!(text, "Connect to deck", "{language}");
+    }
 }
 
 #[test]
@@ -202,28 +204,54 @@ fn a_later_root_overrides_an_earlier_one_entry_by_entry() {
 }
 
 #[test]
-fn the_offered_languages_are_english_then_every_accepted_pack() {
+fn the_offered_languages_are_both_englishes_then_every_accepted_pack() -> R {
     let (translations, report) = Translations::load(&[profile()]);
     assert!(report.is_clean(), "{report}");
     assert_eq!(report.languages, [Language::ZH]);
-    assert_eq!(translations.languages(), [Language::EN, Language::ZH]);
+    assert_eq!(
+        translations.languages(),
+        [Language::EN_GB, Language::EN_US, Language::ZH]
+    );
     assert_eq!(translations.info(Language::ZH).native_name, "简体中文");
-    assert_eq!(translations.info(Language::EN).native_name, "English");
+    assert_eq!(
+        translations.info(Language::EN_GB).native_name,
+        "English (UK)"
+    );
+    assert_eq!(
+        translations.info(Language::EN_US).native_name,
+        "English (US)"
+    );
     assert!(
         translations.units(Language::ZH).is_some(),
         "the profile pack's unit patterns"
     );
+    for language in translations.languages() {
+        assert!(
+            translations.flag_svg(language)?.is_some()
+                && translations.flag_bin(language)?.is_some(),
+            "{language}'s flag, as drawn and compiled"
+        );
+    }
     assert!(
-        translations
-            .flag_svg(Language::ZH)
-            .expect("BUG: the profile's flag reads")
-            .is_some()
-            && translations
-                .flag_bin(Language::ZH)
-                .expect("BUG: the profile's flag reads")
-                .is_some(),
-        "the profile pack's flag, as drawn and compiled"
+        translations.flag_svg(Language::EN)?.is_none(),
+        "the source is no language anyone picks"
     );
+    Ok(())
+}
+
+#[test]
+fn every_built_in_english_flag_is_drawable() -> R {
+    let translations = Translations::load(&[]).0;
+    for language in crate::BUILT_IN_ENGLISHES.map(|english| english.language) {
+        let compiled = translations
+            .flag_bin(language)?
+            .expect("BUG: every built-in English carries a flag");
+        assert!(
+            bmc_ui::svg::svg_viewbox(&compiled).is_some(),
+            "{language}'s compiled flag has a viewBox the device can draw"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -233,7 +261,7 @@ fn a_pack_without_cldr_data_for_its_language_is_refused() {
     let (translations, report) = Translations::load(&[root.path()]);
     assert_eq!(report.refused.len(), 1, "{report}");
     assert_eq!(report.refused[0].0.tag(), "cs");
-    assert_eq!(translations.languages(), [Language::EN]);
+    assert_eq!(translations.languages(), [Language::EN_GB, Language::EN_US]);
 }
 
 #[test]
@@ -241,41 +269,59 @@ fn a_pack_with_no_cldr_blob_is_refused_on_its_facts_even_where_the_base_blob_spe
     let root = Root::new();
     root.write("cs", "info.json", r#"{ "name": "Čeština" }"#)
         .write(
-            "en-GB",
+            "en-AU",
             "system.json",
             &translator_file(&[("colour", "Color", Some("Colour"))]),
         );
     let (translations, report) = Translations::read(&[root.path()]);
-    assert_eq!(translations.languages(), [Language::EN], "{report}");
+    assert_eq!(
+        translations.languages(),
+        [Language::EN_GB, Language::EN_US],
+        "{report}"
+    );
     assert_eq!(
         report
             .refused
             .iter()
             .map(|(language, _)| language.tag())
             .collect::<Vec<_>>(),
-        ["cs", "en-GB"],
+        ["cs", "en-AU"],
         "{report}"
     );
 }
 
 #[test]
-fn a_pack_is_named_by_its_pack_language_which_is_neither_english_nor_und() {
+fn a_pack_is_named_by_its_pack_language_which_is_neither_a_built_in_english_nor_und() {
     let root = Root::new();
     root.language("zh-Hans")
         .language("sr-Cyrl")
         .language("CS")
         .language("en")
+        .language("en-GB")
+        .language("en-AU")
         .language("und")
-        .language("und-Latn");
+        .language("und-Latn")
+        .write_bytes("en-AU", "cldr.postcard", &base_blob());
     let (_, report) = Translations::load(&[root.path()]);
     let skipped = skipped(&report);
     assert!(skipped.contains("zh-Hans: name it `zh`"), "{report}");
     assert!(skipped.contains("sr-Cyrl: name it `sr`"), "{report}");
     assert!(skipped.contains("CS: name it `cs`"), "{report}");
-    assert!(skipped.contains("English is the code's own"), "{report}");
+    assert!(
+        skipped.contains("en: English is the code's own"),
+        "{report}"
+    );
+    assert!(
+        skipped.contains("en-GB: English is the code's own"),
+        "{report}"
+    );
+    assert_eq!(
+        report.languages,
+        [Language::parse("en-AU").expect("BUG: a tag")],
+        "another region's English is a pack like any: {report}"
+    );
     assert!(skipped.contains("und: names no language"), "{report}");
     assert!(skipped.contains("und-Latn: names no language"), "{report}");
-    assert!(report.languages.is_empty(), "{report}");
 }
 
 #[test]
@@ -337,7 +383,7 @@ fn a_later_roots_misspelt_direction_is_skipped_and_the_language_stays() {
     );
     assert_eq!(
         translations.languages(),
-        [Language::EN, Language::ZH],
+        [Language::EN_GB, Language::EN_US, Language::ZH],
         "{report}"
     );
 }
@@ -357,7 +403,11 @@ fn a_later_root_turning_a_language_right_to_left_withdraws_it() {
             &translator_file(&[("web", "Settings", Some("设置"))]),
         );
     let (translations, report) = Translations::load(&[profile(), later.path()]);
-    assert_eq!(translations.languages(), [Language::EN], "{report}");
+    assert_eq!(
+        translations.languages(),
+        [Language::EN_GB, Language::EN_US],
+        "{report}"
+    );
     assert_eq!(report.refused.len(), 1, "{report}");
     assert!(report.languages.is_empty(), "{report}");
     assert!(translations.web(Language::ZH).is_none(), "{report}");
@@ -374,7 +424,7 @@ fn a_later_root_turning_a_language_left_to_right_offers_it_unrefused() {
     let (translations, report) = Translations::load(&[earlier.path(), profile()]);
     assert_eq!(
         translations.languages(),
-        [Language::EN, Language::ZH],
+        [Language::EN_GB, Language::EN_US, Language::ZH],
         "{report}"
     );
     assert!(report.is_clean(), "{report}");
@@ -662,7 +712,10 @@ fn reading_the_facts_opens_no_translation_or_cldr_data() -> R {
 
     let (translations, report) = Translations::read(&[root.path()]);
     assert!(report.is_clean(), "{report}");
-    assert_eq!(translations.languages(), [Language::EN, cs]);
+    assert_eq!(
+        translations.languages(),
+        [Language::EN_GB, Language::EN_US, cs]
+    );
     assert_eq!(translations.info(cs).native_name, "Čeština");
     assert!(
         matches!(translations.flag_svg(cs), Ok(Some(_)))
@@ -707,7 +760,7 @@ fn reading_the_facts_passes_over_contents_that_cannot_be_opened() -> R {
     assert!(report.is_clean(), "{report}");
     assert_eq!(
         translations.languages(),
-        [Language::EN, Language::parse("cs")?]
+        [Language::EN_GB, Language::EN_US, Language::parse("cs")?]
     );
     Ok(())
 }
@@ -795,7 +848,10 @@ fn a_pack_stands_on_its_own_cldr_data() {
         ["zh-SG"],
         "the zh pack's data does not stand in for a regional pack's own: {report}"
     );
-    assert_eq!(translations.languages(), [Language::EN, Language::ZH]);
+    assert_eq!(
+        translations.languages(),
+        [Language::EN_GB, Language::EN_US, Language::ZH]
+    );
 }
 
 /// A `zh` pack translating `a`, `b` and a `web.json` entry,

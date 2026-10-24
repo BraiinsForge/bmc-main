@@ -38,7 +38,7 @@ fn the_firmware_s_own_packs_check_clean() {
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        "✓ languages: en, zh"
+        "✓ languages: en-GB, en-US, zh"
     );
     assert!(output.stderr.is_empty(), "{output:?}");
 }
@@ -74,7 +74,7 @@ fn a_pack_with_a_broken_entry_fails_the_check_and_is_named() {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        "✓ languages: en, zh",
+        "✓ languages: en-GB, en-US, zh",
         "the broken entry is left out, its language is not"
     );
     let findings = String::from_utf8_lossy(&output.stderr);

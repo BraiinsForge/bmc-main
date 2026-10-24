@@ -81,6 +81,35 @@ pub use packs::{LanguageInfo, LoadReport, TextDirection};
 
 const DEFAULT_LOCALE: &str = "en";
 
+/// An English the device speaks without a pack, the source's words in it.
+struct BuiltInEnglish {
+    language: Language,
+    native_name: &'static str,
+    flag_svg: &'static [u8],
+    flag_bin: &'static [u8],
+}
+
+const BUILT_IN_ENGLISHES: [BuiltInEnglish; 2] = [
+    BuiltInEnglish {
+        language: Language::EN_GB,
+        native_name: "English (UK)",
+        flag_svg: include_bytes!("../../../assets/intl/english/gb.svg"),
+        flag_bin: bmc_shared_utils::include_lfs!("../../../assets/intl/english/gb.bin"),
+    },
+    BuiltInEnglish {
+        language: Language::EN_US,
+        native_name: "English (US)",
+        flag_svg: include_bytes!("../../../assets/intl/english/us.svg"),
+        flag_bin: bmc_shared_utils::include_lfs!("../../../assets/intl/english/us.bin"),
+    },
+];
+
+fn built_in_english(language: Language) -> Option<&'static BuiltInEnglish> {
+    BUILT_IN_ENGLISHES
+        .iter()
+        .find(|english| english.language == language)
+}
+
 /// `pattern` parsed exactly as the runtime parses it.
 fn parse_pattern(pattern: &str) -> Result<Vec<MessageFormatElement>, ParserError> {
     Parser::new(pattern, Options::default_parser_options()).parse()
@@ -462,10 +491,12 @@ impl Translations {
         self.version
     }
 
-    /// English, then the packs'.
+    /// The built-in Englishes, then the packs'.
     #[must_use]
     pub fn languages(&self) -> Vec<Language> {
-        std::iter::once(Language::EN)
+        BUILT_IN_ENGLISHES
+            .iter()
+            .map(|english| english.language)
             .chain(
                 self.packs
                     .iter()
@@ -496,8 +527,10 @@ impl Translations {
         self.pack_for(language)
             .and_then(|pack| self.presentation.info.get(&pack).cloned())
             .unwrap_or_else(|| LanguageInfo {
-                // No pack is ever filed under English.
-                native_name: if language == Language::EN {
+                // No pack is ever filed under a built-in English.
+                native_name: if let Some(english) = built_in_english(language) {
+                    english.native_name.to_owned()
+                } else if language == Language::EN {
                     "English".to_owned()
                 } else {
                     language.tag()
@@ -516,11 +549,14 @@ impl Translations {
         self.contents_for(language)?.widgets.get(uid).cloned()
     }
 
-    /// At most [`packs::MAX_FLAG_BYTES`] long.
+    /// Built in for each built-in English; a pack's at most [`packs::MAX_FLAG_BYTES`] long.
     ///
     /// # Errors
     /// The filesystem's, when the pack's file can no longer be read.
     pub fn flag_svg(&self, language: Language) -> std::io::Result<Option<Cow<'static, [u8]>>> {
+        if let Some(english) = built_in_english(language) {
+            return Ok(Some(Cow::Borrowed(english.flag_svg)));
+        }
         self.flag(&self.presentation.flags_svg, language)
     }
 
@@ -529,6 +565,9 @@ impl Translations {
     /// # Errors
     /// The filesystem's, when the pack's file can no longer be read.
     pub fn flag_bin(&self, language: Language) -> std::io::Result<Option<Cow<'static, [u8]>>> {
+        if let Some(english) = built_in_english(language) {
+            return Ok(Some(Cow::Borrowed(english.flag_bin)));
+        }
         self.flag(&self.presentation.flags_bin, language)
     }
 

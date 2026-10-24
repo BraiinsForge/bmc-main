@@ -108,10 +108,13 @@ impl LoadReport {
 
 impl fmt::Display for LoadReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "languages: {}", Language::EN)?;
-        for language in &self.languages {
-            write!(f, ", {language}")?;
-        }
+        let languages = crate::BUILT_IN_ENGLISHES
+            .iter()
+            .map(|english| english.language)
+            .chain(self.languages.iter().copied())
+            .map(|language| language.to_string())
+            .collect::<Vec<_>>();
+        write!(f, "languages: {}", languages.join(", "))?;
         for (language, reason) in &self.refused {
             write!(f, "\nrefused {language}: {reason}")?;
         }
@@ -265,7 +268,8 @@ fn read_language(dir: &Path, found: &mut Facts, report: &mut LoadReport) {
             return;
         }
     };
-    if key == Language::EN {
+    // A pack for a built-in English would list it twice; another region's English is a pack like any.
+    if key == Language::EN || crate::built_in_english(key).is_some() {
         report.skip(dir, "English is the code's own");
         return;
     }
