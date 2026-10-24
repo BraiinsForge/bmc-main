@@ -17,6 +17,8 @@ Walk the Definition of Done from `.ai/instructions.md` and confirm each item is 
 - code follows project conventions, no linter/formatter warnings
 - no TODOs without an issue number
 - the implementation matches the plan
+- a branch that changes a protocol XML (`deck-widget.xml`, `deck-*-v1/protocol/*.xml`) passes the checklist in the
+  `bmc-wayland-protocol-changes` skill
 
 ## 2. Validate the tree
 
