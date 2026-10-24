@@ -14,20 +14,16 @@ or on the next push.
 After **any** edit — Rust, Markdown, justfile, TOML, Nix, docs, configs — run plain `just validate` before creating a
 fixup or proposing the change is "done".
 
-`just validate` runs, in order:
-
-1. `nix fmt` — workspace formatter across Rust, Nix, Python, Shell, Protobuf, TOML, YAML, Markdown.
-2. Cargo clippy across the full workspace, all features, all targets, with `-D warnings`.
-3. Repo content checks (the `content` nix check).
-4. Final marker: `@echo "validate: OK"` — if you don't see that line, validate failed or is still running.
+What it runs is the `validate` recipe in the root `justfile`, each step commented there. It ends with `validate: OK`; if
+you don't see that line, validate failed or is still running.
 
 Under a coding agent the tools run in their own quiet modes (`common.justfile` detects the agent's environment and sets
 `CARGO_TERM_QUIET`, `PYTEST_ADDOPTS=-q`, and drops nix's `-L`), and nextest reports through `scripts/nextest_report.py`:
 one line per test binary naming every passing test by module, failures printed in full. So the output is the echoed step
 commands, the test lines, and whatever failed. A failure ends with `error: recipe validate failed on line N` — that line
 of the root `justfile` is the step; the diagnostic sits just above it. To see one test run by name, use
-`just test CRATE`, or `just test-widget WIDGET FILTER` for a widget's `#[wasm_test]`s on `wasm32` (a shared lib under
-`widgets-wasm/lib/` works too).
+`just test CRATE`, or `just test-widget WIDGET FILTER` for a widget's `#[wasm_test]`s on `wasm32` (see
+`docs/devel/wasm-widgets/unit-testing.md`).
 
 The frontend is not part of `just validate`: on a branch that changes `frontend/`, run `just fe::validate` separately.
 

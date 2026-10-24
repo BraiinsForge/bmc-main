@@ -7,61 +7,16 @@ individual topics.
 
 ## Documents
 
-### [Best Practices](best-practices.md)
-
-The conventions and host behaviors every widget should follow: the pure-logic/wasm split, formatting numbers through the
-host so `number_format` applies, CSS-style alignment on both axes, stable typography, explicit handling of missing data,
-and the pre-commit verification checklist. Read this first.
-
-### [Params](params.md)
-
-How a widget declares per-instance operator configuration in `manifest.json`, regenerates the typed `manifest_params.rs`
-module, reads params from widget code, reacts to `on_params_update`, and exercises params in the testbed.
-
-### [Credentials](credentials.md)
-
-How a widget declares the accounts it needs in `manifest.json`, embeds the generated placeholders in outbound requests,
-and reacts to `on_credentials_update`. The secret never reaches the widget: the host substitutes it as the request
-leaves, and refuses to send a service-pinned credential anywhere else.
-
-### [System Settings](system-settings.md)
-
-How a widget reads the host-defined system-wide snapshot: timezone, formatting settings, next alarm, and night mode.
-Covers the fixed SDK accessors, update hook, and the testbed's System panel.
-
-### [Unit Testing](unit-testing.md)
-
-How a widget marks its tests with `#[wasm_test]` to run them on `wasm32` in the runtime's interpreter, the `just`
-recipes and plain cargo commands that run them, and the hermetic host a test runs against: refused network, in-memory
-storage, a fixed clock and seed, and the fuel and timeout limits.
-
-### [Regression Testing](regression-testing.md)
-
-How a widget opts into the `wasm-regression` CI gate: the `capture/config.toml` toggle, recording fixtures (with params
-and system snapshots baked into the header), setting baselines, verifying locally, and refreshing baselines after
-intentional visual changes.
-
-### [Memory](memory.md)
-
-How guest linear memory is split between the stack, static data, and heap; why release widgets reserve a 64 KiB stack;
-the measured stack high-water marks behind that budget; and how to keep future widgets within it.
-
-### [Display Geometry](display-geometry.md)
-
-How a widget reads its assigned viewport and the active logical display through `widget_viewport()` and
-`display_info()`. Covers rectangular versus round shape signals, platform viewports, testbed platform selection, and the
-temporary compatibility fallback to `widget_size()` / `SizeVariant::{Small, Medium, Large, Full}`.
-
-### [Timers](timers.md)
-
-How a widget does periodic background work that continues while it is off screen: starting and stopping a timer, what a
-tick may do, the limits a timer runs under, and how missed periods arrive.
-
-### [Resource Handles](resource-handles.md)
-
-How a widget holds what it starts in the background: timers, sockets, WebSockets, mDNS, SSDP and UDP discovery, HTTP
-listeners and polls. Each comes with the only handle to it, dropping the handle ends it, and a callback borrows the
-handle rather than owning a copy.
+- [Best Practices](best-practices.md) — the conventions every widget follows.
+- [Params](params.md) — per-instance operator configuration.
+- [Credentials](credentials.md) — the accounts a widget needs, whose secrets only the host sees.
+- [System Settings](system-settings.md) — the host's system-wide settings and their updates.
+- [Unit Testing](unit-testing.md) — writing and running a widget's `#[wasm_test]`s.
+- [Regression Testing](regression-testing.md) — the visual-regression gate and its baselines.
+- [Memory](memory.md) — guest memory layout and the stack budget.
+- [Display Geometry](display-geometry.md) — the widget's viewport and the display around it.
+- [Timers](timers.md) — periodic background work, on screen or off.
+- [Resource Handles](resource-handles.md) — the handles that keep background work alive.
 
 ## Previews
 

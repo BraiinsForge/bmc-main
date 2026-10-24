@@ -1,21 +1,20 @@
 # WASM Widget Best Practices
 
 Read this before writing or changing a WASM widget. It collects the conventions and the easy-to-miss host behaviors
-every widget under `widgets-wasm/` (and the SDK examples) should follow. Pair it with [Params](params.md),
-[System Settings](system-settings.md), [Display Geometry](display-geometry.md), and
-[Regression Testing](regression-testing.md), which go deeper on individual topics.
+every widget under `widgets-wasm/` (and the SDK examples) should follow. The other pages in [WASM Widgets](README.md) go
+deeper on individual topics.
 
 ## Split pure logic from the wasm boundary
 
-Keep formatting, layout decisions, data models, and payload parsing in ordinary modules that compile and unit-test on
-the host. Gate only the code that touches host imports — `render`, fetch handling, and anything using `render_ui`,
-`widget_viewport`, `fetch`, `log_warn!`, or `format_number!` — behind `#[cfg(target_arch = "wasm32")]`.
+Keep formatting, layout decisions, data models, and payload parsing in plain functions that take values and return
+values. Gate behind `#[cfg(target_arch = "wasm32")]` only the code that calls what the SDK offers on `wasm32` alone.
 
-This keeps the bulk of the widget testable with `cargo test` while the host-only surface stays thin. When a host helper
-has to feed pure logic (number formatting is the common case), split the function so the pure part — sign, currency
-symbol, unit assembly, "unavailable" handling — stays host-tested and only the magnitude crosses the boundary.
+A plain function is what a `#[wasm_test]` covers cheaply: the test hands it values, with no widget state or host traffic
+to set up. When a host-bound helper has to feed such logic, split it so the pure part — sign, currency symbol, unit
+assembly, "unavailable" handling — stays a plain function and only the host's result crosses the boundary. See
+[Unit Testing](unit-testing.md) for writing and running the tests.
 
-## Format numbers through the host
+## Format numbers with `format_number!`
 
 Do not hand-roll digit grouping or decimal separators. Use the SDK `format_number!` macro so the device `number_format`
 system setting (grouping symbol and decimal mark) is applied; otherwise the same value prints identically in every
@@ -27,9 +26,6 @@ use bmc_wasm_sdk::format_number;
 let price = format_number!(104_250.0, 0); // "104,250" / "104 250" / "104.250"
 let rate = format_number!(93.42, 2); //      "93.42"   / "93,42"
 ```
-
-`format_number!` is a host call and only runs on `wasm32`. Give native/test builds a plain fallback for the magnitude
-and compose sign, symbol, and unit around it in pure code.
 
 ## Read system settings and react to changes
 
@@ -140,11 +136,5 @@ taste.
 
 ## Verify before committing
 
-Run these from the repository root unless noted:
-
-- `nix develop -c cargo test -p <widget>` (from `widgets-wasm/`) — host unit tests.
-- `nix develop -c cargo clippy -p <widget> --target wasm32-unknown-unknown -- -D warnings` — the lint gate that actually
-  compiles the gated render code.
-- `just validate` — among its gates, rejects allocating `fmt` macros in widget code.
-- `just wasm::verify <widget>` — the visual-regression gate. Headless rendering and baseline capture need a GPU
-  (`/dev/dri`); without one this only runs in CI.
+Run `just validate`. After a change to what a widget draws, also run `just wasm::verify <widget>`; see
+[Regression Testing](regression-testing.md).
