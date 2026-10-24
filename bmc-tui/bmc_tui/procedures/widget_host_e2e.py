@@ -33,7 +33,7 @@ from contextlib import chdir
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, final
+from typing import final
 
 from bmc_tui import catalog, console
 from bmc_tui.device import Device
@@ -439,7 +439,7 @@ class Evidence:
 @dataclass
 class WidgetHostE2e:
     device: str  # IP or host of the target Deck
-    profile: Literal["release", "debug"] = "release"  # build profile for every variant
+    profile: catalog.Profile = "release"  # build profile for every variant
     max_jobs: int | None = None  # nix --max-jobs for builds; None uses nix's own config
 
     def _deploy(self, cwd: Path, packages: Sequence[str]) -> None:

@@ -61,11 +61,12 @@ The deployed packages are installed into the bmc profile and activated immediate
 compositor. Core changes still let the service orchestrator restart the compositor when its executable dependencies
 change.
 
-`--profile {release,debug}` selects the build (default `release`). `debug` deploys the parallel
+`--profile {release,debug,profiling}` selects the build (default `release`). `debug` deploys the parallel
 `.#deck-packages-debug.*` set — the same package names built with the `profiling` feature on the compositor and the wasm
 host — so the device surfaces the `mesh::profile` channel: ii-stopwatch timing, MemProbe RSS, and the asset-cache
-write/evict/restore events. Use it when you need to observe or measure on-device, then redeploy `release` to drop the
-overhead.
+write/evict/restore events. `profiling` deploys `.#deck-packages-profiling.*`, the same feature on a release-optimised
+build, for timings that match what ships. Use either when you need to observe or measure on-device, then redeploy
+`release` to drop the overhead.
 
 ```sh
 nix run .#deck -- deploy --device 192.168.1.2 --profile debug
@@ -190,7 +191,8 @@ to the live one and looks just as authoritative:
 | `widgets.log`, `bmc-wasm-thin.log` | widget / thin-client host                                              |
 | `bmc-wasm-host.log`                | **stale legacy** — predates the versioned host log; do not grep this   |
 
-On a `--profile debug` build the asset-cache observability rides the `mesh::profile` target in the live wasm-host log:
+On a `--profile debug` or `--profile profiling` build the asset-cache observability rides the `mesh::profile` target in
+the live wasm-host log:
 
 ```sh
 ssh root@192.168.1.2 'grep -E "cache write|dormant eviction|cache restore" \

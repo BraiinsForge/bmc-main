@@ -77,6 +77,7 @@ round count, the 60 s idle and the two-widget wait suit a scene with two widgets
 ## What the release host cannot tell you
 
 - **Per-frame time.** The "wasm host render frame" log exists only with the host's `profiling` feature, which the debug
-  deck profile builds. Measuring a frame means a debug-profile deploy on both sides; tell the user that cost first.
+  and profiling deck profiles build. Measuring a frame means a `--profile profiling` deploy on both sides, whose release
+  optimisation keeps the timings true to what ships; tell the user that cost first.
 - **Per-mapping residency.** The device kernel has no `/proc/<pid>/smaps`; `RssFile` in `/proc/<pid>/status` is the
   total.

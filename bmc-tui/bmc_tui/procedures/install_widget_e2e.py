@@ -32,7 +32,6 @@ run.
 """
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from bmc_tui import catalog, console, nix
 from bmc_tui.device import Device
@@ -45,7 +44,7 @@ class InstallWidgetE2e:
     device: str  # IP or host of the target Deck
     widget: str = "widget-blockheight"  # leaf widget to remove then reinstall
     packages: list[str] = field(default_factory=list)  # flake attrs; empty → every deck package
-    profile: Literal["release", "debug"] = "release"  # debug → profiling build (mesh::profile)
+    profile: catalog.Profile = "release"  # debug / profiling → mesh::profile build
     password: str = ""  # device web password; empty when none is set
     port: int = 8080  # binary-cache port served on this machine
     index_port: int = 8081  # package-index port served on this machine

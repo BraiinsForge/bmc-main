@@ -675,6 +675,7 @@ def test_resolve_leaves_qualified_attrs_alone() -> None:
 def test_package_prefix_maps_profile_to_attr_root() -> None:
     assert catalog.package_prefix("release") == ".#deck-packages"
     assert catalog.package_prefix("debug") == ".#deck-packages-debug"
+    assert catalog.package_prefix("profiling") == ".#deck-packages-profiling"
 
 
 def test_resolve_uses_debug_prefix_for_discovery_and_bare_names() -> None:

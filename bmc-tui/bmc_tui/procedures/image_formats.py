@@ -60,16 +60,17 @@ CONFIG = RemotePath("/etc/bmc/config.json")
 BACKUP = RemotePath("/etc/bmc/config.json.image-formats-bak")
 PROCESS = "bmc-wasm-host"
 WIDGET = "image"
-# The profiling build is required below, so debug is the only sensible profile.
-WIDGET_ATTR = Attr(".#deck-packages-debug.widget-image")
-HOST_ATTR = Attr(".#deck-packages-debug.core.pkg.wasmHost")
+# The profiling check below needs the feature on; a release-optimised build
+# keeps the logged decode costs true to what ships.
+WIDGET_ATTR = Attr(".#deck-packages-profiling.widget-image")
+HOST_ATTR = Attr(".#deck-packages-profiling.core.pkg.wasmHost")
 # Only the profiling build contains this literal, so the running binary
 # proves what is installed. A log does not: it outlives its own build.
 PROFILING_MARKER = "host_image_probe"
 WIDGET_TYPE_ID = "f9e4956c-719d-450c-909d-4fc9d4440e15"
 
 # Repo-relative: the fixtures ship with the tree, not the CLI, and the
-# `.#deck-packages-debug` attrs above already require the flake root as cwd.
+# `.#deck-packages-profiling` attrs above already require the flake root as cwd.
 FIXTURES = Path("bmc-tui/fixtures/image-formats")
 
 # Mirrors bmc_wasm_protocol::FetchOutcome: the host puts its wire value in

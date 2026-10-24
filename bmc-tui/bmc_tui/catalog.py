@@ -47,7 +47,7 @@ from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import IO, NewType, Protocol, TypedDict, cast
+from typing import IO, Literal, NewType, Protocol, TypedDict, cast
 
 import msgspec
 from rich.markup import escape
@@ -138,7 +138,7 @@ def ensure_profiling_build(dev: Device, process: str, marker: str) -> str:
     require(
         found == "yes",
         f"{process} carries no profiling instrumentation — redeploy with "
-        + f"`deck deploy --device {dev.host} --profile debug`",
+        + f"`deck deploy --device {dev.host} --profile profiling`",
     )
     return path.rsplit("/", 1)[-1]
 
@@ -318,14 +318,16 @@ def verify_post_upgrade(dev: Device, *, expect: str) -> str:
 
 _DECK_PACKAGES = ".#deck-packages"
 
+Profile = Literal["release", "debug", "profiling"]
 
-def package_prefix(profile: str) -> str:
+
+def package_prefix(profile: Profile) -> str:
     """Flake attr root for a build `profile`.
 
-    `release` deploys `.#deck-packages.<name>`; any other profile (e.g.
-    `debug`) deploys the parallel `.#deck-packages-<profile>.<name>` set, which
-    is the same packages built with the compositor + wasm-host `profiling`
-    feature on (the mesh::profile timing/memory channel).
+    `release` deploys `.#deck-packages.<name>`; any other profile (`debug`,
+    `profiling`) deploys the parallel `.#deck-packages-<profile>.<name>` set:
+    the same packages with the compositor + wasm-host `profiling` feature on
+    (the mesh::profile timing/memory channel).
     """
     return _DECK_PACKAGES if profile == "release" else f"{_DECK_PACKAGES}-{profile}"
 

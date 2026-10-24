@@ -33,7 +33,6 @@ production servers it disables, nor its trusted signing key outlive the run.
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 from bmc_tui import catalog, console, nix
 from bmc_tui.device import Device
@@ -51,7 +50,7 @@ def default_key_dir() -> Path:
 class UpgradeE2e:
     device: str  # IP or host of the target Deck
     packages: list[str] = field(default_factory=list)  # flake attrs; empty → every deck package
-    profile: Literal["release", "debug"] = "release"  # debug → profiling build (mesh::profile)
+    profile: catalog.Profile = "release"  # debug / profiling → mesh::profile build
     password: str = ""  # device web password; empty when none is set
     port: int = 8080  # binary-cache port served on this machine
     index_port: int = 8081  # package-index port served on this machine

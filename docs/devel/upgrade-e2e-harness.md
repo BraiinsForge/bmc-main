@@ -34,7 +34,8 @@ installed profile, which the harness does not yet plumb (`upgrade-server` accept
 passes it).
 
 `--password` passes the device's web password to the gRPC `Login` call; the default empty string matches a device with
-no password set. `--profile debug` serves the profiling build set, mirroring `deck deploy`.
+no password set. `--profile debug` and `--profile profiling` serve the matching profiling build set, mirroring
+`deck deploy`.
 
 An upgrade is only offered when the served build differs from the installed profile — a version bump or a store-path
 change at the same version both count. Rebuilding from the same tree that deployed the device produces identical store

@@ -694,20 +694,18 @@ let
     inherit (wasmWidgetsModule) wasmWidgets thin host wasmLauncher mkWasmWidget;
   };
 
-  # Same package set, built debug with the `profiling` feature on the
-  # compositor and the wasm host — exposed as `deck-packages-debug` so a
-  # `deck deploy --profile debug` surfaces the mesh::profile timing/memory
-  # channel on the device. Package names are identical to the release set;
-  # only the build profile differs.
-  wasmWidgetsModuleDebug = wasmWidgetsFor bmc.profiles.armv7-glibc-debug [ "profiling" ];
-  armv7PackageDefsDebug = import ./nix/packages.nix {
-    inherit bmc armv7Pkgs deps;
-    inherit wasmWidgetCatalog;
-    profile = bmc.profiles.armv7-glibc-debug;
-    openwrtFeatures = [ "profiling" ];
-    bmcVersion = defaultBmcVersion;
-    inherit (wasmWidgetsModuleDebug) wasmWidgets thin host wasmLauncher mkWasmWidget;
-  };
+  # The deck package set, built at `profile` with the `profiling` feature
+  # on the compositor and the wasm host.
+  # Package names match the release set; `deck deploy --profile` picks one.
+  armv7ProfilingPackageDefs = profile:
+    let m = wasmWidgetsFor profile [ "profiling" ];
+    in import ./nix/packages.nix {
+      inherit bmc armv7Pkgs deps;
+      inherit wasmWidgetCatalog profile;
+      openwrtFeatures = [ "profiling" ];
+      bmcVersion = defaultBmcVersion;
+      inherit (m) wasmWidgets thin host wasmLauncher mkWasmWidget;
+    };
 
   initArtifacts = import ./nix/init-artifacts.nix {
     inherit self pkgs lib;
@@ -738,7 +736,8 @@ in
   # through the `legacyPackages` chain.
   legacyPackages = {
     deck-packages = armv7PackageDefs;
-    deck-packages-debug = armv7PackageDefsDebug;
+    deck-packages-debug = armv7ProfilingPackageDefs bmc.profiles.armv7-glibc-debug;
+    deck-packages-profiling = armv7ProfilingPackageDefs bmc.profiles.armv7-glibc-release;
   };
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts.packages // {
     inherit bmc-video-play-armv7;

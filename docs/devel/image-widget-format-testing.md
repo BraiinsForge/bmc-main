@@ -91,7 +91,7 @@ mis-served file cannot read as a decoder regression. Their served lengths must a
 by body length, so a repeat would make a probe or decode impossible to attribute. Hard fail.
 
 **The build behind the numbers is named.** The decoders live in the independently packaged `bmc-wasm-host`, so checking
-the widget alone says nothing about the decoder build. The run builds `.#deck-packages-debug.core.pkg.wasmHost`,
+the widget alone says nothing about the decoder build. The run builds `.#deck-packages-profiling.core.pkg.wasmHost`,
 compares that store path with the running host, and warns before measuring a different build.
 
 **The profiling build is proven from the running binary**, by finding a literal that only the instrumented build

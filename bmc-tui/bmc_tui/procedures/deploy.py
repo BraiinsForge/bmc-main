@@ -28,7 +28,6 @@ its own nix-store binary, not a full nix.
 """
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from bmc_tui import catalog, console, nix
 from bmc_tui.device import Device
@@ -40,7 +39,8 @@ class Deploy:
     device: str  # IP or host of the target Deck
     # flake attrs; empty → core, bmc-nix-cli + all widgets
     packages: list[str] = field(default_factory=list)
-    profile: Literal["release", "debug"] = "release"  # debug → profiling build (mesh::profile)
+    # debug / profiling → mesh::profile build, debug- or release-optimised
+    profile: catalog.Profile = "release"
     dry_run: bool = False  # build + probe for real; log device mutations without executing
     max_jobs: int | None = None  # nix --max-jobs for the build; None → use nix's own config
 
