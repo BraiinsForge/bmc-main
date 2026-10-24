@@ -90,14 +90,17 @@ attributes and enforced by any JSON Schema validator. Examples:
 `bmc_widget_manifest`. Examples:
 
 - Every `default_value`, whether on a param, a list item kind or an object field, passes the same checks an operator's
-  value must: enum options, `[min, max]`, finiteness, the timezone list, the string length cap and length bounds.
+  value must: enum options, `[min, max]`, finiteness, the timezone list, the string length cap and length bounds —
+  except that a required param may default to `""`, as below.
 - `enum_control: radio` only alongside `enum_values` — a radio group with no options has nothing to offer.
 - `min` ≤ `max`, `step > 0`, finite f64 bounds — guard against manifests that compile structurally but produce a UI the
   operator cannot use.
 - Every number `enum_values` option lies within `min` and `max` — an option outside them could never be saved.
 - A number's `unit`, when set, is not blank.
-- A required string, whether a param, a list item or a required object field, is never empty, as a default or a value:
-  the operator UI reads empty text as no value.
+- An edit never saves a required string empty, whether a param, a list item or a required object field: the operator UI
+  reads empty text as no value. A list item's or required object field's default is never empty either. A required param
+  may still default to `""`, as 26.09 manifests do; a new instance starts with it, and the widget receives `""` until an
+  edit saves a value.
 - `min_length` ≤ `max_length` ≤ 1024 (`MAX_PARAM_STRING_LENGTH`), and every `enum_values` option fits those bounds — an
   option outside them could never be saved.
 - `+0.0` / `-0.0` collide in `Double` `enum_values` dedup — JSON Schema treats them as distinct numbers; the runtime

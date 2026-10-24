@@ -912,7 +912,7 @@ impl ParamDefinition {
         if !self.is_optional && !self.kind.has_default_value() {
             return Err(invalid("required param needs default_value".into()));
         }
-        self.kind.validate(name, !self.is_optional)
+        self.kind.validate(name)
     }
 }
 
@@ -940,9 +940,11 @@ impl ParamKind {
         }
     }
 
-    fn validate(&self, name: &str, required: bool) -> Result<(), FieldSchemaError> {
+    fn validate(&self, name: &str) -> Result<(), FieldSchemaError> {
         match self.shape() {
-            Shape::Scalar(scalar) => scalar.validate(required),
+            // 26.09 loaded a required param defaulting to "" and widgets built for it still ship;
+            // a new instance starts from it, but no edit saves it.
+            Shape::Scalar(scalar) => scalar.validate(EmptyDefault::Allowed),
             Shape::Array(array) => array.validate(),
         }
         .map_err(|reason| FieldSchemaError::InvalidParam {
@@ -996,7 +998,7 @@ impl ListItems {
 
     fn validate(&self) -> Result<(), String> {
         match self.shape() {
-            ItemShape::Scalar(scalar) => scalar.validate(true),
+            ItemShape::Scalar(scalar) => scalar.validate(EmptyDefault::Refused),
             ItemShape::Object(object) => object.validate(),
         }
     }
@@ -1036,11 +1038,22 @@ impl ObjectParam {
             field
                 .kind
                 .as_scalar()
-                .validate(!field.is_optional)
+                .validate(if field.is_optional {
+                    EmptyDefault::Allowed
+                } else {
+                    EmptyDefault::Refused
+                })
                 .map_err(|reason| format!("field {:?}: {reason}", key.as_str()))?;
         }
         Ok(())
     }
+}
+
+/// Whether a string default may be the empty text the operator UI reads as no value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmptyDefault {
+    Allowed,
+    Refused,
 }
 
 impl<'a> Scalar<'a> {
@@ -1075,7 +1088,7 @@ impl<'a> Scalar<'a> {
         }
     }
 
-    fn validate(self, required: bool) -> Result<(), String> {
+    fn validate(self, empty_default: EmptyDefault) -> Result<(), String> {
         match self {
             Scalar::String(p) => p.validate(),
             Scalar::Double(p) => p.validate(),
@@ -1083,7 +1096,9 @@ impl<'a> Scalar<'a> {
             Scalar::Boolean(_) | Scalar::Timezone(_) => Ok(()),
         }?;
         let default = self.default_value();
-        if required && matches!(&default, ParamValue::String(s) if s.is_empty()) {
+        if empty_default == EmptyDefault::Refused
+            && matches!(&default, ParamValue::String(s) if s.is_empty())
+        {
             return Err("default_value: Value is required".into());
         }
         if matches!(default, ParamValue::Null) {

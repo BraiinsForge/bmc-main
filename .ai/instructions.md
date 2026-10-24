@@ -352,6 +352,8 @@ The server registers no gRPC reflection; point grpcurl at the protos instead
   object-row fields and credential fields alike. A default the validator would refuse gets seeded into forms and
   widgets, and the next save fails on a value nobody typed.
 - Route the default through the shared check rather than a per-kind special case, so the two cannot drift apart.
+- The one exception is a required top-level string param defaulting to `""`, which 26.09 manifests carry: it loads and
+  seeds a new instance, though no edit saves it. A list item's or required object field's empty default stays refused.
 
 ## Decision Framework
 
