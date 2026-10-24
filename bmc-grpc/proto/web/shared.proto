@@ -92,3 +92,13 @@ enum UnitSystem {
   // mph, miles, lbs, etc.
   UNIT_SYSTEM_IMPERIAL = 2;
 }
+
+// Artwork carried inline rather than behind a URL, so the typed API is the whole contract:
+// a URL would add an unchecked side route, and these icons are few, small and listed rarely.
+message Icon {
+  // IANA media type of `data`, e.g. "image/svg+xml".
+  string mime_type = 1;
+  // Base64 of the icon bytes, so any format
+  // the frontend can render travels unchanged.
+  string data = 2;
+}

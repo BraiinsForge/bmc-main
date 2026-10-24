@@ -29,13 +29,15 @@ import type { EmptySchema } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_empty } from "@bufbuild/protobuf/wkt";
 import type { ManifestParamDefinition } from "./field_schema_pb";
 import { file_web_field_schema } from "./field_schema_pb";
+import type { Icon } from "./shared_pb";
+import { file_web_shared } from "./shared_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file web/credential_management.proto.
  */
 export const file_web_credential_management: GenFile = /*@__PURE__*/
-  fileDesc("Ch93ZWIvY3JlZGVudGlhbF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIi2wEKDkNyZWRlbnRpYWxUeXBlEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSOAoGZmllbGRzGAQgAygLMiguYnJhaWlucy5ibWMud2ViLk1hbmlmZXN0UGFyYW1EZWZpbml0aW9uEi0KBmVncmVzcxgFIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5FZ3Jlc3NQb2xpY3kSKAoEaWNvbhgGIAEoCzIVLmJyYWlpbnMuYm1jLndlYi5JY29uSACIAQFCBwoFX2ljb24iJwoESWNvbhIRCgltaW1lX3R5cGUYASABKAkSDAoEZGF0YRgCIAEoCSIjCgxFZ3Jlc3NQb2xpY3kSEwoLYWxsb3dfaG9zdHMYASADKAkiVwoaR2V0Q3JlZGVudGlhbFR5cGVzUmVzcG9uc2USOQoQY3JlZGVudGlhbF90eXBlcxgBIAMoCzIfLmJyYWlpbnMuYm1jLndlYi5DcmVkZW50aWFsVHlwZTJ4ChtDcmVkZW50aWFsTWFuYWdlbWVudFNlcnZpY2USWQoSR2V0Q3JlZGVudGlhbFR5cGVzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GisuYnJhaWlucy5ibWMud2ViLkdldENyZWRlbnRpYWxUeXBlc1Jlc3BvbnNlYgZwcm90bzM", [file_google_protobuf_empty, file_web_field_schema]);
+  fileDesc("Ch93ZWIvY3JlZGVudGlhbF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIi2wEKDkNyZWRlbnRpYWxUeXBlEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSOAoGZmllbGRzGAQgAygLMiguYnJhaWlucy5ibWMud2ViLk1hbmlmZXN0UGFyYW1EZWZpbml0aW9uEi0KBmVncmVzcxgFIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5FZ3Jlc3NQb2xpY3kSKAoEaWNvbhgGIAEoCzIVLmJyYWlpbnMuYm1jLndlYi5JY29uSACIAQFCBwoFX2ljb24iIwoMRWdyZXNzUG9saWN5EhMKC2FsbG93X2hvc3RzGAEgAygJIlcKGkdldENyZWRlbnRpYWxUeXBlc1Jlc3BvbnNlEjkKEGNyZWRlbnRpYWxfdHlwZXMYASADKAsyHy5icmFpaW5zLmJtYy53ZWIuQ3JlZGVudGlhbFR5cGUyeAobQ3JlZGVudGlhbE1hbmFnZW1lbnRTZXJ2aWNlElkKEkdldENyZWRlbnRpYWxUeXBlcxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRorLmJyYWlpbnMuYm1jLndlYi5HZXRDcmVkZW50aWFsVHlwZXNSZXNwb25zZWIGcHJvdG8z", [file_google_protobuf_empty, file_web_field_schema, file_web_shared]);
 
 /**
  * A kind of account a widget can bind. Each field key is the interpolation variable a widget
@@ -87,39 +89,6 @@ export const CredentialTypeSchema: GenMessage<CredentialType> = /*@__PURE__*/
   messageDesc(file_web_credential_management, 0);
 
 /**
- * Artwork carried inline rather than behind a URL, so it does not
- * depend on the type having a directory to be served from.
- *
- * Firmware bakes its own; a type admitted from elsewhere
- * can carry one the same way, whatever produced the bytes.
- *
- * @generated from message braiins.bmc.web.Icon
- */
-export type Icon = Message<"braiins.bmc.web.Icon"> & {
-  /**
-   * IANA media type of `data`, e.g. "image/svg+xml".
-   *
-   * @generated from field: string mime_type = 1;
-   */
-  mimeType: string;
-
-  /**
-   * Base64 of the icon bytes, so any format
-   * the frontend can render travels unchanged.
-   *
-   * @generated from field: string data = 2;
-   */
-  data: string;
-};
-
-/**
- * Describes the message braiins.bmc.web.Icon.
- * Use `create(IconSchema)` to create a new message.
- */
-export const IconSchema: GenMessage<Icon> = /*@__PURE__*/
-  messageDesc(file_web_credential_management, 1);
-
-/**
  * @generated from message braiins.bmc.web.EgressPolicy
  */
 export type EgressPolicy = Message<"braiins.bmc.web.EgressPolicy"> & {
@@ -134,7 +103,7 @@ export type EgressPolicy = Message<"braiins.bmc.web.EgressPolicy"> & {
  * Use `create(EgressPolicySchema)` to create a new message.
  */
 export const EgressPolicySchema: GenMessage<EgressPolicy> = /*@__PURE__*/
-  messageDesc(file_web_credential_management, 2);
+  messageDesc(file_web_credential_management, 1);
 
 /**
  * @generated from message braiins.bmc.web.GetCredentialTypesResponse
@@ -151,7 +120,7 @@ export type GetCredentialTypesResponse = Message<"braiins.bmc.web.GetCredentialT
  * Use `create(GetCredentialTypesResponseSchema)` to create a new message.
  */
 export const GetCredentialTypesResponseSchema: GenMessage<GetCredentialTypesResponse> = /*@__PURE__*/
-  messageDesc(file_web_credential_management, 3);
+  messageDesc(file_web_credential_management, 2);
 
 /**
  * @generated from service braiins.bmc.web.CredentialManagementService

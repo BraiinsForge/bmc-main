@@ -1233,6 +1233,113 @@ impl ::buffa::Message for SoundInfo {
         self.name.clear();
     }
 }
+/// Artwork carried inline rather than behind a URL, so the typed API is the whole contract:
+/// a URL would add an unchecked side route, and these icons are few, small and listed rarely.
+#[derive(Clone, PartialEq, Default)]
+pub struct Icon {
+    /// IANA media type of `data`, e.g. "image/svg+xml".
+    ///
+    /// Field 1: `mime_type`
+    pub mime_type: ::buffa::alloc::string::String,
+    /// Base64 of the icon bytes, so any format
+    /// the frontend can render travels unchanged.
+    ///
+    /// Field 2: `data`
+    pub data: ::buffa::alloc::string::String,
+}
+impl ::core::fmt::Debug for Icon {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("Icon")
+            .field("mime_type", &self.mime_type)
+            .field("data", &self.data)
+            .finish()
+    }
+}
+impl Icon {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.Icon";
+}
+::buffa::impl_default_instance!(Icon);
+impl ::buffa::MessageName for Icon {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "Icon";
+    const FULL_NAME: &'static str = "braiins.bmc.web.Icon";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.Icon";
+}
+impl ::buffa::Message for Icon {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if !self.mime_type.is_empty() {
+            size += 1u64 + ::buffa::types::string_encoded_len(&self.mime_type) as u64;
+        }
+        if !self.data.is_empty() {
+            size += 1u64 + ::buffa::types::string_encoded_len(&self.data) as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if !self.mime_type.is_empty() {
+            ::buffa::types::put_string_field(1u32, &self.mime_type, buf);
+        }
+        if !self.data.is_empty() {
+            ::buffa::types::put_string_field(2u32, &self.data, buf);
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(&mut self.mime_type, buf)?;
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(&mut self.data, buf)?;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.mime_type.clear();
+        self.data.clear();
+    }
+}
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(i32)]
@@ -8698,116 +8805,6 @@ impl ::buffa::Message for CredentialType {
         self.fields.clear();
         self.egress = ::buffa::MessageField::none();
         self.icon = ::buffa::MessageField::none();
-    }
-}
-/// Artwork carried inline rather than behind a URL, so it does not
-/// depend on the type having a directory to be served from.
-///
-/// Firmware bakes its own; a type admitted from elsewhere
-/// can carry one the same way, whatever produced the bytes.
-#[derive(Clone, PartialEq, Default)]
-pub struct Icon {
-    /// IANA media type of `data`, e.g. "image/svg+xml".
-    ///
-    /// Field 1: `mime_type`
-    pub mime_type: ::buffa::alloc::string::String,
-    /// Base64 of the icon bytes, so any format
-    /// the frontend can render travels unchanged.
-    ///
-    /// Field 2: `data`
-    pub data: ::buffa::alloc::string::String,
-}
-impl ::core::fmt::Debug for Icon {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_struct("Icon")
-            .field("mime_type", &self.mime_type)
-            .field("data", &self.data)
-            .finish()
-    }
-}
-impl Icon {
-    /// Protobuf type URL for this message, for use with `Any::pack` and
-    /// `Any::unpack_if`.
-    ///
-    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
-    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.Icon";
-}
-::buffa::impl_default_instance!(Icon);
-impl ::buffa::MessageName for Icon {
-    const PACKAGE: &'static str = "braiins.bmc.web";
-    const NAME: &'static str = "Icon";
-    const FULL_NAME: &'static str = "braiins.bmc.web.Icon";
-    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.Icon";
-}
-impl ::buffa::Message for Icon {
-    /// Returns the total encoded size in bytes.
-    ///
-    /// Accumulates in `u64` (which cannot overflow for in-memory
-    /// data) and saturates to `u32` at return, so a message whose
-    /// encoded size exceeds the 2 GiB protobuf limit yields a value
-    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
-    /// points reject, never a silently wrapped size.
-    #[allow(clippy::let_and_return)]
-    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        let mut size = 0u64;
-        if !self.mime_type.is_empty() {
-            size += 1u64 + ::buffa::types::string_encoded_len(&self.mime_type) as u64;
-        }
-        if !self.data.is_empty() {
-            size += 1u64 + ::buffa::types::string_encoded_len(&self.data) as u64;
-        }
-        ::buffa::saturate_size(size)
-    }
-    fn write_to(
-        &self,
-        _cache: &mut ::buffa::SizeCache,
-        buf: &mut impl ::buffa::EncodeSink,
-    ) {
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        if !self.mime_type.is_empty() {
-            ::buffa::types::put_string_field(1u32, &self.mime_type, buf);
-        }
-        if !self.data.is_empty() {
-            ::buffa::types::put_string_field(2u32, &self.data, buf);
-        }
-    }
-    fn merge_field(
-        &mut self,
-        tag: ::buffa::encoding::Tag,
-        buf: &mut impl ::buffa::bytes::Buf,
-        ctx: ::buffa::DecodeContext<'_>,
-    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
-        #[allow(unused_imports)]
-        use ::buffa::bytes::Buf as _;
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        match tag.field_number() {
-            1u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::types::merge_string(&mut self.mime_type, buf)?;
-            }
-            2u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::types::merge_string(&mut self.data, buf)?;
-            }
-            _ => {
-                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
-            }
-        }
-        ::core::result::Result::Ok(())
-    }
-    fn clear(&mut self) {
-        self.mime_type.clear();
-        self.data.clear();
     }
 }
 #[derive(Clone, PartialEq, Default)]
@@ -19968,6 +19965,254 @@ pub mod __buffa {
         impl ::buffa::HasMessageView for super::super::SoundInfo {
             type View<'a> = SoundInfoView<'a>;
             type ViewHandle = SoundInfoOwnedView;
+        }
+        /// Artwork carried inline rather than behind a URL, so the typed API is the whole contract:
+        /// a URL would add an unchecked side route, and these icons are few, small and listed rarely.
+        #[derive(Clone, Debug, Default)]
+        pub struct IconView<'a> {
+            /// IANA media type of `data`, e.g. "image/svg+xml".
+            ///
+            /// Field 1: `mime_type`
+            pub mime_type: &'a str,
+            /// Base64 of the icon bytes, so any format
+            /// the frontend can render travels unchanged.
+            ///
+            /// Field 2: `data`
+            pub data: &'a str,
+        }
+        impl<'a> ::buffa::MessageView<'a> for IconView<'a> {
+            type Owned = super::super::Icon;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.mime_type = ::buffa::types::borrow_str(&mut cur)?;
+                    }
+                    2u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.data = ::buffa::types::borrow_str(&mut cur)?;
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<super::super::Icon, ::buffa::DecodeError> {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<super::super::Icon, ::buffa::DecodeError> {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::Icon {
+                    mime_type: self.mime_type.to_string(),
+                    data: self.data.to_string(),
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for IconView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                if !self.mime_type.is_empty() {
+                    size
+                        += 1u64
+                            + ::buffa::types::string_encoded_len(&self.mime_type) as u64;
+                }
+                if !self.data.is_empty() {
+                    size += 1u64 + ::buffa::types::string_encoded_len(&self.data) as u64;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                _cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                if !self.mime_type.is_empty() {
+                    ::buffa::types::put_string_field(1u32, &self.mime_type, buf);
+                }
+                if !self.data.is_empty() {
+                    ::buffa::types::put_string_field(2u32, &self.data, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for IconView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "Icon";
+            const FULL_NAME: &'static str = "braiins.bmc.web.Icon";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.Icon";
+        }
+        ::buffa::impl_default_view_instance!(IconView);
+        ::buffa::impl_view_reborrow!(IconView);
+        /** Self-contained, `'static` owned view of a `Icon` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`IconView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`IconView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct IconOwnedView(::buffa::OwnedView<IconView<'static>>);
+        impl IconOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    IconOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    IconOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::Icon,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    IconOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`IconView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &IconView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::Icon {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// IANA media type of `data`, e.g. "image/svg+xml".
+            ///
+            /// Field 1: `mime_type`
+            #[must_use]
+            pub fn mime_type(&self) -> &'_ str {
+                self.0.reborrow().mime_type
+            }
+            /// Base64 of the icon bytes, so any format
+            /// the frontend can render travels unchanged.
+            ///
+            /// Field 2: `data`
+            #[must_use]
+            pub fn data(&self) -> &'_ str {
+                self.0.reborrow().data
+            }
+        }
+        impl ::core::convert::From<::buffa::OwnedView<IconView<'static>>>
+        for IconOwnedView {
+            fn from(inner: ::buffa::OwnedView<IconView<'static>>) -> Self {
+                IconOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<IconOwnedView>
+        for ::buffa::OwnedView<IconView<'static>> {
+            fn from(wrapper: IconOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<::buffa::OwnedView<IconView<'static>>>
+        for IconOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<IconView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::Icon {
+            type View<'a> = IconView<'a>;
+            type ViewHandle = IconOwnedView;
         }
         #[derive(Clone, Debug, Default)]
         pub struct AlarmView<'a> {
@@ -34912,257 +35157,6 @@ pub mod __buffa {
         impl ::buffa::HasMessageView for super::super::CredentialType {
             type View<'a> = CredentialTypeView<'a>;
             type ViewHandle = CredentialTypeOwnedView;
-        }
-        /// Artwork carried inline rather than behind a URL, so it does not
-        /// depend on the type having a directory to be served from.
-        ///
-        /// Firmware bakes its own; a type admitted from elsewhere
-        /// can carry one the same way, whatever produced the bytes.
-        #[derive(Clone, Debug, Default)]
-        pub struct IconView<'a> {
-            /// IANA media type of `data`, e.g. "image/svg+xml".
-            ///
-            /// Field 1: `mime_type`
-            pub mime_type: &'a str,
-            /// Base64 of the icon bytes, so any format
-            /// the frontend can render travels unchanged.
-            ///
-            /// Field 2: `data`
-            pub data: &'a str,
-        }
-        impl<'a> ::buffa::MessageView<'a> for IconView<'a> {
-            type Owned = super::super::Icon;
-            fn decode_view(
-                buf: &'a [u8],
-            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
-                let __limit = ::core::cell::Cell::new(
-                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
-                );
-                let __elem = ::core::cell::Cell::new(
-                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
-                );
-                <Self as ::buffa::MessageView>::decode_view_ctx(
-                    buf,
-                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
-                        .with_element_memory(&__elem),
-                )
-            }
-            fn decode_view_with_ctx(
-                buf: &'a [u8],
-                ctx: ::buffa::DecodeContext<'_>,
-            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
-                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
-            }
-            #[inline]
-            fn merge_view_field(
-                &mut self,
-                tag: ::buffa::encoding::Tag,
-                cur: &'a [u8],
-                _before_tag: &'a [u8],
-                ctx: ::buffa::DecodeContext<'_>,
-            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
-                let _ = ctx;
-                #[allow(unused_variables)]
-                let view = self;
-                let mut cur = cur;
-                match tag.field_number() {
-                    1u32 => {
-                        ::buffa::encoding::check_wire_type(
-                            tag,
-                            ::buffa::encoding::WireType::LengthDelimited,
-                        )?;
-                        view.mime_type = ::buffa::types::borrow_str(&mut cur)?;
-                    }
-                    2u32 => {
-                        ::buffa::encoding::check_wire_type(
-                            tag,
-                            ::buffa::encoding::WireType::LengthDelimited,
-                        )?;
-                        view.data = ::buffa::types::borrow_str(&mut cur)?;
-                    }
-                    _ => {
-                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
-                    }
-                }
-                ::core::result::Result::Ok(cur)
-            }
-            fn to_owned_message(
-                &self,
-            ) -> ::core::result::Result<super::super::Icon, ::buffa::DecodeError> {
-                self.to_owned_from_source(None)
-            }
-            #[allow(clippy::useless_conversion, clippy::needless_update)]
-            fn to_owned_from_source(
-                &self,
-                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
-            ) -> ::core::result::Result<super::super::Icon, ::buffa::DecodeError> {
-                #[allow(unused_imports)]
-                use ::buffa::alloc::string::ToString as _;
-                let _ = __buffa_src;
-                ::core::result::Result::Ok(super::super::Icon {
-                    mime_type: self.mime_type.to_string(),
-                    data: self.data.to_string(),
-                    ..::core::default::Default::default()
-                })
-            }
-        }
-        impl<'a> ::buffa::ViewEncode<'a> for IconView<'a> {
-            #[allow(clippy::needless_borrow, clippy::let_and_return)]
-            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
-                #[allow(unused_imports)]
-                use ::buffa::Enumeration as _;
-                let mut size = 0u64;
-                if !self.mime_type.is_empty() {
-                    size
-                        += 1u64
-                            + ::buffa::types::string_encoded_len(&self.mime_type) as u64;
-                }
-                if !self.data.is_empty() {
-                    size += 1u64 + ::buffa::types::string_encoded_len(&self.data) as u64;
-                }
-                ::buffa::saturate_size(size)
-            }
-            #[allow(clippy::needless_borrow)]
-            fn write_to(
-                &self,
-                _cache: &mut ::buffa::SizeCache,
-                buf: &mut impl ::buffa::EncodeSink,
-            ) {
-                #[allow(unused_imports)]
-                use ::buffa::Enumeration as _;
-                if !self.mime_type.is_empty() {
-                    ::buffa::types::put_string_field(1u32, &self.mime_type, buf);
-                }
-                if !self.data.is_empty() {
-                    ::buffa::types::put_string_field(2u32, &self.data, buf);
-                }
-            }
-        }
-        impl<'a> ::buffa::MessageName for IconView<'a> {
-            const PACKAGE: &'static str = "braiins.bmc.web";
-            const NAME: &'static str = "Icon";
-            const FULL_NAME: &'static str = "braiins.bmc.web.Icon";
-            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.Icon";
-        }
-        ::buffa::impl_default_view_instance!(IconView);
-        ::buffa::impl_view_reborrow!(IconView);
-        /** Self-contained, `'static` owned view of a `Icon` message.
-
- Wraps [`::buffa::OwnedView`]`<`[`IconView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
-
- Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`IconView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
-        #[derive(Clone, Debug)]
-        pub struct IconOwnedView(::buffa::OwnedView<IconView<'static>>);
-        impl IconOwnedView {
-            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
-            ///
-            /// The view borrows directly from the buffer's data; the buffer is
-            /// retained inside the returned handle.
-            ///
-            /// # Errors
-            ///
-            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
-            /// protobuf data.
-            pub fn decode(
-                bytes: ::buffa::bytes::Bytes,
-            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
-                ::core::result::Result::Ok(
-                    IconOwnedView(::buffa::OwnedView::decode(bytes)?),
-                )
-            }
-            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
-            /// max message size).
-            ///
-            /// # Errors
-            ///
-            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
-            /// exceeds the configured limits.
-            pub fn decode_with_options(
-                bytes: ::buffa::bytes::Bytes,
-                opts: &::buffa::DecodeOptions,
-            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
-                ::core::result::Result::Ok(
-                    IconOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
-                )
-            }
-            /// Build from an owned message via an encode → decode round-trip.
-            ///
-            /// # Errors
-            ///
-            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
-            /// message's encoded size exceeds the 2 GiB protobuf limit, or
-            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
-            /// somehow invalid (should not happen for well-formed messages).
-            pub fn from_owned(
-                msg: &super::super::Icon,
-            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
-                ::core::result::Result::Ok(
-                    IconOwnedView(::buffa::OwnedView::from_owned(msg)?),
-                )
-            }
-            /// Borrow the full [`IconView`] with its lifetime tied to `&self`.
-            #[must_use]
-            pub fn view(&self) -> &IconView<'_> {
-                self.0.reborrow()
-            }
-            /// Convert to the owned message type.
-            ///
-            /// Infallible: this type's constructors wire-decode their
-            /// buffer, and a view produced by wire decoding always
-            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
-            /// whose contract also governs handles converted from a raw
-            /// [`::buffa::OwnedView`].
-            #[must_use]
-            pub fn to_owned_message(&self) -> super::super::Icon {
-                self.0.to_owned_message()
-            }
-            /// The underlying bytes buffer.
-            #[must_use]
-            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
-                self.0.bytes()
-            }
-            /// Consume the handle, returning the underlying bytes buffer.
-            #[must_use]
-            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
-                self.0.into_bytes()
-            }
-            /// IANA media type of `data`, e.g. "image/svg+xml".
-            ///
-            /// Field 1: `mime_type`
-            #[must_use]
-            pub fn mime_type(&self) -> &'_ str {
-                self.0.reborrow().mime_type
-            }
-            /// Base64 of the icon bytes, so any format
-            /// the frontend can render travels unchanged.
-            ///
-            /// Field 2: `data`
-            #[must_use]
-            pub fn data(&self) -> &'_ str {
-                self.0.reborrow().data
-            }
-        }
-        impl ::core::convert::From<::buffa::OwnedView<IconView<'static>>>
-        for IconOwnedView {
-            fn from(inner: ::buffa::OwnedView<IconView<'static>>) -> Self {
-                IconOwnedView(inner)
-            }
-        }
-        impl ::core::convert::From<IconOwnedView>
-        for ::buffa::OwnedView<IconView<'static>> {
-            fn from(wrapper: IconOwnedView) -> Self {
-                wrapper.0
-            }
-        }
-        impl ::core::convert::AsRef<::buffa::OwnedView<IconView<'static>>>
-        for IconOwnedView {
-            fn as_ref(&self) -> &::buffa::OwnedView<IconView<'static>> {
-                &self.0
-            }
-        }
-        impl ::buffa::HasMessageView for super::super::Icon {
-            type View<'a> = IconView<'a>;
-            type ViewHandle = IconOwnedView;
         }
         #[derive(Clone, Debug, Default)]
         pub struct EgressPolicyView<'a> {
@@ -55273,6 +55267,10 @@ pub use self::__buffa::view::SoundInfoView;
 #[doc(inline)]
 pub use self::__buffa::view::SoundInfoOwnedView;
 #[doc(inline)]
+pub use self::__buffa::view::IconView;
+#[doc(inline)]
+pub use self::__buffa::view::IconOwnedView;
+#[doc(inline)]
 pub use self::__buffa::view::AlarmView;
 #[doc(inline)]
 pub use self::__buffa::view::AlarmOwnedView;
@@ -55452,10 +55450,6 @@ pub use self::__buffa::view::FieldValuesOwnedView;
 pub use self::__buffa::view::CredentialTypeView;
 #[doc(inline)]
 pub use self::__buffa::view::CredentialTypeOwnedView;
-#[doc(inline)]
-pub use self::__buffa::view::IconView;
-#[doc(inline)]
-pub use self::__buffa::view::IconOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::EgressPolicyView;
 #[doc(inline)]
