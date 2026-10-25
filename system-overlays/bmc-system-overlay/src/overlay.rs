@@ -246,6 +246,14 @@ pub enum AlarmRequest {
     Snooze,
 }
 
+/// A request an overlay wants to send over `deck_localization_v1`.
+/// The framework drains these after `tick` and forwards them to the compositor;
+/// the change comes back as `on_language` once the device has it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalizationRequest {
+    SetLanguage(Language),
+}
+
 /// An incoming `deck_alarm_v1` event. The client collapses ring/stop into a
 /// single latest-wins slot so a `stop` then `ring` arriving in one dispatch
 /// round keeps the ring rather than losing it to the trailing stop.
@@ -862,6 +870,12 @@ pub trait SystemOverlay {
     /// Drain alarm control requests the overlay wants to send this pass. Called
     /// after `tick`. Default: none.
     fn drain_alarm_requests(&mut self) -> Vec<AlarmRequest> {
+        Vec::new()
+    }
+
+    /// The language requests made since the last drain, those made during this pass's render included.
+    /// No opt-in: every overlay binds `deck_localization_v1` where it is advertised. Default: none.
+    fn drain_localization_requests(&mut self) -> Vec<LocalizationRequest> {
         Vec::new()
     }
 

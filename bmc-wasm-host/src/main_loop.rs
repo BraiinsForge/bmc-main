@@ -903,6 +903,7 @@ fn run_loop(
             }
             overlay.forward_settings_requests();
             overlay.forward_alarm_requests();
+            overlay.forward_localization_requests();
         }
 
         let now = Instant::now();

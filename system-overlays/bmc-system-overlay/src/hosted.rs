@@ -580,4 +580,13 @@ impl HostedOverlay {
             }
         }
     }
+
+    /// Forward the overlay's accumulated language requests to the compositor.
+    pub fn forward_localization_requests(&mut self) {
+        for req in self.overlay.drain_localization_requests() {
+            if let Err(e) = self.client.send_localization_request(req) {
+                tracing::warn!("localization request failed: {e}");
+            }
+        }
+    }
 }

@@ -160,6 +160,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
 
         forward_settings_requests(&mut client, &mut *overlay);
         forward_alarm_requests(&mut client, &mut *overlay);
+        forward_localization_requests(&mut client, &mut *overlay);
 
         // A frame's cadence counts from its start, so the wait after it is measured
         // from now, not from before the render.
@@ -284,6 +285,14 @@ fn forward_alarm_requests(client: &mut LayerSurfaceClient, overlay: &mut dyn Sys
     for req in overlay.drain_alarm_requests() {
         if let Err(e) = client.send_alarm_request(req) {
             tracing::warn!("alarm request failed: {e}");
+        }
+    }
+}
+
+fn forward_localization_requests(client: &mut LayerSurfaceClient, overlay: &mut dyn SystemOverlay) {
+    for req in overlay.drain_localization_requests() {
+        if let Err(e) = client.send_localization_request(req) {
+            tracing::warn!("localization request failed: {e}");
         }
     }
 }

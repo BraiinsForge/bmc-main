@@ -128,6 +128,7 @@ struct State {
     /// round keeps the ring — the trailing event wins, preserving wire order.
     pending_alarm_event: Option<AlarmEvent>,
 
+    localization: Option<DeckLocalizationV1>,
     #[expect(
         clippy::option_option,
         reason = "outer Option latches event-arrived; inner None means no offered language is current"
@@ -227,6 +228,7 @@ impl Default for State {
             wants_alarm: false,
             alarm: None,
             pending_alarm_event: None,
+            localization: None,
             pending_language: None,
             pending_languages: None,
             wants_upgrade: false,
@@ -867,6 +869,24 @@ impl LayerSurfaceClient {
         self.flush()
     }
 
+    pub fn send_localization_request(
+        &self,
+        req: crate::overlay::LocalizationRequest,
+    ) -> anyhow::Result<()> {
+        use crate::overlay::LocalizationRequest;
+        let localization = self
+            .state
+            .localization
+            .as_ref()
+            .context("deck_localization_v1 not bound")?;
+        match req {
+            LocalizationRequest::SetLanguage(language) => {
+                localization.set_language(language.tag());
+            }
+        }
+        self.flush()
+    }
+
     #[must_use]
     pub fn size(&self) -> (u32, u32) {
         self.state.configured_size
@@ -990,7 +1010,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 // Not opt-in like the protocols around it: every overlay renders copy.
                 "deck_localization_v1" => {
-                    let _ = registry.bind::<DeckLocalizationV1, _, _>(name, version.min(1), qh, ());
+                    let localization =
+                        registry.bind::<DeckLocalizationV1, _, _>(name, version.min(1), qh, ());
+                    state.localization = Some(localization);
                 }
                 "deck_upgrade_v1" if state.wants_upgrade => {
                     let upgrade =
