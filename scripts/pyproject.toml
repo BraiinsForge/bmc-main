@@ -5,8 +5,8 @@
 # and cannot resolve a single third-party import here.
 #
 # `bypass-selection` keeps the wheel to metadata: nothing here is importable,
-# and a backend left to guess would either refuse the flat layout of four
-# top-level modules or ship them. uv would take `[tool.uv] package = false`
+# and a backend left to guess would either refuse the flat layout
+# of top-level modules or ship them. uv would take `[tool.uv] package = false`
 # for the same thing, but uv2nix builds every member regardless, so the empty
 # wheel is what makes both agree. Hatchling, like the other members,
 # so no `egg-info` is left behind in the source tree.
