@@ -4,7 +4,7 @@
 
 # `build.rs` reads the scene glob from `gallery.toml`, which Cargo metadata
 # does not discover as a source input for the Nix filter;
-# `assets/` holds the window icon `main.rs` embeds.
+# `assets/` holds the icons `main.rs` and `lib.rs` embed.
 [workspace.metadata.nix]
 include = ["assets/**", "gallery.toml"]
 
@@ -92,9 +92,11 @@ path = "main.rs"
 # Pinned by tag rather than tracking a branch:
 # the lockfile beside this file is what CI and a fresh clone
 # resolve through, and a scene API moves under us otherwise.
-gallery = { git = "https://github.com/kubijo/rs-gallery.git", tag = "v0.14.0" }
+gallery = { git = "https://github.com/kubijo/rs-gallery.git", tag = "v0.16.0" }
 
 bitcoin-mining-data = { path = "../widgets-wasm/bitcoin-mining-data" }
+# The languages the window-bar switcher offers, read from the same packs a device reads.
+bmc-intl = { path = "../bmc-intl/core" }
 bmc-overlay-alarm = { path = "../system-overlays/bmc-overlay-alarm" }
 bmc-overlay-device-info = { path = "../system-overlays/bmc-overlay-device-info" }
 bmc-overlay-offline = { path = "../system-overlays/bmc-overlay-offline" }
@@ -125,6 +127,8 @@ femtovg = { git = "https://github.com/BraiinsForge/femtovg.git", rev = "45047b19
 # Matches the workspace pin; the default features carry the output backends
 # the sink opens, which bmc-render-keyboard's own dependency does not need.
 rodio = "0.20"
+# The window-bar globals are stored and restored by the gallery.
+serde = { version = "1", features = ["derive"] }
 taffy = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -136,7 +140,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bmc-render = { path = "../bmc-render", features = ["atlas-inspect"] }
 
 [build-dependencies]
-gallery-build = { git = "https://github.com/kubijo/rs-gallery.git", tag = "v0.14.0" }
+gallery-build = { git = "https://github.com/kubijo/rs-gallery.git", tag = "v0.16.0" }
 
 # Reached only from scenes, which live in the crates they exercise and arrive
 # through the glob — nothing under this manifest's own directory names them.

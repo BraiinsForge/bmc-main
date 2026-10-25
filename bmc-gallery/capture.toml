@@ -6,6 +6,11 @@ sheet = "sheet.png"
 report = "capture.json"
 settle = true
 
+# A device without languages, as one without the i18n marker;
+# the shots of the language switch opt into a language of their own.
+[globals]
+Language = "und"
+
 [[shot]]
 name = "status-overlay-stale"
 scene = "bmc_gallery::status_overlay::Status Overlay"
