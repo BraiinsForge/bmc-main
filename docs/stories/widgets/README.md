@@ -96,9 +96,9 @@ four widget sizes on rectangular viewports.
 ### [Random Facts Widget](random-facts.md)
 
 A widget that shows a single random factoid, large and centered on the tile, under a fixed "Random Facts" header. Pulls
-a fresh fact from the public `api.viewbits.com` useless-facts API every few minutes, auto-fits the text to the available
-area, and keeps the last shown fact on screen when a refresh fails. Has no parameters and renders at all four widget
-sizes on rectangular viewports.
+a fresh fact from Nexus at `nexus.braiinsforge.com` every 15 minutes, auto-fits the text to the available area, and
+keeps the last shown fact on screen when a refresh fails. Has no parameters and renders at all four widget sizes on
+rectangular viewports.
 
 ### [Weather Widget](weather.md)
 

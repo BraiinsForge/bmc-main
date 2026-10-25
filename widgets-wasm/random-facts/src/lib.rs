@@ -35,12 +35,11 @@ mod wasm_glue {
 
     use crate::render::{fact_draw, header_draw};
 
-    /// The viewbits API also accepts an optional `&key=...` query param; it is
-    /// unused.
-    const FACTS_API_URL: &str = "https://api.viewbits.com/v1/uselessfacts?mode=random";
+    const FACTS_API_URL: &str = "https://nexus.braiinsforge.com/api/v1/data/facts/random";
+    const FACTS_TEXT_PATH: &str = "/data/text";
 
-    /// Steady-state cadence: one fact every 5 minutes per instance.
-    const POLL_INTERVAL_MS: u32 = 300_000;
+    /// Steady-state cadence: one fact every 15 minutes per instance.
+    const POLL_INTERVAL_MS: u32 = 900_000;
 
     /// Shown only until the first fact arrives; afterwards the last-known-good
     /// fact is kept on screen across failures.
@@ -76,12 +75,11 @@ mod wasm_glue {
     }
 
     fn on_fact_data(handle: PollHandle, response: &FetchResponse) {
-        // The response carries `text` (the fact) plus `source` / `url`, which we
-        // ignore. Anything other than a non-empty `/text` on a 2xx response is a
-        // failure: keep the last-known-good fact and retry.
+        // Anything but a non-empty fact on a 2xx response is a failure:
+        // keep the last-known-good fact and retry.
         let fact = response
             .ok()
-            .then(|| response.json().str("/text"))
+            .then(|| response.json().str(FACTS_TEXT_PATH))
             .flatten()
             .filter(|text| !text.is_empty());
 
@@ -90,7 +88,7 @@ mod wasm_glue {
             // Engine reschedules at the normal interval on an ok reply.
         } else {
             if response.ok() {
-                log_warn!("random-facts: response had no usable /text");
+                log_warn!("random-facts: response had no usable {FACTS_TEXT_PATH}");
             } else {
                 log_warn!("random-facts: fetch failed (status {})", response.status);
             }
