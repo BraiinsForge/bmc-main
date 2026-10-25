@@ -40,6 +40,9 @@ pub struct InteractionState {
     /// Pending touch events.
     event_queue: VecDeque<TouchEvent>,
 
+    /// The events `begin_frame` last processed.
+    frame_events: Vec<TouchEvent>,
+
     /// Element where touch started (for click detection).
     touch_down_key: Option<String>,
 
@@ -73,6 +76,7 @@ impl InteractionState {
         Self {
             hit_regions: HashMap::new(),
             event_queue: VecDeque::new(),
+            frame_events: Vec::new(),
             touch_down_key: None,
             pending_click: None,
             pending_click_pos: None,
@@ -106,7 +110,9 @@ impl InteractionState {
 
         // Process pending events BEFORE clearing hit regions
         // (events need to hit-test against previous frame's regions)
+        self.frame_events.clear();
         while let Some(event) = self.event_queue.pop_front() {
+            self.frame_events.push(event);
             match event {
                 TouchEvent::Down { x, y } => {
                     self.touch_down_key = self.hit_test(x, y);
@@ -163,9 +169,11 @@ impl InteractionState {
         self.event_queue.push_back(event);
     }
 
-    /// Cancel the active gesture and discard input that has not been processed.
+    /// Cancel the active gesture and drop its input:
+    /// what is still pending, and what the last frame processed.
     pub fn cancel_touch(&mut self) {
         self.event_queue.clear();
+        self.frame_events.clear();
         self.touch_down_key = None;
         self.pending_click = None;
         self.pending_click_pos = None;
@@ -179,6 +187,12 @@ impl InteractionState {
     #[must_use]
     pub fn has_pending_events(&self) -> bool {
         !self.event_queue.is_empty()
+    }
+
+    /// The touch events the last `begin_frame` processed, in order.
+    #[must_use]
+    pub fn frame_events(&self) -> &[TouchEvent] {
+        &self.frame_events
     }
 
     /// Register a hit region and check if it was clicked.
@@ -480,6 +494,46 @@ mod tests {
         let (clicked, pos) = state.button_with_pos("btn", bounds);
         assert!(!clicked);
         assert_eq!(pos, None);
+    }
+
+    #[test]
+    fn a_frame_keeps_the_events_it_processed_and_the_next_one_forgets_them() {
+        let mut state = InteractionState::new();
+
+        state.push_event(TouchEvent::Down { x: 80.0, y: 35.0 });
+        state.push_event(TouchEvent::Up);
+        state.begin_frame();
+        assert!(matches!(
+            state.frame_events(),
+            [TouchEvent::Down { .. }, TouchEvent::Up]
+        ));
+
+        state.begin_frame();
+        assert!(state.frame_events().is_empty());
+    }
+
+    #[test]
+    fn an_event_pushed_after_a_frame_waits_for_the_next_one() {
+        let mut state = InteractionState::new();
+
+        state.push_event(TouchEvent::Down { x: 80.0, y: 35.0 });
+        state.begin_frame();
+        state.push_event(TouchEvent::Up);
+        assert!(matches!(state.frame_events(), [TouchEvent::Down { .. }]));
+
+        state.begin_frame();
+        assert!(matches!(state.frame_events(), [TouchEvent::Up]));
+    }
+
+    #[test]
+    fn a_cancel_drops_the_events_the_last_frame_processed() {
+        let mut state = InteractionState::new();
+
+        state.push_event(TouchEvent::Down { x: 80.0, y: 35.0 });
+        state.begin_frame();
+        state.cancel_touch();
+
+        assert!(state.frame_events().is_empty());
     }
 
     #[test]
