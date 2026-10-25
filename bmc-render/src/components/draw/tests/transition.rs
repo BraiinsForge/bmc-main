@@ -756,3 +756,16 @@ fn first_frame_snap_does_not_replay_frames_once_a_duration_returns() {
         "a snap with no elapsed time must still count as finished"
     );
 }
+
+#[test]
+fn a_sweep_of_a_turn_closes_the_ring_and_a_shorter_one_does_not() {
+    use std::f32::consts::{PI, TAU};
+    assert!(is_full_turn(0.0, TAU));
+    assert!(is_full_turn(0.3, 0.3 - TAU), "either direction");
+    assert!(
+        is_full_turn(0.0, TAU - 1e-5),
+        "a summed sweep lands beside TAU"
+    );
+    assert!(!is_full_turn(0.0, PI));
+    assert!(!is_full_turn(0.0, TAU - 0.01));
+}

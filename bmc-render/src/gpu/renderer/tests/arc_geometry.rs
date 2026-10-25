@@ -18,11 +18,47 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use super::brightness::{W, render};
 use super::{ARC_CHUNK_MAX, arc_color_at, arc_point, arc_spans, chunk_span, sweep_fraction};
-use bmc_ui::{ArcFill, ArcSegments, Color};
+use crate::renderer::prelude::*;
+use bmc_ui::colors::WHITE;
+use bmc_ui::{ArcCap, ArcFill, ArcSegments, Color};
 
 fn approx(a: f32, b: f32) {
     assert!((a - b).abs() < 1e-4, "{a} != {b}");
+}
+
+#[test]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the probes sit on a ring inside the frame"
+)]
+fn a_solid_sweep_shows_no_seam_where_its_chunks_used_to_meet() {
+    const CENTER: f32 = 32.0;
+    const RADIUS: f32 = 20.0;
+    let px = render(|r| {
+        r.stroke_arc(
+            CENTER,
+            CENTER,
+            RADIUS,
+            0.0,
+            3.5 * ARC_CHUNK_MAX,
+            8.0,
+            &ArcFill::Solid(WHITE),
+            &ArcSegments::Continuous,
+            ArcCap::Butt,
+        );
+    });
+    for boundary in [1.0, 2.0, 3.0] {
+        let (x, y) = arc_point(CENTER, CENTER, RADIUS, boundary * ARC_CHUNK_MAX);
+        let pixel = px[y as usize * W as usize + x as usize];
+        assert_eq!(
+            pixel[..3],
+            [255, 255, 255],
+            "fully lit at chunk boundary {boundary}, got {pixel:?}"
+        );
+    }
 }
 
 #[test]

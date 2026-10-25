@@ -937,3 +937,15 @@ fn a_shrink_and_a_growth_that_cancel_leave_the_box_unscaled() {
     let rect = damage(&draw).expect("BUG: scale animations are bounded");
     assert_eq!((rect.x, rect.y, rect.w, rect.h), (99.0, 99.0, 22.0, 22.0));
 }
+
+#[test]
+fn a_sweep_summed_just_short_of_a_turn_bounds_as_the_full_ring_it_strokes() {
+    assert!(matches!(
+        ArcSpan::between(0.0, TAU - 1e-5),
+        ArcSpan::FullRing
+    ));
+    assert!(matches!(
+        ArcSpan::between(0.0, TAU - 0.01),
+        ArcSpan::Sector { .. }
+    ));
+}

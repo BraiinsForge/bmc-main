@@ -40,6 +40,7 @@ use super::mesh::{MESH_ID_EXCLUSIVE_CAP, MeshRenderer, PendingMeshReservations};
 use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
 use super::text::{FontTable, ParagraphLayoutCache, build_font_table, to_femtovg_color};
+use crate::components::draw::is_full_turn;
 use crate::renderer::FrameClear;
 use crate::renderer::prelude::*;
 
@@ -743,6 +744,30 @@ impl RenderShapes for FemtoVgRenderer {
             ArcCap::Round => LineCap::Round,
             ArcCap::Butt => LineCap::Butt,
         };
+        // The chunking below exists only to run a gradient along the sweep,
+        // and two anti-aliased butt ends never add up to full coverage,
+        // so every chunk seam of a solid sweep would be a hairline gap.
+        if let (ArcFill::Solid(color), ArcSegments::Continuous) = (fill, segments) {
+            let mut path = Path::new();
+            let mut paint = Paint::color(self.paint_color(*color));
+            paint.set_line_width(width);
+            if is_full_turn(start_angle, end_angle) {
+                // Closed, so the ends join rather than meet as two caps.
+                path.circle(cx, cy, radius);
+            } else {
+                path.arc(
+                    cx,
+                    cy,
+                    radius,
+                    arc_to_femtovg_angle(start_angle),
+                    arc_to_femtovg_angle(end_angle),
+                    Solidity::Hole,
+                );
+                paint.set_line_cap(outer_cap);
+            }
+            self.canvas.stroke_path(&path, &paint);
+            return;
+        }
         let spans = arc_spans(segments, start_angle, end_angle);
         let last_span = spans.len().saturating_sub(1);
         for (si, &(s0, s1)) in spans.iter().enumerate() {

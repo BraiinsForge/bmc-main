@@ -45,7 +45,7 @@ use crate::{AnimationState, TransitionState};
 mod transition;
 
 use transition::interpolate_draw_values;
-pub(crate) use transition::{extract_draw_values, shortest_angle_delta};
+pub(crate) use transition::{extract_draw_values, is_full_turn, shortest_angle_delta};
 
 /// Interpolated mesh parameters for transition override.
 /// Wraps the same `MeshDrawArgs` shape rendered later,

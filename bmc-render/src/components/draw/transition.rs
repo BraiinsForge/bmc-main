@@ -200,6 +200,12 @@ pub(crate) fn extract_draw_values(draw: &Draw) -> PrevDrawValues {
     }
 }
 
+/// Whether a sweep closes into a ring,
+/// allowing for the rounding of a sweep summed up to `TAU`.
+pub(crate) fn is_full_turn(start: f32, end: f32) -> bool {
+    (end - start).abs() >= std::f32::consts::TAU - 1e-4
+}
+
 /// Shortest-path delta for angle interpolation (wraps around TAU).
 pub(crate) fn shortest_angle_delta(from: f32, to: f32) -> f32 {
     let delta = to - from;

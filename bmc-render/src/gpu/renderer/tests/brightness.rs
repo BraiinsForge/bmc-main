@@ -24,6 +24,7 @@ use super::FemtoVgRenderer;
 use crate::renderer::prelude::*;
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use bmc_ui::colors::{TRANSPARENT, WHITE};
+use bmc_ui::{ArcCap, ArcFill, ArcSegments};
 use bmc_ui::{Fill, SVG_FLAG_HAS_FILL, SVG_OP_CLOSE, SVG_OP_LINE_TO, SVG_OP_MOVE_TO};
 use bmc_ui::{Span, TextStyle};
 
@@ -101,6 +102,28 @@ fn a_gradient_fill_dims() {
         r.fill_rect_paint(x, y, w, h, &Fill::linear(0.0, WHITE, WHITE));
     });
     assert_half_lit(center(&px), "a gradient rect");
+}
+
+#[test]
+fn a_solid_arc_dims() {
+    const CENTER: usize = 32;
+    const RADIUS: usize = 16;
+    let px = render(|r| {
+        r.set_brightness(HALF);
+        r.stroke_arc(
+            CENTER as f32,
+            CENTER as f32,
+            RADIUS as f32,
+            0.0,
+            std::f32::consts::TAU,
+            12.0,
+            &ArcFill::Solid(WHITE),
+            &ArcSegments::Continuous,
+            ArcCap::Butt,
+        );
+    });
+    let on_the_ring = px[CENTER * W as usize + CENTER + RADIUS];
+    assert_half_lit(on_the_ring, "a solid arc");
 }
 
 /// The case a wrapper in front of the backend could not reach:

@@ -351,7 +351,7 @@ impl ArcSpan {
     /// A negative sweep covers the ring too: femtovg 0.20 `Path::arc` adds full
     /// turns until a hole-wound sweep is positive, so it paints the long way round.
     fn between(start: f32, end: f32) -> Self {
-        if end < start || end - start >= TAU {
+        if end < start || crate::components::draw::is_full_turn(start, end) {
             Self::FullRing
         } else {
             Self::Sector { start, end }
