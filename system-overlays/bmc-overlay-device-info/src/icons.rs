@@ -23,10 +23,11 @@
 //! The SVGs are the stable-26.02 `init_setup` set,
 //! carried over so the screens keep the legacy design.
 
+use bmc_intl::Translations;
 use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
-use bmc_render::ui::{Svg, SvgId};
-use bmc_system_overlay::register_icon;
+use bmc_render::ui::{Svg, SvgId, svg::svg_viewbox};
+use bmc_system_overlay::{Language, register_icon};
 
 const WIFI: Svg = include_svg!("assets/wifi.svg");
 const WIFI_CONNECT: Svg = include_svg!("assets/wifi_connect.svg");
@@ -99,4 +100,52 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> DeviceInfoIcons {
         close: reg(&CLOSE),
         swipe_down: reg(&SWIPE_DOWN),
     }
+}
+
+/// A language the switch offers: its pack's flag where it brings one, and its name in itself.
+#[derive(Debug, Clone)]
+pub struct LanguageChoice {
+    pub language: Language,
+    pub flag: Option<Icon>,
+    pub native_name: String,
+}
+
+/// `offered`, or every language the packs this process reads name
+/// when there is no such list, each presented as those packs present it.
+///
+/// A flag that does not register, or a pack this process
+/// cannot read, leaves its language named instead.
+#[must_use]
+pub fn language_choices(
+    renderer: &mut dyn Renderer,
+    offered: Option<&[Language]>,
+) -> Vec<LanguageChoice> {
+    let translations = Translations::shared();
+    offered
+        .map_or_else(|| translations.languages(), <[Language]>::to_vec)
+        .into_iter()
+        .map(|language| {
+            let flag = match translations.flag_bin(language) {
+                Ok(Some(compiled)) => {
+                    let name = format!("flag-{}", language.tag());
+                    register_icon(&name, || renderer.register_svg(&name, &compiled)).map(|id| {
+                        Icon {
+                            id: Some(id),
+                            size: svg_viewbox(&compiled).unwrap_or((1.0, 1.0)),
+                        }
+                    })
+                }
+                Ok(None) => None,
+                Err(error) => {
+                    tracing::warn!(%error, %language, "language flag unreadable");
+                    None
+                }
+            };
+            LanguageChoice {
+                language,
+                flag,
+                native_name: translations.info(language).native_name,
+            }
+        })
+        .collect()
 }

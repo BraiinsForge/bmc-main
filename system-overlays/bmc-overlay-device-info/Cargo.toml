@@ -20,6 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+bmc-intl.workspace = true
 bmc-render.workspace = true
 bmc-system-overlay.workspace = true
 tracing.workspace = true
@@ -27,6 +28,7 @@ tracing.workspace = true
 [dev-dependencies]
 bmc-render = { workspace = true, features = ["test-support"] }
 bmc-system-overlay = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

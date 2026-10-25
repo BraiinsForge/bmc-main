@@ -34,7 +34,7 @@ use bmc_gallery::prelude::*;
 
 use bmc_overlay_alarm::{AlarmRenderState, AlarmView, render_alarm};
 use bmc_overlay_device_info::{
-    DeviceInfoRenderState, DeviceInfoView, Link, Uplinks, render_device_info,
+    DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Link, Uplinks, render_device_info,
 };
 use bmc_overlay_offline::{Connectivity, OfflineView, Status, decide, render_offline};
 use bmc_overlay_settings_tray::ui::{Action, BRIGHTNESS_UP_KEY, Hold, Phase, Status as TrayStatus};
@@ -46,8 +46,8 @@ use bmc_platform::{HardwareProfile, Product};
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::Color;
 use bmc_system_overlay::{
-    AccessPoint, DisplayShape, DownloadProgress, FrameKind, OverlayViewport, SettingsCaps,
-    UpgradeKind, UpgradePhase,
+    AccessPoint, DisplayShape, DownloadProgress, FrameKind, Language, OverlayViewport,
+    SettingsCaps, TouchEvent, UpgradeKind, UpgradePhase,
 };
 
 scene_meta! { title: "Overlays" }
@@ -186,25 +186,70 @@ fn offline_cell(view: OfflineView, flat: bool) -> CustomRenderFn {
 )]
 fn device_info_cell(
     view: DeviceInfoView,
-    state_key: &'static LocalKey<RefCell<DeviceInfoRenderState>>,
+    state_key: &'static LocalKey<RefCell<DeviceInfoStage>>,
     flat: bool,
     board: Board,
 ) -> CustomRenderFn {
-    Box::new(move |r, _interaction, w, h, _delta| {
+    Box::new(move |r, interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
-        state_key.with_borrow_mut(|state| {
-            let _ = render_device_info(
+        state_key.with_borrow_mut(|stage| {
+            for event in interaction.frame_events() {
+                if let Some(touch) = overlay_touch(*event) {
+                    stage.render.push_touch(touch);
+                }
+            }
+            let drawn = render_device_info(
                 r,
                 (w as u32, h as u32),
-                state,
+                &mut stage.render,
                 &view,
                 board.name,
                 board.miner,
+                language().map_or(LanguageSwitch::Hidden, |current| LanguageSwitch::Shown {
+                    current: Some(current),
+                }),
                 FrameKind::Fresh,
             );
+            stage.picked = drawn.picked;
         });
         // Still, for the same reason as the offline card: a view and nothing else.
         false
+    })
+}
+
+/// A device-info stage's retained state: the overlay's caches,
+/// and the language a tap on the screen's own switch picked this frame.
+struct DeviceInfoStage {
+    render: DeviceInfoRenderState,
+    picked: Option<Language>,
+}
+
+impl DeviceInfoStage {
+    fn new(now: Instant) -> Self {
+        Self {
+            render: DeviceInfoRenderState::new(now),
+            picked: None,
+        }
+    }
+}
+
+/// A stage pointer event as the touch the overlay hit-tests; a wheel is no touch.
+fn overlay_touch(event: bmc_render::interaction::TouchEvent) -> Option<TouchEvent> {
+    use bmc_render::interaction::TouchEvent as Pointer;
+    Some(match event {
+        Pointer::Down { x, y } => TouchEvent::Down {
+            id: 0,
+            x: f64::from(x),
+            y: f64::from(y),
+        },
+        Pointer::Move { x, y } => TouchEvent::Motion {
+            id: 0,
+            x: f64::from(x),
+            y: f64::from(y),
+        },
+        Pointer::Up => TouchEvent::Up { id: 0 },
+        Pointer::Cancel => TouchEvent::Cancel,
+        Pointer::Scroll { .. } => return None,
     })
 }
 
@@ -220,7 +265,7 @@ macro_rules! render_states {
 }
 
 render_states!(
-    DeviceInfoRenderState;
+    DeviceInfoStage;
     DI_SETUP_START,
     DI_SETUP_START_CABLE,
     DI_SETUP_START_PENDING,
@@ -448,12 +493,22 @@ fn device_info_stage(
     heading: &str,
     caption: &str,
     view: DeviceInfoView,
-    state: &'static LocalKey<RefCell<DeviceInfoRenderState>>,
+    state: &'static LocalKey<RefCell<DeviceInfoStage>>,
     flat: bool,
 ) {
     ui.heading(heading);
     ui.label(caption);
-    ctx.custom_stage(ui, board.size, device_info_cell(view, state, flat, board));
+    // Input, for the setup screens' language switch; the other screens ignore it.
+    let _ = ctx.custom_stage_input(ui, board.size, device_info_cell(view, state, flat, board));
+    // The stage draws before it returns, so this frame's pick is already in.
+    if let Some(picked) = state.with_borrow_mut(|stage| stage.picked.take()) {
+        let written = ctx.set_global(LANGUAGE, picked);
+        assert!(
+            written,
+            "BUG: the window bar declares no {} control",
+            LANGUAGE.label()
+        );
+    }
 }
 
 /// The product a device-info stage renders for: its panel,

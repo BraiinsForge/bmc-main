@@ -22,18 +22,19 @@
 //! builders, so every screen is renderable from a plain value (the gallery
 //! renders the same trees the device does).
 
+use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
-    BLACK, CrossAlign, Draw, Fill, FontFamily, FontWeight, GRAY_40, GRAY_60, Justify, Node,
-    PropsData, QrStyle, TRANSPARENT, TextAlign, TextStyle, VIOLET_50, WHITE, col, fixed_height,
-    row, text,
+    ArcCap, ArcFill, ArcSegments, BLACK, ButtonSize, ButtonStyle, CrossAlign, Draw, Fill,
+    FontFamily, FontWeight, GRAY_40, GRAY_60, Justify, Node, PropsData, QrStyle, TRANSPARENT,
+    TextAlign, TextStyle, VIOLET_50, WHITE, col, fixed_height, row, text,
 };
-use bmc_system_overlay::{AccessPoint, FrameKind, RenderOutcome, TreeUi};
+use bmc_system_overlay::{AccessPoint, FrameKind, Language, RenderOutcome, TouchEvent, TreeUi};
 
-use crate::icons::{DeviceInfoIcons, Icon};
+use crate::icons::{DeviceInfoIcons, Icon, LanguageChoice};
 
 /// Which uplinks the board offers, as far as the screens care.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +123,11 @@ pub struct DeviceInfoRenderState {
     /// Registered lazily on the first render (or eagerly by `prewarm`),
     /// so the gallery needs no separate warm-up path.
     icons: Option<DeviceInfoIcons>,
+    /// Read from the packs on the first frame that draws the switch, and again after a new offer.
+    languages: Option<Vec<LanguageChoice>>,
+    /// What bmc offers, once the compositor names it;
+    /// until then, every pack this process reads.
+    offered: Option<Vec<Language>>,
     last_render: Instant,
 }
 
@@ -140,7 +146,17 @@ impl DeviceInfoRenderState {
         Self {
             tree: TreeUi::default(),
             icons: None,
+            languages: None,
+            offered: None,
             last_render: now,
+        }
+    }
+
+    /// Show `offered` on the switch, in that order, from the next frame that draws it.
+    pub fn offer_languages(&mut self, offered: &[Language]) {
+        if self.offered.as_deref() != Some(offered) {
+            self.offered = Some(offered.to_vec());
+            self.languages = None;
         }
     }
 
@@ -148,6 +164,27 @@ impl DeviceInfoRenderState {
         *self
             .icons
             .get_or_insert_with(|| crate::icons::register_icons(renderer))
+    }
+
+    fn ensure_languages(&mut self, renderer: &mut dyn Renderer) {
+        if self.languages.is_none() {
+            self.languages = Some(crate::icons::language_choices(
+                renderer,
+                self.offered.as_deref(),
+            ));
+        }
+    }
+
+    /// Queue a touch for the next render to hit-test against the tree.
+    pub fn push_touch(&mut self, event: TouchEvent) {
+        self.tree.push_touch(event);
+    }
+
+    /// Where the last render put the touch target `key`, if it drew one.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn element_bounds(&self, key: &str) -> Option<bmc_render::interaction::Rect> {
+        self.tree.element_bounds(key)
     }
 }
 
@@ -220,6 +257,15 @@ impl SetupApIcon {
     }
 }
 
+/// Where a screen puts the language switch.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SwitchPlacement {
+    /// The top-left corner, outside the screen's columns.
+    Corner,
+    /// After the last line of the screen's text column.
+    Line,
+}
+
 /// Size-dependent metrics. The screens were authored for the Deck's 1280x480
 /// panel; the compact tier refits the same layouts to small panels such as
 /// the BMM101's 480x320.
@@ -245,6 +291,7 @@ pub(crate) struct Tier {
     icon_margin: f32,
     /// Breathing room above the first line of a screen, and between its blocks.
     top_inset: f32,
+    switch: SwitchPlacement,
     gap: f32,
     /// Gap between a label and the value it introduces, tighter than the gap
     /// separating the surrounding blocks.
@@ -275,6 +322,7 @@ const TIER_WIDE: Tier = Tier {
     ap_up_icon: SetupApIcon::WifiConnect,
     icon_margin: 30.0,
     top_inset: 40.0,
+    switch: SwitchPlacement::Corner,
     gap: 20.0,
     label_gap: 8.0,
     column_gap: 40.0,
@@ -300,6 +348,8 @@ const TIER_COMPACT: Tier = Tier {
     ap_up_icon: SetupApIcon::Wifi,
     icon_margin: 8.0,
     top_inset: 50.0,
+    // The compact columns reach into the corner the wide panel leaves free.
+    switch: SwitchPlacement::Line,
     gap: 8.0,
     label_gap: 4.0,
     column_gap: 16.0,
@@ -531,6 +581,201 @@ fn tray_hint(tier: Tier, icon_id: Icon) -> Node {
             glyph,
         ],
     )
+}
+
+/// A flag's touch target, a third wider than the close glyph's:
+/// it is tapped with a fingertip on the first screen, not felt for in a corner.
+const FLAG_TARGET: f32 = 64.0;
+/// A flag's diameter inside its target.
+const FLAG_SIZE: f32 = 48.0;
+/// Stroke of the black ring that crops a flag to its circle:
+/// its inner edge is the circle, its outer edge as far as a flag may reach.
+const FLAG_RING: f32 = 12.0;
+const _: () = assert!(
+    FLAG_SIZE / 2.0 + FLAG_RING >= FLAG_SIZE * FRAC_1_SQRT_2,
+    "the ring must reach a square flag's corners"
+);
+/// How much of a flag not current is veiled.
+const FLAG_DIM: f32 = 0.6;
+
+/// The size a flag of `viewbox` draws at, centred on its circle:
+/// covering the circle, unless that would push its corners past the ring.
+fn flag_extent((width, height): (f32, f32)) -> (f32, f32) {
+    let cover = FLAG_SIZE / width.min(height);
+    let masked = (FLAG_SIZE + 2.0 * FLAG_RING) / width.hypot(height);
+    let scale = cover.min(masked);
+    (width * scale, height * scale)
+}
+
+const LANGUAGE_KEY_PREFIX: &str = "language:";
+
+/// The touch key of a language's chip in the switch.
+pub(crate) fn language_key(language: Language) -> String {
+    format!("{LANGUAGE_KEY_PREFIX}{}", language.tag())
+}
+
+fn language_for_key(key: &str) -> Option<Language> {
+    key.strip_prefix(LANGUAGE_KEY_PREFIX)
+        .and_then(|tag| Language::parse(tag).ok())
+}
+
+/// Whether `view` offers the language switch: the screens a person reads
+/// instructions from and may want in another language, not the ones that pass by themselves.
+///
+/// Kept beside the screens rather than derived from the FSM,
+/// so adding a view forces an answer here.
+pub(crate) fn offers_language_switch(view: &DeviceInfoView) -> bool {
+    match view {
+        // The AP's own screen and the wired address; without an AP, the board
+        // that has no Wi-Fi waits on its cable while the other waits on the AP.
+        DeviceInfoView::SetupStart { ap, uplinks } => ap.is_some() || !uplinks.wifi,
+        DeviceInfoView::SetupConnectInfo { ip, .. } => ip.is_some(),
+        DeviceInfoView::TurningApOff
+        | DeviceInfoView::SetupConnecting { .. }
+        | DeviceInfoView::SetupConnected { .. }
+        | DeviceInfoView::SetupCompleted
+        | DeviceInfoView::SetupError { .. }
+        | DeviceInfoView::SetupFatal { .. }
+        | DeviceInfoView::UpgradeSuccess
+        | DeviceInfoView::Connecting { .. }
+        | DeviceInfoView::Success { .. }
+        | DeviceInfoView::Failed { .. }
+        | DeviceInfoView::Done => false,
+    }
+}
+
+/// A language with a flag: the flag in a `FLAG_TARGET` touch target,
+/// cropped to a circle by a black ring, since the renderer has no clip and the screen is black.
+/// The one not current is veiled rather than recoloured, since a flag's colours are the flag.
+/// `flag_x` is the flag's offset within the target: centred, or flush with a column's edge.
+fn flag_chip(language: Language, flag: Icon, current: bool, flag_x: f32) -> Node {
+    let (cx, cy) = (flag_x + FLAG_SIZE / 2.0, FLAG_TARGET / 2.0);
+    let (w, h) = flag_extent(flag.size);
+    let mut draws = vec![
+        Draw::Svg {
+            x: cx - w / 2.0,
+            y: cy - h / 2.0,
+            w,
+            h,
+            color: TRANSPARENT,
+            icon_id: flag.id,
+            anti_alias: true,
+            fills: Vec::new(),
+        },
+        Draw::Arc {
+            cx,
+            cy,
+            radius: f32::midpoint(FLAG_SIZE, FLAG_RING),
+            start_angle: 0.0,
+            end_angle: TAU,
+            width: FLAG_RING,
+            fill: ArcFill::Solid(BLACK),
+            segments: ArcSegments::Continuous,
+            cap: ArcCap::Butt,
+        },
+    ];
+    if !current {
+        draws.push(Draw::Circle {
+            cx,
+            cy,
+            r: FLAG_SIZE / 2.0,
+            fill: Fill::Solid(BLACK.with_alpha(FLAG_DIM)),
+        });
+    }
+    Node::Canvas {
+        props: PropsData {
+            width: FLAG_TARGET,
+            height: FLAG_TARGET,
+            ..PropsData::default()
+        },
+        touch_key: Some(language_key(language)),
+        draws,
+    }
+}
+
+/// A language whose pack brings no flag, named in itself.
+fn name_chip(choice: &LanguageChoice, current: bool) -> Node {
+    Node::Button {
+        id: language_key(choice.language),
+        label: choice.native_name.clone(),
+        style: if current {
+            ButtonStyle::Secondary
+        } else {
+            ButtonStyle::Ghost
+        },
+        size: ButtonSize::Small,
+        icon_id: None,
+        disabled: false,
+        stretch: false,
+        skin: None,
+    }
+}
+
+/// The language switch a screen places: it draws the chips and keys their touch targets;
+/// the screen only says where.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Switch<'a> {
+    pub(crate) choices: &'a [LanguageChoice],
+    pub(crate) current: Option<Language>,
+}
+
+/// Whether a screen draws the language switch, and the chip it marks current.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LanguageSwitch {
+    Hidden,
+    /// `current` is `None` while the device speaks none of the languages it offers.
+    Shown {
+        current: Option<Language>,
+    },
+}
+
+impl Switch<'_> {
+    fn render(self, placement: PropsData, flag_x: f32) -> Node {
+        row(
+            PropsData {
+                height: FLAG_TARGET,
+                cross_align: CrossAlign::Center,
+                ..placement
+            },
+            self.choices.iter().map(|choice| {
+                let current = Some(choice.language) == self.current;
+                match choice.flag {
+                    Some(flag) => flag_chip(choice.language, flag, current, flag_x),
+                    None => name_chip(choice, current),
+                }
+            }),
+        )
+    }
+
+    fn line(self) -> Node {
+        self.render(PropsData::default(), 0.0)
+    }
+
+    fn corner(self) -> Node {
+        self.render(
+            PropsData {
+                inset_top: CORNER_INSET,
+                inset_left: CORNER_INSET,
+                ..PropsData::default()
+            },
+            (FLAG_TARGET - FLAG_SIZE) / 2.0,
+        )
+    }
+
+    fn placed(switch: Option<Self>, tier: Tier) -> (Option<Node>, Option<Node>) {
+        match (switch, tier.switch) {
+            (Some(switch), SwitchPlacement::Line) => (Some(switch.line()), None),
+            (Some(switch), SwitchPlacement::Corner) => (None, Some(switch.corner())),
+            (None, _) => (None, None),
+        }
+    }
+}
+
+fn cornered(tree: Node, corner: Option<Node>) -> Node {
+    match corner {
+        Some(corner) => overlaid(tree, corner),
+        None => tree,
+    }
 }
 
 /// Whether a touch anywhere on `view` closes it, which is what the close glyph
@@ -803,11 +1048,23 @@ fn vertical_separator(tier: Tier) -> Node {
     )
 }
 
-fn connected_info_tree(tier: Tier, icon_id: Icon, title_text: &str, ip: Ipv4Addr) -> Node {
-    connected_info_url_tree(tier, icon_id, title_text, &format!("http://{ip}/"))
+fn connected_info_tree(
+    tier: Tier,
+    icon_id: Icon,
+    title_text: &str,
+    ip: Ipv4Addr,
+    switch: Option<Switch<'_>>,
+) -> Node {
+    connected_info_url_tree(tier, icon_id, title_text, &format!("http://{ip}/"), switch)
 }
 
-fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &str) -> Node {
+fn connected_info_url_tree(
+    tier: Tier,
+    icon_id: Icon,
+    title_text: &str,
+    url: &str,
+    switch: Option<Switch<'_>>,
+) -> Node {
     let logo = col(
         PropsData {
             margin: tier.icon_margin,
@@ -816,6 +1073,7 @@ fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &st
         [icon_within(icon_id, tier.icon_width.connect_info)],
     );
 
+    let (switch_line, switch_corner) = Switch::placed(switch, tier);
     let text_section = col(
         PropsData::default(),
         [
@@ -823,12 +1081,19 @@ fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &st
             title(tier, title_text, TextAlign::Left),
             subtitle(tier, url, TextAlign::Left),
             title(tier, "or scan the QR code", TextAlign::Left),
-        ],
+        ]
+        .into_iter()
+        // Set off by two block gaps, so it reads as a control under the lines, not a fourth one.
+        .chain(
+            switch_line
+                .into_iter()
+                .flat_map(|line| [fixed_height(2.0 * tier.gap), line]),
+        ),
     );
 
     let qr_section = col(PropsData::default(), [qr(url, tier.qr)]);
 
-    row(
+    let tree = row(
         PropsData {
             background: BLACK,
             cross_align: CrossAlign::Center,
@@ -841,7 +1106,8 @@ fn connected_info_url_tree(tier: Tier, icon_id: Icon, title_text: &str, url: &st
             qr_section,
             fixed_width(tier.horizontal_space),
         ],
-    )
+    );
+    cornered(tree, switch_corner)
 }
 
 /// Icon, title and detail lines of a connect-progress screen for `link`.
@@ -885,20 +1151,27 @@ fn setup_start_tree(
     device_name: &str,
     ap: Option<&AccessPoint>,
     uplinks: Uplinks,
+    switch: Option<Switch<'_>>,
 ) -> Node {
     let cable_hint = || content(tier, CABLE_HINT, TextAlign::Center);
     match ap {
         // Setup over a wired uplink: no AP to join, so no WiFi column -
         // only the wizard address as text and QR code.
-        Some(ap) if ap.ssid.is_empty() => {
-            connected_info_url_tree(tier, device_icon, "Open the web browser at", &ap.setup_url)
-        }
+        Some(ap) if ap.ssid.is_empty() => connected_info_url_tree(
+            tier,
+            device_icon,
+            "Open the web browser at",
+            &ap.setup_url,
+            switch,
+        ),
         Some(ap) => {
+            let (switch_line, switch_corner) = Switch::placed(switch, tier);
             let mut lines = vec![ssid_line(tier, &ap.ssid)];
             if uplinks.ethernet {
                 lines.push(cable_hint());
             }
-            template_tree_with_qr(
+            lines.extend(switch_line);
+            let tree = template_tree_with_qr(
                 tier,
                 Justify::Start,
                 true,
@@ -909,16 +1182,21 @@ fn setup_start_tree(
                     headline: ["Connected but nothing happens?", "Scan the code!"],
                     url: &ap.setup_url,
                 },
-            )
+            );
+            cornered(tree, switch_corner)
         }
-        None if !uplinks.wifi => template_tree(
-            tier,
-            Justify::Start,
-            true,
-            device_icon,
-            CONNECT_CABLE_TITLE,
-            Vec::new(),
-        ),
+        None if !uplinks.wifi => {
+            let (switch_line, switch_corner) = Switch::placed(switch, tier);
+            let tree = template_tree(
+                tier,
+                Justify::Start,
+                true,
+                device_icon,
+                CONNECT_CABLE_TITLE,
+                switch_line.into_iter().collect(),
+            );
+            cornered(tree, switch_corner)
+        }
         // The authored illustration on every tier, unlike the screen above:
         // this variant holds the panel on its own, so there is nothing per-panel
         // to choose between.
@@ -931,6 +1209,27 @@ fn setup_start_tree(
             SETUP_AP_PENDING_TITLE,
             uplinks.ethernet.then(cable_hint).into_iter().collect(),
         ),
+    }
+}
+
+/// The device's address for the wizard, or the connect progress while it has none.
+fn setup_connect_info_tree(
+    tier: Tier,
+    icons: DeviceInfoIcons,
+    device_icon: Icon,
+    ip: Option<Ipv4Addr>,
+    link: &Link,
+    switch: Option<Switch<'_>>,
+) -> Node {
+    match ip {
+        Some(ip) => connected_info_tree(
+            tier,
+            device_icon,
+            "Complete the setup\nby accessing",
+            ip,
+            switch,
+        ),
+        None => setup_connecting_tree(tier, icons, link),
     }
 }
 
@@ -964,6 +1263,7 @@ pub fn build_device_info_tree(
     tier: Tier,
     device_name: &str,
     miner: bool,
+    switch: Option<Switch<'_>>,
 ) -> Option<Node> {
     // The screens picture the device itself; a miner is not a desktop clock.
     let device_icon = if miner {
@@ -971,10 +1271,17 @@ pub fn build_device_info_tree(
     } else {
         icons.desktop_clock
     };
+    let switch = switch.filter(|_| offers_language_switch(view));
     let tree = match view {
-        DeviceInfoView::SetupStart { ap, uplinks } => {
-            setup_start_tree(tier, icons, device_icon, device_name, ap.as_ref(), *uplinks)
-        }
+        DeviceInfoView::SetupStart { ap, uplinks } => setup_start_tree(
+            tier,
+            icons,
+            device_icon,
+            device_name,
+            ap.as_ref(),
+            *uplinks,
+            switch,
+        ),
         DeviceInfoView::TurningApOff => template_tree(
             tier,
             Justify::Start,
@@ -993,11 +1300,7 @@ pub fn build_device_info_tree(
             ssid_lines(tier, ssid.as_deref()),
         ),
         DeviceInfoView::SetupConnectInfo { ip, link } => {
-            if let Some(ip) = ip {
-                connected_info_tree(tier, device_icon, "Complete the setup\nby accessing", *ip)
-            } else {
-                setup_connecting_tree(tier, icons, link)
-            }
+            setup_connect_info_tree(tier, icons, device_icon, *ip, link, switch)
         }
         DeviceInfoView::SetupCompleted => template_tree(
             tier,
@@ -1028,7 +1331,7 @@ pub fn build_device_info_tree(
         ),
         DeviceInfoView::Connecting { link } => connecting_tree(tier, icons, link),
         DeviceInfoView::Success { ip } => overlaid(
-            connected_info_tree(tier, device_icon, "Access the device at", *ip),
+            connected_info_tree(tier, device_icon, "Access the device at", *ip, None),
             tray_hint(tier, icons.swipe_down),
         ),
         DeviceInfoView::Failed {
@@ -1062,6 +1365,19 @@ pub fn build_device_info_tree(
     })
 }
 
+/// A drawn frame: what it asks of the schedule,
+/// and the language whose chip its touch released on, if any.
+#[derive(Debug, Default)]
+pub struct DeviceInfoFrame {
+    pub outcome: RenderOutcome,
+    pub picked: Option<Language>,
+}
+
+/// Draw `view`, with the language switch where `language_switch` shows it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the view, the board it addresses, the language switch and the frame kind"
+)]
 pub fn render_device_info(
     r: &mut dyn Renderer,
     size: (u32, u32),
@@ -1069,8 +1385,9 @@ pub fn render_device_info(
     view: &DeviceInfoView,
     device_name: &str,
     miner: bool,
+    language_switch: LanguageSwitch,
     frame: FrameKind,
-) -> RenderOutcome {
+) -> DeviceInfoFrame {
     let icons = state.ensure_icons(r);
     let now = Instant::now();
     let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
@@ -1079,17 +1396,36 @@ pub fn render_device_info(
 
     if *view == DeviceInfoView::Done {
         state.tree.clear();
-        return RenderOutcome::default();
+        return DeviceInfoFrame::default();
     }
+    let switch = match language_switch {
+        LanguageSwitch::Hidden => None,
+        LanguageSwitch::Shown { current } => {
+            if offers_language_switch(view) {
+                state.ensure_languages(r);
+            }
+            Some(Switch {
+                choices: state.languages.as_deref().unwrap_or_default(),
+                current,
+            })
+        }
+    };
     let build = || {
-        build_device_info_tree(view, icons, tier_for(size), device_name, miner)
+        build_device_info_tree(view, icons, tier_for(size), device_name, miner, switch)
             .expect("BUG: every view but Done has a tree")
     };
     match state.tree.render(frame, size, delta_ms, r, build) {
-        Ok(tree_frame) => tree_frame.outcome,
+        Ok(tree_frame) => DeviceInfoFrame {
+            outcome: tree_frame.outcome,
+            picked: tree_frame
+                .result
+                .clicks
+                .keys()
+                .find_map(|key| language_for_key(key)),
+        },
         Err(err) => {
             tracing::error!("device-info tree render failed: {err}");
-            RenderOutcome::default()
+            DeviceInfoFrame::default()
         }
     }
 }
@@ -1097,9 +1433,9 @@ pub fn render_device_info(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccessPoint, DeviceInfoRenderState, DeviceInfoView, FrameKind, Link, SetupApIcon,
-        TIER_COMPACT, TIER_WIDE, Tier, Uplinks, build_device_info_tree, dismisses_on_touch,
-        render_device_info, tier_for,
+        AccessPoint, DeviceInfoRenderState, DeviceInfoView, FLAG_RING, FLAG_SIZE, FrameKind,
+        LanguageSwitch, Link, SetupApIcon, TIER_COMPACT, TIER_WIDE, Tier, Uplinks,
+        build_device_info_tree, dismisses_on_touch, flag_extent, render_device_info, tier_for,
     };
     use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
     use bmc_render::partition::tree_static_key;
@@ -1344,6 +1680,7 @@ mod tests {
             tier_for(DECK_PANEL),
             DEVICE_NAME,
             false,
+            None,
         )
         .expect("BUG: every view but Done builds a tree")
     }
@@ -1367,6 +1704,7 @@ mod tests {
                 tier_for(DECK_PANEL),
                 DEVICE_NAME,
                 false,
+                None,
             );
             assert_eq!(
                 tree.is_some(),
@@ -1574,6 +1912,7 @@ mod tests {
             tier_for(DECK_PANEL),
             DEVICE_NAME,
             true,
+            None,
         )
         .expect("BUG: view builds a tree");
         assert!(
@@ -1721,6 +2060,7 @@ mod tests {
                 tier,
                 DEVICE_NAME,
                 false,
+                None,
             )
             .expect("BUG: the setup screen builds a tree");
             let wanted = wanted.id.expect("BUG: fixture icons carry an ID");
@@ -1741,6 +2081,7 @@ mod tests {
                 tier_for(DECK_PANEL),
                 DEVICE_NAME,
                 false,
+                None,
             ) else {
                 continue;
             };
@@ -1810,6 +2151,7 @@ mod tests {
             view,
             DEVICE_NAME,
             false,
+            LanguageSwitch::Hidden,
             frame,
         );
     }
@@ -1887,12 +2229,48 @@ mod tests {
         {
             for tier in [TIER_WIDE, TIER_COMPACT] {
                 for miner in [false, true] {
-                    let tree =
-                        build_device_info_tree(view, distinct_icons(), tier, DEVICE_NAME, miner)
-                            .expect("BUG: every view but Done builds a tree");
+                    let tree = build_device_info_tree(
+                        view,
+                        distinct_icons(),
+                        tier,
+                        DEVICE_NAME,
+                        miner,
+                        None,
+                    )
+                    .expect("BUG: every view but Done builds a tree");
                     assert!(tree_static_key(&tree).is_some(), "{view:?} miner={miner}");
                 }
             }
+        }
+    }
+
+    const NON_SQUARE_FLAGS: [(f32, f32); 4] = [(3.0, 2.0), (2.0, 1.0), (2.0, 3.0), (1.0, 2.0)];
+
+    #[test]
+    fn a_square_flag_fills_its_circle() {
+        let (w, h) = flag_extent((512.0, 512.0));
+        assert!(
+            (w - FLAG_SIZE).abs() < 1e-3 && (h - FLAG_SIZE).abs() < 1e-3,
+            "{w}×{h} is not the circle's {FLAG_SIZE}"
+        );
+    }
+
+    #[test]
+    fn a_flag_keeps_its_aspect_ratio() {
+        for (vw, vh) in NON_SQUARE_FLAGS {
+            let (w, h) = flag_extent((vw, vh));
+            assert!((w / h - vw / vh).abs() < 1e-4, "{vw}:{vh} drew at {w}×{h}");
+        }
+    }
+
+    #[test]
+    fn no_flag_reaches_past_its_ring() {
+        for (vw, vh) in NON_SQUARE_FLAGS.into_iter().chain([(1.0, 1.0)]) {
+            let (w, h) = flag_extent((vw, vh));
+            assert!(
+                w.hypot(h) / 2.0 <= FLAG_SIZE / 2.0 + FLAG_RING + 1e-3,
+                "{vw}:{vh} drew at {w}×{h}, its corners outside the ring"
+            );
         }
     }
 }

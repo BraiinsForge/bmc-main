@@ -31,16 +31,19 @@
 mod icons;
 mod ui;
 
-pub use ui::{DeviceInfoRenderState, DeviceInfoView, Link, Uplinks, render_device_info};
+pub use ui::{
+    DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Link, Uplinks, render_device_info,
+};
 
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DeviceState, FrameKind, Layer, LayerConfig, OverlayViewport, PlatformCaps,
-    RenderOutcome, SetupStep, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind,
-    UpgradeSnapshot, UpgradeState, VersionedSnapshot,
+    AccessPoint, DeviceState, FrameKind, Language, Layer, LayerConfig, LocalizationRequest,
+    NextFrame, OverlayViewport, PlatformCaps, RenderOutcome, SetupStep, SnapshotVersion,
+    SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot, UpgradeState,
+    VersionedSnapshot,
 };
 
 /// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed,
@@ -376,7 +379,26 @@ pub struct DeviceInfoOverlay {
     /// so a screen waiting on a connection can tell a Wi-Fi join from a cable,
     /// and a board without Wi-Fi is never asked to join one.
     uplinks: Uplinks,
+    /// Whether the device offers its languages, as it does by naming them;
+    /// a device that never does gets no switch.
+    offers_languages: bool,
+    /// The offered language the device speaks: `None` until it says, and while it speaks none of them.
+    language: Option<Language>,
+    /// The language a tap asked for, shown as current until the device answers.
+    chosen: Option<Language>,
+    /// The switch's request since the framework last drained it; a newer pick replaces it.
+    pending_request: Option<LocalizationRequest>,
+    /// Where the gesture under way went on its press.
+    gesture: Option<TouchRoute>,
     env: Box<dyn Env>,
+}
+
+/// The two ways the screens take a touch: the language switch's chips,
+/// hit-tested in the tree, or a press anywhere acting on the screen as a whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TouchRoute {
+    Switch,
+    Screen,
 }
 
 impl std::fmt::Debug for DeviceInfoOverlay {
@@ -410,6 +432,11 @@ impl Default for DeviceInfoOverlay {
             device_name: "Braiins Deck".to_owned(),
             miner: false,
             uplinks: Uplinks::WIFI_ONLY,
+            offers_languages: false,
+            language: None,
+            chosen: None,
+            pending_request: None,
+            gesture: None,
             env: Box::new(OsEnv),
         }
     }
@@ -463,6 +490,41 @@ impl DeviceInfoOverlay {
             | Screen::OpSuccess { .. }
             | Screen::OpFailed { .. }
             | Screen::Done => false,
+        }
+    }
+
+    /// The switch the screen shows: only through the first setup,
+    /// and only on a device that offers its languages.
+    /// A set-up device redoing its Wi-Fi has Settings for that, and the owner has already chosen.
+    fn language_switch(&self) -> LanguageSwitch {
+        if self.offers_languages
+            && !self.mode.setup_done()
+            && ui::offers_language_switch(&self.view())
+        {
+            LanguageSwitch::Shown {
+                current: self.chosen.or(self.language),
+            }
+        } else {
+            LanguageSwitch::Hidden
+        }
+    }
+
+    /// Which half of the screen's touch handling `event`'s gesture belongs to,
+    /// decided by its press: a screen change mid-gesture does not split it.
+    fn touch_route(&mut self, event: TouchEvent) -> Option<TouchRoute> {
+        match event {
+            TouchEvent::Down { .. } => {
+                // A screen with the switch never dismisses, so its touches are all the switch's.
+                let route = if self.language_switch() == LanguageSwitch::Hidden {
+                    TouchRoute::Screen
+                } else {
+                    TouchRoute::Switch
+                };
+                self.gesture = Some(route);
+                self.gesture
+            }
+            TouchEvent::Motion { .. } => self.gesture,
+            TouchEvent::Up { .. } | TouchEvent::Cancel => self.gesture.take(),
         }
     }
 
@@ -754,22 +816,66 @@ impl SystemOverlay for DeviceInfoOverlay {
         frame: FrameKind,
     ) -> RenderOutcome {
         let view = self.view();
-        render_device_info(
+        let switch = self.language_switch();
+        let drawn = render_device_info(
             r,
             viewport.size(),
             &mut self.render_state,
             &view,
             &self.device_name,
             self.miner,
+            switch,
             frame,
-        )
+        );
+        // The language already shown asks for nothing: re-asking would only round-trip a no-op.
+        // Any other is marked current at once, since the answer takes a save and a broadcast.
+        let already_current = |language| {
+            switch
+                == LanguageSwitch::Shown {
+                    current: Some(language),
+                }
+        };
+        if let Some(language) = drawn.picked.filter(|&language| !already_current(language)) {
+            tracing::info!(%language, "device-info overlay asks for a language");
+            self.chosen = Some(language);
+            self.pending_request = Some(LocalizationRequest::SetLanguage(language));
+            return RenderOutcome {
+                next: NextFrame::Rebuild,
+                ..drawn.outcome
+            };
+        }
+        drawn.outcome
     }
 
     fn on_hidden(&mut self) {
         self.render_state.tree.clear();
     }
 
+    fn on_language(&mut self, language: Option<Language>) {
+        // The device has the last word: a choice it declined snaps the switch back.
+        let choice_settled = self.chosen.take().is_some();
+        let spoken_changed = std::mem::replace(&mut self.language, language) != language;
+        self.dirty |= choice_settled || spoken_changed;
+    }
+
+    fn on_languages(&mut self, offered: &[Language]) {
+        self.offers_languages = true;
+        self.render_state.offer_languages(offered);
+        self.dirty = true;
+    }
+
+    fn drain_localization_requests(&mut self) -> Vec<LocalizationRequest> {
+        self.pending_request.take().into_iter().collect()
+    }
+
     fn on_touch(&mut self, event: TouchEvent) {
+        if self.touch_route(event) == Some(TouchRoute::Switch) {
+            // The next render hit-tests the press and the release together,
+            // so only the end of the gesture asks for a frame.
+            self.render_state.push_touch(event);
+            self.dirty |= matches!(event, TouchEvent::Up { .. } | TouchEvent::Cancel);
+            return;
+        }
         if !matches!(event, TouchEvent::Down { .. }) {
             return;
         }
@@ -2155,5 +2261,319 @@ mod tests {
         overlay.on_report_ip();
 
         assert_eq!(overlay.screen, Screen::Hidden);
+    }
+
+    /// The Deck panel.
+    const PANEL: OverlayViewport = OverlayViewport {
+        width: 1_280,
+        height: 480,
+        shape: bmc_system_overlay::DisplayShape::Rectangular,
+    };
+
+    fn recorder_for(panel: OverlayViewport) -> bmc_render::renderer::test_support::ShapingRecorder {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a panel edge is a few thousand pixels, exact in f32"
+        )]
+        bmc_render::renderer::test_support::ShapingRecorder::new(
+            panel.width as f32,
+            panel.height as f32,
+        )
+    }
+
+    /// Czech, whose pack in [`install_languages`] brings a name and no flag.
+    fn czech() -> Language {
+        Language::parse("cs").expect("BUG: `cs` is a tag")
+    }
+
+    /// Put the profile's packs and a flagless Czech pack in effect,
+    /// whatever packs the host has, so the switch shows flags and a name chip.
+    fn install_languages() {
+        let flagless = tempfile::tempdir().expect("BUG: a temporary directory");
+        std::fs::create_dir(flagless.path().join("cs"))
+            .expect("BUG: a writable temporary directory");
+        std::fs::write(
+            flagless.path().join("cs/info.json"),
+            r#"{ "name": "Čeština" }"#,
+        )
+        .expect("BUG: a writable temporary directory");
+        let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/intl/profile-languages");
+        // A pack without CLDR data is refused, as its text could not format.
+        std::fs::copy(
+            profile.join("zh/cldr.postcard"),
+            flagless.path().join("cs/cldr.postcard"),
+        )
+        .expect("BUG: the profile's zh pack carries a CLDR blob");
+
+        // Only the facts, read here and now, so the directory can go once they are.
+        let (translations, report) =
+            bmc_intl::Translations::read(&[profile, flagless.path().to_owned()]);
+
+        assert!(report.is_clean(), "{report}");
+        bmc_intl::Translations::install(translations);
+    }
+
+    /// The first setup's screen with its AP up, on a device that offers every installed pack
+    /// and speaks British English.
+    fn setup_start_in_british() -> DeviceInfoOverlay {
+        install_languages();
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_access_point(Some(&setup_ap()));
+        overlay.on_languages(&bmc_intl::Translations::shared().languages());
+        overlay.on_language(Some(Language::EN_GB));
+        let _ = overlay.tick(t0());
+        overlay
+    }
+
+    fn switch_showing(current: Language) -> LanguageSwitch {
+        LanguageSwitch::Shown {
+            current: Some(current),
+        }
+    }
+
+    fn chip_center(overlay: &mut DeviceInfoOverlay, language: Language) -> (f64, f64) {
+        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let rect = overlay
+            .render_state
+            .element_bounds(&ui::language_key(language))
+            .unwrap_or_else(|| panic!("{language} has no chip on screen"));
+        (
+            f64::from(rect.x + rect.w / 2.0),
+            f64::from(rect.y + rect.h / 2.0),
+        )
+    }
+
+    /// The offered languages a fresh render lays out a chip for.
+    fn chips_laid_out(overlay: &mut DeviceInfoOverlay) -> Vec<Language> {
+        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        bmc_intl::Translations::shared()
+            .languages()
+            .into_iter()
+            .filter(|&language| {
+                overlay
+                    .render_state
+                    .element_bounds(&ui::language_key(language))
+                    .is_some()
+            })
+            .collect()
+    }
+
+    /// Which of `candidates` a fresh render lays out a chip for, left to right.
+    fn chips_in_order(overlay: &mut DeviceInfoOverlay, candidates: &[Language]) -> Vec<Language> {
+        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let mut laid_out: Vec<(f32, Language)> = candidates
+            .iter()
+            .filter_map(|&language| {
+                overlay
+                    .render_state
+                    .element_bounds(&ui::language_key(language))
+                    .map(|rect| (rect.x, language))
+            })
+            .collect();
+        laid_out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        laid_out.into_iter().map(|(_, language)| language).collect()
+    }
+
+    /// A tap at `at` and the one frame that follows it: only the release
+    /// asks for a frame, so it hit-tests the press and the release together.
+    fn tap(overlay: &mut DeviceInfoOverlay, at: (f64, f64)) -> RenderOutcome {
+        overlay.on_touch(TouchEvent::Down {
+            id: 0,
+            x: at.0,
+            y: at.1,
+        });
+        overlay.on_touch(TouchEvent::Up { id: 0 });
+        overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh)
+    }
+
+    #[test]
+    fn a_tap_on_another_language_asks_for_it_once() {
+        let mut overlay = setup_start_in_british();
+
+        let american = chip_center(&mut overlay, Language::EN_US);
+        assert_eq!(
+            tap(&mut overlay, american).next,
+            NextFrame::Rebuild,
+            "the choice is drawn at once, without waiting for the device"
+        );
+        assert_eq!(
+            overlay.drain_localization_requests(),
+            vec![LocalizationRequest::SetLanguage(Language::EN_US)]
+        );
+        assert_eq!(
+            overlay.language_switch(),
+            switch_showing(Language::EN_US),
+            "shown as current before the device answers"
+        );
+
+        overlay.on_language(Some(Language::EN_US));
+        let _ = tap(&mut overlay, american);
+        assert!(
+            overlay.drain_localization_requests().is_empty(),
+            "spoken now, so the same tap asks for nothing"
+        );
+    }
+
+    #[test]
+    fn the_device_has_the_last_word_on_what_the_switch_shows() {
+        let mut overlay = setup_start_in_british();
+        let american = chip_center(&mut overlay, Language::EN_US);
+        let _ = tap(&mut overlay, american);
+        overlay.dirty = false;
+
+        overlay.on_language(Some(Language::EN_GB));
+
+        assert_eq!(
+            overlay.language_switch(),
+            switch_showing(Language::EN_GB),
+            "refused: the device answered with what it speaks"
+        );
+        assert!(overlay.dirty, "the switch is drawn again");
+    }
+
+    #[test]
+    fn a_device_speaking_none_it_offers_keeps_the_switch_with_no_chip_current() {
+        let mut overlay = setup_start_in_british();
+
+        overlay.on_language(None);
+
+        assert_eq!(
+            overlay.language_switch(),
+            LanguageSwitch::Shown { current: None }
+        );
+        let british = chip_center(&mut overlay, Language::EN_GB);
+        let _ = tap(&mut overlay, british);
+        assert_eq!(
+            overlay.drain_localization_requests(),
+            vec![LocalizationRequest::SetLanguage(Language::EN_GB)],
+            "no chip is current, so any asks"
+        );
+    }
+
+    #[test]
+    fn no_switch_on_a_device_that_never_offers_its_languages() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_access_point(Some(&setup_ap()));
+        let _ = overlay.tick(t0());
+
+        assert_eq!(overlay.language_switch(), LanguageSwitch::Hidden);
+        assert_eq!(chips_laid_out(&mut overlay), Vec::<Language>::new());
+    }
+
+    #[test]
+    fn a_set_up_device_redoing_its_wifi_offers_no_switch() {
+        install_languages();
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_access_point(Some(&setup_ap()));
+        overlay.on_languages(&bmc_intl::Translations::shared().languages());
+        overlay.on_language(Some(Language::EN_GB));
+        let _ = overlay.tick(t0());
+
+        assert_eq!(overlay.language_switch(), LanguageSwitch::Hidden);
+        assert_eq!(chips_laid_out(&mut overlay), Vec::<Language>::new());
+    }
+
+    /// The wide tier only: the compact tier's one line runs past its column
+    /// from the fourth chip, a layout the switch keeps until its design is approved.
+    #[test]
+    fn every_offered_language_has_a_chip_on_the_deck_panel() {
+        let mut overlay = setup_start_in_british();
+        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+
+        let offered = bmc_intl::Translations::shared().languages();
+        assert!(
+            offered.contains(&Language::ZH) && offered.contains(&czech()),
+            "the fixture's packs are in effect: {offered:?}"
+        );
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a panel edge is a few thousand pixels, exact in f32"
+        )]
+        let (width, height) = (PANEL.width as f32, PANEL.height as f32);
+        for language in offered {
+            let rect = overlay
+                .render_state
+                .element_bounds(&ui::language_key(language))
+                .unwrap_or_else(|| panic!("{language} has no chip"));
+            assert!(
+                rect.x >= 0.0
+                    && rect.y >= 0.0
+                    && rect.x + rect.w <= width
+                    && rect.y + rect.h <= height,
+                "{rect:?} is off the panel"
+            );
+        }
+    }
+
+    #[test]
+    fn a_press_on_a_switch_that_goes_away_is_released_by_its_lift() {
+        let mut overlay = setup_start_in_british();
+        let american = chip_center(&mut overlay, Language::EN_US);
+        overlay.on_touch(TouchEvent::Down {
+            id: 0,
+            x: american.0,
+            y: american.1,
+        });
+        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let chip = ui::language_key(Language::EN_US);
+        assert!(
+            overlay.render_state.tree.is_pressed(&chip),
+            "the press lands on the chip"
+        );
+
+        overlay.on_access_point(None);
+        assert_eq!(
+            overlay.language_switch(),
+            LanguageSwitch::Hidden,
+            "the switch is gone"
+        );
+        overlay.on_touch(TouchEvent::Up { id: 0 });
+        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+
+        assert!(
+            !overlay.render_state.tree.is_pressed(&chip),
+            "the lift ends the press the switch took"
+        );
+        assert!(overlay.drain_localization_requests().is_empty());
+    }
+
+    #[test]
+    fn the_switch_shows_what_the_device_offers_not_every_pack_it_reads() {
+        let mut overlay = setup_start_in_british();
+        assert!(
+            chips_laid_out(&mut overlay).contains(&czech()),
+            "offered with every pack this process reads"
+        );
+
+        let french = Language::parse("fr").expect("BUG: `fr` is a tag");
+        let offered = [Language::ZH, Language::EN_GB, french];
+
+        overlay.on_languages(&offered);
+
+        assert_eq!(
+            chips_in_order(
+                &mut overlay,
+                &[czech(), Language::EN_GB, Language::ZH, french]
+            ),
+            offered,
+            "bmc's list in bmc's order: no cs, and fr though this process has no pack for it"
+        );
+    }
+
+    #[test]
+    fn a_tap_on_a_language_named_without_a_flag_asks_for_it() {
+        let mut overlay = setup_start_in_british();
+
+        let at = chip_center(&mut overlay, czech());
+        let _ = tap(&mut overlay, at);
+
+        assert_eq!(
+            overlay.drain_localization_requests(),
+            vec![LocalizationRequest::SetLanguage(czech())]
+        );
     }
 }

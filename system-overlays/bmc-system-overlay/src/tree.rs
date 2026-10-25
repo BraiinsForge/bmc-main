@@ -229,6 +229,13 @@ impl TreeUi {
     pub fn is_pressed(&self, key: &str) -> bool {
         self.interaction.is_pressed(key)
     }
+
+    /// Where the last render laid out the element with `key`, if it drew one.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn element_bounds(&self, key: &str) -> Option<bmc_render::interaction::Rect> {
+        self.interaction.element_bounds(key)
+    }
 }
 
 #[cfg(test)]

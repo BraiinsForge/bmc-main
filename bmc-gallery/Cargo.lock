@@ -818,6 +818,7 @@ name = "bmc-overlay-device-info"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-intl",
  "bmc-render",
  "bmc-system-overlay",
  "tracing",
