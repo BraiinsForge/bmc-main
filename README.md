@@ -2,8 +2,12 @@
 
 ## Getting started
 
-Software in this repository runs on the [Braiins Deck](https://braiinsforge.com/hardware/braiins-deck) with firmware
-26.09. Update your Deck through its normal software upgrade flow before deploying a development build.
+This repository provides the display application, widgets, and web UI for the
+[Braiins Deck](https://braiinsforge.com/hardware/braiins-deck) starting with firmware 26.09 and the Braiins Mini Miner
+101 (BMM101) starting with firmware 26.10. The Deck is a standalone display; on BMM101, the application shows miner
+status and widgets alongside Braiins OS. See the [changelog](CHANGELOG.md) for package release notes.
+
+Update your device through its normal software upgrade flow before deploying a development build.
 
 ### Official widgets
 
@@ -19,7 +23,7 @@ The following official widgets are available:
 - Halving Countdown
 - Image
 - ISS Position
-- Mining Info (Mining, Geek, Network, and Info Overload views)
+- Miner Info (Mining, Geek, and Info Overload widgets)
 - Nameday
 - Picture of the Day (NASA Astronomy Picture of the Day)
 - Random Facts
@@ -49,7 +53,7 @@ system package manager: Fontconfig, FreeType, Wayland, libxkbcommon, Mesa/OpenGL
 Package names differ between distributions. Building for and deploying to the device via `nix run .#deck -- deploy` does
 not need these libraries.
 
-Root SSH access is available by default. Log in as `root` using the password you configured in the Deck's web UI.
+Root SSH access is available by default. Log in as `root` using the password configured in the device's web UI.
 
 ### Set up the repository
 
@@ -63,14 +67,14 @@ nix develop
 
 Run the remaining commands from this development shell.
 
-For deployment, set `DEVICE_IP` in this shell to your Deck's actual IP address. Find the address in the settings tray by
-swiping down from the top of the Deck's screen, then replace `<your-deck-ip-address>` below with that address:
+For deployment, set `DEVICE_IP` in this shell to your device's IP address. A Deck shows its address in the settings
+tray, opened by swiping down from the top of the screen. Replace `<your-device-ip-address>` below with the address:
 
 ```shell
-DEVICE_IP="<your-deck-ip-address>"
+DEVICE_IP="<your-device-ip-address>"
 ```
 
-If your Deck has a password set, you can install your SSH public key to avoid repeated password prompts during
+If your device has a password set, you can install your SSH public key to avoid repeated password prompts during
 deployment:
 
 ```shell
@@ -144,7 +148,7 @@ record fixtures, and review or update baselines. Visual capture requires a worki
 
 Nix discovers widget crates with manifests in the widget workspaces and exposes them as
 `deck-packages.widget-<directory-name>`. Ensure new files are tracked by Git so Nix includes them. After the
-[initial deployment](#deploy-to-a-deck), deploy an individual widget with:
+[initial deployment](#deploy-to-a-device), deploy an individual widget with:
 
 ```shell
 nix run .#deck -- deploy --device "$DEVICE_IP" --packages widget-my-widget
@@ -175,16 +179,17 @@ of the same name only while its version is above the feed's: the next upgrade, a
 build back over an upload at the feed's version or below. A template repository for such widgets will be linked here
 soon.
 
-### Deploy to a Deck
+### Deploy to a device
 
-On a Deck running firmware 26.09, deploy the packages built from your checkout to the address set in `DEVICE_IP`:
+On a Deck running firmware 26.09 or later, or a BMM101 running firmware 26.10 or later, deploy the packages built from
+your checkout to the address set in `DEVICE_IP`:
 
 ```shell
 nix run .#deck -- deploy --device "$DEVICE_IP"
 ```
 
 `deck deploy` turns automatic upgrades off, so they do not replace the deployed packages. Manual upgrades keep working,
-and Settings → Upgrades in the web UI turns automatic upgrades back on.
+and the device's web UI turns automatic upgrades back on.
 
 Subsequent iterations also use `deck deploy`; see [`docs/deployment.md`](docs/deployment.md) for package selection,
 debug profiles, and faster native-binary iteration. Note that if you make changes to the bmc-wasm-runtime, you should
@@ -329,5 +334,5 @@ nix build .#widgets-armv7-glibc-release -o result-widgets-arm
 
 ## Deployment during development
 
-`nix run .#deck` is the harness for deploying packages and flashing firmware to a device — run it with `--help` (and
-`<subcommand> --help`) for its procedures and options. For details see `docs/deployment.md`.
+`nix run .#deck` is the harness for deploying packages to a device and flashing firmware to a Deck — run it with
+`--help` (and `<subcommand> --help`) for its procedures and options. For details see `docs/deployment.md`.

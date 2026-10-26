@@ -1,6 +1,6 @@
 # Firmware releases
 
-This document covers what needs to happen from our side to successfully publish a new release.
+Internal instructions for releasing a new firmware.
 
 Summary of what we need to do:
 
@@ -23,7 +23,7 @@ nix flake update bmc-main
 
 in `bos-main` repository.
 
-These MRs should use the release task `#BDK-XXX`.
+These MRs should use the release epic `#BDK-XXX`.
 
 ## 2. Ask someone from BOS to start the release, creating a release candidate
 
