@@ -159,25 +159,9 @@ the [`bmc-wasm-runtime` README](bmc-wasm-runtime/README.md) for the full tooling
 
 #### Package a widget for upload
 
-A Deck also installs a widget uploaded from its web UI, so a widget can be shared without a package feed. Build the
-package and dump it as a NAR archive:
-
-```shell
-nix build .#deck-packages.widget-my-widget.pkg --out-link my-widget
-nix-store --dump "$(readlink my-widget)" > widget-my-widget.nar
-```
-
-On the Deck's Display Widgets page, choose Install Widget, accept the third-party notice and pick the `.nar` file. The
-device checks the archive before installing it and refuses anything that is not a single WASM widget under
-`lib/bmc-widgets/`, an archive over 64 MiB or with more than 4096 files and folders, a version older than the one
-installed, a widget whose folder would hide an installed one or be hidden by it, or a widget whose uid an installed
-widget already carries.
-
-A widget built outside this tree should sit under a maintainer folder, `lib/bmc-widgets/<maintainer>/<widget>/`, so that
-its package is named `widget-<maintainer>_<widget>`, clear of the feed's widgets. A flat upload replaces the feed widget
-of the same name only while its version is above the feed's: the next upgrade, automatic ones included, puts the feed's
-build back over an upload at the feed's version or below. A template repository for such widgets will be linked here
-soon.
+The Deck can install a third-party WASM widget from a `.nar` file through its Display Widgets page. See
+[Package a WASM widget for upload](docs/uploading-wasm-widgets.md) for the required folder layout, manifest, launcher,
+and archive commands.
 
 ### Deploy to a device
 
