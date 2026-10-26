@@ -145,6 +145,7 @@ fn following(ids: &[String], names: &[String]) -> Session {
         websocket_url: "ws://ha.test/api/websocket".to_owned(),
         token: "token".to_owned(),
         reserved: |_| false,
+        iso_time: |_| None,
     });
     let _ = session.start();
     let _ = session.on_message(&HostDoc(

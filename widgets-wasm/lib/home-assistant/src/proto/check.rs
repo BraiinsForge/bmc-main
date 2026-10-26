@@ -26,6 +26,10 @@ use super::client::{
     MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES, MAX_NAME_BYTES, MAX_POINTER_BYTES,
     RequestError,
 };
+use super::json::ObjectWriter;
+
+/// Ample for an ISO 8601 time, such as `2026-10-26T10:00:00.000+00:00`, 29 bytes long.
+const MAX_TIME_BYTES: usize = 64;
 
 /// Home Assistant's slug shape, which domains, services and both halves of an entity id share:
 /// lowercase letters, digits and underscores, no leading, trailing or doubled underscore.
@@ -39,7 +43,7 @@ pub(super) fn is_slug(text: &str) -> bool {
         && !text.contains("__")
 }
 
-/// `entity_ids` without repeats, so the limits count each once.
+/// `entity_ids` without repeats, so the limits and a reply's share of points count each once.
 pub(super) fn distinct<'a>(entity_ids: &[&'a str]) -> BTreeSet<&'a str> {
     entity_ids.iter().copied().collect()
 }
@@ -56,6 +60,27 @@ pub(super) fn check_entity_ids(entity_ids: &BTreeSet<&str>) -> Result<(), Reques
         return Err(RequestError::InvalidEntityId);
     }
     Ok(())
+}
+
+/// Only bounded here: Home Assistant parses the time, and refuses one it cannot read.
+pub(super) fn is_time(text: &str) -> bool {
+    text.len() <= MAX_TIME_BYTES
+}
+
+/// A history period as [`Setup::iso_time`](super::Setup::iso_time) wrote it.
+pub(super) struct Times {
+    pub(super) start: String,
+    pub(super) end: Option<String>,
+}
+
+impl Times {
+    pub(super) fn write_into(&self, message: ObjectWriter) -> ObjectWriter {
+        let message = message.string("start_time", &self.start);
+        match &self.end {
+            Some(end) => message.string("end_time", end),
+            None => message,
+        }
+    }
 }
 
 /// A domain or a service, which Home Assistant requires to be slugs.

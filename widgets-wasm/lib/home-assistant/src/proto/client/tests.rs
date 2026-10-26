@@ -24,7 +24,9 @@ use bmc_wasm_sdk::wasm_test;
 
 use super::*;
 use crate::proto::json::test_support::Message;
-use crate::proto::{AttributeValue, Presence, Reply, Values};
+use crate::proto::{
+    AttributeValue, HistoryPoint, MAX_HISTORY_POINTS, Presence, Reply, Series, Values,
+};
 
 const URL: &str = "ws://ha.test/api/websocket";
 const TOKEN: &str = "token-as-the-transport-takes-it";
@@ -34,11 +36,22 @@ fn reserved(text: &str) -> bool {
     text.contains("RESERVED")
 }
 
+/// Stands in for the platform's formatter, which cannot write a time before the epoch.
+fn iso_time(secs: i64) -> Option<String> {
+    if secs < 0 {
+        return None;
+    }
+    let mut time = String::from("t");
+    time.push_str(&secs.to_string());
+    Some(time)
+}
+
 fn client() -> Session {
     Session::new(Setup {
         websocket_url: URL.to_owned(),
         token: TOKEN.to_owned(),
         reserved,
+        iso_time,
     })
 }
 
@@ -932,6 +945,20 @@ fn commands_are_checked() {
     }
 }
 
+const DAY_START_SECS: i64 = 1_761_386_400;
+/// [`DAY_START_SECS`] as [`iso_time`] writes it.
+const DAY_START: &str = "t1761386400";
+
+fn ask_history(
+    client: &mut Session,
+    entity_ids: &[&str],
+    end_secs: Option<i64>,
+) -> (CallId, Effects) {
+    client
+        .history(entity_ids, DAY_START_SECS, end_secs)
+        .expect("BUG: the test history request is valid while connected")
+}
+
 fn only_reply(out: &Output) -> &Reply {
     let [
         Event::CallFinished {
@@ -951,6 +978,116 @@ fn only_values(out: &Output) -> &Values {
     values
 }
 
+fn only_history(out: &Output) -> &BTreeMap<String, Series<HistoryPoint>> {
+    let Reply::History(history) = only_reply(out) else {
+        panic!("BUG: expected history, got {:?}", out.events);
+    };
+    history
+}
+
+#[wasm_test]
+fn a_history_request_asks_for_states_alone() {
+    let mut client = client();
+    let _ = ready(&mut client);
+
+    let (_, open_ended) = ask_history(&mut client, &["sensor.outdoor", "sensor.indoor"], None);
+    assert_eq!(
+        sent(&open_ended),
+        [json!({
+            "id": 1,
+            "type": "history/history_during_period",
+            "start_time": DAY_START,
+            "entity_ids": ["sensor.indoor", "sensor.outdoor"],
+            "minimal_response": true,
+            "no_attributes": true,
+            "significant_changes_only": true,
+        })]
+    );
+
+    let (_, bounded) = ask_history(
+        &mut client,
+        &["sensor.outdoor"],
+        Some(DAY_START_SECS + 86_400),
+    );
+    assert_eq!(sent(&bounded)[0]["end_time"], "t1761472800");
+}
+
+#[wasm_test]
+fn a_history_reply_holds_each_entitys_states() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let _ = ask_history(&mut client, &["sensor.outdoor", "sensor.indoor"], None);
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {
+            "sensor.outdoor": [{"s": "12.4", "lu": 1_761_386_400.0}, {"s": "12.6", "lu": 1_761_386_712.0}],
+        }}),
+    );
+
+    let reply = only_history(&out);
+    let outdoor = reply
+        .get("sensor.outdoor")
+        .expect("BUG: the result holds the outdoor history");
+    let states: Vec<&str> = outdoor
+        .points
+        .iter()
+        .map(|point| point.state.as_str())
+        .collect();
+    assert_eq!(states, ["12.4", "12.6"]);
+    assert_eq!(outdoor.dropped, 0);
+    assert_eq!(
+        reply.get("sensor.indoor"),
+        None,
+        "an entity without states in the period has no history"
+    );
+}
+
+#[wasm_test]
+fn a_command_reply_has_no_history() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let _ = look_up_registry_entry(&mut client);
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {"sensor.outdoor": []}}),
+    );
+
+    assert!(
+        matches!(only_reply(&out), Reply::Values(_)),
+        "a command answers with values, not history"
+    );
+}
+
+#[wasm_test(
+    fuel = 300e6,
+    reason = "builds and parses a 2,000-state reply in the guest"
+)]
+fn the_entities_of_one_history_reply_share_the_cap() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let _ = ask_history(&mut client, &["sensor.outdoor", "sensor.indoor"], None);
+    let states: Vec<Value> = (0..MAX_HISTORY_POINTS)
+        .map(|second| json!({"s": second.to_string(), "lu": second}))
+        .collect();
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {
+            "sensor.outdoor": states, "sensor.indoor": states,
+        }}),
+    );
+
+    let reply = only_history(&out);
+    let kept = |entity| reply.get(entity).map(|series| series.points.len());
+    let half = Some(MAX_HISTORY_POINTS / 2);
+    assert_eq!(
+        (kept("sensor.outdoor"), kept("sensor.indoor")),
+        (half, half)
+    );
+}
+
 /// `count` distinct, well-formed entity ids.
 fn entity_ids(count: usize) -> Vec<String> {
     (0..count)
@@ -962,6 +1099,33 @@ fn entity_ids(count: usize) -> Vec<String> {
         .collect()
 }
 
+#[wasm_test(
+    fuel = 300e6,
+    reason = "builds and parses a 1,000-state reply in the guest"
+)]
+fn a_repeated_entity_is_asked_about_once_with_the_whole_share() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let (_, out) = ask_history(&mut client, &["sensor.outdoor", "sensor.outdoor"], None);
+    assert_eq!(sent(&out)[0]["entity_ids"], json!(["sensor.outdoor"]));
+    let states: Vec<Value> = (0..MAX_HISTORY_POINTS)
+        .map(|second| json!({"s": second.to_string(), "lu": second}))
+        .collect();
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {"sensor.outdoor": states}}),
+    );
+
+    assert_eq!(
+        only_history(&out)
+            .get("sensor.outdoor")
+            .map(|series| series.points.len()),
+        Some(MAX_HISTORY_POINTS),
+        "a repeat must not halve the entity's share"
+    );
+}
+
 #[wasm_test]
 fn a_subscription_counts_each_entity_once_against_the_limit() {
     let mut client = client();
@@ -970,6 +1134,44 @@ fn a_subscription_counts_each_entity_once_against_the_limit() {
     let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
 
     assert!(client.subscribe(&ids, &[]).is_ok());
+}
+
+#[wasm_test]
+fn history_requests_are_checked() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let too_many = entity_ids(MAX_ENTITIES_PER_SUBSCRIPTION + 1);
+    let too_many: Vec<&str> = too_many.iter().map(String::as_str).collect();
+    let cases: [(&[&str], i64, Option<i64>, RequestError); 5] = [
+        (&[], DAY_START_SECS, None, RequestError::NoEntities),
+        (
+            &too_many,
+            DAY_START_SECS,
+            None,
+            RequestError::TooManyEntities,
+        ),
+        (
+            &["outdoor"],
+            DAY_START_SECS,
+            None,
+            RequestError::InvalidEntityId,
+        ),
+        (&["sensor.outdoor"], -1, None, RequestError::InvalidTime),
+        (
+            &["sensor.outdoor"],
+            DAY_START_SECS,
+            Some(-1),
+            RequestError::InvalidTime,
+        ),
+    ];
+
+    for (entity_ids, start_secs, end_secs, error) in cases {
+        assert_eq!(
+            client.history(entity_ids, start_secs, end_secs).err(),
+            Some(error),
+            "{entity_ids:?} {start_secs:?} {end_secs:?}"
+        );
+    }
 }
 
 #[wasm_test]

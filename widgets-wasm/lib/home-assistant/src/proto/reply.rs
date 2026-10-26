@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 
 use super::client::{CallId, Status, SubscriptionId};
 use super::entity::{AttributeValue, read_value};
+use super::history::{HistoryPoint, Series, read_history};
 use super::json::{JsonLookup, Pointer, PointerBuf};
 
 /// Home Assistant's code for an error it has no more specific code for,
@@ -43,10 +44,12 @@ pub struct HaError {
 pub enum CallFailure {
     Rejected(HaError),
     /// The connection dropped before an answer came.
-    /// Home Assistant may or may not have run the call, so never repeat it on the widget's own.
+    /// Home Assistant may or may not have run the call,
+    /// so repeat only a history request, never a service call or a command,
+    /// and only once the status is back to [`Status::Ready`].
     /// After [`Status::MessageTooLarge`] the client stays stopped:
     /// the oversized message may have been any pending reply or a subscription's event,
-    /// so ask for fewer entities, then [`Session::resume`](super::Session::resume).
+    /// so ask for a shorter time range or fewer entities, then [`Session::resume`](super::Session::resume).
     Disconnected,
     /// No answer came within 30 to 60 s.
     /// The session has no clock, so it times a call in its 30 s keepalive ticks
@@ -78,6 +81,8 @@ pub enum Reply {
     Done,
     /// The values a command asked for.
     Values(Values),
+    /// Each entity's states, by entity id; one without states in the period is left out.
+    History(BTreeMap<String, Series<HistoryPoint>>),
 }
 
 /// The values a command found at the JSON Pointers it named.
@@ -123,6 +128,8 @@ pub(super) enum Wanted {
     Nothing,
     /// JSON Pointers into the result.
     Values(Vec<String>),
+    /// Entity ids whose history the result holds.
+    History(Vec<String>),
 }
 
 /// The values at `pointers` into a command's result.
@@ -147,6 +154,7 @@ impl PendingCall {
             Wanted::Values(pointers) => {
                 Reply::Values(read_values(message, pointers.iter().map(String::as_str)))
             }
+            Wanted::History(entity_ids) => Reply::History(read_history(message, entity_ids)),
         }
     }
 }

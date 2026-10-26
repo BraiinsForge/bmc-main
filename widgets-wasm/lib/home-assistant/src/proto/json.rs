@@ -66,6 +66,10 @@ impl Pointer {
         push_key(&mut path, token);
         Self(path)
     }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// One pointer grown and cut back token by token over a single buffer,
@@ -106,6 +110,26 @@ impl PointerBuf {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+/// One array element of a [`PointerBuf`], whose members [`Self::key`] names in turn.
+pub(crate) struct Item<'a> {
+    path: &'a mut PointerBuf,
+    at: usize,
+}
+
+impl<'a> Item<'a> {
+    /// The element `index` of the array `path` names.
+    pub(crate) fn new(path: &'a mut PointerBuf, index: usize) -> Self {
+        path.push_index(index);
+        let at = path.mark();
+        Self { path, at }
+    }
+
+    pub(crate) fn key(&mut self, token: &str) -> &str {
+        self.path.truncate(self.at);
+        self.path.push(token)
     }
 }
 
@@ -398,6 +422,19 @@ mod tests {
                 .as_deref(),
             Some("found"),
             "the escaped pointer must reach the member serde_json resolves"
+        );
+    }
+
+    #[wasm_test]
+    fn an_item_names_the_members_of_its_element_in_turn() {
+        let mut path = PointerBuf::new(Pointer::root().key("result"));
+        let mut item = Item::new(&mut path, 12);
+
+        assert_eq!(item.key("a/b~c"), "/result/12/a~1b~0c");
+        assert_eq!(
+            item.key("s"),
+            "/result/12/s",
+            "nothing of the longer member before"
         );
     }
 

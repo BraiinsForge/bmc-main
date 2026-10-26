@@ -27,6 +27,7 @@
 use core::cell::RefCell;
 use core::mem::ManuallyDrop;
 
+use bmc_wasm_sdk::format::strftime;
 use bmc_wasm_sdk::json::{JsonDoc, JsonKind};
 use bmc_wasm_sdk::log_warn;
 use bmc_wasm_sdk::timer;
@@ -153,6 +154,18 @@ impl Client {
         self.request(|core| core.command(command, data, wanted))
     }
 
+    /// Ask for the states `entity_ids` went through from `start_secs` to `end_secs`, or to now,
+    /// both in seconds since the Unix epoch; the result arrives as [`Event::CallFinished`].
+    /// A reply too large for the host stops the client, as [`proto::Session::history`] says.
+    pub fn history(
+        &self,
+        entity_ids: &[&str],
+        start_secs: i64,
+        end_secs: Option<i64>,
+    ) -> Result<CallId, RequestError> {
+        self.request(|core| core.history(entity_ids, start_secs, end_secs))
+    }
+
     /// Start again after a stop, or start over an attempt still opening,
     /// as [`proto::Session::resume`] says.
     ///
@@ -217,6 +230,10 @@ fn setup(slot: &str) -> proto::Setup {
         websocket_url: credential::placeholder(slot, "websocket_url"),
         token: credential::placeholder(slot, "token"),
         reserved: credential::names_credential,
+        // RFC 3339 in UTC, which the host writes empty for a time it cannot represent.
+        iso_time: |unix_secs| {
+            Some(strftime(unix_secs, "%Y-%m-%dT%H:%M:%SZ")).filter(|time| !time.is_empty())
+        },
     }
 }
 

@@ -31,6 +31,7 @@
 //! let sensor = client.subscribe(&["sensor.outdoor"], &["friendly_name", "unit_of_measurement"])?;
 //! let call = client.call_service("button", "press", "button.gate", &ServiceData::new())?;
 //! let config = client.command("get_config", &ServiceData::new(), &["/time_zone"])?;
+//! let day = client.history(&["sensor.outdoor"], now_secs - 24 * 3600, None)?;
 //! ```
 //!
 //! Every type a widget handles is re-exported here; [`proto`] holds the engine behind them.
@@ -47,10 +48,10 @@ pub mod proto;
 #[cfg(target_arch = "wasm32")]
 pub use adapter::{Client, ConnectError, EventCallback, Subscription, connect};
 pub use proto::{
-    AttributeValue, CallFailure, CallId, Entity, Event, HaError, MAX_ATTRIBUTE_LIST_BYTES,
-    MAX_ATTRIBUTE_NUMBERS, MAX_ATTRIBUTE_TEXT_BYTES, MAX_ATTRIBUTES_PER_SUBSCRIPTION,
-    MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES, MAX_NAME_BYTES, MAX_PENDING_CALLS,
-    MAX_POINTER_BYTES, MAX_REPLY_VALUES, MAX_SERVICE_DATA_LIST_ITEMS, MAX_SERVICE_DATA_TEXT_BYTES,
-    MAX_SUBSCRIPTIONS, Presence, Reply, RequestError, ServiceData, Status, SubscriptionId,
-    UNKNOWN_ERROR, Values, is_entity_id,
+    AttributeValue, CallFailure, CallId, Entity, Event, HaError, HistoryPoint,
+    MAX_ATTRIBUTE_LIST_BYTES, MAX_ATTRIBUTE_NUMBERS, MAX_ATTRIBUTE_TEXT_BYTES,
+    MAX_ATTRIBUTES_PER_SUBSCRIPTION, MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES,
+    MAX_HISTORY_POINTS, MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_POINTER_BYTES, MAX_REPLY_VALUES,
+    MAX_SERVICE_DATA_LIST_ITEMS, MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, Presence, Reply,
+    RequestError, Series, ServiceData, Status, SubscriptionId, UNKNOWN_ERROR, Values, is_entity_id,
 };

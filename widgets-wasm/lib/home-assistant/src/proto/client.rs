@@ -22,7 +22,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::check::{check_entity_ids, distinct, is_entity_id, is_free_name, is_name, is_pointer};
+use super::check::{
+    Times, check_entity_ids, distinct, is_entity_id, is_free_name, is_name, is_pointer, is_time,
+};
 use super::effects::{Closed, Command, Effects, Output, Wake};
 use super::entity::{Entity, EntityEvent};
 use super::json::{JsonLookup, ObjectWriter};
@@ -95,7 +97,8 @@ pub enum Status {
 pub enum RequestError {
     TooManySubscriptions,
     NoEntities,
-    /// Over [`MAX_ENTITIES_PER_SUBSCRIPTION`] entities in a subscription.
+    /// Over [`MAX_ENTITIES_PER_SUBSCRIPTION`] entities in a subscription,
+    /// or a history request.
     TooManyEntities,
     TooManyAttributes,
     /// Not shaped `domain.object_id`, or over [`MAX_ENTITY_ID_BYTES`].
@@ -111,13 +114,15 @@ pub enum RequestError {
     TooManyReplyValues,
     /// A pointer neither empty nor starting with `/`, or over [`MAX_POINTER_BYTES`].
     InvalidPointer,
+    /// A history time [`Setup::iso_time`] cannot write.
+    InvalidTime,
     NotConnected,
     TooManyPendingCalls,
 }
 
 /// What the session takes from the platform it runs on:
 /// what it writes where the transport fills in the account,
-/// and what it must never pass on from a caller.
+/// what it must never pass on from a caller, and how to write a time.
 #[derive(Debug, Clone)]
 pub struct Setup {
     /// The address to dial, as the transport takes it.
@@ -128,6 +133,9 @@ pub struct Setup {
     /// A request carrying such text from its caller is refused before anything is sent,
     /// so the only text the transport acts on is the session's own.
     pub reserved: fn(&str) -> bool,
+    /// Seconds since the Unix epoch as an ISO 8601 time, such as `2026-10-26T10:00:00Z`,
+    /// `None` for one it cannot write.
+    pub iso_time: fn(i64) -> Option<String>,
 }
 
 pub(super) fn owned<'a>(texts: impl IntoIterator<Item = &'a str>) -> Vec<String> {
@@ -591,6 +599,54 @@ impl Session {
         );
 
         Ok((call, Effects::send(message.finish())))
+    }
+
+    /// Ask for the states `entity_ids` went through from `start_secs` to `end_secs`, or to now,
+    /// both in seconds since the Unix epoch.
+    /// The result arrives as [`Event::CallFinished`], its [`Reply::History`](super::Reply::History) holding
+    /// up to [`MAX_HISTORY_POINTS`](super::MAX_HISTORY_POINTS) of the latest states,
+    /// shared evenly between the entities that have any,
+    /// each series' [`dropped`](super::Series::dropped) counting the oldest points left out.
+    /// Like a service call, the request is never sent twice, and times out as one does.
+    ///
+    /// A reply over the host's WebSocket message cap stops the client as [`Status::MessageTooLarge`]
+    /// and fails the request as [`CallFailure::Disconnected`],
+    /// so keep the time range short for a sensor that changes often.
+    pub fn history(
+        &mut self,
+        entity_ids: &[&str],
+        start_secs: i64,
+        end_secs: Option<i64>,
+    ) -> Result<(CallId, Effects), RequestError> {
+        let entity_ids = distinct(entity_ids);
+        check_entity_ids(&entity_ids)?;
+        let times = self.iso_times(start_secs, end_secs)?;
+        let (call, request) =
+            self.start_call(Wanted::History(owned(entity_ids.iter().copied())))?;
+        let message = times
+            .write_into(
+                ObjectWriter::new()
+                    .uint("id", request.0)
+                    .string("type", "history/history_during_period"),
+            )
+            .strings("entity_ids", entity_ids.iter().copied())
+            .bool("minimal_response", true)
+            .bool("no_attributes", true)
+            .bool("significant_changes_only", true);
+
+        Ok((call, Effects::send(message.finish())))
+    }
+
+    fn iso_times(&self, start_secs: i64, end_secs: Option<i64>) -> Result<Times, RequestError> {
+        let iso_time = |secs| {
+            (self.setup.iso_time)(secs)
+                .filter(|time| is_time(time))
+                .ok_or(RequestError::InvalidTime)
+        };
+        Ok(Times {
+            start: iso_time(start_secs)?,
+            end: end_secs.map(iso_time).transpose()?,
+        })
     }
 
     fn start_call(&mut self, wanted: Wanted) -> Result<(CallId, RequestId), RequestError> {
