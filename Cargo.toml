@@ -307,8 +307,9 @@ fdlimit = "0.3.0"
 strsim = "0.11.1"
 # femtovg 0.20.4 passes GL_R8 as the Gray8 sub-upload format
 # on GLES3 and desktop GL; the gallery's desktop context needs GL_RED instead.
-# Pinned to the fork revision carrying that one-token fix, now merged upstream;
-# drop this and the gallery's copy once a fixed release ships.
+# Pinned to the fork revision carrying that one-token fix. 0.27.0 has the fix
+# but zero-fills every texture it creates, which costs the Deck about 17 ms
+# each time a widget wakes (BDK-1011), so the fork stays until femtovg goes.
 femtovg = { git = "https://github.com/BraiinsForge/femtovg.git", rev = "45047b19d18b0b444aca195a3fd13b2fb83bc525" }
 file-rotate = "0.7.6"
 flate2 = { version = "1.0.30", default-features = false }
