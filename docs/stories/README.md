@@ -131,6 +131,11 @@ cable already reaches it, the progress of a Wi-Fi join, and the address the web 
 Also covers re-running Wi-Fi setup from the device, changing the Wi-Fi network from the web UI, and the confirmation
 shown after a firmware update restarts.
 
+### [Device Language](device-language.md)
+
+The language the device speaks, chosen in the web UI's settings or on its own screen during the first setup. Behind a
+marker file until the designs are approved.
+
 ### [Physical Buttons](physical-buttons.md)
 
 What the Deck's physical buttons do. A short press of the IP-report button brings the device's address and QR code back
