@@ -18,24 +18,26 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Past states as `history/history_during_period` returns them.
+//! Past states as `history/history_during_period` returns them,
+//! and long-term statistics as `recorder/statistics_during_period` does.
 //!
-//! The result maps each entity id to an array in time order.
+//! Both results map each entity id to an array in time order.
 //! With `minimal_response` a state is `{"s": state, "lu": seconds}`,
 //! the first also carrying what `no_attributes` leaves in.
+//! A statistic is `{"start": ms, "end": ms, "mean": …, "min": …, "max": …}`.
 
 use std::collections::BTreeMap;
 
 use super::json::{Item, JsonLookup, Pointer, PointerBuf};
 
-/// Most states kept from one reply, shared evenly between the entities that have any;
+/// Most states or statistics kept from one reply, shared evenly between the entities that have any;
 /// the latest of each are kept when there are more, and its series counts the rest as [`Series::dropped`].
 ///
-/// Reading one costs the widget about 2,100 fuel,
+/// Reading one costs the widget about 2,100 fuel, a statistic about 3,600,
 /// so this leaves most of a delivery's 25 million to the widget.
 pub const MAX_HISTORY_POINTS: usize = 1_000;
 
-/// One entity's states over the requested period, oldest first,
+/// One entity's states or statistics over the requested period, oldest first,
 /// as Home Assistant answered them but for the oldest the client dropped.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Series<P> {
@@ -56,6 +58,42 @@ pub struct HistoryPoint {
     pub time: f64,
     /// The state as Home Assistant reports it, such as `21.5` or `unavailable`.
     pub state: String,
+}
+
+/// The mean, minimum and maximum of a sensor over one period, such as an hour,
+/// each `None` when Home Assistant has no value of that kind for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatisticPoint {
+    /// When the period began, in seconds since the Unix epoch.
+    pub start: f64,
+    /// When the period ended, in seconds since the Unix epoch.
+    pub end: f64,
+    pub mean: Option<f64>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+}
+
+/// How long each statistic of a statistics request covers.
+/// No `year`: Home Assistant takes it only from 2026.3, and the widgets support releases from 2024.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Period {
+    FiveMinutes,
+    Hour,
+    Day,
+    Week,
+    Month,
+}
+
+impl Period {
+    pub(crate) fn wire_name(self) -> &'static str {
+        match self {
+            Self::FiveMinutes => "5minute",
+            Self::Hour => "hour",
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+        }
+    }
 }
 
 /// Each of `entity_ids` the result of `message` holds a series for, with its latest points:
@@ -89,6 +127,26 @@ pub(crate) fn read_history(
             Some(HistoryPoint {
                 time: message.f64(item.key("lu"))?,
                 state: message.str(item.key("s"))?,
+            })
+        })
+    })
+}
+
+/// The statistics of each of `entity_ids` in the result of `message`.
+/// A statistic missing its start or end is skipped.
+pub(crate) fn read_statistics(
+    message: &impl JsonLookup,
+    entity_ids: &[String],
+) -> BTreeMap<String, Series<StatisticPoint>> {
+    let secs = |item: &mut Item<'_>, key: &str| Some(message.f64(item.key(key))? / 1000.0);
+    read_all(message, entity_ids, |entity_id, most| {
+        read_series(message, entity_id, most, |item| {
+            Some(StatisticPoint {
+                start: secs(item, "start")?,
+                end: secs(item, "end")?,
+                mean: message.f64(item.key("mean")),
+                min: message.f64(item.key("min")),
+                max: message.f64(item.key("max")),
             })
         })
     })
@@ -207,6 +265,40 @@ mod tests {
         assert_eq!(history(&message, OUTDOOR), None);
     }
 
+    #[wasm_test]
+    fn statistics_are_read_with_their_periods_in_seconds() {
+        let message = result(&serde_json::json!({OUTDOOR: [
+            {"start": 1_760_832_000_000_u64, "end": 1_760_835_600_000_u64, "mean": 11.8, "min": 11.2, "max": 12.4},
+            {"start": 1_760_835_600_000_u64, "end": 1_760_839_200_000_u64, "mean": null, "min": 11.0},
+            {"end": 1_760_842_800_000_u64, "mean": 1.0},
+        ]}));
+
+        let mut statistics = read_statistics(&message, &ids(&[OUTDOOR, "sensor.indoor"]));
+        assert_eq!(
+            statistics.remove(OUTDOOR),
+            Some(Series {
+                points: vec![
+                    StatisticPoint {
+                        start: 1_760_832_000.0,
+                        end: 1_760_835_600.0,
+                        mean: Some(11.8),
+                        min: Some(11.2),
+                        max: Some(12.4),
+                    },
+                    StatisticPoint {
+                        start: 1_760_835_600.0,
+                        end: 1_760_839_200.0,
+                        mean: None,
+                        min: Some(11.0),
+                        max: None,
+                    },
+                ],
+                dropped: 0,
+            })
+        );
+        assert!(statistics.is_empty(), "nothing for sensor.indoor");
+    }
+
     #[wasm_test(fuel = 300e6, reason = "builds and parses 1,002 states in the guest")]
     fn past_the_cap_the_latest_states_are_kept_and_the_series_is_cut() {
         let states: Vec<serde_json::Value> = (0..MAX_HISTORY_POINTS + 2)
@@ -243,5 +335,6 @@ mod tests {
         let message = result(&serde_json::json!({}));
 
         assert!(read_history(&message, &ids(&[OUTDOOR])).is_empty());
+        assert!(read_statistics(&message, &ids(&[OUTDOOR])).is_empty());
     }
 }

@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 
 use super::client::{CallId, Status, SubscriptionId};
 use super::entity::{AttributeValue, read_value};
-use super::history::{HistoryPoint, Series, read_history};
+use super::history::{HistoryPoint, Series, StatisticPoint, read_history, read_statistics};
 use super::json::{JsonLookup, Pointer, PointerBuf};
 
 /// Home Assistant's code for an error it has no more specific code for,
@@ -45,7 +45,7 @@ pub enum CallFailure {
     Rejected(HaError),
     /// The connection dropped before an answer came.
     /// Home Assistant may or may not have run the call,
-    /// so repeat only a history request, never a service call or a command,
+    /// so repeat only a history or statistics request, never a service call or a command,
     /// and only once the status is back to [`Status::Ready`].
     /// After [`Status::MessageTooLarge`] the client stays stopped:
     /// the oversized message may have been any pending reply or a subscription's event,
@@ -83,6 +83,8 @@ pub enum Reply {
     Values(Values),
     /// Each entity's states, by entity id; one without states in the period is left out.
     History(BTreeMap<String, Series<HistoryPoint>>),
+    /// Each entity's statistics, by entity id; one without statistics in the period is left out.
+    Statistics(BTreeMap<String, Series<StatisticPoint>>),
 }
 
 /// The values a command found at the JSON Pointers it named.
@@ -130,6 +132,8 @@ pub(super) enum Wanted {
     Values(Vec<String>),
     /// Entity ids whose history the result holds.
     History(Vec<String>),
+    /// Entity ids whose statistics the result holds.
+    Statistics(Vec<String>),
 }
 
 /// The values at `pointers` into a command's result.
@@ -155,6 +159,9 @@ impl PendingCall {
                 Reply::Values(read_values(message, pointers.iter().map(String::as_str)))
             }
             Wanted::History(entity_ids) => Reply::History(read_history(message, entity_ids)),
+            Wanted::Statistics(entity_ids) => {
+                Reply::Statistics(read_statistics(message, entity_ids))
+            }
         }
     }
 }

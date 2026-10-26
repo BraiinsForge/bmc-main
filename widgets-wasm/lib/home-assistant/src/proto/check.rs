@@ -67,7 +67,7 @@ pub(super) fn is_time(text: &str) -> bool {
     text.len() <= MAX_TIME_BYTES
 }
 
-/// A history period as [`Setup::iso_time`](super::Setup::iso_time) wrote it.
+/// A history or statistics period as [`Setup::iso_time`](super::Setup::iso_time) wrote it.
 pub(super) struct Times {
     pub(super) start: String,
     pub(super) end: Option<String>,

@@ -39,8 +39,8 @@ use bmc_wasm_sdk::ws::{Ws, WsEvent, WsHostClose, ws_connect};
 use crate::credential;
 use crate::proto;
 use crate::proto::{
-    CallId, Closed, Command, Effects, Entity, Event, JsonLookup, Output, RequestError, ServiceData,
-    Status, SubscriptionId, Wake,
+    CallId, Closed, Command, Effects, Entity, Event, JsonLookup, Output, Period, RequestError,
+    ServiceData, Status, SubscriptionId, Wake,
 };
 
 /// Receives a client's events, with the client they came from.
@@ -164,6 +164,18 @@ impl Client {
         end_secs: Option<i64>,
     ) -> Result<CallId, RequestError> {
         self.request(|core| core.history(entity_ids, start_secs, end_secs))
+    }
+
+    /// Ask for the mean, minimum and maximum of each `period` of the sensors `entity_ids`,
+    /// over a time range given as for [`Self::history`].
+    pub fn statistics(
+        &self,
+        entity_ids: &[&str],
+        start_secs: i64,
+        end_secs: Option<i64>,
+        period: Period,
+    ) -> Result<CallId, RequestError> {
+        self.request(|core| core.statistics(entity_ids, start_secs, end_secs, period))
     }
 
     /// Start again after a stop, or start over an attempt still opening,

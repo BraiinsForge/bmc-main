@@ -25,7 +25,8 @@ use bmc_wasm_sdk::wasm_test;
 use super::*;
 use crate::proto::json::test_support::Message;
 use crate::proto::{
-    AttributeValue, HistoryPoint, MAX_HISTORY_POINTS, Presence, Reply, Series, Values,
+    AttributeValue, HistoryPoint, MAX_HISTORY_POINTS, Presence, Reply, Series, StatisticPoint,
+    Values,
 };
 
 const URL: &str = "ws://ha.test/api/websocket";
@@ -985,6 +986,13 @@ fn only_history(out: &Output) -> &BTreeMap<String, Series<HistoryPoint>> {
     history
 }
 
+fn only_statistics(out: &Output) -> &BTreeMap<String, Series<StatisticPoint>> {
+    let Reply::Statistics(statistics) = only_reply(out) else {
+        panic!("BUG: expected statistics, got {:?}", out.events);
+    };
+    statistics
+}
+
 #[wasm_test]
 fn a_history_request_asks_for_states_alone() {
     let mut client = client();
@@ -1060,6 +1068,57 @@ fn a_command_reply_has_no_history() {
     );
 }
 
+#[wasm_test]
+fn a_statistics_request_asks_for_mean_min_and_max() {
+    let mut client = client();
+    let _ = ready(&mut client);
+
+    let (_, out) = client
+        .statistics(
+            &["sensor.outdoor"],
+            DAY_START_SECS,
+            None,
+            Period::FiveMinutes,
+        )
+        .expect("BUG: the test statistics request is valid while connected");
+    assert_eq!(
+        sent(&out),
+        [json!({
+            "id": 1,
+            "type": "recorder/statistics_during_period",
+            "start_time": DAY_START,
+            "statistic_ids": ["sensor.outdoor"],
+            "period": "5minute",
+            "types": ["mean", "min", "max"],
+        })]
+    );
+}
+
+#[wasm_test]
+fn a_statistics_reply_holds_each_entitys_statistics() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let _ = client
+        .statistics(&["sensor.outdoor"], DAY_START_SECS, None, Period::Hour)
+        .expect("BUG: the test statistics request is valid while connected");
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {
+            "sensor.outdoor": [{"start": 1_760_832_000_000_u64, "end": 1_760_835_600_000_u64, "mean": 11.8}],
+        }}),
+    );
+
+    let means: Vec<Option<f64>> = only_statistics(&out)
+        .get("sensor.outdoor")
+        .expect("BUG: the result holds the outdoor statistics")
+        .points
+        .iter()
+        .map(|point| point.mean)
+        .collect();
+    assert_eq!(means, [Some(11.8)]);
+}
+
 #[wasm_test(
     fuel = 300e6,
     reason = "builds and parses a 2,000-state reply in the guest"
@@ -1080,6 +1139,41 @@ fn the_entities_of_one_history_reply_share_the_cap() {
     );
 
     let reply = only_history(&out);
+    let kept = |entity| reply.get(entity).map(|series| series.points.len());
+    let half = Some(MAX_HISTORY_POINTS / 2);
+    assert_eq!(
+        (kept("sensor.outdoor"), kept("sensor.indoor")),
+        (half, half)
+    );
+}
+
+#[wasm_test(
+    fuel = 600e6,
+    reason = "builds and parses a 2,000-statistic reply in the guest"
+)]
+fn the_entities_of_one_statistics_reply_share_the_cap() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let _ = client
+        .statistics(
+            &["sensor.outdoor", "sensor.indoor"],
+            DAY_START_SECS,
+            None,
+            Period::Hour,
+        )
+        .expect("BUG: the test statistics request is valid while connected");
+    let periods: Vec<Value> = (0..MAX_HISTORY_POINTS)
+        .map(|hour| json!({"start": hour * 3_600_000, "end": (hour + 1) * 3_600_000}))
+        .collect();
+
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {
+            "sensor.outdoor": periods, "sensor.indoor": periods,
+        }}),
+    );
+
+    let reply = only_statistics(&out);
     let kept = |entity| reply.get(entity).map(|series| series.points.len());
     let half = Some(MAX_HISTORY_POINTS / 2);
     assert_eq!(
@@ -1137,7 +1231,7 @@ fn a_subscription_counts_each_entity_once_against_the_limit() {
 }
 
 #[wasm_test]
-fn history_requests_are_checked() {
+fn history_and_statistics_requests_are_checked() {
     let mut client = client();
     let _ = ready(&mut client);
     let too_many = entity_ids(MAX_ENTITIES_PER_SUBSCRIPTION + 1);
@@ -1170,6 +1264,13 @@ fn history_requests_are_checked() {
             client.history(entity_ids, start_secs, end_secs).err(),
             Some(error),
             "{entity_ids:?} {start_secs:?} {end_secs:?}"
+        );
+        assert_eq!(
+            client
+                .statistics(entity_ids, start_secs, end_secs, Period::Hour)
+                .err(),
+            Some(error),
+            "statistics: {entity_ids:?} {start_secs:?} {end_secs:?}"
         );
     }
 }

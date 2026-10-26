@@ -19,7 +19,7 @@
 // the grant above.
 
 //! The protocol core: login, keepalive, reconnect, entity subscriptions,
-//! service calls, commands and history.
+//! service calls, commands, history and statistics.
 //!
 //! The caller owns the socket and the timer.
 //! It reports what happened to them through the [`Session`] methods,
@@ -52,7 +52,7 @@ pub use entity::{
     AttributeValue, Entity, MAX_ATTRIBUTE_LIST_BYTES, MAX_ATTRIBUTE_NUMBERS,
     MAX_ATTRIBUTE_TEXT_BYTES, Presence,
 };
-pub use history::{HistoryPoint, MAX_HISTORY_POINTS, Series};
+pub use history::{HistoryPoint, MAX_HISTORY_POINTS, Period, Series, StatisticPoint};
 pub use json::JsonLookup;
 pub use reply::{CallFailure, Event, HaError, Reply, UNKNOWN_ERROR, Values};
 pub use service_data::ServiceData;

@@ -27,6 +27,7 @@ use super::check::{
 };
 use super::effects::{Closed, Command, Effects, Output, Wake};
 use super::entity::{Entity, EntityEvent};
+use super::history::Period;
 use super::json::{JsonLookup, ObjectWriter};
 use super::reply::{CallFailure, Event, HaError, PendingCall, UNKNOWN_ERROR, Wanted};
 use super::service_data::{CheckedData, ServiceData};
@@ -98,7 +99,7 @@ pub enum RequestError {
     TooManySubscriptions,
     NoEntities,
     /// Over [`MAX_ENTITIES_PER_SUBSCRIPTION`] entities in a subscription,
-    /// or a history request.
+    /// a history or a statistics request.
     TooManyEntities,
     TooManyAttributes,
     /// Not shaped `domain.object_id`, or over [`MAX_ENTITY_ID_BYTES`].
@@ -114,7 +115,7 @@ pub enum RequestError {
     TooManyReplyValues,
     /// A pointer neither empty nor starting with `/`, or over [`MAX_POINTER_BYTES`].
     InvalidPointer,
-    /// A history time [`Setup::iso_time`] cannot write.
+    /// A history or statistics time [`Setup::iso_time`] cannot write.
     InvalidTime,
     NotConnected,
     TooManyPendingCalls,
@@ -633,6 +634,36 @@ impl Session {
             .bool("minimal_response", true)
             .bool("no_attributes", true)
             .bool("significant_changes_only", true);
+
+        Ok((call, Effects::send(message.finish())))
+    }
+
+    /// Ask for the mean, minimum and maximum of each `period` of the sensors `entity_ids`,
+    /// from `start_secs` to `end_secs`, or to now.
+    /// Hourly and longer statistics outlive the states the recorder purges;
+    /// five-minute ones are purged with them.
+    /// Times and the result are as for [`Self::history`], the statistics in [`Reply::Statistics`](super::Reply::Statistics).
+    pub fn statistics(
+        &mut self,
+        entity_ids: &[&str],
+        start_secs: i64,
+        end_secs: Option<i64>,
+        period: Period,
+    ) -> Result<(CallId, Effects), RequestError> {
+        let entity_ids = distinct(entity_ids);
+        check_entity_ids(&entity_ids)?;
+        let times = self.iso_times(start_secs, end_secs)?;
+        let (call, request) =
+            self.start_call(Wanted::Statistics(owned(entity_ids.iter().copied())))?;
+        let message = times
+            .write_into(
+                ObjectWriter::new()
+                    .uint("id", request.0)
+                    .string("type", "recorder/statistics_during_period"),
+            )
+            .strings("statistic_ids", entity_ids.iter().copied())
+            .string("period", period.wire_name())
+            .strings("types", ["mean", "min", "max"]);
 
         Ok((call, Effects::send(message.finish())))
     }
