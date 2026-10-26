@@ -29,6 +29,7 @@ use anyhow::{Context as _, Result, ensure};
 use cosmic_text::fontdb;
 use femtovg::{FontId, TextContext};
 use memmap2::Mmap;
+use unicode_script::Script;
 
 /// Resolved by `build.rs`: the font store path in builds Nix makes,
 /// the checkout's own `assets/fonts` in everything cargo builds from it.
@@ -82,7 +83,7 @@ const fn is_sfnt(data: &[u8]) -> bool {
 /// would map every glyph to the wrong face.
 ///
 /// [`build_font_table`]: crate::gpu::text::build_font_table
-pub(crate) const FACES: [Face; 7] = [
+pub(crate) const FACES: [Face; 9] = [
     face!("BraiinsSans-Regular.otf", "BraiinsSans", 400),
     face!("BraiinsSans-SemiBold.otf", "BraiinsSans-SemiBold", 600),
     face!("BraiinsSans-Bold.otf", "BraiinsSans-Bold", 700),
@@ -101,6 +102,10 @@ pub(crate) const FACES: [Face; 7] = [
     face!("BraiinsDeckSans-Bold.otf", "BraiinsDeckSans-Bold", 700),
     // Covers the glyphs the Braiins faces don't (Greek variants, symbols, …).
     face!("NotoSans-Regular.ttf", "NotoSans-Regular", 400),
+    // Han, subset to GB2312. Mapped whatever the language;
+    // only the pages shaping reads become resident.
+    face!("NotoSansSC-GB2312.otf", "NotoSansSC-Regular", 400),
+    face!("NotoSansSC-GB2312-Bold.otf", "NotoSansSC-Bold", 700),
 ];
 
 /// Every face in [`FACES`], each file mapped once.
@@ -201,12 +206,54 @@ impl AsRef<[u8]> for SharedFace {
 ///
 /// Paragraphs request "Braiins Sans" or "Braiins Deck Sans" by family name (see
 /// [`crate::gpu::text::build_attrs`]), so cosmic-text always prefers them; Noto Sans
-/// covers only the glyphs the Braiins faces don't (Greek, Cyrillic, …).
+/// covers only the glyphs the Braiins faces don't (Greek, Cyrillic, …),
+/// Noto Sans SC the Han, kana and Bopomofo ones, found by name through [`ScFallback`].
 ///
 /// Deliberately not `FontSystem::new()`, which scans the host's installed fonts:
 /// shaping would then vary with whatever the machine happens to have, and the
 /// Nix build sandbox has nothing at all — cosmic-text panics there with "no
 /// default font found". Tests shape through this for the same reason.
 pub(crate) fn build_font_system(fonts: &Fonts) -> cosmic_text::FontSystem {
-    cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), fonts.db.clone())
+    cosmic_text::FontSystem::new_with_locale_and_db_and_fallback(
+        "en-US".into(),
+        fonts.db.clone(),
+        ScFallback,
+    )
+}
+
+/// The family of the Noto Sans SC faces in [`FACES`].
+const SC_FAMILY: &str = "Noto Sans SC";
+
+/// The scripts the [`SC_FAMILY`] faces carry: GB2312 holds kana and Bopomofo beside Han.
+pub(crate) const SC_SCRIPTS: [Script; 4] = [
+    Script::Han,
+    Script::Hiragana,
+    Script::Katakana,
+    Script::Bopomofo,
+];
+
+/// The platform's fallback, with [`SC_SCRIPTS`] sent to [`SC_FAMILY`] by name.
+/// cosmic-text's own asks for "Noto Sans CJK SC" for Han and Bopomofo
+/// and "Noto Sans CJK JP" for kana, and misses,
+/// leaving them to its last resort, a scan of every face in whatever order they load.
+pub(crate) struct ScFallback;
+
+static PLATFORM_FALLBACK: cosmic_text::PlatformFallback = cosmic_text::PlatformFallback;
+
+impl cosmic_text::Fallback for ScFallback {
+    fn common_fallback(&self) -> &[&'static str] {
+        PLATFORM_FALLBACK.common_fallback()
+    }
+
+    fn forbidden_fallback(&self) -> &[&'static str] {
+        PLATFORM_FALLBACK.forbidden_fallback()
+    }
+
+    fn script_fallback(&self, script: Script, locale: &str) -> &[&'static str] {
+        if SC_SCRIPTS.contains(&script) {
+            &[SC_FAMILY]
+        } else {
+            PLATFORM_FALLBACK.script_fallback(script, locale)
+        }
+    }
 }

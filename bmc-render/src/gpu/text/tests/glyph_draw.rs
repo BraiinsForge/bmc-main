@@ -24,7 +24,7 @@
 #![expect(clippy::cast_precision_loss)]
 
 use super::font_system;
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache};
+use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight};
 
 use super::{
     DIRECT_PATH_CUTOFF_PX, FAKE_ITALIC_SKEW_DEGREES, FontTable, GlyphCommand,
@@ -452,6 +452,71 @@ fn cached_quads_sit_at_the_snapped_origin() {
 /// proves nothing about the fallback.
 const GREEK_FALLBACK: &str = "ϖϑϰϱϵ";
 
+/// Han, which only Noto Sans SC carries.
+const HAN_FALLBACK: &str = "已加载小组件";
+
+/// The PostScript name of the face a shaped glyph landed on.
+fn face_name(font_system: &FontSystem, id: cosmic_text::fontdb::ID) -> String {
+    font_system
+        .db()
+        .face(id)
+        .expect("BUG: a shaped glyph names a loaded face")
+        .post_script_name
+        .clone()
+}
+
+/// Han requested as Braiins Sans lands on the SC face,
+/// and a mixed line switches faces exactly at the script boundary.
+#[test]
+fn han_glyphs_shape_to_the_cjk_face() {
+    let mut font_system = font_system();
+
+    let han = shape_line(&mut font_system, HAN_FALLBACK, 20.0, false);
+    let faces: Vec<_> = han
+        .glyphs
+        .iter()
+        .map(|g| face_name(&font_system, g.font_id))
+        .collect();
+    assert!(
+        faces.iter().all(|name| name == "NotoSansSC-Regular"),
+        "Han glyphs shaped to {faces:?}"
+    );
+
+    let mixed = shape_line(&mut font_system, "Deck 小组件", 20.0, false);
+    let faces: Vec<_> = mixed
+        .glyphs
+        .iter()
+        .map(|g| face_name(&font_system, g.font_id))
+        .collect();
+    assert_eq!(faces.first().map(String::as_str), Some("BraiinsSans"));
+    assert_eq!(faces.last().map(String::as_str), Some("NotoSansSC-Regular"));
+}
+
+/// Bold Han lands on the bold SC face, so a bold stretch stays bold in Chinese.
+#[test]
+fn bold_han_glyphs_shape_to_the_bold_cjk_face() {
+    let mut font_system = font_system();
+    let mut buffer = Buffer::new(&mut font_system, Metrics::new(20.0, 20.0));
+    buffer.set_text(
+        &mut font_system,
+        HAN_FALLBACK,
+        &named(SANS_FAMILY, false).weight(Weight::BOLD),
+        Shaping::Advanced,
+        None,
+    );
+    buffer.shape_until_scroll(&mut font_system, false);
+
+    let faces: Vec<_> = extract_lines(&buffer)
+        .iter()
+        .flat_map(|line| &line.glyphs)
+        .map(|g| face_name(&font_system, g.font_id))
+        .collect();
+    assert!(
+        !faces.is_empty() && faces.iter().all(|name| name == "NotoSansSC-Bold"),
+        "bold Han glyphs shaped to {faces:?}"
+    );
+}
+
 /// The cosmic-to-femtovg font pairing `FemtoVgRenderer::new` builds,
 /// without its canvas: fonts live in the text context, so real `FontId`s
 /// cost no GL context here. The context is returned because the ids index
@@ -688,7 +753,12 @@ fn cutoff_is_continuous() {
     let cached_size = DIRECT_PATH_CUTOFF_PX;
     let direct_size = DIRECT_PATH_CUTOFF_PX + 1.0;
 
-    for (text, italic) in [("AVAWij", false), ("AVAWij", true), (GREEK_FALLBACK, false)] {
+    for (text, italic) in [
+        ("AVAWij", false),
+        ("AVAWij", true),
+        (GREEK_FALLBACK, false),
+        (HAN_FALLBACK, false),
+    ] {
         let cached = shape_line(&mut font_system, text, cached_size, italic);
         let direct = shape_line(&mut font_system, text, direct_size, italic);
         assert_eq!(

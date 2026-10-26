@@ -897,6 +897,7 @@ dependencies = [
  "rgb",
  "taffy",
  "tracing",
+ "unicode-script",
 ]
 
 [[package]]

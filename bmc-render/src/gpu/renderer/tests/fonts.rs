@@ -21,9 +21,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use cosmic_text::fontdb;
+use cosmic_text::{Fallback, fontdb};
 
-use crate::gpu::renderer::fonts::FONTS_DIR;
+use crate::gpu::renderer::fonts::{FONTS_DIR, SC_SCRIPTS, ScFallback};
 use crate::gpu::renderer::{FACES, Fonts, build_font_system};
 
 /// fontdb must read each face straight from its mapping,
@@ -97,4 +97,24 @@ fn a_file_holding_another_face_names_itself() {
         message.contains(&swapped.display().to_string()),
         "{message}"
     );
+}
+
+/// A script sent to a family no face carries is left to cosmic-text's last-resort scan of every face.
+#[test]
+fn the_sc_fallback_sends_each_sc_script_to_a_family_the_faces_carry() {
+    let fonts = Fonts::load().expect("BUG: the font directory carries every face");
+    let font_system = build_font_system(&fonts);
+    let carried = |name: &str| {
+        font_system
+            .db()
+            .faces()
+            .any(|face| face.families.iter().any(|(family, _)| family == name))
+    };
+    for script in SC_SCRIPTS {
+        let families = ScFallback.script_fallback(script, "en-US");
+        assert!(
+            !families.is_empty() && families.iter().all(|family| carried(family)),
+            "{script:?} is sent to {families:?}, which no face carries"
+        );
+    }
 }

@@ -21,6 +21,8 @@ description = "Repo utility scripts that are run as files, not imported"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.13"
 dependencies = [
+    # Cuts the CJK faces in `subset_gb2312.py`.
+    "fonttools>=4.63",
     # CommonMark parser behind `md_to_adf.py`; also what mdformat parses with,
     # so the converter and the formatter agree on these files.
     "markdown-it-py>=4.2",

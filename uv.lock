@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 
 [manifest]
@@ -36,6 +36,7 @@ name = "bmc-scripts"
 version = "0.0.0"
 source = { editable = "scripts" }
 dependencies = [
+    { name = "fonttools" },
     { name = "markdown-it-py" },
     { name = "tyro" },
 ]
@@ -47,6 +48,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fonttools", specifier = ">=4.63" },
     { name = "markdown-it-py", specifier = ">=4.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "tyro", specifier = ">=0.9" },

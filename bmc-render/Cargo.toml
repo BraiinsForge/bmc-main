@@ -40,6 +40,7 @@ memmap2.workspace = true
 qrcodegen.workspace = true
 rgb.workspace = true
 taffy.workspace = true
+unicode-script.workspace = true
 
 [build-dependencies]
 bmc-svg-compiler = { path = "../bmc-wasm-runtime/svg-compiler" }

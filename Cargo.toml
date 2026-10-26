@@ -500,6 +500,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tungstenite = "0.24.0"
 udev = "0.9"
 ufmt = { version = "0.2", features = ["std"] }
+unicode-script = "0.5.8"
 unit-prefix = { version = "0.5.2", default-features = false }
 ureq = "3.4"
 url = { version = "2.5.4", features = ["serde"] }

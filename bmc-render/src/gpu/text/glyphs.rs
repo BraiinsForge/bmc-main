@@ -111,11 +111,11 @@ impl FontTable {
 /// with the femtovg font registered from the same mapping.
 ///
 /// femtovg's [`FontId`] is opaque, so no pair can be *queried* for correctness —
-/// it holds by construction, both libraries being fed the same seven mappings
+/// it holds by construction, both libraries being fed the same mappings
 /// in the same order. The check against [`FACES`] is unconditional:
 /// `faces()` iterates fontdb's private slot map, and a release build whose order
 /// had silently diverged would map glyphs to the wrong fonts forever after.
-/// Seven faces once at init cost nothing.
+/// A handful of faces once at init cost nothing.
 pub(crate) fn build_font_table(
     font_system: &FontSystem,
     femtovg_ids: &[FontId; FACES.len()],
