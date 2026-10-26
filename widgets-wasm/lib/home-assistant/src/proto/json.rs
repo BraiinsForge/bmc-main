@@ -158,16 +158,27 @@ impl ObjectWriter {
 
     pub(crate) fn int(mut self, key: &str, value: i64) -> Self {
         self.member(key);
-        if value < 0 {
-            self.out.push('-');
-        }
-        push_uint(&mut self.out, value.unsigned_abs());
+        push_int(&mut self.out, value);
+        self
+    }
+
+    pub(crate) fn ints(mut self, key: &str, values: &[i64]) -> Self {
+        self.member(key);
+        push_array(&mut self.out, values, |out, value| push_int(out, *value));
         self
     }
 
     pub(crate) fn decimal(mut self, key: &str, value: Decimal) -> Self {
         self.member(key);
         push_decimal(&mut self.out, value);
+        self
+    }
+
+    pub(crate) fn decimals(mut self, key: &str, values: &[Decimal]) -> Self {
+        self.member(key);
+        push_array(&mut self.out, values, |out, value| {
+            push_decimal(out, *value);
+        });
         self
     }
 
@@ -183,14 +194,7 @@ impl ObjectWriter {
         values: impl IntoIterator<Item = &'a str>,
     ) -> Self {
         self.member(key);
-        self.out.push('[');
-        for (i, value) in values.into_iter().enumerate() {
-            if i > 0 {
-                self.out.push(',');
-            }
-            push_string(&mut self.out, value);
-        }
-        self.out.push(']');
+        push_array(&mut self.out, values, push_string);
         self
     }
 
@@ -236,6 +240,29 @@ impl Decimal {
         let scaled = scaled as i64;
         Some(Self { scaled, decimals })
     }
+}
+
+/// `items` as a JSON array, each written by `push`.
+fn push_array<T>(
+    out: &mut String,
+    items: impl IntoIterator<Item = T>,
+    push: impl Fn(&mut String, T),
+) {
+    out.push('[');
+    for (i, item) in items.into_iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        push(out, item);
+    }
+    out.push(']');
+}
+
+fn push_int(out: &mut String, value: i64) {
+    if value < 0 {
+        out.push('-');
+    }
+    push_uint(out, value.unsigned_abs());
 }
 
 fn push_decimal(out: &mut String, Decimal { scaled, decimals }: Decimal) {
@@ -394,6 +421,9 @@ mod tests {
             .decimal("temperature", decimal(21.5, 1))
             .bool("flag", false)
             .strings("entity_ids", ["light.a", "sensor.b"])
+            .ints("rgb_color", &[255, -1, 0])
+            .decimals("hs_color", &[decimal(30.04, 1), decimal(100.0, 1)])
+            .ints("none", &[])
             .object(
                 "target",
                 ObjectWriter::new().string("entity_id", "button.gate"),
@@ -411,6 +441,9 @@ mod tests {
                 "temperature": 21.5,
                 "flag": false,
                 "entity_ids": ["light.a", "sensor.b"],
+                "rgb_color": [255, -1, 0],
+                "hs_color": [30.0, 100.0],
+                "none": [],
                 "target": { "entity_id": "button.gate" },
             })
         );

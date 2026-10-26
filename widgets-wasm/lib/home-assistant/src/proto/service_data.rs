@@ -21,7 +21,9 @@
 //! The extra fields of a service call or command, and the check they pass before they are written.
 
 use super::check::is_free_name;
-use super::client::{MAX_SERVICE_DATA_TEXT_BYTES, RequestError};
+use super::client::{
+    MAX_SERVICE_DATA_LIST_ITEMS, MAX_SERVICE_DATA_TEXT_BYTES, RequestError, owned,
+};
 use super::json::{Decimal, ObjectWriter};
 
 /// Extra fields of a service call beside its target, or of a command beside its id and type.
@@ -37,6 +39,9 @@ enum DataValue {
     Integer(i64),
     Decimal { value: f64, decimals: u32 },
     Bool(bool),
+    Texts(Vec<String>),
+    Integers(Vec<i64>),
+    Decimals { values: Vec<f64>, decimals: u32 },
 }
 
 impl ServiceData {
@@ -74,6 +79,33 @@ impl ServiceData {
         self
     }
 
+    /// A list of texts, such as the `entity_ids` a command asks about.
+    #[must_use]
+    pub fn texts(mut self, key: &str, values: &[&str]) -> Self {
+        self.0.push((
+            key.to_owned(),
+            DataValue::Texts(owned(values.iter().copied())),
+        ));
+        self
+    }
+
+    /// A list of integers, such as a light's `rgb_color`.
+    #[must_use]
+    pub fn integers(mut self, key: &str, values: &[i64]) -> Self {
+        self.0
+            .push((key.to_owned(), DataValue::Integers(values.to_vec())));
+        self
+    }
+
+    /// A list of decimals, each rounded as [`Self::decimal`] rounds one, such as a light's `hs_color`.
+    #[must_use]
+    pub fn decimals(mut self, key: &str, values: &[f64], decimals: u32) -> Self {
+        let values = values.to_vec();
+        self.0
+            .push((key.to_owned(), DataValue::Decimals { values, decimals }));
+        self
+    }
+
     /// The data as it will be written, if it keeps every bound,
     /// and names nothing `reserved` refuses, in its keys or texts.
     pub(super) fn checked(
@@ -82,6 +114,11 @@ impl ServiceData {
     ) -> Result<CheckedData<'_>, RequestError> {
         let text = |text: &str| {
             (text.len() <= MAX_SERVICE_DATA_TEXT_BYTES && !reserved(text))
+                .then_some(())
+                .ok_or(RequestError::InvalidData)
+        };
+        let list = |len: usize| {
+            (len <= MAX_SERVICE_DATA_LIST_ITEMS)
                 .then_some(())
                 .ok_or(RequestError::InvalidData)
         };
@@ -105,6 +142,24 @@ impl ServiceData {
                     WireValue::Decimal(decimal(*value, *decimals)?)
                 }
                 DataValue::Bool(flag) => WireValue::Bool(*flag),
+                DataValue::Texts(texts) => {
+                    list(texts.len())?;
+                    texts.iter().try_for_each(|value| text(value))?;
+                    WireValue::Texts(texts)
+                }
+                DataValue::Integers(numbers) => {
+                    list(numbers.len())?;
+                    WireValue::Integers(numbers)
+                }
+                DataValue::Decimals { values, decimals } => {
+                    list(values.len())?;
+                    WireValue::Decimals(
+                        values
+                            .iter()
+                            .map(|value| decimal(*value, *decimals))
+                            .collect::<Result<_, _>>()?,
+                    )
+                }
             };
             checked.push((key.as_str(), value));
         }
@@ -125,6 +180,9 @@ enum WireValue<'a> {
     Integer(i64),
     Decimal(Decimal),
     Bool(bool),
+    Texts(&'a [String]),
+    Integers(&'a [i64]),
+    Decimals(Vec<Decimal>),
 }
 
 impl CheckedData<'_> {
@@ -140,6 +198,9 @@ impl CheckedData<'_> {
                 WireValue::Integer(number) => object.int(key, *number),
                 WireValue::Decimal(decimal) => object.decimal(key, *decimal),
                 WireValue::Bool(flag) => object.bool(key, *flag),
+                WireValue::Texts(texts) => object.strings(key, texts.iter().map(String::as_str)),
+                WireValue::Integers(numbers) => object.ints(key, numbers),
+                WireValue::Decimals(decimals) => object.decimals(key, decimals),
             })
     }
 }

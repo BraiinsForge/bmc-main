@@ -463,6 +463,46 @@ fn a_decimal_json_cannot_spell_is_refused_before_sending() {
 }
 
 #[wasm_test]
+fn lists_are_sent_as_json_arrays() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let data = ServiceData::new()
+        .integers("rgb_color", &[255, 128, 0])
+        .decimals("hs_color", &[30.04, 100.0], 1)
+        .texts("entity_ids", &["light.a", "light.b"]);
+    let (_, out) = client
+        .call_service("light", "turn_on", "light.desk", &data)
+        .expect("BUG: a valid call");
+
+    assert_eq!(
+        sent(&out)[0]["service_data"],
+        json!({"rgb_color": [255, 128, 0], "hs_color": [30.0, 100.0], "entity_ids": ["light.a", "light.b"]})
+    );
+}
+
+#[wasm_test]
+fn a_list_past_its_bounds_is_refused_before_sending() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let long_text = "x".repeat(MAX_SERVICE_DATA_TEXT_BYTES + 1);
+    let cases = [
+        ServiceData::new().decimals("hs_color", &[30.0, f64::NAN], 1),
+        ServiceData::new().texts("entity_ids", &[&long_text]),
+        ServiceData::new().integers("rgb_color", &[0; MAX_SERVICE_DATA_LIST_ITEMS + 1]),
+    ];
+
+    for data in cases {
+        assert_eq!(
+            client
+                .call_service("light", "turn_on", "light.desk", &data)
+                .err(),
+            Some(RequestError::InvalidData),
+            "{data:?}"
+        );
+    }
+}
+
+#[wasm_test]
 fn a_data_key_is_any_text_within_the_name_cap() {
     let mut client = client();
     let _ = ready(&mut client);
@@ -491,6 +531,7 @@ fn text_the_transport_reserves_is_refused_and_only_that_request_fails() {
     let reserved_data = [
         ServiceData::new().text("message", "a RESERVED text"),
         ServiceData::new().integer("RESERVED", 1),
+        ServiceData::new().texts("entity_id", &["light.a", "RESERVED"]),
     ];
 
     for data in &reserved_data {

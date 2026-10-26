@@ -51,6 +51,8 @@ pub const MAX_REPLY_VALUES: usize = 16;
 pub const MAX_ENTITY_ID_BYTES: usize = 255;
 pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_SERVICE_DATA_TEXT_BYTES: usize = 1024;
+/// As many as a subscription follows, which bounds a list of entity ids.
+pub const MAX_SERVICE_DATA_LIST_ITEMS: usize = MAX_ENTITIES_PER_SUBSCRIPTION;
 /// The same cap as an entity id, which a pointer may name.
 pub const MAX_POINTER_BYTES: usize = 255;
 
@@ -103,7 +105,7 @@ pub enum RequestError {
     /// or a command the session sends itself.
     InvalidName,
     /// A service data value past its bounds: a text over [`MAX_SERVICE_DATA_TEXT_BYTES`],
-    /// or a decimal a JSON number cannot spell exactly.
+    /// a list over [`MAX_SERVICE_DATA_LIST_ITEMS`], or a decimal a JSON number cannot spell exactly.
     /// Also a command, data key or text the transport reserves, as [`Setup::reserved`] says.
     InvalidData,
     TooManyReplyValues,

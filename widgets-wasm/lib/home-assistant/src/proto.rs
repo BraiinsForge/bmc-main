@@ -43,8 +43,8 @@ pub use check::is_entity_id;
 pub use client::{
     CallId, MAX_ATTRIBUTES_PER_SUBSCRIPTION, MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES,
     MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_POINTER_BYTES, MAX_REPLY_VALUES,
-    MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, RequestError, Session, Setup, Status,
-    SubscriptionId,
+    MAX_SERVICE_DATA_LIST_ITEMS, MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, RequestError,
+    Session, Setup, Status, SubscriptionId,
 };
 pub use effects::{Closed, Command, Effects, Output, Wake};
 pub use entity::{
