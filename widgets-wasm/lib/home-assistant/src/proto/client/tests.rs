@@ -25,8 +25,7 @@ use bmc_wasm_sdk::wasm_test;
 use super::*;
 use crate::proto::json::test_support::Message;
 use crate::proto::{
-    AttributeValue, HistoryPoint, MAX_HISTORY_POINTS, Presence, Reply, Series, StatisticPoint,
-    Values,
+    AttributeValue, HistoryPoint, MAX_HISTORY_POINTS, Presence, Series, StatisticPoint, Values,
 };
 
 const URL: &str = "ws://ha.test/api/websocket";
@@ -729,6 +728,103 @@ fn look_up_registry_entry(client: &mut Session) -> (CallId, Effects) {
             &[PRECISION, SUGGESTED],
         )
         .expect("BUG: the test command is valid while connected")
+}
+
+const NOT_FOUND: &str = "not_found";
+
+fn not_found() -> Value {
+    json!({"id": 1, "type": "result", "success": false,
+        "error": {"code": NOT_FOUND, "message": "Entity not found"}})
+}
+
+#[wasm_test]
+fn a_precision_lookup_outside_the_registry_finds_no_precision() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let _ = client
+        .display_precision("sensor.yaml_only")
+        .expect("BUG: the test lookup is valid while connected");
+
+    let out = feed(&mut client, &not_found());
+
+    assert_eq!(
+        only_reply(&out),
+        &Reply::Precision(None),
+        "an entity the registry does not know has no precision set, which is no failure"
+    );
+}
+
+#[wasm_test]
+fn a_command_outside_the_registry_fails_as_rejected() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let (call, _) = look_up_registry_entry(&mut client);
+
+    let out = feed(&mut client, &not_found());
+
+    assert!(
+        matches!(
+            out.events.as_slice(),
+            [Event::CallFinished { call: finished, result: Err(CallFailure::Rejected(error)) }]
+                if *finished == call && error.code == NOT_FOUND
+        ),
+        "only the precision lookup reads not_found as an empty answer: {:?}",
+        out.events
+    );
+}
+
+#[wasm_test]
+fn a_display_precision_lookup_reads_the_registry_entry() {
+    let mut client = client();
+    let _ = ready(&mut client);
+
+    let (_, out) = client
+        .display_precision("sensor.outdoor")
+        .expect("BUG: the test lookup is valid while connected");
+    assert_eq!(
+        sent(&out),
+        [json!({"id": 1, "type": "config/entity_registry/get", "entity_id": "sensor.outdoor"})]
+    );
+
+    let done = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": true, "result": {
+            "options": {"sensor": {"display_precision": null, "suggested_display_precision": 1}},
+        }}),
+    );
+    assert_eq!(
+        only_reply(&done),
+        &Reply::Precision(Some(1)),
+        "the suggestion stands in for no choice"
+    );
+
+    let _ = client
+        .display_precision("sensor.outdoor")
+        .expect("BUG: the test lookup is valid while connected");
+    let chosen = feed(
+        &mut client,
+        &json!({"id": 2, "type": "result", "success": true, "result": {
+            "options": {"sensor": {"display_precision": 3, "suggested_display_precision": 1}},
+        }}),
+    );
+    assert_eq!(
+        only_reply(&chosen),
+        &Reply::Precision(Some(3)),
+        "the user's choice comes first"
+    );
+
+    let _ = client
+        .display_precision("sensor.outdoor")
+        .expect("BUG: the test lookup is valid while connected");
+    let neither = feed(
+        &mut client,
+        &json!({"id": 3, "type": "result", "success": true, "result": {"options": {}}}),
+    );
+    assert_eq!(only_reply(&neither), &Reply::Precision(None));
+    assert_eq!(
+        client.display_precision("outdoor").err(),
+        Some(RequestError::InvalidEntityId)
+    );
 }
 
 #[wasm_test]

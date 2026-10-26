@@ -154,6 +154,12 @@ impl Client {
         self.request(|core| core.command(command, data, wanted))
     }
 
+    /// Look up the display precision of the sensor `entity_id`;
+    /// the result arrives as [`Event::CallFinished`] with a [`Reply::Precision`](crate::Reply::Precision).
+    pub fn display_precision(&self, entity_id: &str) -> Result<CallId, RequestError> {
+        self.request(|core| core.display_precision(entity_id))
+    }
+
     /// Ask for the states `entity_ids` went through from `start_secs` to `end_secs`, or to now,
     /// both in seconds since the Unix epoch; the result arrives as [`Event::CallFinished`].
     /// A reply too large for the host stops the client, as [`proto::Session::history`] says.

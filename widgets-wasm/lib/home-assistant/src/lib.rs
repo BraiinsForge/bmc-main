@@ -30,6 +30,7 @@
 //! let client = home_assistant::connect("ha", on_ha_event)?;
 //! let sensor = client.subscribe(&["sensor.outdoor"], &["friendly_name", "unit_of_measurement"])?;
 //! let call = client.call_service("button", "press", "button.gate", &ServiceData::new())?;
+//! let precision = client.display_precision("sensor.outdoor")?;
 //! let config = client.command("get_config", &ServiceData::new(), &["/time_zone"])?;
 //! let day = client.history(&["sensor.outdoor"], now_secs - 24 * 3600, None)?;
 //! ```

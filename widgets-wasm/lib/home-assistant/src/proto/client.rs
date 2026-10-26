@@ -29,7 +29,7 @@ use super::effects::{Closed, Command, Effects, Output, Wake};
 use super::entity::{Entity, EntityEvent};
 use super::history::Period;
 use super::json::{JsonLookup, ObjectWriter};
-use super::reply::{CallFailure, Event, HaError, PendingCall, UNKNOWN_ERROR, Wanted};
+use super::reply::{CallFailure, Event, HaError, PendingCall, Reply, UNKNOWN_ERROR, Wanted};
 use super::service_data::{CheckedData, ServiceData};
 
 /// Connect timeout, from the connect until `auth_ok`,
@@ -58,6 +58,7 @@ pub const MAX_SERVICE_DATA_TEXT_BYTES: usize = 1024;
 pub const MAX_SERVICE_DATA_LIST_ITEMS: usize = MAX_ENTITIES_PER_SUBSCRIPTION;
 /// The same cap as an entity id, which a pointer may name.
 pub const MAX_POINTER_BYTES: usize = 255;
+const REGISTRY_ENTRY: &str = "config/entity_registry/get";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SubscriptionId(usize);
@@ -547,7 +548,7 @@ impl Session {
 
     /// Send the one-off command `command`, with `data` beside its id and type,
     /// such as `config/entity_registry/get` with the `entity_id` to look up.
-    /// The result arrives as [`Event::CallFinished`], its [`Reply`](super::Reply) holding the values found at `wanted`:
+    /// The result arrives as [`Event::CallFinished`], its [`Reply`] holding the values found at `wanted`:
     /// JSON Pointers into the command's `result`, as a lookup cannot list its keys.
     /// Like a service call, a command is never sent twice, and times out as one does.
     ///
@@ -586,6 +587,21 @@ impl Session {
         )
     }
 
+    /// Look up the display precision of the sensor `entity_id` in the entity registry.
+    /// The result arrives as [`Event::CallFinished`] with a [`Reply::Precision`],
+    /// `None` also for an entity outside the entity registry.
+    pub fn display_precision(
+        &mut self,
+        entity_id: &str,
+    ) -> Result<(CallId, Effects), RequestError> {
+        if !is_entity_id(entity_id) {
+            return Err(RequestError::InvalidEntityId);
+        }
+        let data = ServiceData::new().text("entity_id", entity_id);
+        let data = data.checked(self.setup.reserved)?;
+        self.send_command(REGISTRY_ENTRY, &data, Wanted::Precision)
+    }
+
     fn send_command(
         &mut self,
         command: &str,
@@ -604,7 +620,7 @@ impl Session {
 
     /// Ask for the states `entity_ids` went through from `start_secs` to `end_secs`, or to now,
     /// both in seconds since the Unix epoch.
-    /// The result arrives as [`Event::CallFinished`], its [`Reply::History`](super::Reply::History) holding
+    /// The result arrives as [`Event::CallFinished`], its [`Reply::History`] holding
     /// up to [`MAX_HISTORY_POINTS`](super::MAX_HISTORY_POINTS) of the latest states,
     /// shared evenly between the entities that have any,
     /// each series' [`dropped`](super::Series::dropped) counting the oldest points left out.
@@ -642,7 +658,7 @@ impl Session {
     /// from `start_secs` to `end_secs`, or to now.
     /// Hourly and longer statistics outlive the states the recorder purges;
     /// five-minute ones are purged with them.
-    /// Times and the result are as for [`Self::history`], the statistics in [`Reply::Statistics`](super::Reply::Statistics).
+    /// Times and the result are as for [`Self::history`], the statistics in [`Reply::Statistics`].
     pub fn statistics(
         &mut self,
         entity_ids: &[&str],
@@ -798,6 +814,14 @@ impl Session {
             (Pending::Call(call), result) => {
                 let result = match result {
                     Ok(()) => Ok(call.reply(message)),
+                    // An entity outside the registry, such as a YAML sensor without a unique id,
+                    // has no precision set, which is no failure.
+                    Err(error)
+                        if matches!(call.wanted, Wanted::Precision)
+                            && error.code == "not_found" =>
+                    {
+                        Ok(Reply::Precision(None))
+                    }
                     Err(error) => Err(CallFailure::Rejected(error)),
                 };
                 out.events.push(Event::CallFinished {

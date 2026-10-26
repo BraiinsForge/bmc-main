@@ -26,6 +26,12 @@ use super::client::{CallId, Status, SubscriptionId};
 use super::entity::{AttributeValue, read_value};
 use super::history::{HistoryPoint, Series, StatisticPoint, read_history, read_statistics};
 use super::json::{JsonLookup, Pointer, PointerBuf};
+use crate::format::precision;
+
+// Where an entity registry entry keeps a sensor's display precision:
+// the user's choice, then the integration's suggestion.
+const DISPLAY_PRECISION: &str = "/result/options/sensor/display_precision";
+const SUGGESTED_PRECISION: &str = "/result/options/sensor/suggested_display_precision";
 
 /// Home Assistant's code for an error it has no more specific code for,
 /// and the one a failure arrives with when it names none.
@@ -81,6 +87,9 @@ pub enum Reply {
     Done,
     /// The values a command asked for.
     Values(Values),
+    /// A sensor's display precision: the user's choice, else the integration's suggestion,
+    /// `None` when it has neither or is not in the entity registry.
+    Precision(Option<u32>),
     /// Each entity's states, by entity id; one without states in the period is left out.
     History(BTreeMap<String, Series<HistoryPoint>>),
     /// Each entity's statistics, by entity id; one without statistics in the period is left out.
@@ -130,6 +139,8 @@ pub(super) enum Wanted {
     Nothing,
     /// JSON Pointers into the result.
     Values(Vec<String>),
+    /// A sensor's display precision, from its entity registry entry.
+    Precision,
     /// Entity ids whose history the result holds.
     History(Vec<String>),
     /// Entity ids whose statistics the result holds.
@@ -158,6 +169,10 @@ impl PendingCall {
             Wanted::Values(pointers) => {
                 Reply::Values(read_values(message, pointers.iter().map(String::as_str)))
             }
+            Wanted::Precision => Reply::Precision(precision(
+                message.f64(DISPLAY_PRECISION),
+                message.f64(SUGGESTED_PRECISION),
+            )),
             Wanted::History(entity_ids) => Reply::History(read_history(message, entity_ids)),
             Wanted::Statistics(entity_ids) => {
                 Reply::Statistics(read_statistics(message, entity_ids))
