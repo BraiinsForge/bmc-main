@@ -70,7 +70,7 @@ const MAX_DIR_ENTRIES: usize = 4096;
 const MAX_SHOWN_CHARS: usize = 80;
 /// The wrapper `nix/wasm-widgets.nix` installs for a profile-mode widget,
 /// shared with the build so the check cannot drift from what it produces.
-const WRAPPER_TEMPLATE: &str = include_str!("../../nix/wasm-widget-wrapper.sh");
+const WRAPPER_TEMPLATE: &str = include_str!("../assets/wasm-widget-wrapper.sh");
 
 /// `value`, cut to `MAX_SHOWN_CHARS` with an ellipsis when longer.
 #[must_use]

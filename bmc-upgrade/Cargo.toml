@@ -6,9 +6,10 @@ license = "GPL-3.0-or-later"
 authors = ["Braiins <braiins@braiins.com>"]
 
 # The profile wrapper template the validator compares uploads against;
-# it lives beside its nix consumer so the two cannot drift.
+# nix/wasm-widgets.nix reads it from here, since cargo packages only
+# files inside the crate.
 [package.metadata.nix]
-include = ["../nix/wasm-widget-wrapper.sh"]
+include = ["assets/wasm-widget-wrapper.sh"]
 
 [dependencies]
 anyhow.workspace = true

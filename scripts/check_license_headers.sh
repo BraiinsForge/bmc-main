@@ -45,7 +45,7 @@ excludes=(
     "*/src/manifest_params.rs"
     # Installed verbatim as every profile widget's launcher and compared
     # byte for byte by bmc-upgrade; a header would ship into each wrapper.
-    "nix/wasm-widget-wrapper.sh"
+    "bmc-upgrade/assets/wasm-widget-wrapper.sh"
 )
 
 source_extensions=()

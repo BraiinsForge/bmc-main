@@ -191,7 +191,7 @@ let
       # so the two cannot drift.
       profileWrapper = pkgs.writeText "bmc-widget-${name}-wrapper"
         (builtins.replaceStrings [ "@sdkMajor@" "@name@" ] [ (toString sdkMajor) name ]
-          (builtins.readFile ./wasm-widget-wrapper.sh));
+          (builtins.readFile ../bmc-upgrade/assets/wasm-widget-wrapper.sh));
       installWrapper =
         if wrapperMode == "profile" then ''
           install -m755 ${profileWrapper} "$base/bin/${name}"

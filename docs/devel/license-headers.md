@@ -78,8 +78,8 @@ Do not add Braiins headers to:
 - `frontend/src/lib/react/props.tsx` — carries the IBM Corp. Apache-2.0 notice.
 - `widgets-wasm-examples/media-control/proto/cast_channel.proto` — Chromium, BSD-style license.
 - `bmc-virt/kernel-patches/ref/spi-bmc-virt.c` — Linux kernel module reference, GPL-2.0-only.
-- `nix/wasm-widget-wrapper.sh` — the five-line launcher template installed verbatim into every profile widget and
-  compared byte for byte by `bmc-upgrade`; a header would ship into each wrapper and break the comparison.
+- `bmc-upgrade/assets/wasm-widget-wrapper.sh` — the five-line launcher template installed verbatim into every profile
+  widget and compared byte for byte by `bmc-upgrade`; a header would ship into each wrapper and break the comparison.
 
 Files that embed fragments of third-party code under a Braiins header must keep an attribution note next to the fragment
 stating the origin and license — see the Carbon Design System notes in
