@@ -26,8 +26,6 @@ mod render;
 #[cfg(target_arch = "wasm32")]
 mod wasm_glue {
 
-    use std::cell::RefCell;
-
     use bmc_wasm_sdk::*;
 
     use crate::render::{fact_draw, header_draw};
@@ -42,81 +40,82 @@ mod wasm_glue {
     /// fact is kept on screen across failures.
     const LOADING_TEXT: &str = "Loading...";
 
-    thread_local! {
+    struct RandomFacts {
         /// Last successfully fetched fact, kept as the fallback on later failures.
-        static FACT: RefCell<Option<String>> = const { RefCell::new(None) };
-
-        static POLL_HANDLE: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
+        fact: Option<String>,
+        _poll: PollHandle,
     }
 
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "matches the SDK Build callback signature; this widget always fetches"
-    )]
-    fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
-        Some(FetchSpec::get(FACTS_API_URL))
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn init() {
-        let handle = register_poll(
-            build_request,
-            on_fact_data,
-            PollConfig {
-                interval_ms: Some(POLL_INTERVAL_MS),
-                ..Default::default()
-            },
-        );
-
-        POLL_HANDLE.with(|h| *h.borrow_mut() = Some(handle));
-    }
-
-    fn on_fact_data(handle: &PollHandle, response: &FetchResponse) {
-        // Anything but a non-empty fact on a 2xx response is a failure:
-        // keep the last-known-good fact and retry.
-        let fact = response
-            .ok()
-            .then(|| response.json().str(FACTS_TEXT_PATH))
-            .flatten()
-            .filter(|text| !text.is_empty());
-
-        if let Some(fact) = fact {
-            FACT.with(|f| *f.borrow_mut() = Some(fact));
-            // Engine reschedules at the normal interval on an ok reply.
-        } else {
-            if response.ok() {
-                log_warn!("random-facts: response had no usable {FACTS_TEXT_PATH}");
-            } else {
-                log_warn!("random-facts: fetch failed (status {})", response.status);
-            }
-
-            // Fast retry; forces `retry_ms` even on an HTTP-ok-but-unusable
-            // reply.
-            handle.retry();
+    impl RandomFacts {
+        #[expect(clippy::unused_self, reason = "the SDK calls this as a method")]
+        #[expect(
+            clippy::unnecessary_wraps,
+            reason = "the SDK Build callback returns Option"
+        )]
+        fn build_request(&mut self, _handle: &PollHandle) -> Option<FetchSpec> {
+            Some(FetchSpec::get(FACTS_API_URL))
         }
 
-        request_frame();
+        fn on_fact_data(&mut self, handle: &PollHandle, response: &FetchResponse) {
+            let fact = response
+                .ok()
+                .then(|| response.json().str(FACTS_TEXT_PATH))
+                .flatten()
+                .filter(|text| !text.is_empty());
+
+            if let Some(fact) = fact {
+                self.fact = Some(fact);
+            } else {
+                if response.ok() {
+                    log_warn!("random-facts: response had no usable {FACTS_TEXT_PATH}");
+                } else {
+                    log_warn!("random-facts: fetch failed (status {})", response.status);
+                }
+
+                // Fast retry; forces `retry_ms` even on an HTTP-ok-but-unusable
+                // reply.
+                handle.retry();
+            }
+
+            request_frame();
+        }
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn render(_delta_ms: u32) {
-        let ws = widget_size();
+    #[widget]
+    impl Widget for RandomFacts {
+        fn init(me: &Building<Self>) -> Self {
+            let poll = PollHandle::register(
+                me,
+                Self::build_request,
+                Self::on_fact_data,
+                PollConfig {
+                    interval_ms: Some(POLL_INTERVAL_MS),
+                    ..Default::default()
+                },
+            );
+            Self {
+                fact: None,
+                _poll: poll,
+            }
+        }
 
-        let fact = FACT.with(|f| f.borrow().clone());
-        let fact = fact.as_deref().unwrap_or(LOADING_TEXT);
+        fn render(&mut self, _delta_ms: u32) {
+            let ws = widget_size();
 
-        let root = col(
-            props!(background: BLACK),
-            vec![header_draw(ws), fact_draw(ws, fact)],
-        );
+            let fact = self.fact.as_deref().unwrap_or(LOADING_TEXT);
 
-        let _ = render_ui(ws.width, ws.height, root);
-    }
+            let root = col(
+                props!(background: BLACK),
+                vec![header_draw(ws), fact_draw(ws, fact)],
+            );
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn on_system_update() {
-        // Only `theme` is relevant; re-render so a theme change is reflected
-        // without a re-spawn.
-        request_frame();
+            let _ = render_ui(ws.width, ws.height, root);
+        }
+
+        fn on_system_update(&mut self) {
+            // Only `theme` is relevant; re-render so a theme change is reflected
+            // without a re-spawn.
+            request_frame();
+        }
     }
 }
