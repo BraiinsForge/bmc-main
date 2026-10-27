@@ -20,7 +20,7 @@
 
 //! mDNS service discovery and registration for WASM widgets.
 //!
-//! Provides `mdns_browse()` for discovering LAN services and `mdns_register()`
+//! Provides [`MdnsBrowse::start`] for discovering LAN services and [`mdns_register`]
 //! for advertising services. The host manages the mDNS daemon in background
 //! threads and delivers events by calling the `__on_mdns_event` export.
 //!
@@ -34,39 +34,55 @@
 //! # Example
 //!
 //! ```ignore
-//! use std::cell::RefCell;
-//!
 //! use bmc_wasm_sdk::*;
 //! use bmc_wasm_sdk::mdns::*;
 //!
-//! thread_local! {
-//!     static BROWSE: RefCell<Option<MdnsBrowse>> = const { RefCell::new(None) };
+//! struct Speakers {
+//!     browse: Option<MdnsBrowse>,
 //! }
 //!
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn init() {
-//!     BROWSE.set(mdns_browse(&["_googlecast._tcp", "_touch-able._tcp"], on_mdns_event));
-//! }
-//!
-//! fn on_mdns_event(_browse: &MdnsBrowse, event: &MdnsEvent<'_>) {
-//!     match event {
-//!         MdnsEvent::Found(json) => log_info!("found: {json}"),
-//!         MdnsEvent::Removed(name) => log_info!("removed: {name}"),
+//! impl Speakers {
+//!     fn on_mdns_event(&mut self, _browse: &MdnsBrowse, event: &MdnsEvent<'_>) {
+//!         match event {
+//!             MdnsEvent::Found(json) => log_info!("found: {json}"),
+//!             MdnsEvent::Removed(name) => log_info!("removed: {name}"),
+//!         }
 //!     }
+//! }
+//!
+//! #[widget]
+//! impl Widget for Speakers {
+//!     fn init(me: &Building<Self>) -> Self {
+//!         let services = ["_googlecast._tcp", "_touch-able._tcp"];
+//!         let browse = MdnsBrowse::start(me, &services, Self::on_mdns_event);
+//!         Self { browse }
+//!     }
+//!
+//!     fn render(&mut self, _delta_ms: u32) {}
 //! }
 //! ```
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
+use std::rc::Rc;
 
 use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
 
 #[cfg(target_arch = "wasm32")]
 use crate::fmt;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::Receiver;
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::widget::Target;
 
 /// Callback type: `fn(browse, event)`.
 pub type BrowseCallback = fn(&MdnsBrowse, &MdnsEvent<'_>);
+
+/// A browse event as a method of the value it is delivered to.
+pub type BrowseMethod<T> = fn(&mut T, &MdnsBrowse, &MdnsEvent<'_>);
+
+type Handler = Rc<dyn Fn(&MdnsBrowse, &MdnsEvent<'_>)>;
 
 /// The only handle to an mDNS browse; dropping it stops the browse.
 #[derive(Debug, PartialEq, Eq)]
@@ -76,6 +92,24 @@ impl MdnsBrowse {
     /// Stop the browse. An event already due in the same delivery pass is dropped.
     pub fn stop(self) {
         drop(self);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl MdnsBrowse {
+    /// Browse for services; the events run `method` on `to`.
+    ///
+    /// Otherwise as [`mdns_browse`], and refused through a [`PartHandle`](crate::PartHandle)
+    /// whose part is dropped.
+    /// Events after the part is dropped run nothing.
+    #[must_use = "dropping the returned MdnsBrowse stops it"]
+    pub fn start<T: 'static>(
+        to: &impl Receiver<T>,
+        service_types: &[&str],
+        method: BrowseMethod<T>,
+    ) -> Option<MdnsBrowse> {
+        let target = to.__target()?;
+        browse_with(service_types, on_target(target, method))
     }
 }
 
@@ -116,22 +150,18 @@ pub enum MdnsEvent<'a> {
 }
 
 thread_local! {
-    static CALLBACKS: RefCell<Vec<BrowseCallback>> = const { RefCell::new(Vec::new()) };
-    static BROWSES: RefCell<HashMap<MdnsBrowseId, usize>> = RefCell::new(HashMap::new());
+    static BROWSES: RefCell<HashMap<MdnsBrowseId, Handler>> = RefCell::new(HashMap::new());
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn register_callback(cb: BrowseCallback) -> usize {
-    CALLBACKS.with(|cbs| {
-        let mut cbs = cbs.borrow_mut();
-        for (i, existing) in cbs.iter().enumerate() {
-            if *existing as usize == cb as usize {
-                return i;
-            }
-        }
-        let idx = cbs.len();
-        cbs.push(cb);
-        idx
+fn register(browse_id: MdnsBrowseId, handler: Handler) {
+    BROWSES.with_borrow_mut(|browses| browses.insert(browse_id, handler));
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn on_target<T: 'static>(target: Target<T>, method: BrowseMethod<T>) -> Handler {
+    Rc::new(move |browse: &MdnsBrowse, event: &MdnsEvent<'_>| {
+        target.deliver(|value| method(value, browse, event));
     })
 }
 
@@ -144,10 +174,14 @@ fn register_callback(cb: BrowseCallback) -> usize {
 #[must_use = "dropping the returned MdnsBrowse stops it"]
 #[cfg(target_arch = "wasm32")]
 pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> Option<MdnsBrowse> {
+    browse_with(service_types, Rc::new(callback))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn browse_with(service_types: &[&str], handler: Handler) -> Option<MdnsBrowse> {
     let joined = service_types.join("\n");
     let browse_id = Platform::browse(&joined)?;
-    let cb_idx = register_callback(callback);
-    BROWSES.with(|b| b.borrow_mut().insert(browse_id, cb_idx));
+    register(browse_id, handler);
     Some(MdnsBrowse(browse_id))
 }
 
@@ -178,9 +212,8 @@ pub fn mdns_register(
     expect(dead_code, reason = "off-target no host delivers events")
 )]
 fn deliver(browse_id: MdnsBrowseId, event: &MdnsEvent<'_>) {
-    let cb = BROWSES
-        .with(|b| b.borrow().get(&browse_id).copied())
-        .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+    // Cloned out before invoking (the callback may start or stop browses).
+    let cb = BROWSES.with(|b| b.borrow().get(&browse_id).cloned());
 
     if let Some(cb) = cb {
         // Borrowed for the event only; dropping it would stop the browse.
@@ -201,6 +234,7 @@ mod wasm {
     use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
 
     use super::{MdnsEvent, deliver};
+    use crate::widget;
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
@@ -251,10 +285,6 @@ mod wasm {
     }
 
     /// Called by the host when an mDNS event is ready.
-    #[expect(
-        clippy::same_length_and_capacity,
-        reason = "the host hands back the size it asked __alloc for"
-    )]
     #[unsafe(no_mangle)]
     pub extern "C" fn __on_mdns_event(
         browse_id: u32,
@@ -262,6 +292,14 @@ mod wasm {
         data_ptr: u32,
         data_len: u32,
     ) {
+        widget::export(|| on_event(browse_id, event_type, data_ptr, data_len));
+    }
+
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    fn on_event(browse_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
         let Some(browse_id) = MdnsBrowseId::from_wire(browse_id) else {
             return;
         };
@@ -292,11 +330,15 @@ use wasm::Host as Platform;
 #[cfg(test)]
 mod tests {
     use core::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     use bmc_wasm_protocol::MdnsBrowseId;
 
-    use super::{BROWSES, BrowseCallback, MdnsBrowse, MdnsEvent, register_callback};
+    use super::{
+        BROWSES, BrowseCallback, BrowseMethod, MdnsBrowse, MdnsEvent, on_target, register,
+    };
     use crate::wasm_test;
+    use crate::widget::Part;
 
     thread_local! {
         static SEEN: Cell<Option<MdnsBrowseId>> = const { Cell::new(None) };
@@ -305,8 +347,7 @@ mod tests {
 
     fn browse(callback: BrowseCallback) -> MdnsBrowse {
         let id = MdnsBrowseId::from_wire(1).expect("BUG: test ids are non-zero");
-        let cb_idx = register_callback(callback);
-        BROWSES.with_borrow_mut(|browses| browses.insert(id, cb_idx));
+        register(id, Rc::new(callback));
         MdnsBrowse(id)
     }
 
@@ -340,11 +381,27 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     #[wasm_test]
     fn a_find_from_the_host_reaches_its_browse() {
-        let browse = browse(record);
+        let part = Part::new(Finder {
+            found: 0,
+            browse: None,
+        });
+        let browse = browse_on(&part, Finder::count_found);
 
-        super::wasm::__on_mdns_event(browse.0.to_wire(), 0, 0, 0);
+        crate::widget::as_host(|| super::wasm::__on_mdns_event(browse.0.to_wire(), 0, 0, 0));
 
-        assert_eq!(SEEN.get(), Some(browse.0));
+        assert_eq!(part.with(|value| value.found), 1);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_find_from_the_host_reaches_a_plain_callback() {
+        let handle = browse(record);
+
+        crate::widget::as_host(|| {
+            super::wasm::__on_mdns_event(handle.0.to_wire(), 0, 0, 0);
+        });
+
+        assert_eq!(SEEN.get(), Some(handle.0));
     }
 
     #[wasm_test]
@@ -376,5 +433,60 @@ mod tests {
         deliver(id);
 
         assert!(!is_registered(id));
+    }
+
+    struct Finder {
+        found: usize,
+        browse: Option<MdnsBrowse>,
+    }
+
+    impl Finder {
+        fn count_found(&mut self, _browse: &MdnsBrowse, event: &MdnsEvent<'_>) {
+            if matches!(event, MdnsEvent::Found(_)) {
+                self.found += 1;
+            }
+        }
+
+        fn stop_own(&mut self, _browse: &MdnsBrowse, _event: &MdnsEvent<'_>) {
+            self.browse.take();
+        }
+    }
+
+    fn browse_on(part: &Part<Finder>, method: BrowseMethod<Finder>) -> MdnsBrowse {
+        let id = MdnsBrowseId::from_wire(2).expect("BUG: test ids are non-zero");
+        register(id, on_target(part.target(), method));
+        MdnsBrowse(id)
+    }
+
+    #[wasm_test]
+    fn a_part_stops_its_own_browse_from_the_event() {
+        let mut part = Part::new(Finder {
+            found: 0,
+            browse: None,
+        });
+        let browse = browse_on(&part, Finder::stop_own);
+        let id = browse.0;
+        part.with_mut(|value| value.browse = Some(browse));
+
+        deliver(id);
+
+        assert!(!is_registered(id));
+    }
+
+    #[wasm_test]
+    fn a_browse_outlives_its_part() {
+        let part = Part::new(Finder {
+            found: 0,
+            browse: None,
+        });
+        let browse = browse_on(&part, Finder::count_found);
+
+        drop(part);
+        deliver(browse.0);
+
+        assert!(
+            is_registered(browse.0),
+            "the handle owns the browse; the part only gets its events"
+        );
     }
 }

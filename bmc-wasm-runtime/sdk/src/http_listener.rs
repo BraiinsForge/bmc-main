@@ -20,7 +20,7 @@
 
 //! HTTP listener for WASM widgets.
 //!
-//! Provides `http_listen()` for accepting inbound HTTP connections. The host
+//! Provides [`HttpListener::listen`] for accepting inbound HTTP connections. The host
 //! manages the TCP listener in a background thread and delivers requests by
 //! calling the `__on_http_request` export. WASM responds via `HttpRequest::respond()`.
 //!
@@ -36,42 +36,58 @@
 //! # Example
 //!
 //! ```ignore
-//! use std::cell::RefCell;
-//!
 //! use bmc_wasm_sdk::*;
 //! use bmc_wasm_sdk::http_listener::*;
 //!
-//! thread_local! {
-//!     static LISTENER: RefCell<Option<HttpListener>> = const { RefCell::new(None) };
+//! struct Pairing {
+//!     listener: Option<HttpListener>,
 //! }
 //!
-//! fn start_pairing() {
-//!     let listener = http_listen(0, on_request); // port 0 = ephemeral
-//!     if let Some(listener) = &listener {
-//!         log_info!("listening on port {}", listener.port());
-//!     }
-//!     LISTENER.set(listener);
-//! }
-//!
-//! fn on_request(_listener: &HttpListener, req: &HttpRequest) {
-//!     log_info!("{} {}", req.method, req.path);
-//!     req.respond(200, "Content-Type: text/plain", b"OK");
-//!     if req.path == "/paired" {
-//!         if let Some(listener) = LISTENER.take() {
-//!             listener.close();
+//! impl Pairing {
+//!     fn on_request(&mut self, _listener: &HttpListener, req: &HttpRequest) {
+//!         log_info!("{} {}", req.method, req.path);
+//!         req.respond(200, "Content-Type: text/plain", b"OK");
+//!         if req.path == "/paired" {
+//!             if let Some(listener) = self.listener.take() {
+//!                 listener.close();
+//!             }
 //!         }
 //!     }
+//! }
+//!
+//! #[widget]
+//! impl Widget for Pairing {
+//!     fn init(me: &Building<Self>) -> Self {
+//!         let listener = HttpListener::listen(me, 0, Self::on_request); // port 0 = ephemeral
+//!         if let Some(listener) = &listener {
+//!             log_info!("listening on port {}", listener.port());
+//!         }
+//!         Self { listener }
+//!     }
+//!
+//!     fn render(&mut self, _delta_ms: u32) {}
 //! }
 //! ```
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
+use std::rc::Rc;
 
 use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
+#[cfg(target_arch = "wasm32")]
+use crate::widget::Receiver;
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::widget::Target;
+
 /// Callback type: `fn(listener, request)`.
 pub type RequestCallback = fn(&HttpListener, &HttpRequest);
+
+/// A request as a method of the value it is delivered to.
+pub type RequestMethod<T> = fn(&mut T, &HttpListener, &HttpRequest);
+
+type Handler = Rc<dyn Fn(&HttpListener, &HttpRequest)>;
 
 /// The only handle to an HTTP listener; dropping it closes the listener.
 #[derive(Debug, PartialEq, Eq)]
@@ -91,6 +107,24 @@ impl HttpListener {
     /// Close the listener. A request already due in the same delivery pass is dropped.
     pub fn close(self) {
         drop(self);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl HttpListener {
+    /// Start listening; the requests run `method` on `to`.
+    ///
+    /// Otherwise as [`http_listen`], and refused through a [`PartHandle`](crate::PartHandle)
+    /// whose part is dropped.
+    /// Requests after the part is dropped run nothing.
+    #[must_use = "dropping the returned HttpListener closes it"]
+    pub fn listen<T: 'static>(
+        to: &impl Receiver<T>,
+        port: u16,
+        method: RequestMethod<T>,
+    ) -> Option<HttpListener> {
+        let target = to.__target()?;
+        listen_with(port, on_target(target, method))
     }
 }
 
@@ -123,22 +157,18 @@ impl HttpRequest {
 }
 
 thread_local! {
-    static CALLBACKS: RefCell<Vec<RequestCallback>> = const { RefCell::new(Vec::new()) };
-    static LISTENERS: RefCell<HashMap<HttpListenerId, usize>> = RefCell::new(HashMap::new());
+    static LISTENERS: RefCell<HashMap<HttpListenerId, Handler>> = RefCell::new(HashMap::new());
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn register_callback(cb: RequestCallback) -> usize {
-    CALLBACKS.with(|cbs| {
-        let mut cbs = cbs.borrow_mut();
-        for (i, existing) in cbs.iter().enumerate() {
-            if *existing as usize == cb as usize {
-                return i;
-            }
-        }
-        let idx = cbs.len();
-        cbs.push(cb);
-        idx
+fn register(listener_id: HttpListenerId, handler: Handler) {
+    LISTENERS.with_borrow_mut(|listeners| listeners.insert(listener_id, handler));
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn on_target<T: 'static>(target: Target<T>, method: RequestMethod<T>) -> Handler {
+    Rc::new(move |listener: &HttpListener, request: &HttpRequest| {
+        target.deliver(|value| method(value, listener, request));
     })
 }
 
@@ -151,9 +181,13 @@ fn register_callback(cb: RequestCallback) -> usize {
 #[must_use = "dropping the returned HttpListener closes it"]
 #[cfg(target_arch = "wasm32")]
 pub fn http_listen(port: u16, callback: RequestCallback) -> Option<HttpListener> {
+    listen_with(port, Rc::new(callback))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn listen_with(port: u16, handler: Handler) -> Option<HttpListener> {
     let listener_id = Platform::listen(port)?;
-    let cb_idx = register_callback(callback);
-    LISTENERS.with_borrow_mut(|listeners| listeners.insert(listener_id, cb_idx));
+    register(listener_id, handler);
     Some(HttpListener(listener_id))
 }
 
@@ -163,9 +197,8 @@ pub fn http_listen(port: u16, callback: RequestCallback) -> Option<HttpListener>
     expect(dead_code, reason = "off-target no host delivers requests")
 )]
 fn deliver(listener_id: HttpListenerId, req: &HttpRequest) {
-    let cb = LISTENERS
-        .with(|l| l.borrow().get(&listener_id).copied())
-        .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+    // Cloned out before invoking (the callback may open or close listeners).
+    let cb = LISTENERS.with(|l| l.borrow().get(&listener_id).cloned());
 
     if let Some(cb) = cb {
         // Borrowed for the request only; dropping it would close the listener.
@@ -186,6 +219,7 @@ mod wasm {
     use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
     use super::{HttpRequest, deliver};
+    use crate::widget;
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
@@ -246,6 +280,26 @@ mod wasm {
         body_ptr: u32,
         body_len: u32,
     ) {
+        widget::export(|| {
+            on_request(
+                listener_id,
+                request_id,
+                (method_ptr, method_len),
+                (path_ptr, path_len),
+                (headers_ptr, headers_len),
+                (body_ptr, body_len),
+            );
+        });
+    }
+
+    fn on_request(
+        listener_id: u32,
+        request_id: u32,
+        method: (u32, u32),
+        path: (u32, u32),
+        headers: (u32, u32),
+        body: (u32, u32),
+    ) {
         let Some(listener_id) = HttpListenerId::from_wire(listener_id) else {
             return;
         };
@@ -253,10 +307,10 @@ mod wasm {
             return;
         };
 
-        let method = take_string(method_ptr, method_len);
-        let path = take_string(path_ptr, path_len);
-        let headers = take_string(headers_ptr, headers_len);
-        let body = take_vec(body_ptr, body_len);
+        let method = take_string(method.0, method.1);
+        let path = take_string(path.0, path.1);
+        let headers = take_string(headers.0, headers.1);
+        let body = take_vec(body.0, body.1);
 
         let req = HttpRequest {
             request_id,
@@ -301,11 +355,15 @@ use wasm::Host as Platform;
 #[cfg(test)]
 mod tests {
     use core::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
-    use super::{HttpListener, HttpRequest, LISTENERS, RequestCallback, register_callback};
+    use super::{
+        HttpListener, HttpRequest, LISTENERS, RequestCallback, RequestMethod, on_target, register,
+    };
     use crate::wasm_test;
+    use crate::widget::Part;
 
     thread_local! {
         static SEEN: Cell<Option<HttpListenerId>> = const { Cell::new(None) };
@@ -314,8 +372,7 @@ mod tests {
 
     fn listen(callback: RequestCallback) -> HttpListener {
         let id = HttpListenerId::from_wire(1).expect("BUG: test ids are non-zero");
-        let cb_idx = register_callback(callback);
-        LISTENERS.with_borrow_mut(|listeners| listeners.insert(id, cb_idx));
+        register(id, Rc::new(callback));
         HttpListener(id)
     }
 
@@ -356,11 +413,29 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     #[wasm_test]
     fn a_request_from_the_host_reaches_its_listener() {
-        let listener = listen(record);
+        let part = Part::new(Server {
+            requests: 0,
+            listener: None,
+        });
+        let listener = listen_on(&part, Server::count_request);
 
-        super::wasm::__on_http_request(listener.0.to_wire(), 1, 0, 0, 0, 0, 0, 0, 0, 0);
+        crate::widget::as_host(|| {
+            super::wasm::__on_http_request(listener.0.to_wire(), 1, 0, 0, 0, 0, 0, 0, 0, 0);
+        });
 
-        assert_eq!(SEEN.get(), Some(listener.0));
+        assert_eq!(part.with(|value| value.requests), 1);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_request_from_the_host_reaches_a_plain_callback() {
+        let handle = listen(record);
+
+        crate::widget::as_host(|| {
+            super::wasm::__on_http_request(handle.0.to_wire(), 1, 0, 0, 0, 0, 0, 0, 0, 0);
+        });
+
+        assert_eq!(SEEN.get(), Some(handle.0));
     }
 
     #[wasm_test]
@@ -392,5 +467,58 @@ mod tests {
         deliver(id);
 
         assert!(!is_registered(id));
+    }
+
+    struct Server {
+        requests: usize,
+        listener: Option<HttpListener>,
+    }
+
+    impl Server {
+        fn count_request(&mut self, _listener: &HttpListener, _request: &HttpRequest) {
+            self.requests += 1;
+        }
+
+        fn close_own(&mut self, _listener: &HttpListener, _request: &HttpRequest) {
+            self.listener.take();
+        }
+    }
+
+    fn listen_on(part: &Part<Server>, method: RequestMethod<Server>) -> HttpListener {
+        let id = HttpListenerId::from_wire(2).expect("BUG: test ids are non-zero");
+        register(id, on_target(part.target(), method));
+        HttpListener(id)
+    }
+
+    #[wasm_test]
+    fn a_part_closes_its_own_listener_from_the_request() {
+        let mut part = Part::new(Server {
+            requests: 0,
+            listener: None,
+        });
+        let listener = listen_on(&part, Server::close_own);
+        let id = listener.0;
+        part.with_mut(|value| value.listener = Some(listener));
+
+        deliver(id);
+
+        assert!(!is_registered(id));
+    }
+
+    #[wasm_test]
+    fn a_listener_outlives_its_part() {
+        let part = Part::new(Server {
+            requests: 0,
+            listener: None,
+        });
+        let listener = listen_on(&part, Server::count_request);
+
+        drop(part);
+        deliver(listener.0);
+
+        assert!(
+            is_registered(listener.0),
+            "the handle owns the listener; the part only gets its events"
+        );
     }
 }

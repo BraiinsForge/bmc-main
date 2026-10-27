@@ -20,7 +20,7 @@
 
 //! SSDP (UPnP) device discovery for WASM widgets.
 //!
-//! Provides `ssdp_search()` for discovering UPnP/DLNA devices on the local
+//! Provides [`SsdpSearch::start`] for discovering UPnP/DLNA devices on the local
 //! network via SSDP M-SEARCH. The host manages the search in a background
 //! thread and delivers events by calling the `__on_ssdp_event` export.
 //!
@@ -33,36 +33,53 @@
 //! # Example
 //!
 //! ```ignore
-//! use std::cell::RefCell;
-//!
 //! use bmc_wasm_sdk::*;
 //! use bmc_wasm_sdk::ssdp::*;
 //!
-//! thread_local! {
-//!     static SEARCH: RefCell<Option<SsdpSearch>> = const { RefCell::new(None) };
+//! struct Renderers {
+//!     search: Option<SsdpSearch>,
 //! }
 //!
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn init() {
-//!     SEARCH.set(ssdp_search("urn:schemas-upnp-org:device:MediaRenderer:1", 5, on_ssdp_event));
-//! }
-//!
-//! fn on_ssdp_event(_search: &SsdpSearch, event: &SsdpEvent<'_>) {
-//!     match event {
-//!         SsdpEvent::Found(json) => log_info!("found: {json}"),
-//!         SsdpEvent::Removed(usn) => log_info!("removed: {usn}"),
+//! impl Renderers {
+//!     fn on_ssdp_event(&mut self, _search: &SsdpSearch, event: &SsdpEvent<'_>) {
+//!         match event {
+//!             SsdpEvent::Found(json) => log_info!("found: {json}"),
+//!             SsdpEvent::Removed(usn) => log_info!("removed: {usn}"),
+//!         }
 //!     }
+//! }
+//!
+//! #[widget]
+//! impl Widget for Renderers {
+//!     fn init(me: &Building<Self>) -> Self {
+//!         let target = "urn:schemas-upnp-org:device:MediaRenderer:1";
+//!         let search = SsdpSearch::start(me, target, 5, Self::on_ssdp_event);
+//!         Self { search }
+//!     }
+//!
+//!     fn render(&mut self, _delta_ms: u32) {}
 //! }
 //! ```
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
+use std::rc::Rc;
 
 use bmc_wasm_protocol::SsdpSearchId;
 
+#[cfg(target_arch = "wasm32")]
+use crate::widget::Receiver;
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::widget::Target;
+
 /// Callback type: `fn(search, event)`.
 pub type SearchCallback = fn(&SsdpSearch, &SsdpEvent<'_>);
+
+/// A search event as a method of the value it is delivered to.
+pub type SearchMethod<T> = fn(&mut T, &SsdpSearch, &SsdpEvent<'_>);
+
+type Handler = Rc<dyn Fn(&SsdpSearch, &SsdpEvent<'_>)>;
 
 /// The only handle to an SSDP search; dropping it stops the search.
 #[derive(Debug, PartialEq, Eq)]
@@ -72,6 +89,25 @@ impl SsdpSearch {
     /// Stop the search. An event already due in the same delivery pass is dropped.
     pub fn stop(self) {
         drop(self);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl SsdpSearch {
+    /// Start a search; the events run `method` on `to`.
+    ///
+    /// Otherwise as [`ssdp_search`], and refused through a [`PartHandle`](crate::PartHandle)
+    /// whose part is dropped.
+    /// Events after the part is dropped run nothing.
+    #[must_use = "dropping the returned SsdpSearch stops it"]
+    pub fn start<T: 'static>(
+        to: &impl Receiver<T>,
+        search_target: &str,
+        timeout_secs: u32,
+        method: SearchMethod<T>,
+    ) -> Option<SsdpSearch> {
+        let target = to.__target()?;
+        search_with(search_target, timeout_secs, on_target(target, method))
     }
 }
 
@@ -95,22 +131,18 @@ pub enum SsdpEvent<'a> {
 }
 
 thread_local! {
-    static CALLBACKS: RefCell<Vec<SearchCallback>> = const { RefCell::new(Vec::new()) };
-    static SEARCHES: RefCell<HashMap<SsdpSearchId, usize>> = RefCell::new(HashMap::new());
+    static SEARCHES: RefCell<HashMap<SsdpSearchId, Handler>> = RefCell::new(HashMap::new());
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn register_callback(cb: SearchCallback) -> usize {
-    CALLBACKS.with(|cbs| {
-        let mut cbs = cbs.borrow_mut();
-        for (i, existing) in cbs.iter().enumerate() {
-            if *existing as usize == cb as usize {
-                return i;
-            }
-        }
-        let idx = cbs.len();
-        cbs.push(cb);
-        idx
+fn register(search_id: SsdpSearchId, handler: Handler) {
+    SEARCHES.with_borrow_mut(|searches| searches.insert(search_id, handler));
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn on_target<T: 'static>(target: Target<T>, method: SearchMethod<T>) -> Handler {
+    Rc::new(move |search: &SsdpSearch, event: &SsdpEvent<'_>| {
+        target.deliver(|value| method(value, search, event));
     })
 }
 
@@ -130,9 +162,13 @@ pub fn ssdp_search(
     timeout_secs: u32,
     callback: SearchCallback,
 ) -> Option<SsdpSearch> {
+    search_with(search_target, timeout_secs, Rc::new(callback))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn search_with(search_target: &str, timeout_secs: u32, handler: Handler) -> Option<SsdpSearch> {
     let search_id = Platform::start(search_target, timeout_secs)?;
-    let cb_idx = register_callback(callback);
-    SEARCHES.with(|s| s.borrow_mut().insert(search_id, cb_idx));
+    register(search_id, handler);
     Some(SsdpSearch(search_id))
 }
 
@@ -142,9 +178,8 @@ pub fn ssdp_search(
     expect(dead_code, reason = "off-target no host delivers events")
 )]
 fn deliver(search_id: SsdpSearchId, event: &SsdpEvent<'_>) {
-    let cb = SEARCHES
-        .with(|s| s.borrow().get(&search_id).copied())
-        .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+    // Cloned out before invoking (the callback may start or stop searches).
+    let cb = SEARCHES.with(|s| s.borrow().get(&search_id).cloned());
 
     if let Some(cb) = cb {
         // Borrowed for the event only; dropping it would stop the search.
@@ -163,6 +198,7 @@ mod wasm {
     use bmc_wasm_protocol::SsdpSearchId;
 
     use super::{SsdpEvent, deliver};
+    use crate::widget;
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
@@ -189,10 +225,6 @@ mod wasm {
     }
 
     /// Called by the host when an SSDP event is ready.
-    #[expect(
-        clippy::same_length_and_capacity,
-        reason = "the host hands back the size it asked __alloc for"
-    )]
     #[unsafe(no_mangle)]
     pub extern "C" fn __on_ssdp_event(
         search_id: u32,
@@ -200,6 +232,14 @@ mod wasm {
         data_ptr: u32,
         data_len: u32,
     ) {
+        widget::export(|| on_event(search_id, event_type, data_ptr, data_len));
+    }
+
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    fn on_event(search_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
         let Some(search_id) = SsdpSearchId::from_wire(search_id) else {
             return;
         };
@@ -230,11 +270,15 @@ use wasm::Host as Platform;
 #[cfg(test)]
 mod tests {
     use core::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     use bmc_wasm_protocol::SsdpSearchId;
 
-    use super::{SEARCHES, SearchCallback, SsdpEvent, SsdpSearch, register_callback};
+    use super::{
+        SEARCHES, SearchCallback, SearchMethod, SsdpEvent, SsdpSearch, on_target, register,
+    };
     use crate::wasm_test;
+    use crate::widget::Part;
 
     thread_local! {
         static SEEN: Cell<Option<SsdpSearchId>> = const { Cell::new(None) };
@@ -243,8 +287,7 @@ mod tests {
 
     fn search(callback: SearchCallback) -> SsdpSearch {
         let id = SsdpSearchId::from_wire(1).expect("BUG: test ids are non-zero");
-        let cb_idx = register_callback(callback);
-        SEARCHES.with_borrow_mut(|searches| searches.insert(id, cb_idx));
+        register(id, Rc::new(callback));
         SsdpSearch(id)
     }
 
@@ -278,11 +321,27 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     #[wasm_test]
     fn a_find_from_the_host_reaches_its_search() {
-        let search = search(record);
+        let part = Part::new(Finder {
+            found: 0,
+            search: None,
+        });
+        let search = search_on(&part, Finder::count_found);
 
-        super::wasm::__on_ssdp_event(search.0.to_wire(), 0, 0, 0);
+        crate::widget::as_host(|| super::wasm::__on_ssdp_event(search.0.to_wire(), 0, 0, 0));
 
-        assert_eq!(SEEN.get(), Some(search.0));
+        assert_eq!(part.with(|value| value.found), 1);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_find_from_the_host_reaches_a_plain_callback() {
+        let handle = search(record);
+
+        crate::widget::as_host(|| {
+            super::wasm::__on_ssdp_event(handle.0.to_wire(), 0, 0, 0);
+        });
+
+        assert_eq!(SEEN.get(), Some(handle.0));
     }
 
     #[wasm_test]
@@ -314,5 +373,60 @@ mod tests {
         deliver(id);
 
         assert!(!is_registered(id));
+    }
+
+    struct Finder {
+        found: usize,
+        search: Option<SsdpSearch>,
+    }
+
+    impl Finder {
+        fn count_found(&mut self, _search: &SsdpSearch, event: &SsdpEvent<'_>) {
+            if matches!(event, SsdpEvent::Found(_)) {
+                self.found += 1;
+            }
+        }
+
+        fn stop_own(&mut self, _search: &SsdpSearch, _event: &SsdpEvent<'_>) {
+            self.search.take();
+        }
+    }
+
+    fn search_on(part: &Part<Finder>, method: SearchMethod<Finder>) -> SsdpSearch {
+        let id = SsdpSearchId::from_wire(2).expect("BUG: test ids are non-zero");
+        register(id, on_target(part.target(), method));
+        SsdpSearch(id)
+    }
+
+    #[wasm_test]
+    fn a_part_stops_its_own_search_from_the_event() {
+        let mut part = Part::new(Finder {
+            found: 0,
+            search: None,
+        });
+        let search = search_on(&part, Finder::stop_own);
+        let id = search.0;
+        part.with_mut(|value| value.search = Some(search));
+
+        deliver(id);
+
+        assert!(!is_registered(id));
+    }
+
+    #[wasm_test]
+    fn a_search_outlives_its_part() {
+        let part = Part::new(Finder {
+            found: 0,
+            search: None,
+        });
+        let search = search_on(&part, Finder::count_found);
+
+        drop(part);
+        deliver(search.0);
+
+        assert!(
+            is_registered(search.0),
+            "the handle owns the search; the part only gets its events"
+        );
     }
 }

@@ -20,8 +20,8 @@
 
 //! TLS socket support for WASM widgets.
 //!
-//! Provides `tls_connect()` for verified TLS connections and
-//! `tls_connect_insecure()` for trusted self-signed LAN devices. The host
+//! Provides [`Socket::tls_connect`] for verified TLS connections and
+//! [`Socket::tls_connect_insecure`] for trusted self-signed LAN devices. The host
 //! manages the TCP+TLS I/O in a background thread and delivers events by
 //! calling the `__on_socket_event` export.
 //!
@@ -36,45 +36,58 @@
 //! # Example
 //!
 //! ```ignore
-//! use std::cell::RefCell;
-//!
 //! use bmc_wasm_sdk::*;
 //! use bmc_wasm_sdk::socket::*;
 //!
-//! thread_local! {
-//!     static SOCKET: RefCell<Option<Socket>> = const { RefCell::new(None) };
+//! struct Cast {
+//!     socket: Option<Socket>,
 //! }
 //!
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn init() {
-//!     SOCKET.set(tls_connect("192.168.1.50", 8009, on_socket_event));
-//! }
-//!
-//! fn on_socket_event(socket: &Socket, event: &SocketEvent<'_>) {
-//!     match event {
-//!         SocketEvent::Connected => socket.write(b"hello"),
-//!         SocketEvent::Data(b"bye") => {
-//!             if let Some(socket) = SOCKET.take() {
-//!                 socket.close();
+//! impl Cast {
+//!     fn on_socket_event(&mut self, socket: &Socket, event: &SocketEvent<'_>) {
+//!         match event {
+//!             SocketEvent::Connected => socket.write(b"hello"),
+//!             SocketEvent::Data(b"bye") => {
+//!                 if let Some(socket) = self.socket.take() {
+//!                     socket.close();
+//!                 }
+//!             }
+//!             SocketEvent::Data(data) => log_info!("received {} bytes", data.len()),
+//!             SocketEvent::Closed(code) => {
+//!                 log_info!("closed with code {code}");
+//!                 self.socket = None;
 //!             }
 //!         }
-//!         SocketEvent::Data(data) => log_info!("received {} bytes", data.len()),
-//!         SocketEvent::Closed(code) => {
-//!             log_info!("closed with code {code}");
-//!             SOCKET.set(None);
-//!         }
 //!     }
+//! }
+//!
+//! #[widget]
+//! impl Widget for Cast {
+//!     fn init(me: &Building<Self>) -> Self {
+//!         let socket = Socket::tls_connect(me, "192.168.1.50", 8009, Self::on_socket_event);
+//!         Self { socket }
+//!     }
+//!
+//!     fn render(&mut self, _delta_ms: u32) {}
 //! }
 //! ```
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
+use std::rc::Rc;
 
 use bmc_wasm_protocol::SocketId;
 
+#[cfg(target_arch = "wasm32")]
+use crate::widget::Receiver;
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::widget::Target;
+
 /// Callback type: `fn(socket, event)`.
 pub type Callback = fn(&Socket, &SocketEvent<'_>);
+
+type Handler = Rc<dyn Fn(&Socket, &SocketEvent<'_>)>;
 
 /// The only handle to a socket connection; dropping it closes the connection.
 #[derive(Debug, PartialEq, Eq)]
@@ -95,6 +108,63 @@ impl Socket {
         drop(self);
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+impl Socket {
+    /// Connect over TLS; the events run `method` on `to`.
+    ///
+    /// Otherwise as [`tls_connect`], and refused through a [`PartHandle`](crate::PartHandle)
+    /// whose part is dropped.
+    /// Events after the part is dropped run nothing.
+    #[must_use = "dropping the returned Socket closes it"]
+    pub fn tls_connect<T: 'static>(
+        to: &impl Receiver<T>,
+        host: &str,
+        port: u16,
+        method: SocketMethod<T>,
+    ) -> Option<Socket> {
+        let target = to.__target()?;
+        let socket_id = Platform::tls_connect(host, port)?;
+        Some(connect_with(socket_id, on_target(target, method)))
+    }
+
+    /// Connect over unverified TLS; the events run `method` on `to`.
+    ///
+    /// Otherwise as [`tls_connect_insecure`], and refused
+    /// through a [`PartHandle`](crate::PartHandle) whose part is dropped.
+    /// Events after the part is dropped run nothing.
+    #[must_use = "dropping the returned Socket closes it"]
+    pub fn tls_connect_insecure<T: 'static>(
+        to: &impl Receiver<T>,
+        host: &str,
+        port: u16,
+        method: SocketMethod<T>,
+    ) -> Option<Socket> {
+        let target = to.__target()?;
+        let socket_id = Platform::tls_connect_insecure(host, port)?;
+        Some(connect_with(socket_id, on_target(target, method)))
+    }
+
+    /// Connect over plain TCP; the events run `method` on `to`.
+    ///
+    /// Otherwise as [`tcp_connect`], and refused through a [`PartHandle`](crate::PartHandle)
+    /// whose part is dropped.
+    /// Events after the part is dropped run nothing.
+    #[must_use = "dropping the returned Socket closes it"]
+    pub fn tcp_connect<T: 'static>(
+        to: &impl Receiver<T>,
+        host: &str,
+        port: u16,
+        method: SocketMethod<T>,
+    ) -> Option<Socket> {
+        let target = to.__target()?;
+        let socket_id = Platform::tcp_connect(host, port)?;
+        Some(connect_with(socket_id, on_target(target, method)))
+    }
+}
+
+/// A socket event as a method of the value it is delivered to.
+pub type SocketMethod<T> = fn(&mut T, &Socket, &SocketEvent<'_>);
 
 impl Drop for Socket {
     fn drop(&mut self) {
@@ -118,22 +188,19 @@ pub enum SocketEvent<'a> {
 }
 
 thread_local! {
-    static CALLBACKS: RefCell<Vec<Callback>> = const { RefCell::new(Vec::new()) };
-    static CONNECTIONS: RefCell<HashMap<SocketId, usize>> = RefCell::new(HashMap::new());
+    static CONNECTIONS: RefCell<HashMap<SocketId, Handler>> = RefCell::new(HashMap::new());
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn register_callback(cb: Callback) -> usize {
-    CALLBACKS.with(|cbs| {
-        let mut cbs = cbs.borrow_mut();
-        for (i, existing) in cbs.iter().enumerate() {
-            if *existing as usize == cb as usize {
-                return i;
-            }
-        }
-        let idx = cbs.len();
-        cbs.push(cb);
-        idx
+fn connect_with(socket_id: SocketId, handler: Handler) -> Socket {
+    CONNECTIONS.with_borrow_mut(|connections| connections.insert(socket_id, handler));
+    Socket(socket_id)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn on_target<T: 'static>(target: Target<T>, method: SocketMethod<T>) -> Handler {
+    Rc::new(move |socket: &Socket, event: &SocketEvent<'_>| {
+        target.deliver(|value| method(value, socket, event));
     })
 }
 
@@ -146,9 +213,7 @@ fn register_callback(cb: Callback) -> usize {
 #[cfg(target_arch = "wasm32")]
 pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let socket_id = Platform::tls_connect(host, port)?;
-    let cb_idx = register_callback(callback);
-    CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
-    Some(Socket(socket_id))
+    Some(connect_with(socket_id, Rc::new(callback)))
 }
 
 /// Connect to a TLS socket while skipping certificate verification.
@@ -161,9 +226,7 @@ pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> 
 #[cfg(target_arch = "wasm32")]
 pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let socket_id = Platform::tls_connect_insecure(host, port)?;
-    let cb_idx = register_callback(callback);
-    CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
-    Some(Socket(socket_id))
+    Some(connect_with(socket_id, Rc::new(callback)))
 }
 
 /// Connect to a plain TCP socket. The host performs the TCP connect in the
@@ -175,9 +238,7 @@ pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option
 #[cfg(target_arch = "wasm32")]
 pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let socket_id = Platform::tcp_connect(host, port)?;
-    let cb_idx = register_callback(callback);
-    CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
-    Some(Socket(socket_id))
+    Some(connect_with(socket_id, Rc::new(callback)))
 }
 
 /// Hand an event to the callback of its socket, if a handle still holds it.
@@ -190,15 +251,14 @@ pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> 
 fn deliver(socket_id: SocketId, event: &SocketEvent<'_>) {
     let is_close = matches!(event, SocketEvent::Closed(_));
 
-    let cb = CONNECTIONS
-        .with(|c| {
-            if is_close {
-                c.borrow_mut().remove(&socket_id)
-            } else {
-                c.borrow().get(&socket_id).copied()
-            }
-        })
-        .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+    // Cloned out before invoking (the callback may open or close sockets).
+    let cb = CONNECTIONS.with(|c| {
+        if is_close {
+            c.borrow_mut().remove(&socket_id)
+        } else {
+            c.borrow().get(&socket_id).cloned()
+        }
+    });
 
     if let Some(cb) = cb {
         // Borrowed for the event only; dropping it would close the connection.
@@ -220,6 +280,7 @@ mod wasm {
     use bmc_wasm_protocol::SocketId;
 
     use super::{SocketEvent, deliver};
+    use crate::widget;
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
@@ -273,10 +334,6 @@ mod wasm {
     }
 
     /// Called by the host when a socket event is ready.
-    #[expect(
-        clippy::same_length_and_capacity,
-        reason = "the host hands back the size it asked __alloc for"
-    )]
     #[unsafe(no_mangle)]
     pub extern "C" fn __on_socket_event(
         socket_id: u32,
@@ -284,6 +341,14 @@ mod wasm {
         data_ptr: u32,
         data_len: u32,
     ) {
+        widget::export(|| on_event(socket_id, event_type, data_ptr, data_len));
+    }
+
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    fn on_event(socket_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
         let Some(socket_id) = SocketId::from_wire(socket_id) else {
             return;
         };
@@ -320,11 +385,15 @@ use wasm::Host as Platform;
 #[cfg(test)]
 mod tests {
     use core::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     use bmc_wasm_protocol::SocketId;
 
-    use super::{CONNECTIONS, Callback, Socket, SocketEvent, register_callback};
+    use super::{
+        CONNECTIONS, Callback, Socket, SocketEvent, SocketMethod, connect_with, on_target,
+    };
     use crate::wasm_test;
+    use crate::widget::Part;
 
     thread_local! {
         static SEEN: Cell<Option<SocketId>> = const { Cell::new(None) };
@@ -333,9 +402,7 @@ mod tests {
 
     fn connect(callback: Callback) -> Socket {
         let id = SocketId::from_wire(1).expect("BUG: test ids are non-zero");
-        let cb_idx = register_callback(callback);
-        CONNECTIONS.with_borrow_mut(|connections| connections.insert(id, cb_idx));
-        Socket(id)
+        connect_with(id, Rc::new(callback))
     }
 
     fn deliver(id: SocketId) {
@@ -368,11 +435,27 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     #[wasm_test]
     fn a_connect_from_the_host_reaches_its_socket() {
-        let socket = connect(record);
+        let part = Part::new(Client {
+            connects: 0,
+            socket: None,
+        });
+        let socket = connect_on(&part, Client::count_connect);
 
-        super::wasm::__on_socket_event(socket.0.to_wire(), 0, 0, 0);
+        crate::widget::as_host(|| super::wasm::__on_socket_event(socket.0.to_wire(), 0, 0, 0));
 
-        assert_eq!(SEEN.get(), Some(socket.0));
+        assert_eq!(part.with(|value| value.connects), 1);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_connect_from_the_host_reaches_a_plain_callback() {
+        let handle = connect(record);
+
+        crate::widget::as_host(|| {
+            super::wasm::__on_socket_event(handle.0.to_wire(), 0, 0, 0);
+        });
+
+        assert_eq!(SEEN.get(), Some(handle.0));
     }
 
     #[wasm_test]
@@ -404,5 +487,59 @@ mod tests {
         deliver(id);
 
         assert!(!is_registered(id));
+    }
+
+    struct Client {
+        connects: usize,
+        socket: Option<Socket>,
+    }
+
+    impl Client {
+        fn count_connect(&mut self, _socket: &Socket, event: &SocketEvent<'_>) {
+            if matches!(event, SocketEvent::Connected) {
+                self.connects += 1;
+            }
+        }
+
+        fn close_own(&mut self, _socket: &Socket, _event: &SocketEvent<'_>) {
+            self.socket.take();
+        }
+    }
+
+    fn connect_on(part: &Part<Client>, method: SocketMethod<Client>) -> Socket {
+        let id = SocketId::from_wire(2).expect("BUG: test ids are non-zero");
+        connect_with(id, on_target(part.target(), method))
+    }
+
+    #[wasm_test]
+    fn a_part_closes_its_own_socket_from_the_event() {
+        let mut part = Part::new(Client {
+            connects: 0,
+            socket: None,
+        });
+        let socket = connect_on(&part, Client::close_own);
+        let id = socket.0;
+        part.with_mut(|value| value.socket = Some(socket));
+
+        deliver(id);
+
+        assert!(!is_registered(id));
+    }
+
+    #[wasm_test]
+    fn a_socket_outlives_its_part() {
+        let part = Part::new(Client {
+            connects: 0,
+            socket: None,
+        });
+        let socket = connect_on(&part, Client::count_connect);
+
+        drop(part);
+        deliver(socket.0);
+
+        assert!(
+            is_registered(socket.0),
+            "the handle owns the socket; the part only gets its events"
+        );
     }
 }

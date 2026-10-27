@@ -20,7 +20,7 @@
 
 //! UDP broadcast discovery for WASM widgets.
 //!
-//! Provides `udp_broadcast()` for sending a UDP broadcast message and receiving
+//! Provides [`UdpBroadcast::start`] for sending a UDP broadcast message and receiving
 //! responses from devices on the local network. The host manages the broadcast
 //! in a background thread and delivers events by calling the
 //! `__on_udp_broadcast_event` export.
@@ -34,34 +34,51 @@
 //! # Example
 //!
 //! ```ignore
-//! use std::cell::RefCell;
-//!
 //! use bmc_wasm_sdk::*;
 //! use bmc_wasm_sdk::udp_broadcast::*;
 //!
-//! thread_local! {
-//!     static DISCOVERY: RefCell<Option<UdpBroadcast>> = const { RefCell::new(None) };
+//! struct Jellyfin {
+//!     discovery: Option<UdpBroadcast>,
 //! }
 //!
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn init() {
-//!     DISCOVERY.set(udp_broadcast(7359, "Who is JellyfinServer?", 5, on_response));
+//! impl Jellyfin {
+//!     fn on_response(&mut self, _broadcast: &UdpBroadcast, event: &UdpBroadcastEvent<'_>) {
+//!         let UdpBroadcastEvent::Response { data, source } = event;
+//!         log_info!("{source} answered: {data}");
+//!     }
 //! }
 //!
-//! fn on_response(_broadcast: &UdpBroadcast, event: &UdpBroadcastEvent<'_>) {
-//!     let UdpBroadcastEvent::Response { data, source } = event;
-//!     log_info!("{source} answered: {data}");
+//! #[widget]
+//! impl Widget for Jellyfin {
+//!     fn init(me: &Building<Self>) -> Self {
+//!         let probe = "Who is JellyfinServer?";
+//!         let discovery = UdpBroadcast::start(me, 7359, probe, 5, Self::on_response);
+//!         Self { discovery }
+//!     }
+//!
+//!     fn render(&mut self, _delta_ms: u32) {}
 //! }
 //! ```
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
+use std::rc::Rc;
 
 use bmc_wasm_protocol::UdpBroadcastId;
 
+#[cfg(target_arch = "wasm32")]
+use crate::widget::Receiver;
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::widget::Target;
+
 /// Callback type: `fn(broadcast, event)`.
 pub type BroadcastCallback = fn(&UdpBroadcast, &UdpBroadcastEvent<'_>);
+
+/// A broadcast event as a method of the value it is delivered to.
+pub type BroadcastMethod<T> = fn(&mut T, &UdpBroadcast, &UdpBroadcastEvent<'_>);
+
+type Handler = Rc<dyn Fn(&UdpBroadcast, &UdpBroadcastEvent<'_>)>;
 
 /// The only handle to a UDP broadcast; dropping it stops the broadcast.
 #[derive(Debug, PartialEq, Eq)]
@@ -71,6 +88,31 @@ impl UdpBroadcast {
     /// Stop the broadcast. An event already due in the same delivery pass is dropped.
     pub fn stop(self) {
         drop(self);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl UdpBroadcast {
+    /// Start a broadcast; the responses run `method` on `to`.
+    ///
+    /// Otherwise as [`udp_broadcast`], and refused through a [`PartHandle`](crate::PartHandle)
+    /// whose part is dropped.
+    /// Responses after the part is dropped run nothing.
+    #[must_use = "dropping the returned UdpBroadcast stops it"]
+    pub fn start<T: 'static>(
+        to: &impl Receiver<T>,
+        port: u16,
+        message: &str,
+        timeout_secs: u32,
+        method: BroadcastMethod<T>,
+    ) -> Option<UdpBroadcast> {
+        let target = to.__target()?;
+        broadcast_with(
+            u32::from(port),
+            message,
+            timeout_secs,
+            on_target(target, method),
+        )
     }
 }
 
@@ -90,23 +132,21 @@ pub enum UdpBroadcastEvent<'a> {
 }
 
 thread_local! {
-    static CALLBACKS: RefCell<Vec<BroadcastCallback>> = const { RefCell::new(Vec::new()) };
-    static BROADCASTS: RefCell<HashMap<UdpBroadcastId, usize>> = RefCell::new(HashMap::new());
+    static BROADCASTS: RefCell<HashMap<UdpBroadcastId, Handler>> = RefCell::new(HashMap::new());
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn register_callback(cb: BroadcastCallback) -> usize {
-    CALLBACKS.with(|cbs| {
-        let mut cbs = cbs.borrow_mut();
-        for (i, existing) in cbs.iter().enumerate() {
-            if *existing as usize == cb as usize {
-                return i;
-            }
-        }
-        let idx = cbs.len();
-        cbs.push(cb);
-        idx
-    })
+fn register(broadcast_id: UdpBroadcastId, handler: Handler) {
+    BROADCASTS.with_borrow_mut(|broadcasts| broadcasts.insert(broadcast_id, handler));
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn on_target<T: 'static>(target: Target<T>, method: BroadcastMethod<T>) -> Handler {
+    Rc::new(
+        move |broadcast: &UdpBroadcast, event: &UdpBroadcastEvent<'_>| {
+            target.deliver(|value| method(value, broadcast, event));
+        },
+    )
 }
 
 /// Send a UDP broadcast message to the given port and receive responses.
@@ -124,9 +164,18 @@ pub fn udp_broadcast(
     timeout_secs: u32,
     callback: BroadcastCallback,
 ) -> Option<UdpBroadcast> {
+    broadcast_with(port, message, timeout_secs, Rc::new(callback))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn broadcast_with(
+    port: u32,
+    message: &str,
+    timeout_secs: u32,
+    handler: Handler,
+) -> Option<UdpBroadcast> {
     let broadcast_id = Platform::start(port, message, timeout_secs)?;
-    let cb_idx = register_callback(callback);
-    BROADCASTS.with(|b| b.borrow_mut().insert(broadcast_id, cb_idx));
+    register(broadcast_id, handler);
     Some(UdpBroadcast(broadcast_id))
 }
 
@@ -138,9 +187,8 @@ pub fn udp_broadcast(
 fn deliver(broadcast_id: UdpBroadcastId, data: &str, source: &str) {
     let event = UdpBroadcastEvent::Response { data, source };
 
-    let cb = BROADCASTS
-        .with(|b| b.borrow().get(&broadcast_id).copied())
-        .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+    // Cloned out before invoking (the callback may start or stop broadcasts).
+    let cb = BROADCASTS.with(|b| b.borrow().get(&broadcast_id).cloned());
 
     if let Some(cb) = cb {
         // Borrowed for the event only; dropping it would stop the broadcast.
@@ -159,6 +207,7 @@ mod wasm {
     use bmc_wasm_protocol::UdpBroadcastId;
 
     use super::deliver;
+    use crate::widget;
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
@@ -191,10 +240,6 @@ mod wasm {
     }
 
     /// Called by the host when a UDP broadcast event is ready.
-    #[expect(
-        clippy::same_length_and_capacity,
-        reason = "the host hands back the sizes it asked __alloc for"
-    )]
     #[unsafe(no_mangle)]
     pub extern "C" fn __on_udp_broadcast_event(
         broadcast_id: u32,
@@ -203,6 +248,14 @@ mod wasm {
         source_ptr: u32,
         source_len: u32,
     ) {
+        widget::export(|| on_event(broadcast_id, data_ptr, data_len, source_ptr, source_len));
+    }
+
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the sizes it asked __alloc for"
+    )]
+    fn on_event(broadcast_id: u32, data_ptr: u32, data_len: u32, source_ptr: u32, source_len: u32) {
         let Some(broadcast_id) = UdpBroadcastId::from_wire(broadcast_id) else {
             return;
         };
@@ -239,13 +292,16 @@ use wasm::Host as Platform;
 #[cfg(test)]
 mod tests {
     use core::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     use bmc_wasm_protocol::UdpBroadcastId;
 
     use super::{
-        BROADCASTS, BroadcastCallback, UdpBroadcast, UdpBroadcastEvent, register_callback,
+        BROADCASTS, BroadcastCallback, BroadcastMethod, UdpBroadcast, UdpBroadcastEvent, on_target,
+        register,
     };
     use crate::wasm_test;
+    use crate::widget::Part;
 
     thread_local! {
         static SEEN: Cell<Option<UdpBroadcastId>> = const { Cell::new(None) };
@@ -254,8 +310,7 @@ mod tests {
 
     fn broadcast(callback: BroadcastCallback) -> UdpBroadcast {
         let id = UdpBroadcastId::from_wire(1).expect("BUG: test ids are non-zero");
-        let cb_idx = register_callback(callback);
-        BROADCASTS.with_borrow_mut(|broadcasts| broadcasts.insert(id, cb_idx));
+        register(id, Rc::new(callback));
         UdpBroadcast(id)
     }
 
@@ -289,11 +344,29 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     #[wasm_test]
     fn a_datagram_from_the_host_reaches_its_broadcast() {
-        let broadcast = broadcast(record);
+        let part = Part::new(Discovery {
+            responses: 0,
+            broadcast: None,
+        });
+        let broadcast = broadcast_on(&part, Discovery::count_response);
 
-        super::wasm::__on_udp_broadcast_event(broadcast.0.to_wire(), 0, 0, 0, 0);
+        crate::widget::as_host(|| {
+            super::wasm::__on_udp_broadcast_event(broadcast.0.to_wire(), 0, 0, 0, 0);
+        });
 
-        assert_eq!(SEEN.get(), Some(broadcast.0));
+        assert_eq!(part.with(|value| value.responses), 1);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_datagram_from_the_host_reaches_a_plain_callback() {
+        let handle = broadcast(record);
+
+        crate::widget::as_host(|| {
+            super::wasm::__on_udp_broadcast_event(handle.0.to_wire(), 0, 0, 0, 0);
+        });
+
+        assert_eq!(SEEN.get(), Some(handle.0));
     }
 
     #[wasm_test]
@@ -325,5 +398,58 @@ mod tests {
         deliver(id);
 
         assert!(!is_registered(id));
+    }
+
+    struct Discovery {
+        responses: usize,
+        broadcast: Option<UdpBroadcast>,
+    }
+
+    impl Discovery {
+        fn count_response(&mut self, _broadcast: &UdpBroadcast, _event: &UdpBroadcastEvent<'_>) {
+            self.responses += 1;
+        }
+
+        fn stop_own(&mut self, _broadcast: &UdpBroadcast, _event: &UdpBroadcastEvent<'_>) {
+            self.broadcast.take();
+        }
+    }
+
+    fn broadcast_on(part: &Part<Discovery>, method: BroadcastMethod<Discovery>) -> UdpBroadcast {
+        let id = UdpBroadcastId::from_wire(2).expect("BUG: test ids are non-zero");
+        register(id, on_target(part.target(), method));
+        UdpBroadcast(id)
+    }
+
+    #[wasm_test]
+    fn a_part_stops_its_own_broadcast_from_the_event() {
+        let mut part = Part::new(Discovery {
+            responses: 0,
+            broadcast: None,
+        });
+        let broadcast = broadcast_on(&part, Discovery::stop_own);
+        let id = broadcast.0;
+        part.with_mut(|value| value.broadcast = Some(broadcast));
+
+        deliver(id);
+
+        assert!(!is_registered(id));
+    }
+
+    #[wasm_test]
+    fn a_broadcast_outlives_its_part() {
+        let part = Part::new(Discovery {
+            responses: 0,
+            broadcast: None,
+        });
+        let broadcast = broadcast_on(&part, Discovery::count_response);
+
+        drop(part);
+        deliver(broadcast.0);
+
+        assert!(
+            is_registered(broadcast.0),
+            "the handle owns the broadcast; the part only gets its events"
+        );
     }
 }
