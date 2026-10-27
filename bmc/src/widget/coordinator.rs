@@ -2105,6 +2105,7 @@ mod tests {
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
     use std::time::Duration;
+    mod params_migration;
 
     #[test]
     fn the_display_hears_the_languages_only_from_a_device_that_offers_them() {

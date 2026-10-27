@@ -61,6 +61,8 @@ pub(crate) struct RecordingCompositor {
     retained_modes: Mutex<BTreeMap<WidgetInstanceKey, WidgetConnectionMode>>,
     retained_sizes: Mutex<BTreeMap<WidgetInstanceKey, Size>>,
     retained_params: Mutex<BTreeMap<WidgetInstanceKey, serde_json::Map<String, serde_json::Value>>>,
+    registered_params:
+        Mutex<BTreeMap<WidgetInstanceKey, Vec<serde_json::Map<String, serde_json::Value>>>>,
     retained_credentials: Mutex<BTreeMap<WidgetInstanceKey, RetainedCredentials>>,
     held_widget_receipts: Mutex<Option<Vec<tokio::sync::oneshot::Sender<()>>>>,
     held_credential_receipts: Mutex<Option<Vec<HeldCredentialReceipt>>>,
@@ -174,6 +176,20 @@ impl RecordingCompositor {
             .expect("BUG: retained-params lock must not be poisoned")
             .get(&key)
             .cloned()
+    }
+
+    /// The params every registration of `key` carried, in order;
+    /// unlike `retained_params`, a later params update does not touch it.
+    pub(crate) fn registered_params(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Vec<serde_json::Map<String, serde_json::Value>> {
+        self.registered_params
+            .lock()
+            .expect("BUG: registered-params lock must not be poisoned")
+            .get(&key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub(crate) fn retained_size(&self, key: WidgetInstanceKey) -> Option<Size> {
@@ -345,6 +361,12 @@ impl Compositor for RecordingCompositor {
             .expect("BUG: retained-mode lock must not be poisoned")
             .entry(registration.key)
             .or_insert(registration.connection_mode);
+        self.registered_params
+            .lock()
+            .expect("BUG: registered-params lock must not be poisoned")
+            .entry(registration.key)
+            .or_default()
+            .push(registration.initial_config.params.clone());
         self.record(format!("register_retained {}", registration.key));
         Ok(self.widget_receipt("register widget"))
     }
