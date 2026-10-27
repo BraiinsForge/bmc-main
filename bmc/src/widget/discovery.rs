@@ -298,11 +298,12 @@ impl WidgetDiscovery for PathDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_widget_manifest::CredentialSlot;
+    use bmc_widget_manifest::{CredentialSlot, ProgramEntry};
     use std::fs as std_fs;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
+    use crate::test_support::answering_migrator;
     use crate::test_support::manifest::{param_key, widget_manifest, write_manifest};
 
     /// Package `name` at 1.0.0 in a 317×238 slot.
@@ -698,6 +699,192 @@ mod tests {
         let widgets = discovery.discover().await;
 
         assert!(widgets.is_empty());
+    }
+
+    fn create_migrating_widget(base_dir: &Path) -> PathBuf {
+        let mut manifest =
+            named_manifest("migrating-widget", "550e8400-e29b-41d4-a716-446655440001");
+        manifest.programs.params_migrator = Some(ProgramEntry {
+            path: PathBuf::from("migrate"),
+            protocol: 0,
+        });
+        create_widget(base_dir, &manifest)
+    }
+
+    async fn migrator_refusal(widget_dir: &Path) -> RegistryError {
+        PathDiscovery::load_widget(widget_dir)
+            .await
+            .expect_err("BUG: a migrator that cannot run must fail the package")
+    }
+
+    #[tokio::test]
+    async fn a_declared_migrator_resolves_inside_the_widget_dir() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let widget_dir = create_migrating_widget(temp_dir.path());
+        let migrator = widget_dir.join("migrate");
+        std_fs::write(&migrator, answering_migrator(&serde_json::json!({})))
+            .expect("BUG: write migrator");
+        std_fs::set_permissions(&migrator, std_fs::Permissions::from_mode(0o755))
+            .expect("BUG: chmod migrator");
+
+        let info = PathDiscovery::load_widget(&widget_dir)
+            .await
+            .expect("BUG: an executable migrator loads");
+
+        assert_eq!(
+            info.params_migrator,
+            Some(ParamsMigrator {
+                path: std_fs::canonicalize(&migrator).expect("BUG: the migrator exists"),
+                protocol: 0,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_relative_widget_dir_resolves_the_migrator_to_an_absolute_path() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let widget_dir = create_migrating_widget(temp_dir.path());
+        let migrator = widget_dir.join("migrate");
+        std_fs::write(&migrator, answering_migrator(&serde_json::json!({})))
+            .expect("BUG: write migrator");
+        std_fs::set_permissions(&migrator, std_fs::Permissions::from_mode(0o755))
+            .expect("BUG: chmod migrator");
+        let cwd = std::env::current_dir().expect("BUG: test cwd");
+        let mut relative: PathBuf = cwd.components().skip(1).map(|_| "..").collect();
+        relative.push(
+            widget_dir
+                .strip_prefix("/")
+                .expect("BUG: a temp dir is absolute"),
+        );
+
+        let info = PathDiscovery::load_widget(&relative)
+            .await
+            .expect("BUG: an executable migrator loads");
+
+        let path = info
+            .params_migrator
+            .expect("BUG: the manifest declares a migrator")
+            .path;
+        assert!(
+            path.is_absolute(),
+            "the migrator runs with the widget dir as its cwd, so a relative {} resolves twice",
+            path.display()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_migrator_is_reported_as_the_params_migrator() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let widget_dir = create_migrating_widget(temp_dir.path());
+
+        let error = migrator_refusal(&widget_dir).await;
+
+        assert!(
+            matches!(
+                error,
+                RegistryError::ProgramNotFound {
+                    role: ProgramRole::ParamsMigrator,
+                    ..
+                }
+            ),
+            "the operator must learn which program is missing: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_executable_migrator_is_refused() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let widget_dir = create_migrating_widget(temp_dir.path());
+        let migrator = widget_dir.join("migrate");
+        std_fs::write(&migrator, answering_migrator(&serde_json::json!({})))
+            .expect("BUG: write migrator");
+        std_fs::set_permissions(&migrator, std_fs::Permissions::from_mode(0o644))
+            .expect("BUG: chmod migrator");
+
+        let error = migrator_refusal(&widget_dir).await;
+
+        assert!(
+            matches!(
+                error,
+                RegistryError::ProgramNotExecutable {
+                    role: ProgramRole::ParamsMigrator,
+                    ..
+                }
+            ),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_directory_as_migrator_is_refused() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let widget_dir = create_migrating_widget(temp_dir.path());
+        std_fs::create_dir(widget_dir.join("migrate")).expect("BUG: mkdir migrator");
+
+        let error = migrator_refusal(&widget_dir).await;
+
+        assert!(
+            matches!(
+                error,
+                RegistryError::ProgramNotExecutable {
+                    role: ProgramRole::ParamsMigrator,
+                    ..
+                }
+            ),
+            "a directory carries execute bits but cannot run as the migrator: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_migrator_outside_the_widget_dir_is_refused() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let outside = temp_dir.path().join("outside");
+        std_fs::write(&outside, "#!/bin/sh\n").expect("BUG: write migrator");
+        std_fs::set_permissions(&outside, std_fs::Permissions::from_mode(0o755))
+            .expect("BUG: chmod migrator");
+
+        for path in [outside.clone(), PathBuf::from("../outside")] {
+            let mut manifest =
+                named_manifest("escaping-widget", "550e8400-e29b-41d4-a716-446655440001");
+            manifest.programs.params_migrator = Some(ProgramEntry {
+                path: path.clone(),
+                protocol: 0,
+            });
+            let widget_dir = create_widget(temp_dir.path(), &manifest);
+
+            let error = migrator_refusal(&widget_dir).await;
+
+            assert!(
+                matches!(
+                    error,
+                    RegistryError::ParseManifest {
+                        source: bmc_widget_manifest::ManifestError::ProgramOutsidePackage(_),
+                        ..
+                    }
+                ),
+                "{} is executable but not shipped by the package: {error}",
+                path.display()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn skip_directory_binary() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+
+        let widget_dir = create_package(
+            temp_dir.path(),
+            &named_manifest("dir-binary-widget", "550e8400-e29b-41d4-a716-446655440001"),
+        );
+        std_fs::create_dir(widget_dir.join("widget")).expect("BUG: failed to create dir");
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert!(
+            widgets.is_empty(),
+            "a directory carries execute bits but cannot run as the binary"
+        );
     }
 
     #[tokio::test]

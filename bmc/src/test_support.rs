@@ -28,7 +28,7 @@ use std::path::Path;
 use axum_extra::extract::cookie::Cookie;
 use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_time::time::Timezone;
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use tokio::sync::watch;
 
 use crate::bootloader_config::BootloaderConfig;
@@ -196,4 +196,19 @@ pub(crate) fn write_executable(path: &Path, body: &str) {
         "writing {} failed: {status}",
         path.display()
     );
+}
+
+/// A params migrator script that runs the shell `steps` in the widget dir, then prints `overlay`.
+pub(crate) fn migrator_script(steps: &str, overlay: &serde_json::Value) -> String {
+    formatdoc! {"
+        #!/bin/sh
+        {steps}
+        cat <<'EOF'
+        {overlay}
+        EOF
+    "}
+}
+
+pub(crate) fn answering_migrator(overlay: &serde_json::Value) -> String {
+    migrator_script("", overlay)
 }
