@@ -26,6 +26,7 @@ use bmc_widget_manifest::Manifest;
 use tokio::{fs, task};
 use tracing::warn;
 
+use super::registry::{ParamsMigrator, ProgramRole};
 use super::{RegistryError, WidgetInfo};
 
 /// Whether `path` names an image we are willing to serve as a widget icon.
@@ -159,32 +160,12 @@ impl PathDiscovery {
         })?;
 
         let binary_path = widget_dir.join(&manifest.binary);
+        Self::require_executable(&binary_path, ProgramRole::Binary).await?;
 
-        if !fs::try_exists(&binary_path)
-            .await
-            .map_err(|e| RegistryError::ReadManifest {
-                path: binary_path.clone(),
-                source: e,
-            })?
-        {
-            return Err(RegistryError::BinaryNotFound { path: binary_path });
-        }
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let metadata =
-                fs::metadata(&binary_path)
-                    .await
-                    .map_err(|e| RegistryError::ReadManifest {
-                        path: binary_path.clone(),
-                        source: e,
-                    })?;
-            let permissions = metadata.permissions();
-            if permissions.mode() & 0o111 == 0 {
-                return Err(RegistryError::BinaryNotExecutable { path: binary_path });
-            }
-        }
+        let params_migrator = match &manifest.programs.params_migrator {
+            None => None,
+            Some(program) => Some(Self::resolve_params_migrator(&canonical_dir, program).await?),
+        };
 
         // Relative resolves against the widget dir, absolute wins, like `binary`.
         // The manifest is install-time trusted, but only image-extension paths are
@@ -208,7 +189,52 @@ impl PathDiscovery {
             widget_dir: widget_dir.to_path_buf(),
             binary_path,
             icon_path,
+            params_migrator,
         })
+    }
+
+    /// Resolve the manifest's migrator like `binary`: it must exist and be executable.
+    /// The path is absolute, as the migrator runs with the widget dir as its cwd.
+    async fn resolve_params_migrator(
+        widget_dir: &Path,
+        program: &bmc_widget_manifest::ProgramEntry,
+    ) -> Result<ParamsMigrator, RegistryError> {
+        let path = widget_dir.join(&program.path);
+        Self::require_executable(&path, ProgramRole::ParamsMigrator).await?;
+        Ok(ParamsMigrator {
+            path,
+            protocol: program.protocol,
+        })
+    }
+
+    async fn require_executable(path: &Path, role: ProgramRole) -> Result<(), RegistryError> {
+        let metadata = match fs::metadata(path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(RegistryError::ProgramNotFound {
+                    role,
+                    path: path.to_path_buf(),
+                });
+            }
+            Err(source) => {
+                return Err(RegistryError::InspectProgram {
+                    role,
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+                return Err(RegistryError::ProgramNotExecutable {
+                    role,
+                    path: path.to_path_buf(),
+                });
+            }
+        }
+        Ok(())
     }
 
     async fn discover_with_policy(

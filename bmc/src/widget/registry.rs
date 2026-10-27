@@ -36,6 +36,30 @@ pub struct WidgetIdentity {
     pub version: Version,
 }
 
+/// The manifest's `programs.params_migrator`, resolved at discovery:
+/// the path checked to exist and be executable like `binary_path`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamsMigrator {
+    pub path: PathBuf,
+    pub protocol: u32,
+}
+
+/// Which of a package's programs discovery checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramRole {
+    Binary,
+    ParamsMigrator,
+}
+
+impl std::fmt::Display for ProgramRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Binary => "binary",
+            Self::ParamsMigrator => "params migrator",
+        })
+    }
+}
+
 /// Information about a discovered widget.
 #[derive(Debug, Clone)]
 pub struct WidgetInfo {
@@ -47,6 +71,9 @@ pub struct WidgetInfo {
     pub binary_path: PathBuf,
     /// Resolved icon path when the manifest declares one; served by BMC.
     pub icon_path: Option<PathBuf>,
+    /// The manifest's params migrator, resolved at discovery;
+    /// `None` when the manifest declares none.
+    pub params_migrator: Option<ParamsMigrator>,
     pub identity: WidgetIdentity,
 }
 
@@ -72,11 +99,21 @@ impl WidgetInfo {
             canonical_dir: widget_dir.clone(),
             version: manifest.version.clone(),
         };
+        let params_migrator =
+            manifest
+                .programs
+                .params_migrator
+                .as_ref()
+                .map(|program| ParamsMigrator {
+                    path: widget_dir.join(&program.path),
+                    protocol: program.protocol,
+                });
         Self {
             manifest,
             widget_dir,
             binary_path,
             icon_path,
+            params_migrator,
             identity,
         }
     }
@@ -111,11 +148,18 @@ pub enum RegistryError {
         source: ManifestError,
     },
 
-    #[error("binary not found at '{path}'")]
-    BinaryNotFound { path: PathBuf },
+    #[error("failed to inspect {role} at '{path}': {source}")]
+    InspectProgram {
+        role: ProgramRole,
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
-    #[error("binary at '{path}' is not executable")]
-    BinaryNotExecutable { path: PathBuf },
+    #[error("{role} not found at '{path}'")]
+    ProgramNotFound { role: ProgramRole, path: PathBuf },
+
+    #[error("{role} at '{path}' is not executable")]
+    ProgramNotExecutable { role: ProgramRole, path: PathBuf },
 
     #[error("failed to canonicalize widget directory '{path}': {source}")]
     CanonicalizeWidgetDir {
