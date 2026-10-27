@@ -24,6 +24,7 @@
 //! except a network stack the test hands it, so code under test cannot consult it by accident.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use axum_extra::extract::cookie::Cookie;
 use bmc_platform::{BosPlatform, BosVersion};
@@ -211,4 +212,36 @@ pub(crate) fn migrator_script(steps: &str, overlay: &serde_json::Value) -> Strin
 
 pub(crate) fn answering_migrator(overlay: &serde_json::Value) -> String {
     migrator_script("", overlay)
+}
+
+/// A `tracing` writer the test reads back, for asserting on log lines.
+#[derive(Clone, Default)]
+pub(crate) struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+impl LogCapture {
+    pub(crate) fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().expect("BUG: log buffer poisoned")).into_owned()
+    }
+}
+
+impl std::io::Write for LogCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("BUG: log buffer poisoned")
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
 }

@@ -367,3 +367,6 @@ pub(crate) async fn commit_migrated_params(
     }
     committed
 }
+
+#[cfg(test)]
+mod tests;

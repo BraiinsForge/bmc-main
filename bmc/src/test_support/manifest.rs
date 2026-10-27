@@ -23,8 +23,9 @@
 use std::path::{Path, PathBuf};
 
 use bmc_widget_manifest::{
-    EnumControl, IntegerParam, Manifest, ParamDefinition, ParamKey, ParamKind, Programs,
-    StringParam, ViewportShape, WidgetCategory, WidgetViewportConstraint,
+    ArrayParam, EnumControl, IntegerParam, ListItems, Manifest, ParamDefinition, ParamKey,
+    ParamKind, ParamValue, Programs, ScalarKind, StringParam, ViewportShape, WidgetCategory,
+    WidgetViewportConstraint,
 };
 use indexmap::IndexMap;
 use uuid::Uuid;
@@ -93,6 +94,21 @@ pub(crate) fn integer_param(default: i32) -> ParamDefinition {
         enum_control: EnumControl::default(),
         default_value: Some(default),
         placeholder: None,
+    }))
+}
+
+pub(crate) fn string_list_param(defaults: &[&str]) -> ParamDefinition {
+    required(ParamKind::Array(ArrayParam {
+        items: ListItems::Scalar {
+            kind: ScalarKind::String(plain_string(None)),
+            unique: false,
+        },
+        min_items: 1,
+        max_items: 8,
+        default_value: defaults
+            .iter()
+            .map(|item| ParamValue::String((*item).to_owned()))
+            .collect(),
     }))
 }
 
