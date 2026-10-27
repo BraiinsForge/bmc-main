@@ -1965,26 +1965,22 @@ impl GrpcSceneManagementService for SceneManagementService {
             widget.credential_bindings =
                 validate_credential_bindings(manifest, &requested_bindings, accounts.accounts())
                     .map_err(bad_request_status)?;
+            let capacity_check = Self::require_widget_capacity(&config, *preview, 1);
             let scene = config
-                .scenes()
-                .get(&scene_id_key)
+                .edit_scene(&scene_id_key)
                 .ok_or_else(|| ConnectError::not_found(format!("scene not found: {scene_id}")))?;
 
-            if scene.kind == scene::SceneKind::Combined {
+            if scene.get().kind == scene::SceneKind::Combined {
                 reject_combined_when_no_slot_grid(&self.capabilities)?;
             }
 
-            validate_widget_placement(scene, &widget, None)?;
+            validate_widget_placement(scene.get(), &widget, None)?;
 
-            if scene.enabled || *preview == Some(scene_id_key) {
-                Self::require_widget_capacity(&config, *preview, 1)?;
+            if scene.get().enabled || *preview == Some(scene_id_key) {
+                capacity_check?;
             }
 
-            let scene = config
-                .scenes_mut()
-                .get_mut(&scene_id_key)
-                .expect("BUG: scene existence checked above");
-            scene.widgets.insert(widget.id, widget.clone());
+            scene.into_mut().widgets.insert(widget.id, widget.clone());
             Self::save_config(&mut config).await?;
 
             self.coordinator.enqueue_configured_widget_registration(

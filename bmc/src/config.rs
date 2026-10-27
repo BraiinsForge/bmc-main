@@ -45,7 +45,10 @@ use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 mod defaults;
+mod scene_edit;
 pub(crate) mod widget_uuids;
+
+pub use scene_edit::SceneEdit;
 
 const CHANNEL_CAPACITY: usize = 8;
 
@@ -712,6 +715,11 @@ impl ConfigHandle {
     pub fn scenes_mut(&mut self) -> &mut IndexMap<SceneId, Scene> {
         self.scenes_dirty = true;
         &mut self.config.scenes
+    }
+
+    pub fn edit_scene(&mut self, id: &SceneId) -> Option<SceneEdit<'_, Scene>> {
+        let scene = self.config.scenes.get_mut(id)?;
+        Some(SceneEdit::new(scene, &mut self.scenes_dirty))
     }
 
     pub fn widget_scene_map(&self) -> WidgetSceneMap {
