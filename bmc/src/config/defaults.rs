@@ -141,6 +141,7 @@ fn widget(
         widget_type_id: type_uid,
         viewport_shape: shape,
         params,
+        params_version: None,
         credential_bindings,
     }
 }

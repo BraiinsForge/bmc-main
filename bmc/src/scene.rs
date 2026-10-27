@@ -201,6 +201,10 @@ pub struct Widget {
     pub viewport_shape: bmc_widget_manifest::ViewportShape,
     #[serde(default)]
     pub params: BTreeMap<ParamKey, ParamValue>,
+    /// Version of the widget package whose manifest shaped `params`.
+    /// Absent for code defaults and shapes predating any migrator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params_version: Option<semver::Version>,
     /// Account bound per credential slot the manifest declares.
     /// The secret itself never lands here — it lives in [`crate::secret_store`].
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -224,6 +228,7 @@ impl Widget {
             widget_type_id,
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params,
+            params_version: None,
             credential_bindings: BTreeMap::new(),
             position,
             placement,
@@ -420,6 +425,7 @@ mod tests {
             widget_type_id: Uuid::nil(),
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: BTreeMap::new(),
+            params_version: None,
             credential_bindings: BTreeMap::new(),
         };
         assert!(
@@ -443,6 +449,7 @@ mod tests {
             widget_type_id: Uuid::nil(),
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: BTreeMap::new(),
+            params_version: None,
             credential_bindings: BTreeMap::new(),
         };
         let b = a.clone_with_new_id();

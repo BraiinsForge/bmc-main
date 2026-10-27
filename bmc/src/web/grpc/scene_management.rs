@@ -573,6 +573,7 @@ impl SceneManagementService {
             widget_type_id: existing.widget_type_id,
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: typed_params,
+            params_version: existing.params_version.clone(),
             credential_bindings: typed_bindings,
         };
         stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
