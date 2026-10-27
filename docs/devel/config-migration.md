@@ -32,6 +32,15 @@ The chain has two hops today, both landing on the current schema: v0 → current
 builds the upgraded config through `Config::from_migrated_parts(scenes, accounts, settings)`, which pins `version` to
 `CONFIG_VERSION` (currently 2); `Config::save` pins it again on every write as a belt-and-braces guard.
 
+### Widget params version
+
+Each widget entry carries `params_version` beside `params`: the widget version whose manifest shaped the values.
+
+- The key is additive: it is omitted when absent and older code ignores it, so it needs no `CONFIG_VERSION` bump.
+- The v0 and v1 hops leave it absent.
+- The next gate (boot or package reload) fills it when the package's `programs.params_migrator` succeeds; otherwise the
+  next edit of the widget does. See [`widget-manifest.md`](widget-manifest.md#programs).
+
 ### Dispatch
 
 ```
@@ -100,13 +109,17 @@ logs a `warn!` naming what it dropped.
 
 ### Required params are always filled
 
-The boot-load path hands stored params to the widget verbatim — unlike the gRPC add-widget path
-(`validate_widget_params`), it injects **no manifest defaults**. A widget's generated param reader panics on a missing
-required key. The migration therefore emits **every required param of the target manifest**: a present, valid v0 value
-passes through (translated where the schema changed); anything absent or malformed gets the manifest default written
-explicitly. Enum-typed params are guarded against out-of-vocabulary values for the same reason (an out-of-enum string
-also panics the typed read). Optional params (`timezone_override`) are emitted only when the legacy value is valid, and
-stay unset otherwise.
+Unlike the gRPC add-widget path (`validate_widget_params`), the boot-load path validates nothing on its own. A widget
+launches with manifest defaults for its missing keys, but on the stored params as they are when a migrator fails or the
+manifest rejects a present value ([Programs](widget-manifest.md#programs)). A widget's generated param reader panics on
+a missing required key. The migration therefore emits **every required param of the manifest the hop was written for**:
+a present, valid v0 value passes through (translated where the schema changed); anything absent or malformed gets the
+manifest default written explicitly. Enum-typed params are guarded against out-of-vocabulary values for the same reason
+(an out-of-enum string also panics the typed read). Optional params (`timezone_override`) are emitted only when the
+legacy value is valid, and stay unset otherwise.
+
+A package that reshaped its params after that gets the rest of the way through its own migrator at the next gate: the
+hop still writes ticker-list 0.1.x `symbol_1`…`symbol_8`, and the package migrator turns them into 0.2.0 `symbols`.
 
 ### Drop policy (no placeholders)
 
@@ -163,8 +176,8 @@ accounts as raw JSON of the same pre-typed shape, so the v0 → current path run
 - **Atomic write** via `crate::utils::replace_file` (tmp + rename).
 - **Total parse failure** surfaces as an explicit `anyhow::Error` from `LoadedConfig::from_str`; the existing file is
   left untouched (no partial rewrite).
-- **Validate before persist.** The boot path validates the upgraded config in memory and, because it never writes at
-  boot, a bad migration cannot overwrite the on-disk original at all — the original stays in place and the device
+- **Validate before persist.** The boot path validates the upgraded config in memory and, because the load itself never
+  writes, a bad migration cannot overwrite the on-disk original at all — the original stays in place and the device
   recovers onto a default (backing the unreadable file up to `<path>.bcp`). The offline `bmc-migrate-config` tool
   applies the same validate-before-write rule to `<dst>`.
 
@@ -174,11 +187,12 @@ accounts as raw JSON of the same pre-typed shape, so the v0 → current path run
 happens once on first boot with no user action. Loading upgrades a legacy config **in memory** and validates it; the
 on-disk file is **not** rewritten. An already-current config is a plain no-op.
 
-**Migration is committed on the first genuine change, not at boot.** The handle carries a `migrated` flag; the first
-`ConfigHandle::save` from a real settings change writes one timestamped backup of the pre-migration file and then
-persists the upgraded config, clearing the flag. Until then the on-disk file keeps its original version. This is what
-keeps a would-be downgrade safe: if the user upgrades the BMC application and rolls back before changing anything, the
-older application still finds its own config on disk.
+**Migration is committed on the first save, not by the load.** The handle carries a `migrated` flag; the first
+`ConfigHandle::save` writes one timestamped backup of the pre-migration file and then persists the upgraded config,
+clearing the flag. That save is usually a settings change, but the params gate saves too, for the migrator results it
+commits, since the stamp moves even when the params do not ([Programs](widget-manifest.md#programs)). A legacy config is
+therefore written at its first boot as soon as one of its widgets migrates. Until the first save the on-disk file keeps
+its original version, and an older application rolled back before then still finds its own config on disk.
 
 On a load failure the file is backed up to `<path>.bcp` and replaced with a platform default. **Downgrades are not
 supported**, so a config whose version is newer than this application understands is treated the same as any other

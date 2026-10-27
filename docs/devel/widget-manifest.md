@@ -27,42 +27,38 @@ user creates a widget instance, the application spawns the binary as a Wayland c
 
 ## Manifest Location
 
-Widgets are installed into the Nix store and symlinked to a known location:
+Each widget is a package in the device's Nix profile, carrying its widget folder under `lib/bmc-widgets/`:
 
 ```
 /nix/store/<hash>-<widget-name>/lib/bmc-widgets/<widget-name>/manifest.json
 ```
 
-The system configuration symlinks installed widgets to a standard scan directory with separate subdirectories for
-official and third-party widgets:
+A profile generation merges the packages it selects into one symlink tree (see [`profiles.md`](profiles.md)). The BMC
+application discovers widgets by scanning that tree's `/run/current-profile/lib/bmc-widgets/`:
 
-```
-/usr/lib/bmc-widgets/
-  official/
-    <widget-name>/ -> /nix/store/<hash>-<widget-name>/...
-  third-party/
-    <widget-name>/ -> /nix/store/<hash>-<widget-name>/...
-```
-
-This separation enables easy factory reset by removing the entire `third-party` directory.
-
-The main Deck application scans both `/usr/lib/bmc-widgets/official/` and `/usr/lib/bmc-widgets/third-party/` to
-discover available widgets.
+- a folder holding a `manifest.json` at most three levels down is a widget; the walk follows links and does not descend
+  past a widget;
+- an official widget sits at `<widget-name>/`;
+- an uploaded third-party widget sits under its maintainer's folder, at `<maintainer>/<widget-name>/`, and its binary is
+  `bin/<widget-name>` (see [`uploading-wasm-widgets.md`](../uploading-wasm-widgets.md)).
 
 ## Widget Directory Structure
 
 ```
-/usr/lib/bmc-widgets/
-  official/
+/run/current-profile/lib/bmc-widgets/
+  <widget-name>/
+    manifest.json
+    bin/
+      <binary-name>
+      <binary-name>-migrate-params   # optional, see Programs
+    assets/
+      icon.png
+      ...
+  <maintainer>/
     <widget-name>/
       manifest.json
       bin/
-        <binary-name>
-      assets/
-        icon.png
-        ...
-  third-party/
-    <widget-name>/
+        <widget-name>
       ...
 ```
 
@@ -106,9 +102,10 @@ attributes and enforced by any JSON Schema validator. Examples:
 - `+0.0` / `-0.0` collide in `Double` `enum_values` dedup — JSON Schema treats them as distinct numbers; the runtime
   treats them as the same selection.
 - Required params (i.e. `optional: false`) **must** declare a `default_value`, so a scene saved against the current
-  manifest stores a value for every key. Nothing fills in a key the widget later requires: params stored before then
-  lack it until the widget migrates them. An `array` param is the exception: an omitted `default_value` is the empty
-  list.
+  manifest stores a value for every key. Params stored before the widget required a key get its default at launch, or
+  from the migrator's result when the package ships one ([Programs](#programs)). A failed migration, or a stored value
+  the package rejects, launches the params as stored, so the key stays missing. An `array` param is the exception: an
+  omitted `default_value` is the empty list.
 - `array` params cannot be `optional` — `min_items: 0` is how a list says it may be empty, so the widget always receives
   a list, never `null`.
 - `min_items` ≤ `max_items`, and an array's `default_value` holds between `min_items` and `max_items` items, each valid
@@ -131,6 +128,105 @@ The split lets editor-side tooling catch the structural errors as the operator t
 `default_value: 3.14` for a boolean) while leaving the cross-field semantics where the load-time error message can name
 the specific manifest field and reason.
 
+## Programs
+
+`programs` lists helper programs the package ships beside `binary`. Each entry has:
+
+- `path`: a non-empty relative path of plain names — no leading `/` or `./`, no `..` — so an uploaded manifest cannot
+  name a program the package does not ship;
+- `protocol` (default `0`): a protocol the BMC application does not implement is skipped with a warning, and the package
+  still loads.
+
+```json
+{
+  "programs": {
+    "params_migrator": { "path": "bin/<name>-migrate-params", "protocol": 0 }
+  }
+}
+```
+
+Only index packages built by this repository may declare `programs`. The installer refuses an uploaded package that
+does, until the device can verify the programs.
+
+### `params_migrator`
+
+Rewrites one instance's stored params when their stamp predates the installed package version, and restamps them with
+that version on success. Discovery refuses the package when the declared file is missing, not a regular file or not
+executable.
+
+Protocol 0:
+
+- **argv:** none.
+- **cwd:** the widget directory.
+- **env:** the BMC application's environment.
+- **stdin:** one JSON object: `params_version` (the stamp, or `null` for a shape older than the package's first migrator
+  or for code defaults), `widget_version` (the installed version), the instance's stored `params`, and the `width`,
+  `height`, `viewport_shape` and `display` it is spawned with. No credentials, no token and no settings.
+- **stdout:** one JSON object, an overlay of params keys. `{}` means the stored shape is current. The result is the
+  stored params minus keys the manifest no longer declares, with the overlay applied, validated against the manifest
+  with defaults filling what is still missing.
+- **stderr:** logged line by line, up to 64 KiB; the rest is drained unread.
+- **failure:** a non-zero exit, stdout that is not a JSON object, stdout above 256 KiB, a run above 5 seconds (the
+  program is killed), or a result the manifest rejects. The stored params stay as they were and the attempt repeats at
+  the next gate. The limits are constants in `bmc/src/widget/params_migration.rs` and can be raised when a shipped
+  migrator needs more.
+- **current shape:** answer `{}`. Code defaults and scenes written before the stamp existed carry no `params_version`,
+  so the program sees `null` for both an old shape and the current one.
+
+#### Gates
+
+- They run at boot before any widget starts, and on a package reload before the changed instances are replaced.
+- They run the selected instances four at a time (`MIGRATOR_CONCURRENCY`, beside the limits above). The cap keeps a
+  scene set's worth of migrator processes from running at once while bounding the gate's wall time.
+- A gate holds the scenes. An edit through the scene-management RPCs waits for it, up to eight seconds
+  (`SCENE_EDIT_WAIT` in `bmc/src/widget/coordinator.rs`), and is then refused as `unavailable` so the client retries. An
+  edit never lands between the registry swap and the instance replacement, where it would validate against the new
+  manifest while the old instance still runs.
+- A gate in turn waits for the edits already running, widget stops and spawns included, so an edit queued behind it
+  waits for both.
+- A migrated result the device cannot write to disk stays in memory, like any other
+  [config save](config-persistence.md); the next boot runs the migrator again from the stamp the file still holds.
+
+#### Failed Migrations
+
+After a failure the instance starts on its stored params. A widget that requires a key the stored shape lacks then fails
+to start until a later gate succeeds. The BMC application deliberately does not fill in manifest defaults instead:
+
+- Defaults are chosen per key and know nothing of the other keys, so a filled shape can be internally inconsistent (a
+  unit that no longer matches its value, a list whose rows no longer match their selector).
+- A package that ships a migrator has said its params need more than defaults. Filling them in would run the widget on
+  params nobody chose and nothing validated as a whole.
+- A correct migration is the package's responsibility: a widget that does not start after a package upgrade is a bug in
+  its migrator, not in the gate.
+
+#### Packages Without A Migrator
+
+Nothing runs at the gates. The instances launch on their stored params read through the manifest, as the settings form
+reads them:
+
+- undeclared keys drop and missing ones take their defaults;
+- the read is never saved: the config changes only when an edit saves the widget, which stamps it;
+- params the manifest rejects launch as stored, logged.
+
+A package whose params need more than defaults, such as a renamed key or a changed unit, ships a migrator.
+
+#### Downgrades
+
+A package downgrade leaves stamps newer than the installed version. No migrator runs for them and nothing is saved, so
+the newer package finds its params intact when it is reinstalled. Meanwhile the older package launches on them read
+through its own manifest, as above.
+
+#### Writing One
+
+- Write a Rust binary crate under `migrators/<name>/`, a member of the main workspace: the Deck has no jq, and serde
+  reads the input as the BMC application writes it. `migrators/ticker-list` is the reference.
+- Declare it with `defineCrate` in `nix/crates.nix` and list it in `widgetPrograms` in `nix/wasm-widgets.nix`. That
+  builds it for the package's target and installs it into the package's `bin/`; the package build fails when a declared
+  program is missing there.
+- Test it against the shipped manifest from `bmc-widget-manifest-tests`, through its entry in the root
+  `[workspace.dependencies]`, never from `bmc`: a migrator in the BMC application's dependencies, even a dev-dependency,
+  rebuilds the application on every migrator change.
+
 ## Runtime Behavior
 
 When the compositor loads a widget instance:
@@ -140,13 +236,15 @@ When the compositor loads a widget instance:
 2. The scene-management path checks the selected placement against the manifest's `supported_viewports`. The derived
    descriptor contains viewport shape, width, height, and DPI; each field must fall inside one of the manifest's
    inclusive constraints.
-3. The compositor sends the params as stored for the scene. Saving a scene checks them against the manifest and stores
-   every declared key, defaults included, but the compositor neither merges nor checks anything at load: a key the
-   widget later requires stays missing, and a value whose type or options the widget later changed stays as stored,
-   until the widget migrates them.
+3. Saving a scene checks the params against the manifest and stores every declared key, defaults included. Adding a
+   widget stamps them with the installed widget version (`params_version`); an update restamps only when the values
+   change. For every instance whose stamp predates the installed version, at boot and after a package reload and before
+   the widget spawns, the BMC application runs the package's `programs.params_migrator` when it declares one. The
+   compositor sends the stored params read through the manifest, without saving that read; an instance whose migration
+   failed gets its stored params as they are, see [Programs](#programs).
 4. The widget binary is spawned as a Wayland client.
-5. The compositor sends viewport/display geometry and the stored params as JSON via the `deck_widget` initial configure
-   batch.
+5. The compositor sends viewport/display geometry and the params from step 3 as JSON via the `deck_widget` initial
+   configure batch.
 6. Geometry-stable params changes re-emit the complete params object on the existing widget surface. The wasm host
    runtime exposes params via `bmc_wasm_sdk::params::current()` / `previous()` and the `on_params_update` lifecycle
    hook.

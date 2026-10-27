@@ -206,13 +206,14 @@ let accent_tz = <String as ParamRead>::read_optional(&params, "accent_tz");
 let symbols = <Vec<String> as ParamRead>::read_required(&params, "symbols");
 ```
 
-Use `read_required` for manifest-required params. It traps if the host snapshot is missing the value: saving a scene
-stores every declared key, defaults included, but nothing fills in a key or list-row field the widget later requires, so
-params stored before then lack it until the widget migrates them. A list row lacking such a field traps the same way,
-naming the field. Use `read_optional` for manifest-optional params; it returns `None` for missing or `null` values.
-Either read traps on a value or list item of another type, or an enum value outside its options. The host checks values
-against the manifest when a scene is saved, not when it loads, so a value stored before the widget changed a param's
-type or options traps until the widget migrates it.
+Use `read_required` for manifest-required params. It traps if the host snapshot is missing the value. Saving a scene
+stores every declared key, defaults included, and a key the widget later requires reaches it with its default at launch
+(see [Migrate Params Across Versions](#migrate-params-across-versions)). A list-row field the widget later requires is
+not filled: a row lacking it traps, naming the field, until the widget migrates it. Use `read_optional` for
+manifest-optional params; it returns `None` for missing or `null` values. Either read traps on a value or list item of
+another type, or an enum value outside its options. Stored params that do not fit the manifest launch as they are rather
+than being replaced, so a value stored before the widget changed a param's type or options traps until the widget
+migrates it.
 
 `ParamRead` reads any type that implements `ValueRead`, and a `Vec` of one. The scalar types and the generated enums and
 row structs all implement it; a hand-written row type can implement it with the `required_field` and `optional_field`
@@ -254,6 +255,16 @@ its existing one-second cadence displays the new values on the next tick without
 
 The operator UI can send live-preview updates before saving. Treat preview and committed updates the same way. Debounce
 network fetches and other expensive side effects triggered by params changes.
+
+## Migrate Params Across Versions
+
+A widget that renames, splits or retypes a param ships a params migrator in its package, declared under
+`programs.params_migrator` in the manifest. The BMC application runs it for each instance whose stored params predate
+the installed version, before the widget starts. The contract, the gates and how to write one are in
+[`widget-manifest.md`](../widget-manifest.md#params_migrator).
+
+A third-party widget cannot ship one yet: the installer refuses an uploaded package that declares a program, since the
+program would be arbitrary code running as root on the device.
 
 ## Use The Testbed
 
