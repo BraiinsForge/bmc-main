@@ -113,7 +113,7 @@ pub fn series_view(
                 label_y - axis_box_h / 2.0,
                 band.axis_width,
                 axis_box_h,
-                price_text(symbol, tick),
+                price_text(symbol, tick, None),
                 style!(
                     size: band.axis_font,
                     color: SYMBOL_COLOR.with_alpha(alpha),
@@ -161,7 +161,7 @@ pub fn series_view(
             price_y - axis_box_h / 2.0,
             band.axis_width,
             axis_box_h,
-            price_text(symbol, series.current),
+            price_text(symbol, series.current, None),
             style!(
                 size: band.axis_font,
                 weight: FontWeight::BOLD,

@@ -28,7 +28,7 @@ use bmc_wasm_sdk::*;
 
 use crate::display::{SizeBand, band_for};
 use crate::model::{
-    IconStyle, MIN_PRICE, PricePrecision, Series, change_text, icon_for, price_precision,
+    IconStyle, MIN_PRICE, PricePrecision, Series, change_text, display_precision, icon_for,
 };
 use prices::closed_market::{CLOSED_CHART_ALPHA, pause_marker};
 
@@ -146,9 +146,9 @@ fn header_row(
     )
 }
 
-/// The formatted price per the shared precision rule.
-fn price_text(symbol: &str, value: f64) -> String {
-    match price_precision(symbol, value) {
+/// The formatted price per [`display_precision`].
+fn price_text(symbol: &str, value: f64, decimals: Option<u32>) -> String {
+    match display_precision(symbol, value, decimals) {
         PricePrecision::Fraction(digits) => format_number!(value, digits),
         PricePrecision::BelowMin => {
             let mut out = String::from("<");

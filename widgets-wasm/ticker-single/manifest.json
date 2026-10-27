@@ -74,6 +74,14 @@
         }
       ],
       "enum_control": "radio"
+    },
+    "precision": {
+      "name": "Precision",
+      "description": "Decimal places of the price over the sparkline; leave empty to pick them automatically",
+      "type": "integer",
+      "optional": true,
+      "min": 0,
+      "max": 8
     }
   }
 }
