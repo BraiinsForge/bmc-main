@@ -29,7 +29,7 @@ use smithay::backend::{
 /// an EGL failure there is a broken profile, and a skip would pass a test that never ran.
 const REQUIRE_EGL: &str = "BMC_REQUIRE_HEADLESS_EGL";
 
-pub(super) fn headless_renderer() -> Option<GlesRenderer> {
+pub(crate) fn headless_renderer() -> Option<GlesRenderer> {
     let init = || -> anyhow::Result<GlesRenderer> {
         // SAFETY: only smithay creates or terminates EGL displays in this test binary,
         // and it shares one tracked instance between the tests that run in parallel.
@@ -43,7 +43,7 @@ pub(super) fn headless_renderer() -> Option<GlesRenderer> {
         Err(err) => {
             assert!(
                 std::env::var_os(REQUIRE_EGL).is_none(),
-                "{REQUIRE_EGL} is set, so skipping would pass a shader that never compiled: {err:#}"
+                "{REQUIRE_EGL} is set, so skipping would pass a test that never ran: {err:#}"
             );
             eprintln!("skipping: headless EGL init failed, run in the `ci` dev shell: {err:#}");
             None

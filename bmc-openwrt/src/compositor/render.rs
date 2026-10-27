@@ -25,7 +25,7 @@ mod drm_output;
 mod egl_context;
 mod frame_diff;
 #[cfg(test)]
-mod headless_egl;
+pub(crate) mod headless_egl;
 mod scanout_swizzle;
 
 pub use buffer_pool::{BufferPool, ScanoutFormat};

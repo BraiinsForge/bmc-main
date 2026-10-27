@@ -20,14 +20,17 @@
 
 //! Scene renderer for compositing multiple widgets.
 
+mod branding;
+
+pub use branding::Branding;
+
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use bmc::compositor::ScenePlaceholder;
 use bmc::scene::WidgetPosition;
 use bmc_gpu_render_lock::GpuRenderLock;
-use bmc_platform::{DisplayPixelFormat, DisplayProfile, DisplayTransform, PanelTransfer, Product};
-use bmc_shared_utils::include_png;
+use bmc_platform::{DisplayPixelFormat, DisplayProfile, DisplayTransform, PanelTransfer};
 use smithay::{
     backend::allocator::Fourcc,
     backend::renderer::{
@@ -51,32 +54,10 @@ use super::render::{
 };
 use super::scene_cycling::TransitionFrame;
 use super::widget_tracker::WidgetTracker;
+use branding::{BrandingOverlay, LogoCaption, LogoScene};
 
 const BACKGROUND_COLOR: Color32F = Color32F::new(0.0, 0.0, 0.0, 1.0);
 const SEPARATOR_COLOR: Color32F = Color32F::new(0.15, 0.15, 0.15, 1.0);
-
-/// DECK logo shown as the screen background when a scene has no rendered
-/// content. Embedded so there is no runtime file dependency.
-const DECK_LOGO_PNG: &[u8] = include_png!("../assets/deck_logo.png");
-
-/// Branding logo a product shows in scenes with no rendered content, or
-/// `None` to keep the plain cleared background (which also drops the
-/// "Loading scene…" caption). The DECK logo is Deck branding and is wider
-/// (527px) than the other products' panels, so only the Deck shows it.
-#[must_use]
-pub fn logo_for_product(product: Product) -> Option<&'static [u8]> {
-    match product {
-        Product::Bmc100 => Some(DECK_LOGO_PNG),
-        Product::Bmm100 | Product::Bmm101 | Product::Bfm100 => None,
-    }
-}
-
-/// "Loading scene…" caption drawn below the logo while a configured scene has
-/// not painted its first frame yet.
-const LOADING_SCENE_TEXT_PNG: &[u8] = include_png!("../assets/loading_scene_text.png");
-
-/// Logical-pixel gap between the logo and the caption below it.
-const LOGO_TEXT_GAP_PX: i32 = 42;
 
 #[must_use]
 pub fn scanout_transform(profile: DisplayTransform) -> Transform {
@@ -422,95 +403,6 @@ fn blit_texture_on_frame(
     }
 }
 
-/// Start coordinate (left/top edge along one axis) at which `content` sits
-/// centered inside `container`; the 1px bias from integer division is fine
-/// for the overlays this positions.
-#[expect(
-    clippy::integer_division,
-    reason = "1px rounding when centering is fine"
-)]
-fn centered_start(container: i32, content: i32) -> i32 {
-    (container - content) / 2
-}
-
-/// A scene showing the branding logo this frame: the x-offset it slides with
-/// during swipes and transitions, the opacity it fades with during cross-fades,
-/// and whether the "Loading scene…" caption is drawn below the logo
-/// (see [`ScenePlaceholder`]).
-struct LogoScene {
-    x_offset: i32,
-    alpha: f32,
-    with_caption: bool,
-}
-
-/// Draw the DECK logo centered on every scene in `scenes` — the on-screen
-/// scenes that have no rendered widget yet (the empty sentinel, or a
-/// configured scene whose widgets have not painted — fullscreen, combined, or
-/// preview). A scene with a caption also gets the "Loading scene…" `caption`
-/// below the logo. Drawn per scene at its x-offset so it slides with
-/// swipes/transitions; these scenes are excluded from the separator grid, so
-/// the grid never overlaps the logo. Products without a logo (see
-/// [`logo_for_product`]) pass `logo: None` and keep the cleared background.
-fn draw_logo_scenes(
-    frame: &mut GlesFrame<'_, '_>,
-    output: &DrmOutput,
-    transform: DisplayTransform,
-    scenes: &[LogoScene],
-    logo: Option<&GlesTexture>,
-    caption: Option<&GlesTexture>,
-) {
-    let Some(logo) = logo else {
-        return;
-    };
-    let (lw, lh) = output.logical_size();
-    // Panel dimensions are small and non-negative; narrow them to the i32
-    // space the signed x-offsets live in.
-    let to_i32 = |v: u32| i32::try_from(v).expect("BUG: panel geometry fits i32");
-    let output_w = to_i32(output.width());
-    let output_h = to_i32(output.height());
-    let logical_w = to_i32(lw);
-    let logical_h = to_i32(lh);
-    let logo_size = logo.size();
-    for scene in scenes {
-        // Draw the logo centered.
-        let logo_x = scene.x_offset + centered_start(logical_w, logo_size.w);
-        let logo_y = centered_start(logical_h, logo_size.h);
-        blit_texture_on_frame(
-            frame,
-            logo,
-            logo_x,
-            logo_y,
-            None,
-            output_w,
-            output_h,
-            transform,
-            scene.alpha,
-            "DECK logo",
-        );
-
-        // Draw optional caption under the logo.
-        if scene.with_caption
-            && let Some(caption) = caption
-        {
-            let caption_size = caption.size();
-            let caption_x = scene.x_offset + centered_start(logical_w, caption_size.w);
-            let caption_y = logo_y + logo_size.h + LOGO_TEXT_GAP_PX;
-            blit_texture_on_frame(
-                frame,
-                caption,
-                caption_x,
-                caption_y,
-                None,
-                output_w,
-                output_h,
-                transform,
-                scene.alpha,
-                "loading text",
-            );
-        }
-    }
-}
-
 pub struct SceneRenderer {
     egl: EglContext,
     output: DrmOutput,
@@ -523,15 +415,9 @@ pub struct SceneRenderer {
     frame_differ: Option<FrameDiffer>,
     /// Texture cache: maps WlBuffer ObjectId to cached GlesTexture
     texture_cache: HashMap<ObjectId, GlesTexture>,
-    /// Branding logo drawn when a scene has no rendered content, from
-    /// [`logo_for_product`]; `None` keeps the plain cleared background.
-    logo_png: Option<&'static [u8]>,
-    /// Logo texture decoded from [`Self::logo_png`]. Loaded on demand and
-    /// dropped when unused.
-    logo_texture: OverlayTexture,
-    /// "Loading scene…" caption texture. Loaded on demand and dropped when
-    /// unused.
-    loading_text_texture: OverlayTexture,
+    /// Logo and captions for scenes with no rendered content;
+    /// `None` keeps the plain cleared background.
+    branding_overlay: Option<BrandingOverlay>,
     /// Cached pixels from the last inline capture readback.
     /// Served to capture clients between renders (avoids re-rendering
     /// just to observe the same frame).
@@ -586,7 +472,7 @@ impl SceneRenderer {
         mut egl: EglContext,
         output: DrmOutput,
         display: &DisplayProfile,
-        logo_png: Option<&'static [u8]>,
+        branding: Option<Branding>,
     ) -> Result<Self> {
         let DisplayProfile {
             scanout_transform,
@@ -650,10 +536,7 @@ impl SceneRenderer {
             swizzler,
             frame_differ,
             texture_cache: HashMap::new(),
-            logo_png,
-            // Overlay textures are loaded lazily on first use (see render_scene).
-            logo_texture: OverlayTexture::Unloaded,
-            loading_text_texture: OverlayTexture::Unloaded,
+            branding_overlay: branding.map(BrandingOverlay::new),
             capture_cache: CaptureCache::empty(),
             gpu_render_lock,
             scanout_transform,
@@ -832,9 +715,6 @@ impl SceneRenderer {
         // cross-fade, where the other scene's fading grid can overlap a
         // logo parked at the same offset.
         let mut combined_scene_grids: Vec<CombinedSceneGrid> = Vec::new();
-        // On-screen scenes showing the branding logo, per their
-        // `ScenePlaceholder`. Products without a logo (see `logo_for_product`)
-        // keep the plain cleared background.
         let mut logo_scenes: Vec<LogoScene> = Vec::new();
 
         for rendered in widgets.rendered_scenes(transition_frame, self.seam_overlap_px) {
@@ -853,8 +733,6 @@ impl SceneRenderer {
                     });
                 }
             } else {
-                // The grid-vs-logo-vs-caption policy lives on SceneLayout;
-                // see `ScenePlaceholder` for the policy and its rationale.
                 match rendered.scene.placeholder() {
                     ScenePlaceholder::Grid => {
                         combined_scene_grids.push(CombinedSceneGrid {
@@ -863,45 +741,25 @@ impl SceneRenderer {
                         });
                     }
                     ScenePlaceholder::Empty => {
-                        if self.logo_png.is_some() {
-                            logo_scenes.push(LogoScene {
-                                x_offset: rendered.x_offset,
-                                alpha: rendered.alpha,
-                                with_caption: false,
-                            });
-                        }
+                        logo_scenes.push(LogoScene {
+                            x_offset: rendered.x_offset,
+                            alpha: rendered.alpha,
+                            caption: LogoCaption::Empty,
+                        });
                     }
                     ScenePlaceholder::Loading => {
-                        if self.logo_png.is_some() {
-                            logo_scenes.push(LogoScene {
-                                x_offset: rendered.x_offset,
-                                alpha: rendered.alpha,
-                                with_caption: true,
-                            });
-                        }
+                        logo_scenes.push(LogoScene {
+                            x_offset: rendered.x_offset,
+                            alpha: rendered.alpha,
+                            caption: LogoCaption::Loading,
+                        });
                     }
                 }
             }
         }
 
-        // Load the overlay textures on demand and drop them when unused, so the
-        // GPU only holds them while a "no content yet" scene is on screen.
-        let needs_logo = !logo_scenes.is_empty();
-        let needs_text = logo_scenes.iter().any(|s| s.with_caption);
-        if needs_logo && let Some(png) = self.logo_png {
-            self.logo_texture
-                .ensure_loaded(self.egl.renderer(), png, "DECK logo");
-        } else if !needs_logo {
-            self.logo_texture.unload();
-        }
-        if needs_text {
-            self.loading_text_texture.ensure_loaded(
-                self.egl.renderer(),
-                LOADING_SCENE_TEXT_PNG,
-                "loading text",
-            );
-        } else {
-            self.loading_text_texture.unload();
+        if let Some(overlay) = &mut self.branding_overlay {
+            overlay.sync(self.egl.renderer(), &logo_scenes);
         }
 
         let buffer = self.buffers.back_buffer(&self.output)?;
@@ -981,14 +839,14 @@ impl SceneRenderer {
                 .context("Failed to clear uncovered output regions")?;
         }
 
-        draw_logo_scenes(
-            &mut frame,
-            &self.output,
-            self.scanout_transform,
-            &logo_scenes,
-            self.logo_texture.texture(),
-            self.loading_text_texture.texture(),
-        );
+        if let Some(overlay) = &self.branding_overlay {
+            overlay.draw(
+                &mut frame,
+                &self.output,
+                self.scanout_transform,
+                &logo_scenes,
+            );
+        }
 
         // Drawn over the cleared background and before the widgets, for the
         // same reason as the clear above.

@@ -11,6 +11,8 @@ authors = ["Braiins <braiins@braiins.com>"]
 include = [
     "src/compositor/render/frame_diff.frag",
     "src/compositor/render/scanout_swizzle.frag",
+    "src/assets/bmm101_empty_scene_text.png",
+    "src/assets/bmm_logo.png",
     "src/assets/deck_logo.png",
     "src/assets/loading_scene_text.png",
 ]

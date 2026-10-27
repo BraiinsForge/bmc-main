@@ -20,7 +20,7 @@
 
 //! EGL Compositor implementation for bmc-openwrt.
 
-use super::scene_renderer::{logo_for_product, touch_to_logical};
+use super::scene_renderer::{Branding, touch_to_logical};
 use super::{
     commands::CompositorCommand,
     device_access::{DeviceAccessConfig, RootLibinputInterface, set_libinput_debug_priority},
@@ -405,7 +405,7 @@ impl EglCompositor {
                     egl,
                     output,
                     display_profile,
-                    logo_for_product(profile.product),
+                    Branding::for_product(profile.product),
                 ),
                 "Failed to initialize scene renderer"
             );
