@@ -20,18 +20,25 @@
 
 //! Fetches the SDK repeats on a widget's behalf.
 //!
-//! `register`, re-exported as `register_poll`, starts a poll and returns the only [`Handle`] to it.
-//! The SDK sends the poll's request, hands each reply to its `OnReply` handler
+//! [`Handle::register`], `PollHandle::register` at the crate root,
+//! starts a poll whose build and replies run methods on its receiver,
+//! and returns the only [`Handle`] to it.
+//! The SDK sends the poll's request, hands each reply to its reply method
 //! with the borrowed handle, and sends the next request on the [`Config`] cadence.
 //! Dropping the handle, or calling `Handle::stop`, ends the poll and cancels its live fetch.
+//! The free `register`, re-exported as `register_poll`, takes plain functions,
+//! and stays only so that a widget not yet ported still builds.
 
 #[cfg(any(target_arch = "wasm32", test))]
 use std::collections::HashMap;
 #[cfg(any(target_arch = "wasm32", test))]
-use std::mem::ManuallyDrop;
+use std::rc::Rc;
 use std::time::Duration;
 
 use bmc_wasm_protocol::FetchRequestId;
+
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::net::FetchResponse;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
@@ -165,10 +172,28 @@ impl Handle {
 
 /// Builds the poll's next request, or `None` to skip it.
 ///
-/// It runs while the SDK holds its poll registry,
-/// so calling any poll handle method from it but [`Handle::index`] panics,
-/// and so does dropping a poll handle.
+/// It may read the handle, disable or end the poll, and call what asks for no request,
+/// such as `retry` or `set_interval`.
+/// Asking any poll for a request panics: `invalidate`, `enable_after`, `set_enabled(true)`
+/// or registering a poll would build again before this request goes out.
 pub type Build = fn(&Handle) -> Option<FetchSpec>;
+
+#[cfg(any(target_arch = "wasm32", test))]
+type BuildFn = Rc<dyn Fn(&Handle) -> Option<FetchSpec>>;
+
+#[cfg(any(target_arch = "wasm32", test))]
+type OnReplyFn = Rc<dyn Fn(&Handle, &FetchResponse)>;
+
+/// When a kick may run the poll's `build`.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BuildTiming {
+    /// A plain function: where the kick is asked for.
+    Now,
+    /// A widget method: once the method or callback that asked for the request has returned,
+    /// before the export ends.
+    AtExportEnd,
+}
 
 pub trait FetchBackend {
     fn send(&mut self, spec: &FetchSpec, delay_ms: Option<u32>) -> Option<FetchRequestId>;
@@ -177,7 +202,9 @@ pub trait FetchBackend {
 
 #[cfg(any(target_arch = "wasm32", test))]
 struct Poll {
-    build: Build,
+    build: BuildFn,
+    on_reply: OnReplyFn,
+    build_timing: BuildTiming,
     config: Config,
     enabled: bool,
     live: Option<FetchRequestId>,
@@ -191,6 +218,40 @@ struct Poll {
     last_failed: bool,
     /// Epoch secs the failing streak began; anchors the offline grace.
     failing_since_secs: Option<i64>,
+    /// Counts the kicks asked for; a kick performed after a newer one was asked for yields to it.
+    revision: usize,
+}
+
+/// A request the registry wants sent, performed outside its borrow:
+/// `build` runs between [`Registry::prepare`] and [`Registry::finish`].
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Kick {
+    index: usize,
+    delay_ms: Option<u32>,
+    build_timing: BuildTiming,
+    /// The poll's kick count when this one was asked for.
+    revision: usize,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn request_kick(poll: &mut Poll, index: usize, delay_ms: Option<u32>) -> Kick {
+    poll.revision += 1;
+    Kick {
+        index,
+        delay_ms,
+        build_timing: poll.build_timing,
+        revision: poll.revision,
+    }
+}
+
+/// Whether a poll's `build` is running.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Activity {
+    #[default]
+    Idle,
+    Building,
 }
 
 /// An ended poll's slot stays empty for good:
@@ -198,11 +259,16 @@ struct Poll {
 /// and widgets key their own state on [`Handle::index`].
 /// The cost is one empty slot per ended poll for the widget's lifetime,
 /// which only matters to a widget that registers polls over and over.
+///
+/// Nothing may call into the widget while the registry is borrowed.
+/// A call that can lead to `build` returns a [`Kick`] for the glue to perform once the borrow ends;
+/// a cancel reaches only the host, so it runs in place.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Default)]
 pub(crate) struct Registry {
     polls: Vec<Option<Poll>>,
     routes: HashMap<FetchRequestId, usize>,
+    activity: Activity,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -212,10 +278,18 @@ fn poll_mut(polls: &mut [Option<Poll>], index: usize) -> Option<&mut Poll> {
 
 #[cfg(any(target_arch = "wasm32", test))]
 impl Registry {
-    pub(crate) fn register(&mut self, build: Build, config: Config) -> usize {
+    pub(crate) fn register(
+        &mut self,
+        build: impl Fn(&Handle) -> Option<FetchSpec> + 'static,
+        on_reply: impl Fn(&Handle, &FetchResponse) + 'static,
+        build_timing: BuildTiming,
+        config: Config,
+    ) -> usize {
         let index = self.polls.len();
         self.polls.push(Some(Poll {
-            build,
+            build: Rc::new(build),
+            on_reply: Rc::new(on_reply),
+            build_timing,
             config,
             enabled: config.enabled,
             live: None,
@@ -225,12 +299,13 @@ impl Registry {
             prev_success_secs: None,
             last_failed: false,
             failing_since_secs: None,
+            revision: 0,
         }));
         index
     }
 
     /// End the poll: cancel its live fetch and stop routing replies to it.
-    pub(crate) fn release(&mut self, index: usize, backend: &mut dyn FetchBackend) {
+    fn release(&mut self, index: usize, backend: &mut dyn FetchBackend) {
         let Some(poll) = self.polls.get_mut(index).and_then(Option::take) else {
             return;
         };
@@ -245,14 +320,50 @@ impl Registry {
         self.polls.get(index)?.as_ref()
     }
 
-    fn kick(&mut self, index: usize, delay_ms: Option<u32>, backend: &mut dyn FetchBackend) {
-        let Some(poll) = self.poll(index) else {
-            return;
-        };
+    /// Refuse a request asked for from inside a `build`:
+    /// it would build again before that build's request goes out, and could loop for good.
+    fn refuse_while_building(&self) {
+        assert!(
+            self.activity == Activity::Idle,
+            "BUG: a poll's build asked a poll for a request (invalidate, enable_after, set_enabled(true) or a registration)"
+        );
+    }
+
+    /// Ask for the poll's next request after `delay_ms`;
+    /// `None` when the poll is gone, disabled or has a request live.
+    fn kick(&mut self, index: usize, delay_ms: Option<u32>) -> Option<Kick> {
+        let poll = poll_mut(&mut self.polls, index)?;
         if !poll.enabled || poll.live.is_some() {
-            return;
+            return None;
         }
-        let Some(spec) = (poll.build)(&ManuallyDrop::new(Handle(index))) else {
+        Some(request_kick(poll, index, delay_ms))
+    }
+
+    /// The poll `kick` is for, unless the kick went stale:
+    /// the poll ended, was disabled, or asked for a newer kick.
+    fn current(&self, kick: &Kick) -> Option<&Poll> {
+        let poll = self.poll(kick.index)?;
+        (poll.enabled && poll.revision == kick.revision).then_some(poll)
+    }
+
+    /// The `build` to run for `kick`, or `None` for a stale kick.
+    ///
+    /// Until [`finish`](Self::finish), asking any poll for a request panics.
+    pub(crate) fn prepare(&mut self, kick: &Kick) -> Option<BuildFn> {
+        let build = Rc::clone(&self.current(kick)?.build);
+        self.activity = Activity::Building;
+        Some(build)
+    }
+
+    /// Send the request `build` made for `kick`, unless the kick went stale meanwhile.
+    pub(crate) fn finish(
+        &mut self,
+        kick: &Kick,
+        spec: Option<&FetchSpec>,
+        backend: &mut dyn FetchBackend,
+    ) {
+        self.activity = Activity::Idle;
+        let (Some(spec), Some(poll)) = (spec, self.current(kick)) else {
             return;
         };
         let retry_ms = poll.config.retry_ms;
@@ -260,28 +371,34 @@ impl Registry {
         // so a send should not be rejected; treat an unexpected rejection as a transient
         // failure and re-attempt after retry_ms so a budget hiccup self-heals instead
         // of leaving the poll dormant forever.
-        let id = match backend.send(&spec, delay_ms) {
+        let id = match backend.send(spec, kick.delay_ms) {
             Some(id) => Some(id),
-            None => backend.send(&spec, Some(retry_ms)),
+            None => backend.send(spec, Some(retry_ms)),
         };
         if let Some(id) = id
-            && let Some(poll) = poll_mut(&mut self.polls, index)
+            && let Some(poll) = poll_mut(&mut self.polls, kick.index)
         {
             poll.live = Some(id);
-            self.routes.insert(id, index);
+            self.routes.insert(id, kick.index);
         }
     }
 
-    pub(crate) fn start(&mut self, index: usize, backend: &mut dyn FetchBackend) {
-        self.kick(index, None, backend);
+    pub(crate) fn start(&mut self, index: usize) -> Option<Kick> {
+        self.refuse_while_building();
+        self.kick(index, None)
     }
 
-    pub(crate) fn invalidate(&mut self, index: usize, backend: &mut dyn FetchBackend) {
-        let Some(poll) = poll_mut(&mut self.polls, index) else {
-            return;
-        };
+    /// Ask for a fresh request: cancel the live one in place, or, if the host
+    /// would not cancel it, re-issue once its reply arrives.
+    pub(crate) fn invalidate(
+        &mut self,
+        index: usize,
+        backend: &mut dyn FetchBackend,
+    ) -> Option<Kick> {
+        self.refuse_while_building();
+        let poll = poll_mut(&mut self.polls, index)?;
         if !poll.enabled {
-            return;
+            return None;
         }
         let debounce = poll.config.debounce_ms;
         match poll.live {
@@ -289,20 +406,17 @@ impl Registry {
                 if backend.cancel(id) {
                     poll.live = None;
                     self.routes.remove(&id);
-                    self.kick(index, Some(debounce), backend);
+                    self.kick(index, Some(debounce))
                 } else {
                     poll.pending = true;
+                    None
                 }
             }
-            None => self.kick(index, Some(debounce), backend),
+            None => self.kick(index, Some(debounce)),
         }
     }
 
-    pub(crate) fn begin_reply(
-        &mut self,
-        id: FetchRequestId,
-        backend: &mut dyn FetchBackend,
-    ) -> ReplyAction {
+    pub(crate) fn begin_reply(&mut self, id: FetchRequestId) -> ReplyAction {
         let Some(index) = self.routes.remove(&id) else {
             return ReplyAction::Ignore;
         };
@@ -318,10 +432,9 @@ impl Registry {
             return ReplyAction::Stopped;
         }
         if pending {
-            self.kick(index, None, backend);
-            return ReplyAction::Reissued;
+            return ReplyAction::Reissued(request_kick(poll, index, None));
         }
-        ReplyAction::Deliver(index)
+        ReplyAction::Deliver(index, Rc::clone(&poll.on_reply))
     }
 
     /// Mark the in-flight reply as unusable: a 2xx whose body
@@ -373,16 +486,8 @@ impl Registry {
         }
     }
 
-    pub(crate) fn reschedule(
-        &mut self,
-        index: usize,
-        ok: bool,
-        now_secs: i64,
-        backend: &mut dyn FetchBackend,
-    ) {
-        let Some(poll) = poll_mut(&mut self.polls, index) else {
-            return;
-        };
+    pub(crate) fn reschedule(&mut self, index: usize, ok: bool, now_secs: i64) -> Option<Kick> {
+        let poll = poll_mut(&mut self.polls, index)?;
         let forced = std::mem::take(&mut poll.force_retry);
         // A forced retry means the handler rejected this reply, so it is no
         // refresh however the HTTP call went.
@@ -396,55 +501,50 @@ impl Registry {
             poll.failing_since_secs.get_or_insert(now_secs);
         }
         if !poll.enabled || poll.live.is_some() {
-            return;
+            return None;
         }
         let delay = match forced {
             Some(delay_ms) => delay_ms,
-            None if ok => match poll.config.interval_ms {
-                Some(ms) => ms,
-                None => return,
-            },
+            None if ok => poll.config.interval_ms?,
             None => poll.config.retry_ms,
         };
-        self.kick(index, Some(delay), backend);
+        self.kick(index, Some(delay))
     }
 
+    /// Enable the poll and ask for a request, or disable it and cancel the live one in place.
     pub(crate) fn set_enabled(
         &mut self,
         index: usize,
         enabled: bool,
         backend: &mut dyn FetchBackend,
-    ) {
-        let Some(poll) = poll_mut(&mut self.polls, index) else {
-            return;
-        };
+    ) -> Option<Kick> {
+        if enabled {
+            self.refuse_while_building();
+        }
+        let poll = poll_mut(&mut self.polls, index)?;
         if poll.enabled == enabled {
-            return;
+            return None;
         }
         poll.enabled = enabled;
         if enabled {
             let debounce = poll.config.debounce_ms;
-            self.kick(index, Some(debounce), backend);
-        } else if let Some(id) = poll.live
+            return self.kick(index, Some(debounce));
+        }
+        if let Some(id) = poll.live
             && backend.cancel(id)
         {
             poll.live = None;
             self.routes.remove(&id);
         }
+        None
     }
 
     /// Enable and schedule the next fetch after `delay_ms` (no immediate kick).
-    pub(crate) fn set_enabled_after(
-        &mut self,
-        index: usize,
-        delay_ms: u32,
-        backend: &mut dyn FetchBackend,
-    ) {
-        let Some(poll) = poll_mut(&mut self.polls, index) else {
-            return;
-        };
+    pub(crate) fn set_enabled_after(&mut self, index: usize, delay_ms: u32) -> Option<Kick> {
+        self.refuse_while_building();
+        let poll = poll_mut(&mut self.polls, index)?;
         poll.enabled = true;
-        self.kick(index, Some(delay_ms), backend);
+        self.kick(index, Some(delay_ms))
     }
 
     /// Retarget the poll cadence and `is_stale` threshold; reschedule to apply.
@@ -524,12 +624,12 @@ impl Registry {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReplyAction {
     Ignore,
-    Reissued,
+    /// A refresh asked for while the reply was in flight goes out instead of delivering it.
+    Reissued(Kick),
     Stopped,
-    Deliver(usize),
+    Deliver(usize, OnReplyFn),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -594,14 +694,16 @@ mod backend {
     thread_local! {
         static NEXT_ID: Cell<u32> = const { Cell::new(1) };
         static SENDS: Cell<usize> = const { Cell::new(0) };
+        static LAST_DELAY: Cell<Option<u32>> = const { Cell::new(None) };
         static CANCELS: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(super) struct HostBackend;
 
     impl FetchBackend for HostBackend {
-        fn send(&mut self, _spec: &FetchSpec, _delay_ms: Option<u32>) -> Option<FetchRequestId> {
+        fn send(&mut self, _spec: &FetchSpec, delay_ms: Option<u32>) -> Option<FetchRequestId> {
             SENDS.set(SENDS.get() + 1);
+            LAST_DELAY.set(delay_ms);
             let mut next = NEXT_ID.get();
             let id = FetchRequestId::alloc(&mut next);
             NEXT_ID.set(next);
@@ -625,167 +727,18 @@ mod backend {
     pub(super) fn cancels() -> usize {
         CANCELS.get()
     }
-}
 
-#[cfg(any(target_arch = "wasm32", test))]
-mod glue {
-    use std::cell::RefCell;
-    use std::mem::ManuallyDrop;
-
-    use crate::net::FetchResponse;
-
-    use super::backend::{HostBackend, now_secs};
-    use super::{Config, Handle, Registry};
-
-    /// Receives each reply with the borrowed handle of the poll it belongs to.
-    pub type OnReply = fn(&Handle, &FetchResponse);
-
-    thread_local! {
-        pub(super) static REGISTRY: RefCell<Registry> = RefCell::new(Registry::default());
-        static HANDLERS: RefCell<Vec<OnReply>> = const { RefCell::new(Vec::new()) };
-    }
-
-    pub(super) fn trampoline(response: &FetchResponse) {
-        let action = REGISTRY.with(|r| {
-            r.borrow_mut()
-                .begin_reply(response.request_id, &mut HostBackend)
-        });
-        if let super::ReplyAction::Deliver(index) = action {
-            let on_reply = HANDLERS.with(|h| h.borrow()[index]);
-            // Borrowed for the reply only; dropping it would end the poll.
-            on_reply(&ManuallyDrop::new(Handle(index)), response);
-            let now = now_secs();
-            REGISTRY.with(|r| {
-                r.borrow_mut()
-                    .reschedule(index, response.ok(), now, &mut HostBackend);
-            });
-        }
-    }
-
-    /// Register a poll and send its first request, unless `config.enabled` is false.
-    ///
-    /// An enabled poll's `build` runs once before this returns;
-    /// a disabled one's waits until it is enabled.
-    /// Returns the only handle to the poll; dropping it ends the poll.
-    #[must_use = "dropping the returned Handle ends the poll"]
-    pub fn register(build: super::Build, on_reply: OnReply, config: Config) -> Handle {
-        let index = REGISTRY.with(|r| r.borrow_mut().register(build, config));
-        HANDLERS.with(|h| {
-            let mut h = h.borrow_mut();
-            debug_assert_eq!(h.len(), index);
-            h.push(on_reply);
-        });
-        REGISTRY.with(|r| r.borrow_mut().start(index, &mut HostBackend));
-        Handle(index)
-    }
-
-    impl Drop for Handle {
-        fn drop(&mut self) {
-            REGISTRY.with(|r| r.borrow_mut().release(self.0, &mut HostBackend));
-        }
-    }
-
-    impl Handle {
-        /// End the poll: cancel its live fetch, and drop a reply already on its way.
-        pub fn stop(self) {
-            drop(self);
-        }
-
-        pub fn set_enabled(&self, enabled: bool) {
-            REGISTRY.with(|r| {
-                r.borrow_mut()
-                    .set_enabled(self.0, enabled, &mut HostBackend);
-            });
-        }
-
-        /// Enable with the next fetch after `delay_ms` instead of the debounce.
-        pub fn enable_after(&self, delay_ms: u32) {
-            REGISTRY.with(|r| {
-                r.borrow_mut()
-                    .set_enabled_after(self.0, delay_ms, &mut HostBackend);
-            });
-        }
-
-        /// Retarget the poll cadence and `is_stale` threshold; pair with `invalidate` to apply now.
-        pub fn set_interval(&self, interval_ms: u32) {
-            REGISTRY.with(|r| r.borrow_mut().set_interval(self.0, interval_ms));
-        }
-
-        pub fn invalidate(&self) {
-            REGISTRY.with(|r| r.borrow_mut().invalidate(self.0, &mut HostBackend));
-        }
-
-        /// Treat the reply being delivered as unusable, for a body
-        /// this handler cannot use despite the 2xx.
-        ///
-        /// The poll then reads as failing and keeps the anchor it had,
-        /// and the next attempt waits `retry_ms` rather than the interval.
-        pub fn retry(&self) {
-            REGISTRY.with(|r| r.borrow_mut().request_retry(self.0));
-        }
-
-        /// Like [`retry`](Self::retry), including counting as no refresh,
-        /// but the next attempt waits `delay_ms` instead of `retry_ms`.
-        pub fn retry_after(&self, delay_ms: u32) {
-            REGISTRY.with(|r| r.borrow_mut().request_retry_after(self.0, delay_ms));
-        }
-
-        /// Flag stale after a reply was banked ok (e.g. a late decode failure).
-        pub fn mark_stale(&self) {
-            REGISTRY.with(|r| r.borrow_mut().mark_stale(self.0));
-        }
-
-        /// Seed the last-success anchor from a restored cache entry
-        /// so staleness reads the true age across a reboot.
-        pub fn restore_anchor(&self, unix_secs: i64) {
-            REGISTRY.with(|r| r.borrow_mut().restore_anchor(self.0, unix_secs));
-        }
-
-        /// Forget all staleness history — for when the widget blanks its data.
-        pub fn reset_staleness(&self) {
-            REGISTRY.with(|r| r.borrow_mut().reset_staleness(self.0));
-        }
-
-        #[must_use]
-        pub fn enabled(&self) -> bool {
-            REGISTRY.with(|r| r.borrow().enabled(self.0))
-        }
-
-        /// Whether the poll is failing with stale data.
-        #[must_use]
-        pub fn is_stale(&self) -> bool {
-            let now = now_secs();
-            REGISTRY.with(|r| r.borrow().is_stale(self.0, now))
-        }
-
-        /// Never loaded and failing past the stale grace.
-        #[must_use]
-        pub fn is_offline(&self) -> bool {
-            let now = now_secs();
-            REGISTRY.with(|r| r.borrow().is_offline(self.0, now))
-        }
-
-        /// Age of the last successful reply, or `None` if it has never succeeded.
-        #[must_use]
-        pub fn last_success_age(&self) -> Option<std::time::Duration> {
-            let now = now_secs();
-            REGISTRY.with(|r| r.borrow().last_success_age(self.0, now))
-        }
-
-        /// The last successful reply's instant — the relative-time anchor.
-        #[must_use]
-        pub fn last_success_time(&self) -> Option<crate::host::SystemTime> {
-            REGISTRY.with(|r| {
-                r.borrow()
-                    .last_success_secs(self.0)
-                    .map(|unix_secs| crate::host::SystemTime { unix_secs })
-            })
-        }
+    /// The delay the last send asked for.
+    pub(super) fn last_delay() -> Option<u32> {
+        LAST_DELAY.get()
     }
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-pub use glue::{OnReply, register};
+mod glue;
+
+#[cfg(any(target_arch = "wasm32", test))]
+pub use glue::{BuildMethod, OnReply, ReplyMethod, register};
 
 #[cfg(test)]
 mod tests;

@@ -2705,7 +2705,11 @@ mod tests {
     }
 
     fn minimal_runtime() -> WasmWidgetRuntime {
-        let wasm = wat::parse_str(minimal_wat()).expect("BUG: minimal WAT must parse");
+        runtime_from_wat(&minimal_wat())
+    }
+
+    fn runtime_from_wat(wat: &str) -> WasmWidgetRuntime {
+        let wasm = wat::parse_str(wat).expect("BUG: test WAT must parse");
         WasmWidgetRuntime::new(
             &wasm,
             480,
@@ -2750,6 +2754,28 @@ mod tests {
         assert!(
             rt.has_pending_lifecycle(),
             "the wake must wait for a renderer rather than being dropped"
+        );
+    }
+
+    /// `#[widget]` holds the name of each hook a widget leaves out with a data export.
+    #[test]
+    fn a_hook_name_exported_as_data_is_no_hook() {
+        let mut rt = runtime_from_wat(&format!(
+            r#"
+        (module
+          (memory (export "memory") 1)
+          (global (export "on_touch") i32 (i32.const 0))
+          (global (export "on_wake") i32 (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64)
+            i64.const {})
+          (func (export "render") (param i32)))
+        "#,
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
+        ));
+
+        assert!(
+            !rt.exports_on_touch() && !rt.notify_wake(),
+            "a widget that leaves the hooks out must get neither touches nor a wake call"
         );
     }
 

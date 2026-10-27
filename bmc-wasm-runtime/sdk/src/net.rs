@@ -20,31 +20,45 @@
 
 //! Network fetching for WASM widgets.
 //!
-//! Provides `fetch()` and `fetch_after()` for HTTP requests. The host performs
-//! the actual network I/O in the background and delivers responses by calling
-//! the `__on_fetch_response` export.
+//! [`FetchRequest::send_on`] and [`FetchRequest::send_after_on`] send an HTTP request
+//! whose response runs a method on the receiver they are given.
+//! The host performs the network I/O in the background
+//! and delivers responses by calling the `__on_fetch_response` export.
+//! A request repeated on a cadence is a poll instead (see [`crate::poll`]).
 //!
 //! # Example
 //!
 //! ```ignore
 //! use bmc_wasm_sdk::*;
 //!
-//! fn init(width: u32, height: u32) {
-//!     fetch("https://api.example.com/data", on_data);
+//! struct Profile {
+//!     name: Option<String>,
 //! }
 //!
-//! fn on_data(response: &FetchResponse) {
-//!     if response.ok() {
-//!         let json = response.json();
-//!         let name = json.str("/name").unwrap_or_default();
-//!         // ... update state
+//! impl Profile {
+//!     fn on_data(&mut self, response: &FetchResponse) {
+//!         if response.ok() {
+//!             self.name = response.json().str("/name");
+//!             request_frame();
+//!         }
 //!     }
-//!     // Re-fetch every 5 minutes
-//!     fetch_after(300_000, "https://api.example.com/data", on_data);
+//! }
+//!
+//! #[widget]
+//! impl Widget for Profile {
+//!     fn init(me: &Building<Self>) -> Self {
+//!         // A refused request leaves `name` None: the host has logged why.
+//!         let _ = FetchRequest::get("https://api.example.com/data").send_on(me, Self::on_data);
+//!         Self { name: None }
+//!     }
+//!
+//!     fn render(&mut self, _delta_ms: u32) { /* … */ }
 //! }
 //! ```
 
 use std::marker::PhantomData;
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc;
 use std::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
@@ -52,6 +66,8 @@ use bmc_wasm_protocol::MediaTypePart;
 use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
 use crate::json::JsonDoc;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::{Receiver, Target};
 
 /// Default per-call cap on every fetch operation (DNS, connect, send, recv),
 /// applied to any [`FetchRequest`] that does not set its own [`timeout`].
@@ -199,6 +215,19 @@ impl FetchResponse {
 #[cfg(target_arch = "wasm32")]
 type Callback = fn(&FetchResponse);
 
+/// A response as a method of the value it is delivered to.
+pub type ResponseMethod<T> = fn(&mut T, &FetchResponse);
+
+#[cfg(target_arch = "wasm32")]
+type Handler = Rc<dyn Fn(&FetchResponse)>;
+
+#[cfg(target_arch = "wasm32")]
+fn on_target<T: 'static>(target: Target<T>, method: ResponseMethod<T>) -> Handler {
+    Rc::new(move |response: &FetchResponse| {
+        target.deliver(|value| method(value, response));
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResponseBodyDelivery {
     Guest,
@@ -220,7 +249,8 @@ pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) -> Option<Fet
 }
 
 /// Fetch a URL with GET after a delay (in milliseconds).
-/// Useful for periodic re-fetching (e.g., `fetch_after(300_000, url, None, cb)` for 5-minute refresh).
+/// A request repeated on a cadence is a poll instead,
+/// registered with [`PollHandle::register`](crate::PollHandle::register).
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
 #[must_use]
@@ -362,7 +392,22 @@ impl<'a> FetchRequest<'a> {
     #[must_use]
     #[cfg(target_arch = "wasm32")]
     pub fn send(self, callback: Callback) -> Option<FetchRequestId> {
-        Platform::fetch(&self, callback)
+        Platform::fetch(&self, Rc::new(callback))
+    }
+
+    /// Send the request; the response runs `method` on `to`.
+    ///
+    /// Otherwise as [`send`](Self::send), and refused through a
+    /// [`PartHandle`](crate::PartHandle) whose part is dropped.
+    /// A part dropped before the response gets none.
+    #[must_use]
+    #[cfg(target_arch = "wasm32")]
+    pub fn send_on<T: 'static>(
+        self,
+        to: &impl Receiver<T>,
+        method: ResponseMethod<T>,
+    ) -> Option<FetchRequestId> {
+        Platform::fetch(&self, on_target(to.__target()?, method))
     }
 
     /// Send the request after a delay (in milliseconds).
@@ -371,17 +416,33 @@ impl<'a> FetchRequest<'a> {
     #[must_use]
     #[cfg(target_arch = "wasm32")]
     pub fn send_after(self, delay_ms: u32, callback: Callback) -> Option<FetchRequestId> {
-        Platform::fetch_after(delay_ms, &self, callback)
+        Platform::fetch_after(delay_ms, &self, Rc::new(callback))
+    }
+
+    /// Send the request after a delay; the response runs `method` on `to`.
+    ///
+    /// Otherwise as [`send_after`](Self::send_after), and refused through a
+    /// [`PartHandle`](crate::PartHandle) whose part is dropped.
+    /// A part dropped before the response gets none.
+    #[must_use]
+    #[cfg(target_arch = "wasm32")]
+    pub fn send_after_on<T: 'static>(
+        self,
+        to: &impl Receiver<T>,
+        delay_ms: u32,
+        method: ResponseMethod<T>,
+    ) -> Option<FetchRequestId> {
+        Platform::fetch_after(delay_ms, &self, on_target(to.__target()?, method))
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 trait Fetcher {
-    fn fetch(request: &FetchRequest<'_>, callback: Callback) -> Option<FetchRequestId>;
+    fn fetch(request: &FetchRequest<'_>, handler: Handler) -> Option<FetchRequestId>;
     fn fetch_after(
         delay_ms: u32,
         request: &FetchRequest<'_>,
-        callback: Callback,
+        handler: Handler,
     ) -> Option<FetchRequestId>;
     fn cancel(request_id: FetchRequestId) -> bool;
     fn header(request_id: FetchRequestId, name: &str) -> Option<String>;
@@ -397,42 +458,23 @@ mod wasm {
     use bmc_wasm_protocol::{FetchRequestId, MediaTypePart};
 
     use super::{
-        Callback, FetchBodyRef, FetchRequest, FetchResponse, FetchResponseBody,
-        ResponseBodyDelivery,
+        FetchBodyRef, FetchRequest, FetchResponse, FetchResponseBody, Handler, ResponseBodyDelivery,
     };
+    use crate::widget;
 
-    #[derive(Debug, Clone, Copy)]
     struct PendingFetch {
-        callback_idx: usize,
+        handler: Handler,
         body_delivery: ResponseBodyDelivery,
     }
 
     thread_local! {
-        /// Registered callbacks indexed by position.
-        static CALLBACKS: RefCell<Vec<Callback>> = const { RefCell::new(Vec::new()) };
         /// Maps request IDs to callback and body-delivery metadata.
         static PENDING: RefCell<HashMap<FetchRequestId, PendingFetch>> = RefCell::new(HashMap::new());
     }
 
-    /// Register a callback and return its index.
-    fn register_callback(cb: Callback) -> usize {
-        CALLBACKS.with(|cbs| {
-            let mut cbs = cbs.borrow_mut();
-            // Reuse existing slot if same function pointer
-            for (i, existing) in cbs.iter().enumerate() {
-                if *existing as usize == cb as usize {
-                    return i;
-                }
-            }
-            let idx = cbs.len();
-            cbs.push(cb);
-            idx
-        })
-    }
-
     fn insert_pending(
         request_id: FetchRequestId,
-        callback: Callback,
+        handler: Handler,
         requested_delivery: ResponseBodyDelivery,
     ) {
         let body_delivery = match requested_delivery {
@@ -445,12 +487,11 @@ mod wasm {
                 }
             }
         };
-        let callback_idx = register_callback(callback);
         PENDING.with(|pending| {
             pending.borrow_mut().insert(
                 request_id,
                 PendingFetch {
-                    callback_idx,
+                    handler,
                     body_delivery,
                 },
             );
@@ -504,7 +545,7 @@ mod wasm {
     pub(super) struct Host;
 
     impl super::Fetcher for Host {
-        fn fetch(request: &FetchRequest<'_>, callback: Callback) -> Option<FetchRequestId> {
+        fn fetch(request: &FetchRequest<'_>, handler: Handler) -> Option<FetchRequestId> {
             let (m_ptr, m_len) = (
                 request.method.as_ptr(),
                 crate::ffi_u32(request.method.len()),
@@ -524,14 +565,14 @@ mod wasm {
                     b_len,
                 )
             })?;
-            insert_pending(request_id, callback, request.body_delivery);
+            insert_pending(request_id, handler, request.body_delivery);
             Some(request_id)
         }
 
         fn fetch_after(
             delay_ms: u32,
             request: &FetchRequest<'_>,
-            callback: Callback,
+            handler: Handler,
         ) -> Option<FetchRequestId> {
             let (m_ptr, m_len) = (
                 request.method.as_ptr(),
@@ -553,7 +594,7 @@ mod wasm {
                     b_len,
                 )
             })?;
-            insert_pending(request_id, callback, request.body_delivery);
+            insert_pending(request_id, handler, request.body_delivery);
             Some(request_id)
         }
 
@@ -627,10 +668,6 @@ mod wasm {
     ///
     /// Guest-delivered bodies arrive through `__alloc`; opted-in bodies remain
     /// host-owned and are valid only while the registered callback runs.
-    #[expect(
-        clippy::same_length_and_capacity,
-        reason = "the host hands back the size it asked __alloc for"
-    )]
     #[unsafe(no_mangle)]
     pub extern "C" fn __on_fetch_response(
         request_id: u32,
@@ -638,12 +675,20 @@ mod wasm {
         body_ptr: u32,
         body_len: u32,
     ) {
+        widget::export(|| on_response(request_id, status, body_ptr, body_len));
+    }
+
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the host hands back the size it asked __alloc for"
+    )]
+    fn on_response(request_id: u32, status: u32, body_ptr: u32, body_len: u32) {
         let Some(request_id) = FetchRequestId::from_wire(request_id) else {
             return;
         };
 
         let pending = PENDING.with(|p| p.borrow_mut().remove(&request_id));
-        let body = match pending.map(|pending| pending.body_delivery) {
+        let body = match pending.as_ref().map(|pending| pending.body_delivery) {
             Some(ResponseBodyDelivery::Host) => FetchResponseBody::Host { len: body_len },
             Some(ResponseBodyDelivery::Guest) | None => {
                 let body = if body_len > 0 && body_ptr != 0 {
@@ -667,12 +712,70 @@ mod wasm {
             body,
         };
 
-        // Copy the callback out before invoking it because it may register another fetch.
-        let cb = pending.and_then(|pending| {
-            CALLBACKS.with(|cbs| cbs.borrow().get(pending.callback_idx).copied())
-        });
-        if let Some(cb) = cb {
-            cb(&response);
+        if let Some(pending) = pending {
+            (pending.handler)(&response);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::cell::Cell;
+
+        use bmc_wasm_protocol::FetchRequestId;
+
+        use super::{__on_fetch_response, insert_pending};
+        use crate::net::{FetchResponse, ResponseBodyDelivery, on_target};
+        use crate::wasm_test;
+        use crate::widget::Part;
+
+        thread_local! {
+            static RESPONSES: Cell<usize> = const { Cell::new(0) };
+        }
+
+        struct Client {
+            statuses: Vec<u32>,
+        }
+
+        impl Client {
+            fn on_response(&mut self, response: &FetchResponse) {
+                RESPONSES.set(RESPONSES.get() + 1);
+                self.statuses.push(response.status);
+            }
+        }
+
+        #[wasm_test]
+        fn a_response_runs_as_a_method_of_the_part() {
+            let part = Part::new(Client {
+                statuses: Vec::new(),
+            });
+            let id = FetchRequestId::from_wire(1).expect("BUG: test ids are non-zero");
+            insert_pending(
+                id,
+                on_target(part.target(), Client::on_response),
+                ResponseBodyDelivery::Guest,
+            );
+
+            crate::widget::as_host(|| __on_fetch_response(id.to_wire(), 200, 0, 0));
+
+            assert_eq!(part.with(|value| value.statuses.clone()), vec![200]);
+        }
+
+        #[wasm_test]
+        fn a_response_after_the_part_is_dropped_reaches_nothing() {
+            let part = Part::new(Client {
+                statuses: Vec::new(),
+            });
+            let id = FetchRequestId::from_wire(2).expect("BUG: test ids are non-zero");
+            insert_pending(
+                id,
+                on_target(part.target(), Client::on_response),
+                ResponseBodyDelivery::Guest,
+            );
+
+            drop(part);
+            crate::widget::as_host(|| __on_fetch_response(id.to_wire(), 200, 0, 0));
+
+            assert_eq!(RESPONSES.get(), 0);
         }
     }
 }

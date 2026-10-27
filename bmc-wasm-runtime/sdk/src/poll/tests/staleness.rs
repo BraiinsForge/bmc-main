@@ -24,8 +24,8 @@ use super::*;
 fn not_stale_while_replies_succeed() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     deliver_at(&mut reg, &mut be, 1, true, 0);
     assert!(
         !reg.is_stale(h, 1_000_000),
@@ -37,8 +37,8 @@ fn not_stale_while_replies_succeed() {
 fn is_stale_once_failure_ages_past_stale_factor() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     deliver_at(&mut reg, &mut be, 1, true, 0);
     deliver_at(&mut reg, &mut be, 2, false, 8);
     assert!(!reg.is_stale(h, 7), "age 7 s is within the 7.5 s threshold");
@@ -49,8 +49,8 @@ fn is_stale_once_failure_ages_past_stale_factor() {
 fn success_clears_staleness() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     deliver_at(&mut reg, &mut be, 1, true, 0);
     deliver_at(&mut reg, &mut be, 2, false, 8);
     assert!(reg.is_stale(h, 8), "stale once the failure ages out");
@@ -64,14 +64,16 @@ fn success_clears_staleness() {
 fn forced_retry_does_not_count_as_a_refresh() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     deliver_at(&mut reg, &mut be, 1, true, 0);
     // A 2xx the handler rejected via retry(): no refresh despite ok=true.
     let id = FetchRequestId::from_wire(2).expect("BUG: test id is nonzero");
-    assert_eq!(reg.begin_reply(id, &mut be), ReplyAction::Deliver(h));
+    assert!(
+        matches!(begin_reply(&mut reg, &mut be, id), ReplyAction::Deliver(index, _) if index == h)
+    );
     reg.request_retry(h);
-    reg.reschedule(h, true, 100, &mut be);
+    reschedule(&mut reg, &mut be, h, true, 100);
     assert_eq!(
         reg.last_success_secs(h),
         Some(0),
@@ -87,8 +89,8 @@ fn forced_retry_does_not_count_as_a_refresh() {
 fn mark_stale_reverts_the_corrupt_reply_to_the_last_good_anchor() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     deliver_at(&mut reg, &mut be, 1, true, 0); // good image banked at t=0
     // A later 2xx banks ok (header passed) but its decode fails async.
     deliver_at(&mut reg, &mut be, 2, true, 100);
@@ -109,8 +111,8 @@ fn mark_stale_reverts_the_corrupt_reply_to_the_last_good_anchor() {
 fn restore_anchor_seeds_only_before_the_first_success() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     // A restored anchor lets a later failed refresh read stale.
     reg.restore_anchor(h, 100);
     assert_eq!(reg.last_success_secs(h), Some(100));
@@ -133,8 +135,8 @@ fn restore_anchor_seeds_only_before_the_first_success() {
 fn reset_staleness_forgets_all_history() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     deliver_at(&mut reg, &mut be, 1, true, 0); // loaded
     deliver_at(&mut reg, &mut be, 2, false, 100); // then failing → stale
     assert!(reg.is_stale(h, 100));
@@ -151,8 +153,8 @@ fn reset_staleness_forgets_all_history() {
 fn is_offline_after_failing_past_grace_without_ever_loading() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG); // interval 5s, stale_factor 1.5 → 7.5s grace
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG); // interval 5s, stale_factor 1.5 → 7.5s grace
+    start(&mut reg, &mut be, h);
     assert!(
         !reg.is_offline(h, 100),
         "a still-loading poll is not offline"
@@ -175,14 +177,15 @@ fn is_offline_after_failing_past_grace_without_ever_loading() {
 fn not_stale_without_prior_success_or_interval() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(
+    let h = register_in(
+        &mut reg,
         build_url,
         Config {
             interval_ms: None,
             ..CFG
         },
     );
-    reg.start(h, &mut be);
+    start(&mut reg, &mut be, h);
     deliver_at(&mut reg, &mut be, 1, false, 0);
     assert!(
         !reg.is_stale(h, 1_000_000),

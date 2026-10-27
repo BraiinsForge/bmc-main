@@ -38,52 +38,58 @@
 //! - missed periods are not replayed: after a stall, one tick arrives
 //!   carrying the number of periods it covers
 //!
-//! [`start`] returns a [`Timer`]; dropping it stops the timer.
-//! A refused [`start`] returns `None` and the host logs why.
+//! Each start form returns a [`Timer`]; dropping it stops the timer.
+//! A refused one returns `None` and the host logs why;
+//! one through a `PartHandle` also returns `None` once its part is dropped, without a log.
 //! [`Timer::set_period`] changes the period of a running timer.
 //!
 //! # Example
 //!
 //! ```ignore
-//! use std::cell::{Cell, RefCell};
+//! use bmc_wasm_sdk::timer::Timer;
+//! use bmc_wasm_sdk::{Building, Widget, widget};
 //!
-//! use bmc_wasm_sdk::timer::{self, Timer};
-//!
-//! thread_local! {
+//! struct Chart {
 //!     // Set by the widget's fetch reply handler.
-//!     static LATEST_HASHRATE: Cell<Option<f64>> = const { Cell::new(None) };
+//!     latest_hashrate: Option<f64>,
 //!     // One entry per minute; `None` marks a minute with no sample.
-//!     static SAMPLES: RefCell<Vec<Option<f64>>> = const { RefCell::new(Vec::new()) };
-//!     static SAMPLER: RefCell<Option<Timer>> = const { RefCell::new(None) };
-//!     static HISTORY_UNAVAILABLE: Cell<bool> = const { Cell::new(false) };
+//!     samples: Vec<Option<f64>>,
+//!     sampler: Option<Timer>,
 //! }
 //!
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn init() {
-//!     let sampler = timer::start(60_000, sample_hashrate);
-//!     if sampler.is_none() {
-//!         // The host has logged why; render a notice instead of an empty chart.
-//!         HISTORY_UNAVAILABLE.set(true);
+//! impl Chart {
+//!     fn sample_hashrate(&mut self, _timer: &Timer, elapsed_periods: u32) {
+//!         let missed_periods = elapsed_periods as usize - 1;
+//!         self.samples.resize(self.samples.len() + missed_periods, None);
+//!         self.samples.push(self.latest_hashrate);
+//!         // The host does not render after a tick by itself.
+//!         bmc_wasm_sdk::request_frame();
 //!     }
-//!     SAMPLER.set(sampler);
 //! }
 //!
-//! fn sample_hashrate(_timer: &Timer, elapsed_periods: u32) {
-//!     let missed_periods = elapsed_periods as usize - 1;
-//!     SAMPLES.with_borrow_mut(|samples| {
-//!         samples.resize(samples.len() + missed_periods, None);
-//!         samples.push(LATEST_HASHRATE.get());
-//!     });
-//!     // The host does not render after a tick by itself.
-//!     bmc_wasm_sdk::request_frame();
+//! #[widget]
+//! impl Widget for Chart {
+//!     fn init(me: &Building<Self>) -> Self {
+//!         // A refused timer leaves `sampler` None: the host has logged why,
+//!         // and `render` shows a notice instead of an empty chart.
+//!         let sampler = Timer::start(me, 60_000, Self::sample_hashrate);
+//!         Self { latest_hashrate: None, samples: Vec::new(), sampler }
+//!     }
+//!
+//!     fn render(&mut self, _delta_ms: u32) { /* … */ }
 //! }
 //! ```
 
 use core::cell::RefCell;
 use core::mem::ManuallyDrop;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use bmc_wasm_protocol::TimerId;
+
+use crate::widget::Target;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::{self, Receiver};
 
 #[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
@@ -96,12 +102,14 @@ unsafe extern "C" {
 /// Called with the timer that fired and the number of periods the tick covers.
 pub type TimerCallback = fn(&Timer, u32);
 
+type Handler = Rc<dyn Fn(&Timer, u32)>;
+
 /// The only handle to a running timer; dropping it stops the timer.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Timer(TimerId);
 
 thread_local! {
-    static CALLBACKS: RefCell<HashMap<TimerId, TimerCallback>> = RefCell::new(HashMap::new());
+    static CALLBACKS: RefCell<HashMap<TimerId, Handler>> = RefCell::new(HashMap::new());
 }
 
 /// Start a timer whose first tick arrives one period from now.
@@ -112,13 +120,41 @@ thread_local! {
 #[cfg(target_arch = "wasm32")]
 #[must_use = "dropping the returned Timer stops it"]
 pub fn start(period_ms: u32, callback: TimerCallback) -> Option<Timer> {
+    start_with(period_ms, Rc::new(callback))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_with(period_ms: u32, callback: Handler) -> Option<Timer> {
     let id = TimerId::from_wire(unsafe { host_timer_start(period_ms) })?;
-    CALLBACKS.with(|callbacks| callbacks.borrow_mut().insert(id, callback));
+    register(id, callback);
     Some(Timer(id))
+}
+
+/// A timer's tick as a method of the value it is delivered to.
+pub type TimerMethod<T> = fn(&mut T, &Timer, u32);
+
+fn on_target<T: 'static>(target: Target<T>, method: TimerMethod<T>) -> Handler {
+    Rc::new(move |timer: &Timer, elapsed_periods| {
+        target.deliver(|value| method(value, timer, elapsed_periods));
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
 impl Timer {
+    /// Start a timer whose ticks run `method` on `to`.
+    ///
+    /// Otherwise as [`start`], and refused through a [`PartHandle`](crate::PartHandle)
+    /// whose part is dropped.
+    /// Ticks after the part is dropped run nothing.
+    #[must_use = "dropping the returned Timer stops it"]
+    pub fn start<T: 'static>(
+        to: &impl Receiver<T>,
+        period_ms: u32,
+        method: TimerMethod<T>,
+    ) -> Option<Timer> {
+        start_with(period_ms, on_target(to.__target()?, method))
+    }
+
     /// Run the timer at `period_ms`, its next tick one new period from now.
     ///
     /// The timer keeps its id and callback,
@@ -149,13 +185,17 @@ impl Drop for Timer {
     }
 }
 
+fn register(id: TimerId, callback: Handler) {
+    CALLBACKS.with(|callbacks| callbacks.borrow_mut().insert(id, callback));
+}
+
 fn unregister(id: TimerId) {
     CALLBACKS.with(|callbacks| callbacks.borrow_mut().remove(&id));
 }
 
 fn dispatch(id: TimerId, elapsed_periods: u32) {
-    // Copied out first: the callback may start or stop timers itself.
-    let callback = CALLBACKS.with(|callbacks| callbacks.borrow().get(&id).copied());
+    // Cloned out first: the callback may start or stop timers itself.
+    let callback = CALLBACKS.with(|callbacks| callbacks.borrow().get(&id).cloned());
     if let Some(callback) = callback {
         // Borrowed for the tick only; dropping it would stop the timer.
         callback(&ManuallyDrop::new(Timer(id)), elapsed_periods);
@@ -166,19 +206,23 @@ fn dispatch(id: TimerId, elapsed_periods: u32) {
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_timer(timer_id: u32, elapsed_periods: u32) {
-    if let Some(id) = TimerId::from_wire(timer_id) {
-        dispatch(id, elapsed_periods);
-    }
+    widget::export(|| {
+        if let Some(id) = TimerId::from_wire(timer_id) {
+            dispatch(id, elapsed_periods);
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use core::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     use bmc_wasm_protocol::TimerId;
 
-    use super::{CALLBACKS, Timer, TimerCallback, dispatch};
+    use super::{CALLBACKS, Timer, TimerCallback, dispatch, on_target};
     use crate::wasm_test;
+    use crate::widget::Part;
 
     thread_local! {
         static FIRED: Cell<Option<(TimerId, u32)>> = const { Cell::new(None) };
@@ -190,7 +234,7 @@ mod tests {
     }
 
     fn register(raw: u32, callback: TimerCallback) {
-        CALLBACKS.with(|callbacks| callbacks.borrow_mut().insert(id(raw), callback));
+        super::register(id(raw), Rc::new(callback));
     }
 
     fn is_registered(raw: u32) -> bool {
@@ -243,5 +287,89 @@ mod tests {
         dispatch(id(4), 1);
 
         assert!(!is_registered(4));
+    }
+
+    struct Sampler {
+        ticks: u32,
+        timer: Option<Timer>,
+    }
+
+    impl Sampler {
+        fn tick(&mut self, _timer: &Timer, elapsed_periods: u32) {
+            self.ticks += elapsed_periods;
+            TICKS.set(TICKS.get() + 1);
+        }
+
+        fn stop_own_timer(&mut self, _timer: &Timer, _elapsed_periods: u32) {
+            self.timer.take();
+        }
+    }
+
+    thread_local! {
+        static TICKS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    fn sampler() -> Part<Sampler> {
+        Part::new(Sampler {
+            ticks: 0,
+            timer: None,
+        })
+    }
+
+    // The tick export exists on wasm32 only.
+    #[cfg(target_arch = "wasm32")]
+    mod export {
+        use super::{TICKS, Timer, register};
+        use crate::{wasm_test, widget};
+
+        fn defer_a_tick(_timer: &Timer, _elapsed_periods: u32) {
+            widget::defer(|| TICKS.set(TICKS.get() + 1));
+        }
+
+        #[wasm_test]
+        fn work_deferred_from_a_tick_runs_once_the_tick_returned() {
+            register(7, defer_a_tick);
+
+            crate::timer::__on_timer(7, 1);
+
+            assert_eq!(
+                TICKS.get(),
+                1,
+                "the tick's export drains before it hands back to the host"
+            );
+        }
+    }
+
+    #[wasm_test]
+    fn a_part_stops_its_own_timer_from_the_tick() {
+        let mut part = sampler();
+        super::register(id(6), on_target(part.target(), Sampler::stop_own_timer));
+        part.with_mut(|value| value.timer = Some(Timer(id(6))));
+
+        dispatch(id(6), 1);
+
+        assert!(!is_registered(6));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn a_tick_from_the_host_runs_as_a_method_of_the_part() {
+        let part = sampler();
+        super::register(id(8), on_target(part.target(), Sampler::tick));
+
+        crate::widget::as_host(|| super::__on_timer(8, 2));
+
+        assert_eq!(part.with(|value| value.ticks), 2);
+    }
+
+    #[wasm_test]
+    fn a_dropped_part_gets_no_ticks() {
+        let part = sampler();
+        super::register(id(7), on_target(part.target(), Sampler::tick));
+        drop(part);
+
+        dispatch(id(7), 1);
+
+        assert_eq!(TICKS.get(), 0);
     }
 }

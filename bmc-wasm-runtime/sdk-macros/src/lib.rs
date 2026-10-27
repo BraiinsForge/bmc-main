@@ -20,7 +20,9 @@
 
 //! Proc macros for the WASM widget SDK.
 //!
-//! Provides `json!` for compile-time JSON templates and `fmt!` backing macro.
+//! Provides `json!` for compile-time JSON templates, the `fmt!` backing macro,
+//! `tz!` for timezone literals, `#[wasm_test]` for tests that run on both targets,
+//! and `#[widget]`, which exports a widget struct's hooks.
 //!
 //! Asset macros (`include_svg!`, `include_bitmap!`, `include_mesh!`,
 //! `include_nine_patch!`, `include_skin!`, `include_audio!`) live in
@@ -30,6 +32,7 @@ mod fmt_capture;
 mod json;
 mod tz;
 mod wasm_test;
+mod widget;
 
 use proc_macro::TokenStream;
 
@@ -88,6 +91,8 @@ pub fn tz(input: TokenStream) -> TokenStream {
 /// A test that runs natively under libtest and on wasm32 under the wasm test runner.
 ///
 /// Write `#[should_panic]` and `#[ignore]` after it, as with `#[test]`.
+/// The body runs as a host export: a method callback may deliver into
+/// a `Part`, and work deferred to the export's end runs once the body returns.
 ///
 /// ```ignore
 /// use bmc_wasm_sdk::wasm_test;
@@ -108,4 +113,27 @@ pub fn tz(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn wasm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     wasm_test::expand(attr.into(), item.into()).into()
+}
+
+/// The host exports for a widget written as a struct.
+///
+/// Put it on the `impl Widget for …` block. It exports `init`, `render` and
+/// `unload`, plus each optional hook the impl writes, and lets the type pass
+/// `self` to run its own methods as callbacks (`Timer::start(self, period, Self::tick)`).
+/// A hand-written export of a hook it leaves out fails to build for wasm32: it holds the name.
+///
+/// ```ignore
+/// use bmc_wasm_sdk::{Building, Widget, widget};
+///
+/// struct RandomFact { fact: Option<String> }
+///
+/// #[widget]
+/// impl Widget for RandomFact {
+///     fn init(_: &Building<Self>) -> Self { Self { fact: None } }
+///     fn render(&mut self, _delta_ms: u32) { /* … */ }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn widget(attr: TokenStream, item: TokenStream) -> TokenStream {
+    widget::expand(attr.into(), item.into()).into()
 }

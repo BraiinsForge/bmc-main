@@ -24,14 +24,15 @@ use super::*;
 fn enable_from_disabled_kicks_after_debounce() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(
+    let h = register_in(
+        &mut reg,
         build_url,
         Config {
             enabled: false,
             ..CFG
         },
     );
-    reg.set_enabled(h, true, &mut be);
+    set_enabled(&mut reg, &mut be, h, true);
     assert_eq!(be.sends.len(), 1);
     assert_eq!(be.sends[0].1, Some(300));
 }
@@ -40,9 +41,9 @@ fn enable_from_disabled_kicks_after_debounce() {
 fn disable_cancels_queued_request() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
-    reg.set_enabled(h, false, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    set_enabled(&mut reg, &mut be, h, false);
     assert_eq!(be.cancels.len(), 1);
     assert!(!reg.enabled(h));
 }
@@ -51,9 +52,9 @@ fn disable_cancels_queued_request() {
 fn set_enabled_is_idempotent() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
-    reg.set_enabled(h, true, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    set_enabled(&mut reg, &mut be, h, true);
     assert_eq!(be.sends.len(), 1);
 }
 
@@ -61,14 +62,15 @@ fn set_enabled_is_idempotent() {
 fn enable_after_schedules_at_the_given_delay() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(
+    let h = register_in(
+        &mut reg,
         build_url,
         Config {
             enabled: false,
             ..CFG
         },
     );
-    reg.set_enabled_after(h, 7_000, &mut be);
+    set_enabled_after(&mut reg, &mut be, h, 7_000);
     assert!(reg.enabled(h));
     assert_eq!(be.sends.len(), 1);
     assert_eq!(be.sends[0].1, Some(7_000));
@@ -79,10 +81,10 @@ fn reply_to_disabled_poll_stops_without_reschedule() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
     be.cancel_result = false;
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
-    reg.set_enabled(h, false, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    set_enabled(&mut reg, &mut be, h, false);
     let action = deliver(&mut reg, &mut be, 1, true);
-    assert_eq!(action, ReplyAction::Stopped);
+    assert!(matches!(action, ReplyAction::Stopped));
     assert_eq!(be.sends.len(), 1);
 }

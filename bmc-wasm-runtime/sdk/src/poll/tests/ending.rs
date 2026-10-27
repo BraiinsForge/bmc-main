@@ -24,8 +24,8 @@ use super::*;
 fn an_ended_poll_cancels_its_live_fetch() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
 
     reg.release(h, &mut be);
 
@@ -37,12 +37,15 @@ fn a_reply_already_queued_for_an_ended_poll_is_not_delivered() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
     be.cancel_result = false;
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
 
     reg.release(h, &mut be);
 
-    assert_eq!(deliver(&mut reg, &mut be, 1, true), ReplyAction::Ignore);
+    assert!(matches!(
+        deliver(&mut reg, &mut be, 1, true),
+        ReplyAction::Ignore
+    ));
     assert_eq!(be.sends.len(), 1, "an ended poll never fetches again");
 }
 
@@ -50,14 +53,14 @@ fn a_reply_already_queued_for_an_ended_poll_is_not_delivered() {
 fn an_ended_poll_ignores_later_calls() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     reg.release(h, &mut be);
 
-    reg.invalidate(h, &mut be);
-    reg.set_enabled(h, false, &mut be);
-    reg.set_enabled(h, true, &mut be);
-    reg.set_enabled_after(h, 1_000, &mut be);
+    invalidate(&mut reg, &mut be, h);
+    set_enabled(&mut reg, &mut be, h, false);
+    set_enabled(&mut reg, &mut be, h, true);
+    set_enabled_after(&mut reg, &mut be, h, 1_000);
 
     assert_eq!(be.sends.len(), 1);
     assert!(!reg.enabled(h));
@@ -67,13 +70,15 @@ fn an_ended_poll_ignores_later_calls() {
 fn a_poll_ended_by_its_reply_handler_is_not_rescheduled() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = reg.register(build_url, CFG);
-    reg.start(h, &mut be);
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
     let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
-    assert_eq!(reg.begin_reply(id, &mut be), ReplyAction::Deliver(h));
+    assert!(
+        matches!(begin_reply(&mut reg, &mut be, id), ReplyAction::Deliver(index, _) if index == h)
+    );
 
     reg.release(h, &mut be);
-    reg.reschedule(h, true, 0, &mut be);
+    reschedule(&mut reg, &mut be, h, true, 0);
 
     assert_eq!(be.sends.len(), 1);
 }
@@ -82,10 +87,10 @@ fn a_poll_ended_by_its_reply_handler_is_not_rescheduled() {
 fn an_ended_polls_index_is_never_reused() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let first = reg.register(build_url, CFG);
+    let first = register_in(&mut reg, build_url, CFG);
     reg.release(first, &mut be);
 
-    let second = reg.register(build_url, CFG);
+    let second = register_in(&mut reg, build_url, CFG);
 
     assert_ne!(first, second);
 }

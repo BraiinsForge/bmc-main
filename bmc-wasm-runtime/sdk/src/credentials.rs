@@ -30,7 +30,7 @@
 //! and to name the account in the UI.
 //!
 //! Read it on the render path.
-//! The host invokes an exported `on_credentials_update` immediately
+//! The host runs the widget's `on_credentials_update` immediately
 //! when a binding changes, but delivery and hook invocation do not repaint.
 //! Call `request_frame()` or `request_frame_after()`
 //! when the change affects visible output.

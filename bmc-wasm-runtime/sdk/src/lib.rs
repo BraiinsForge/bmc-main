@@ -31,6 +31,38 @@
 //!
 //! # Widget lifecycle
 //!
+//! A widget is a struct implementing [`Widget`], with `#[widget]` on the
+//! impl block. The attribute exports `init`, `render`, `unload` and the
+//! optional hooks the impl writes; the host calls only what is exported.
+//! See the [`mod@widget`] module for the callbacks that run as methods
+//! of the struct, and for [`Part`], the box a sub-object of the widget
+//! lives in so that its own methods can be callbacks.
+//!
+//! ```rust,ignore
+//! use bmc_wasm_sdk::*;
+//!
+//! struct Clock {
+//!     ticks: usize,
+//! }
+//!
+//! #[widget]
+//! impl Widget for Clock {
+//!     fn init(_: &Building<Self>) -> Self {
+//!         Self { ticks: 0 }
+//!     }
+//!
+//!     fn render(&mut self, _delta_ms: u32) {
+//!         let WidgetSize { width, height, .. } = widget_size();
+//!         let _ = render_ui(width, height, text(fmt!("{}", self.ticks), style!(size: 24)));
+//!     }
+//!
+//!     fn on_touch(&mut self) {
+//!         self.ticks += 1;
+//!         request_frame();
+//!     }
+//! }
+//! ```
+//!
 //! A widget process spends its life in one of four lifecycle phases.
 //! The host tracks the active phase and uses it to gate host imports
 //! — some trap when called from the wrong phase, others soft-fail
@@ -60,8 +92,8 @@
 //! ```
 //!
 //! `on_params_update`, `on_system_update`, and `on_credentials_update` are
-//! independent exports — each fires only for its own channel's delivery. A
-//! widget can export any combination of them, or none.
+//! independent hooks — each fires only for its own channel's delivery. A
+//! widget can write any combination of them, or none.
 //!
 //! Delivery updates the snapshot and invokes the optional hook, but does not
 //! itself schedule a render. Call `request_frame()` or `request_frame_after()`
@@ -76,18 +108,18 @@
 //! ### `init`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn init() { /* one-shot setup */ }
+//! fn init(me: &Building<Self>) -> Self { /* one-shot setup */ }
 //! ```
 //!
-//! Optional. The host runs it once during instantiation if exported.
+//! The host runs it once during instantiation; it builds the instance the
+//! other hooks run on.
 //! Use for setup that must complete before the first `render`: KV reads to
 //! restore persisted state, kick-off fetches whose response will populate the
 //! first frame. (The SDK auto-installs the panic hook — no widget setup needed.)
 //!
 //! Viewport dimensions are not arguments — call [`widget_size`] from anywhere
 //! (in `init`, in `render`, in helpers) and you get the same `WidgetSize`
-//! on every call. Most widgets don't need a thread-local copy at all.
+//! on every call. Most widgets don't need a copy of it at all.
 //!
 //! The initial params snapshot is already staged by the time `init` runs
 //! — `params::current()` (or the typed accessor emitted by `bmc-widget-codegen`)
@@ -96,10 +128,9 @@
 //! ### `render(delta_ms)`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn render(delta_ms: u32) {
+//! fn render(&mut self, delta_ms: u32) {
 //!     let WidgetSize { width: w, height: h, .. } = widget_size();
-//!     render_ui(w, h, build_tree(/* … */));
+//!     render_ui(w, h, self.build_tree(/* … */));
 //! }
 //! ```
 //!
@@ -114,8 +145,7 @@
 //! ### `on_params_update`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_params_update() {
+//! fn on_params_update(&mut self) {
 //!     let Some(previous) = Params::previous() else { return };
 //!     let changed = Params::current().changed_keys(&previous);
 //!     // …
@@ -141,8 +171,7 @@
 //! ### `on_system_update`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_system_update() {
+//! fn on_system_update(&mut self) {
 //!     let cur = system::current();
 //!     let prev = system::previous();
 //!     // diff cur vs prev field-by-field
@@ -162,8 +191,7 @@
 //! ### `on_credentials_update`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_credentials_update() {
+//! fn on_credentials_update(&mut self) {
 //!     let current = credentials::current();
 //!     let previous = credentials::previous();
 //!     if current != previous {
@@ -181,8 +209,7 @@
 //! ### `on_touch`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_touch() {
+//! fn on_touch(&mut self) {
 //!     request_frame();
 //! }
 //! ```
@@ -195,7 +222,7 @@
 //! scroll offsets) — `on_touch`'s job is only to decide whether that render
 //! should happen, by calling `request_frame` (or `request_frame_after`).
 //!
-//! A widget that consumes touch **must** export this hook. The host does not
+//! A widget that consumes touch **must** write this hook. The host does not
 //! render on touch by itself; without `on_touch` (and a frame request from it)
 //! a touch produces no render, so buttons, sliders, and scroll views stay
 //! inert. A purely passive widget that ignores touch simply omits it.
@@ -203,9 +230,8 @@
 //! ### `on_network_update`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_network_update() {
-//!     if network_is_on_screen() {
+//! fn on_network_update(&mut self) {
+//!     if self.network_is_on_screen() {
 //!         request_frame();
 //!     }
 //! }
@@ -226,26 +252,24 @@
 //! ### `unload`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn unload() { /* persist state, flush buffers */ }
+//! fn unload(self) { /* persist state, flush buffers */ }
 //! ```
 //!
 //! Optional. The host runs it once, synchronously, immediately before the widget instance
 //! is dropped (scene swap, hot reload, shutdown). The place to flush in-memory state to KV.
+//! It takes the instance by value, so it is the last call the instance gets.
 //! A widget that trapped, running out of fuel included, is dropped without it.
 //! Frame requests fired from `unload` are silently ignored — the runtime is about to be torn down.
 //!
 //! ### `on_wake` / `on_sleep`
 //!
 //! ```rust,ignore
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_sleep() { /* release off-scene resources */ }
-//! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_wake() { /* rebuild guest state before the first frame */ }
+//! fn on_sleep(&mut self) { /* release off-scene resources */ }
+//! fn on_wake(&mut self) { /* rebuild guest state before the first frame */ }
 //! ```
 //!
 //! Optional, paired with the dormancy edge. `on_sleep` fires when the widget
-//! scrolls off-scene; `on_wake` fires before the first frame when it returns.
+//! scrolls off-scene; `on_wake` fires before the first frame and each time it returns.
 //! After `on_sleep`, the host releases package- and cache-backed renderer payloads
 //! while preserving their IDs. `on_wake` runs without restoring them. The host
 //! restores a package/cache ID at its first draw,
@@ -313,7 +337,7 @@ pub(crate) fn ffi_u32(value: usize) -> u32 {
 }
 
 // `#[wasm_test]` names the SDK as `::bmc_wasm_sdk`, which the SDK's own tests reach through this.
-#[cfg(all(test, target_arch = "wasm32"))]
+#[cfg(test)]
 extern crate self as bmc_wasm_sdk;
 
 // SDK instantiation handshake the host calls once: installs the panic hook,
@@ -398,6 +422,7 @@ pub mod types;
 pub mod tz;
 pub mod udp_broadcast;
 pub mod url;
+pub mod widget;
 pub mod ws;
 pub mod xml;
 
@@ -422,6 +447,7 @@ pub use poll::{Config as PollConfig, FetchSpec, Handle as PollHandle, Method as 
 pub use slot::*;
 pub use tz::Tz;
 pub use ufmt;
+pub use widget::{Building, Me, Part, PartHandle, Receiver, Root, Widget};
 #[cfg(target_arch = "wasm32")]
 pub use ws::ws_connect;
 pub use ws::{Ws, WsEvent, WsHostClose};

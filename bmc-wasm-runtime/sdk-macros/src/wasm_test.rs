@@ -50,6 +50,11 @@ fn try_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
     let mut function: ItemFn = syn::parse2(item)?;
     check_signature(&function)?;
     let attributes = take_test_attributes(&mut function.attrs)?;
+    let body = function.block;
+    function.block = Box::new(parse_quote!({
+        let body = || #body;
+        ::bmc_wasm_sdk::widget::export(body);
+    }));
 
     let name = &function.sig.ident;
     let path = quote!(::core::module_path!(), "::", ::core::stringify!(#name));
