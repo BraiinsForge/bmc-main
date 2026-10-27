@@ -54,7 +54,9 @@ pub(crate) mod wire;
 pub use animation::*;
 pub use arc::*;
 pub use assets::*;
-pub use codec::{DecodeError, Decoded, decode, encode, encode_into};
+pub use codec::{
+    DecodeError, Decoded, EncodeError, decode, encode, encode_into, try_encode, try_encode_into,
+};
 pub use colors::*;
 pub use components::{
     modal::*, notification::*, number_input::*, progress_bar::*, relative_time::*,

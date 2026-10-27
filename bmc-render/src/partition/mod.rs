@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Static/dynamic partition of a widget tree: the keys of its static half.
+//! Static/dynamic partition of a widget or overlay tree: the keys of its static half.
 //!
 //! Which nodes and draws are dynamic is [`bmc_ui::partition`]'s call,
 //! re-exported here; this module hashes the static half
@@ -59,6 +59,28 @@ pub fn static_bytes_key(data: &[u8], dynamic_ranges: &[Range<usize>]) -> u64 {
     }
     hash_segment(&data[start..], &mut hasher);
     hasher.finish()
+}
+
+/// Key the static half of a tree built on the host, as a guest's is keyed from its wire bytes.
+///
+/// Encodes the tree and keys the bytes as [`crate::tree::deserialize_tree_keyed`] keys a guest's,
+/// so host-built and guest trees split static from dynamic in one place.
+/// The wire format rounds `line_height` to hundredths, so a finer change keeps the key.
+///
+/// `None`, logged, for a tree the wire format cannot carry or the decoder refuses,
+/// such as one with a negative extent.
+#[must_use]
+pub fn tree_static_key(node: &Node) -> Option<u64> {
+    let keyed = bmc_ui::try_encode(node)
+        .map_err(anyhow::Error::from)
+        .and_then(|bytes| crate::tree::deserialize_tree_keyed(&bytes));
+    match keyed {
+        Ok((_, key)) => Some(key),
+        Err(err) => {
+            tracing::warn!("host-built tree has no static key: {err:#}");
+            None
+        }
+    }
 }
 
 fn hash_segment<H: Hasher>(segment: &[u8], hasher: &mut H) {
@@ -252,5 +274,7 @@ fn hash_debug<H: Hasher>(value: &dyn fmt::Debug, hasher: &mut H) {
     let _ = write!(HashWriter(hasher), "{value:?}");
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 #[cfg(test)]
 mod tests;

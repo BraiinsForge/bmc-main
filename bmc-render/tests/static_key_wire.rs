@@ -18,13 +18,15 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The static-half key the decoder derives from encoded trees.
+//! The static-half key the decoder derives from encoded trees,
+//! and the one a tree built on the host gets.
 
+use bmc_render::partition::tree_static_key;
 use bmc_render::tree::deserialize_tree_keyed;
 use bmc_ui::{
     AnimProperty, Color, Draw, Easing, LoopMode, Node, ProgressMode, PropsData, RelTimeClamp,
-    RelTimeFormat, SystemTime, TextStyle, canvas, col, encode, modal, progress_bar,
-    relative_time_live, text,
+    RelTimeFormat, SystemTime, TextStyle, canvas, col, dimmed, encode, modal, progress_bar,
+    relative_time_live, spacer, text,
 };
 
 fn key(node: &Node) -> u64 {
@@ -234,4 +236,59 @@ fn a_canvas_gaining_or_losing_its_dynamic_draw_moves_the_key() {
         key(&overlaid(vec![spinning(square(0.0))])),
         key(&overlaid(Vec::new())),
     );
+}
+
+/// Static and dynamic content side by side, through every kind of dynamic split:
+/// host-driven nodes, a modal's body, and a canvas banded around its animation.
+fn mixed(title: &str, progress: f32, anchor: i64, spin_x: f32) -> Node {
+    col(
+        PropsData::default(),
+        [
+            label(title),
+            meter(progress),
+            dimmed(0.5, clock(anchor)),
+            canvas(
+                PropsData::default(),
+                [square(0.0), spinning(square(spin_x)), square(3.0)],
+            ),
+            modal("details", true, "Details", vec![label(title)], None),
+        ],
+    )
+}
+
+fn host_key(node: &Node) -> u64 {
+    tree_static_key(node).expect("BUG: the host decodes every tree the codec encodes")
+}
+
+#[test]
+fn a_host_built_tree_keys_as_its_wire_bytes() {
+    let tree = mixed("Upgrade", 0.25, 100, 1.0);
+    assert_eq!(host_key(&tree), key(&tree));
+}
+
+#[test]
+fn a_host_built_tree_holds_its_key_when_only_dynamic_content_moves() {
+    assert_eq!(
+        host_key(&mixed("Upgrade", 0.25, 100, 1.0)),
+        host_key(&mixed("Upgrade", 0.75, 200, 2.0)),
+    );
+}
+
+#[test]
+fn a_host_built_tree_moves_its_key_on_a_static_edit() {
+    assert_ne!(
+        host_key(&mixed("Upgrade", 0.25, 100, 1.0)),
+        host_key(&mixed("Upgrading", 0.25, 100, 1.0)),
+    );
+}
+
+#[test]
+fn a_host_built_tree_the_decoder_refuses_has_no_key() {
+    assert_eq!(tree_static_key(&spacer(-1.0)), None);
+}
+
+#[test]
+fn a_host_built_tree_past_the_wire_format_has_no_key() {
+    let past_a_length_prefix = "x".repeat(usize::from(u16::MAX) + 1);
+    assert_eq!(tree_static_key(&label(&past_a_length_prefix)), None);
 }

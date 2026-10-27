@@ -542,6 +542,9 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
 
 #[cfg(test)]
 mod tests {
+    use bmc_render::partition::test_support::move_dynamic_content;
+    use bmc_render::partition::tree_static_key;
+
     use super::*;
 
     fn test_icons() -> UpgradeIcons {
@@ -895,6 +898,55 @@ mod tests {
         }
     }
 
+    /// Every surface an upgrade shows on: the kind, its tier and the size it is laid out at.
+    const SURFACES: [(UpgradeKind, SurfaceTier, (u32, u32)); 6] = [
+        (
+            UpgradeKind::Firmware,
+            SurfaceTier::FullscreenLarge,
+            (1_280, 480),
+        ),
+        (
+            UpgradeKind::Firmware,
+            SurfaceTier::FullscreenMedium,
+            (480, 320),
+        ),
+        (
+            UpgradeKind::Firmware,
+            SurfaceTier::FullscreenSmall,
+            (320, 240),
+        ),
+        (UpgradeKind::Packages, SurfaceTier::CardLarge, (384, 192)),
+        (UpgradeKind::Packages, SurfaceTier::CardSmall, (240, 120)),
+        (
+            UpgradeKind::Packages,
+            SurfaceTier::FullscreenSmall,
+            (320, 240),
+        ),
+    ];
+
+    /// The phases of one `kind` of run, through to failure.
+    fn run_views(kind: UpgradeKind) -> [UpgradeView; 5] {
+        let download = if kind == UpgradeKind::Firmware {
+            UpgradePhase::FirmwareDownloading
+        } else {
+            UpgradePhase::PackageRealizing
+        };
+        [
+            running_view(kind, None, None),
+            running_view(
+                kind,
+                Some(download),
+                Some(DownloadProgress {
+                    downloaded_bytes: 82_000_000,
+                    total_bytes: Some(151_000_000),
+                }),
+            ),
+            running_view(kind, Some(download), None),
+            running_view(kind, Some(UpgradePhase::PackageBuilding), None),
+            UpgradeView::Failed { kind },
+        ]
+    }
+
     /// The icon holds its place for a whole run. What sits under it changes from
     /// phase to phase — a bar arrives, byte counts come and go, the terminal
     /// screen has neither — and an icon positioned against that content walks up
@@ -914,49 +966,8 @@ mod tests {
                 .expect("BUG: every upgrade screen draws an icon")
         };
 
-        for (kind, tier, size) in [
-            (
-                UpgradeKind::Firmware,
-                SurfaceTier::FullscreenLarge,
-                (1_280, 480),
-            ),
-            (
-                UpgradeKind::Firmware,
-                SurfaceTier::FullscreenMedium,
-                (480, 320),
-            ),
-            (
-                UpgradeKind::Firmware,
-                SurfaceTier::FullscreenSmall,
-                (320, 240),
-            ),
-            (UpgradeKind::Packages, SurfaceTier::CardLarge, (384, 192)),
-            (UpgradeKind::Packages, SurfaceTier::CardSmall, (240, 120)),
-            (
-                UpgradeKind::Packages,
-                SurfaceTier::FullscreenSmall,
-                (320, 240),
-            ),
-        ] {
-            let download = if kind == UpgradeKind::Firmware {
-                UpgradePhase::FirmwareDownloading
-            } else {
-                UpgradePhase::PackageRealizing
-            };
-            let views = [
-                running_view(kind, None, None),
-                running_view(
-                    kind,
-                    Some(download),
-                    Some(DownloadProgress {
-                        downloaded_bytes: 82_000_000,
-                        total_bytes: Some(151_000_000),
-                    }),
-                ),
-                running_view(kind, Some(download), None),
-                running_view(kind, Some(UpgradePhase::PackageBuilding), None),
-                UpgradeView::Failed { kind },
-            ];
+        for (kind, tier, size) in SURFACES {
+            let views = run_views(kind);
             let tops: Vec<f32> = views
                 .iter()
                 .map(|view| icon_y(&surface_draws(view, size, tier)))
@@ -1125,5 +1136,69 @@ mod tests {
             Draw::Text { text, style, .. }
                 if text == "Update Failed" && style.color == WHITE
         ));
+    }
+
+    fn firmware_download_tree(progress: Option<DownloadProgress>) -> Node {
+        build_upgrade_tree(
+            &running_view(
+                UpgradeKind::Firmware,
+                Some(UpgradePhase::FirmwareDownloading),
+                progress,
+            ),
+            Surface {
+                width: 1_280,
+                height: 480,
+                tier: SurfaceTier::fullscreen_for_width(1_280),
+            },
+            test_icons(),
+        )
+    }
+
+    fn static_key(tree: &Node) -> u64 {
+        tree_static_key(tree).expect("BUG: the upgrade tree decodes")
+    }
+
+    fn downloaded(downloaded_bytes: u64) -> DownloadProgress {
+        DownloadProgress {
+            downloaded_bytes,
+            total_bytes: Some(1_000_000),
+        }
+    }
+
+    #[test]
+    fn a_determinate_progress_step_moves_the_static_key() {
+        // The bar and its percentage are plain draws, not dynamic ones.
+        assert_ne!(
+            static_key(&firmware_download_tree(Some(downloaded(250_000)))),
+            static_key(&firmware_download_tree(Some(downloaded(750_000)))),
+        );
+    }
+
+    #[test]
+    fn the_static_key_holds_when_only_the_active_bar_moves() {
+        let tree = firmware_download_tree(None);
+        let mut moved = tree.clone();
+        assert!(move_dynamic_content(&mut moved) > 0);
+        assert_eq!(static_key(&tree), static_key(&moved));
+    }
+
+    #[test]
+    fn every_surface_and_phase_has_a_static_key() {
+        for (kind, tier, size) in SURFACES {
+            for view in run_views(kind)
+                .iter()
+                .chain([&UpgradeView::Succeeded { kind }])
+            {
+                let surface = Surface {
+                    width: size.0,
+                    height: size.1,
+                    tier,
+                };
+                assert!(
+                    tree_static_key(&build_upgrade_tree(view, surface, test_icons())).is_some(),
+                    "{view:?} on {tier:?} {size:?}"
+                );
+            }
+        }
     }
 }

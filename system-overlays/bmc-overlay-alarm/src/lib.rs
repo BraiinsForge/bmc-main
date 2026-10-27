@@ -501,6 +501,8 @@ impl SystemOverlay for AlarmOverlay {
 
 #[cfg(test)]
 mod tests {
+    use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
+    use bmc_render::partition::tree_static_key;
     use bmc_render::renderer::test_support::ShapingRecorder;
 
     use super::*;
@@ -538,5 +540,54 @@ mod tests {
         overlay.on_hidden();
         render(&mut overlay.render_state, FrameKind::AnimationOnly);
         assert!(!overlay.render_state.tree.replayed_last_frame());
+    }
+
+    fn static_key(tree: &Node) -> u64 {
+        tree_static_key(tree).expect("BUG: the alarm tree decodes")
+    }
+
+    #[test]
+    fn a_time_change_moves_the_static_key() {
+        let later = AlarmView {
+            time: "7:31".to_owned(),
+            ..view()
+        };
+        assert_ne!(
+            static_key(&build_alarm_ui_tree(&view(), SIZE)),
+            static_key(&build_alarm_ui_tree(&later, SIZE)),
+        );
+    }
+
+    /// The alarm does not animate yet, so it gains a spinner to move.
+    #[test]
+    fn the_static_key_holds_when_only_dynamic_content_moves() {
+        let mut tree = build_alarm_ui_tree(&view(), SIZE);
+        assert!(add_animated_draw(&mut tree), "the alarm has no canvas");
+        let mut moved = tree.clone();
+        assert!(move_dynamic_content(&mut moved) > 0);
+        assert_eq!(static_key(&tree), static_key(&moved));
+    }
+
+    #[test]
+    fn every_alarm_on_every_display_has_a_static_key() {
+        let views = [
+            view(),
+            AlarmView {
+                snooze_allowed: false,
+                ..view()
+            },
+            AlarmView {
+                label: String::new(),
+                ..view()
+            },
+        ];
+        for size in [SIZE, (1_280, 480), (480, 480), (480, 320), (320, 240)] {
+            for view in &views {
+                assert!(
+                    tree_static_key(&build_alarm_ui_tree(view, size)).is_some(),
+                    "{view:?} at {size:?}"
+                );
+            }
+        }
     }
 }

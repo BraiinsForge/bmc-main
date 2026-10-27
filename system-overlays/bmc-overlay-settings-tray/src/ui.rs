@@ -661,6 +661,8 @@ pub fn build_tree(
 
 #[cfg(test)]
 mod tests {
+    use bmc_render::partition::test_support::move_dynamic_content;
+    use bmc_render::partition::tree_static_key;
     use bmc_render::ui::{Node, PropsData, TextOverflow};
 
     use super::*;
@@ -1274,6 +1276,101 @@ mod tests {
                     TextOverflow::Ellipsis,
                     "{panel:?}"
                 );
+            }
+        }
+    }
+
+    fn static_key(tree: &Node) -> u64 {
+        tree_static_key(tree).expect("BUG: the tray tree decodes")
+    }
+
+    fn held_on(panel: Panel, ip: &str, progress: f32) -> Node {
+        build_tree(
+            Some("braiins-deck"),
+            Some(ip),
+            Some(-55),
+            Some("MyWifi"),
+            WifiIcons::default(),
+            panel,
+            WifiView::Idle,
+            ControlIcons::default(),
+            all_controls(),
+            Some(&status_at(Action::Restart, holding(progress))),
+        )
+    }
+
+    fn held_at(panel: Panel, progress: f32) -> Node {
+        held_on(panel, "10.0.0.2", progress)
+    }
+
+    #[test]
+    fn an_address_change_under_the_same_hold_moves_the_static_key() {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
+            assert_ne!(
+                static_key(&held_on(panel, "10.0.0.2", 0.5)),
+                static_key(&held_on(panel, "10.0.0.3", 0.5)),
+                "{panel:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_static_key_holds_when_only_dynamic_content_moves() {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
+            let tree = held_at(panel, 0.5);
+            let mut moved = tree.clone();
+            assert!(move_dynamic_content(&mut moved) > 0, "{panel:?}");
+            assert_eq!(static_key(&tree), static_key(&moved), "{panel:?}");
+        }
+    }
+
+    #[test]
+    fn a_hold_rebuilt_further_on_holds_the_static_key() {
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
+            assert_eq!(
+                static_key(&held_at(panel, 0.3)),
+                static_key(&held_at(panel, 0.6)),
+                "{panel:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_tray_state_on_every_panel_has_a_static_key() {
+        let statuses = [
+            None,
+            Some(status_at(Action::Restart, holding(0.5))),
+            Some(status_at(Action::WifiReconfig, holding(0.5))),
+            Some(status_at(Action::Restart, Phase::Pending)),
+            Some(status_at(Action::Restart, Phase::Failed)),
+        ];
+        let views = [
+            WifiView::Idle,
+            WifiView::Setup {
+                ap_ssid: "Deck setup",
+            },
+            WifiView::Cable,
+        ];
+        for panel in [wide_panel(), narrow_panel(), round_panel()] {
+            for view in views {
+                for status in &statuses {
+                    let tree = build_tree(
+                        Some("braiins-deck"),
+                        Some("10.0.0.2"),
+                        Some(-55),
+                        Some("MyWifi"),
+                        WifiIcons::default(),
+                        panel,
+                        view,
+                        ControlIcons::default(),
+                        all_controls(),
+                        status.as_ref(),
+                    );
+                    assert!(
+                        tree_static_key(&tree).is_some(),
+                        "{panel:?} {view:?} {status:?}"
+                    );
+                }
             }
         }
     }

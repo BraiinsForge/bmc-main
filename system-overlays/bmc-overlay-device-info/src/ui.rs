@@ -1098,9 +1098,11 @@ pub fn render_device_info(
 mod tests {
     use super::{
         AccessPoint, DeviceInfoRenderState, DeviceInfoView, FrameKind, Link, SetupApIcon,
-        TIER_WIDE, Tier, Uplinks, build_device_info_tree, dismisses_on_touch, render_device_info,
-        tier_for,
+        TIER_COMPACT, TIER_WIDE, Tier, Uplinks, build_device_info_tree, dismisses_on_touch,
+        render_device_info, tier_for,
     };
+    use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
+    use bmc_render::partition::tree_static_key;
     use bmc_render::renderer::test_support::ShapingRecorder;
     use std::time::Instant;
 
@@ -1846,5 +1848,51 @@ mod tests {
             !state.tree.replayed_last_frame(),
             "a view shown after Done must not replay the tree from before it"
         );
+    }
+
+    fn static_key(tree: &Node) -> u64 {
+        tree_static_key(tree).expect("BUG: every device info screen decodes")
+    }
+
+    #[test]
+    fn a_screen_change_moves_the_static_key() {
+        assert_ne!(
+            static_key(&tree_for(&DeviceInfoView::Success { ip: IP })),
+            static_key(&tree_for(&DeviceInfoView::Success {
+                ip: Ipv4Addr::new(10, 0, 0, 6),
+            })),
+        );
+    }
+
+    /// No screen animates yet, so each gains a spinner to move.
+    #[test]
+    fn every_screen_holds_its_static_key_when_only_dynamic_content_moves() {
+        for view in all_views()
+            .iter()
+            .filter(|view| **view != DeviceInfoView::Done)
+        {
+            let mut tree = tree_for(view);
+            assert!(add_animated_draw(&mut tree), "{view:?} has no canvas");
+            let mut moved = tree.clone();
+            assert!(move_dynamic_content(&mut moved) > 0, "{view:?}");
+            assert_eq!(static_key(&tree), static_key(&moved), "{view:?}");
+        }
+    }
+
+    #[test]
+    fn every_screen_on_every_tier_has_a_static_key() {
+        for view in all_views()
+            .iter()
+            .filter(|view| **view != DeviceInfoView::Done)
+        {
+            for tier in [TIER_WIDE, TIER_COMPACT] {
+                for miner in [false, true] {
+                    let tree =
+                        build_device_info_tree(view, distinct_icons(), tier, DEVICE_NAME, miner)
+                            .expect("BUG: every view but Done builds a tree");
+                    assert!(tree_static_key(&tree).is_some(), "{view:?} miner={miner}");
+                }
+            }
+        }
     }
 }

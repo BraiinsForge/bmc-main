@@ -59,7 +59,8 @@
 //! The decoder validates what the renderer cannot survive — extents, discriminants, UTF-8 —
 //! and records the byte ranges of every dynamic node,
 //! for the static-half key the host builds over the raw bytes.
-//! The encoder validates nothing: a widget's tree is its own to get right.
+//! The encoder checks only that each count and length fits its prefix:
+//! the rest of a widget's tree is its own to get right.
 
 use core::fmt;
 use std::ops::Range;
@@ -97,7 +98,24 @@ const NODE_TYPE_LEN: usize = 1;
 
 // ── Encoding ────────────────────────────────────────────────────────
 
+/// A tree the wire format cannot carry:
+/// a count or length past what its prefix holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EncodeError(&'static str);
+
+impl fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for EncodeError {}
+
 /// The wire bytes of a tree rooted at `root`.
+///
+/// # Panics
+///
+/// When the wire format cannot carry the tree; see [`try_encode`].
 #[must_use]
 pub fn encode(root: &Node) -> Vec<u8> {
     let mut buf = Vec::with_capacity(4096);
@@ -106,31 +124,94 @@ pub fn encode(root: &Node) -> Vec<u8> {
 }
 
 /// Append the wire bytes of a tree rooted at `root` to `buf`.
+///
+/// # Panics
+///
+/// When the wire format cannot carry the tree; see [`try_encode_into`].
 pub fn encode_into(buf: &mut Vec<u8>, root: &Node) {
-    Writer(buf).node(root);
+    try_encode_into(buf, root).unwrap_or_else(|err| panic!("BUG: {err}"));
 }
 
-struct Writer<'a>(&'a mut Vec<u8>);
+/// The wire bytes of a tree rooted at `root`.
+///
+/// # Errors
+///
+/// When a count or length in the tree overflows its prefix.
+pub fn try_encode(root: &Node) -> Result<Vec<u8>, EncodeError> {
+    let mut buf = Vec::with_capacity(4096);
+    try_encode_into(&mut buf, root)?;
+    Ok(buf)
+}
 
-impl Writer<'_> {
+/// Append the wire bytes of a tree rooted at `root` to `buf`,
+/// leaving `buf` as it was when the tree does not fit.
+///
+/// # Errors
+///
+/// When a count or length in the tree overflows its prefix.
+pub fn try_encode_into(buf: &mut Vec<u8>, root: &Node) -> Result<(), EncodeError> {
+    let start = buf.len();
+    let mut writer = Writer::new(buf);
+    writer.node(root);
+    match writer.overflow {
+        None => Ok(()),
+        Some(what) => {
+            buf.truncate(start);
+            Err(EncodeError(what))
+        }
+    }
+}
+
+struct Writer<'a> {
+    out: &'a mut Vec<u8>,
+    /// The first count or length past its prefix; the bytes after it are garbage.
+    overflow: Option<&'static str>,
+}
+
+impl<'a> Writer<'a> {
+    fn new(out: &'a mut Vec<u8>) -> Self {
+        Self {
+            out,
+            overflow: None,
+        }
+    }
+
+    /// A u16 count or length; `too_many` names the overflow if `n` does not fit.
+    fn count_u16(&mut self, n: usize, too_many: &'static str) {
+        let v = u16::try_from(n).unwrap_or_else(|_| {
+            self.overflow.get_or_insert(too_many);
+            u16::MAX
+        });
+        self.u16(v);
+    }
+
+    /// A u8 count or index; `too_many` names the overflow if `n` does not fit.
+    fn count_u8(&mut self, n: usize, too_many: &'static str) {
+        let v = u8::try_from(n).unwrap_or_else(|_| {
+            self.overflow.get_or_insert(too_many);
+            u8::MAX
+        });
+        self.u8(v);
+    }
+
     fn u8(&mut self, v: u8) {
-        self.0.push(v);
+        self.out.push(v);
     }
 
     fn u16(&mut self, v: u16) {
-        self.0.extend_from_slice(&v.to_le_bytes());
+        self.out.extend_from_slice(&v.to_le_bytes());
     }
 
     fn u32(&mut self, v: u32) {
-        self.0.extend_from_slice(&v.to_le_bytes());
+        self.out.extend_from_slice(&v.to_le_bytes());
     }
 
     fn f32(&mut self, v: f32) {
-        self.0.extend_from_slice(&v.to_le_bytes());
+        self.out.extend_from_slice(&v.to_le_bytes());
     }
 
     fn i64(&mut self, v: i64) {
-        self.0.extend_from_slice(&v.to_le_bytes());
+        self.out.extend_from_slice(&v.to_le_bytes());
     }
 
     fn color(&mut self, c: Color) {
@@ -138,13 +219,13 @@ impl Writer<'_> {
     }
 
     fn bytes(&mut self, bytes: &[u8]) {
-        self.0.extend_from_slice(bytes);
+        self.out.extend_from_slice(bytes);
     }
 
-    /// A u16 length prefix, then the bytes; `too_long` is the panic for a string past u16.
+    /// A u16 length prefix, then the bytes; `too_long` names a string past u16.
     fn str(&mut self, s: &str, too_long: &'static str) {
         let bytes = s.as_bytes();
-        self.u16(u16::try_from(bytes.len()).expect(too_long));
+        self.count_u16(bytes.len(), too_long);
         self.bytes(bytes);
     }
 
@@ -179,7 +260,7 @@ impl Writer<'_> {
     fn container(&mut self, tag: u8, props: &PropsData, children: &[Node]) {
         self.u8(tag);
         self.props(props);
-        self.u16(u16::try_from(children.len()).expect("BUG: container children exceed u16::MAX"));
+        self.count_u16(children.len(), "container children exceed u16::MAX");
         for child in children {
             self.node(child);
         }
@@ -202,12 +283,12 @@ impl Writer<'_> {
                 self.u8(NODE_PARAGRAPH);
                 self.props(props);
                 self.text_style(base_style);
-                self.u16(u16::try_from(spans.len()).expect("BUG: text spans exceed u16::MAX"));
+                self.count_u16(spans.len(), "text spans exceed u16::MAX");
                 for span in spans {
                     let (flags, extra_flags) = span.wire_flags();
                     self.u16(flags);
                     self.u8(extra_flags);
-                    self.str(&span.text, "BUG: span text exceeds u16::MAX bytes");
+                    self.str(&span.text, "span text exceeds u16::MAX bytes");
                     if let Some(color) = span.color {
                         self.color(color);
                     }
@@ -255,13 +336,13 @@ impl Writer<'_> {
                 skin,
             } => {
                 self.u8(NODE_BUTTON);
-                self.str(id, "BUG: button id exceeds u16::MAX bytes");
+                self.str(id, "button id exceeds u16::MAX bytes");
                 self.u8(*style as u8);
                 self.u8(*size as u8);
                 self.svg_id(*icon_id);
                 self.u8(u8::from(*disabled));
                 self.u8(u8::from(*stretch));
-                self.str(label, "BUG: button label exceeds u16::MAX bytes");
+                self.str(label, "button label exceeds u16::MAX bytes");
                 if let Some(skin) = skin {
                     self.u8(1);
                     self.nine_patch(&skin.normal);
@@ -291,9 +372,9 @@ impl Writer<'_> {
                 self.props(props);
                 self.str(
                     touch_key.as_deref().unwrap_or(""),
-                    "BUG: touch key exceeds u16::MAX bytes",
+                    "touch key exceeds u16::MAX bytes",
                 );
-                self.u16(u16::try_from(draws.len()).expect("BUG: canvas draws exceed u16::MAX"));
+                self.count_u16(draws.len(), "canvas draws exceed u16::MAX");
                 for draw in draws {
                     self.draw(draw);
                 }
@@ -304,11 +385,9 @@ impl Writer<'_> {
                 children,
             } => {
                 self.u8(NODE_SCROLL);
-                self.str(scroll_key, "BUG: scroll key exceeds u16::MAX bytes");
+                self.str(scroll_key, "scroll key exceeds u16::MAX bytes");
                 self.props(props);
-                self.u16(
-                    u16::try_from(children.len()).expect("BUG: scroll children exceed u16::MAX"),
-                );
+                self.count_u16(children.len(), "scroll children exceed u16::MAX");
                 for child in children {
                     self.node(child);
                 }
@@ -320,8 +399,8 @@ impl Writer<'_> {
             } => {
                 self.u8(NODE_NOTIFICATION);
                 self.u8(*kind as u8);
-                self.str(title, "BUG: title exceeds u16::MAX bytes");
-                self.str(subtitle, "BUG: subtitle exceeds u16::MAX bytes");
+                self.str(title, "title exceeds u16::MAX bytes");
+                self.str(subtitle, "subtitle exceeds u16::MAX bytes");
             }
             Node::Switcher {
                 active,
@@ -329,12 +408,12 @@ impl Writer<'_> {
                 tabs,
             } => {
                 self.u8(NODE_SWITCHER);
-                self.u8(u8::try_from(*active).expect("BUG: active tab index exceeds u8::MAX"));
+                self.count_u8(*active, "active tab index exceeds u8::MAX");
                 self.u8(u8::from(*disabled));
-                self.u8(u8::try_from(tabs.len()).expect("BUG: switcher tabs exceed u8::MAX"));
+                self.count_u8(tabs.len(), "switcher tabs exceed u8::MAX");
                 for tab in tabs {
                     self.svg_id(tab.icon);
-                    self.str(&tab.click_id, "BUG: tab click id exceeds u16::MAX bytes");
+                    self.str(&tab.click_id, "tab click id exceeds u16::MAX bytes");
                 }
             }
             Node::Skeleton(data) => {
@@ -365,15 +444,13 @@ impl Writer<'_> {
                 footer_danger,
             } => {
                 self.u8(NODE_MODAL);
-                self.str(modal_id, "BUG: modal id exceeds u16::MAX bytes");
+                self.str(modal_id, "modal id exceeds u16::MAX bytes");
                 self.u8(u8::from(*is_open));
                 self.u16(*padding);
                 self.u8(*backdrop_alpha);
-                self.str(title, "BUG: modal title exceeds u16::MAX bytes");
+                self.str(title, "modal title exceeds u16::MAX bytes");
                 self.f32(*content_height);
-                self.u16(
-                    u16::try_from(body.len()).expect("BUG: modal body children exceed u16::MAX"),
-                );
+                self.count_u16(body.len(), "modal body children exceed u16::MAX");
                 self.color(*bg_color);
                 self.color(*header_color);
                 self.color(*title_color);
@@ -383,19 +460,19 @@ impl Writer<'_> {
                 }
                 self.str(
                     footer_primary_key,
-                    "BUG: footer primary key exceeds u16::MAX bytes",
+                    "footer primary key exceeds u16::MAX bytes",
                 );
                 self.str(
                     footer_primary_label,
-                    "BUG: footer primary label exceeds u16::MAX bytes",
+                    "footer primary label exceeds u16::MAX bytes",
                 );
                 self.str(
                     footer_secondary_key,
-                    "BUG: footer secondary key exceeds u16::MAX bytes",
+                    "footer secondary key exceeds u16::MAX bytes",
                 );
                 self.str(
                     footer_secondary_label,
-                    "BUG: footer secondary label exceeds u16::MAX bytes",
+                    "footer secondary label exceeds u16::MAX bytes",
                 );
                 self.u8(u8::from(*footer_danger));
             }
@@ -412,7 +489,7 @@ impl Writer<'_> {
                 self.u8(NODE_PROGRESS_BAR);
                 self.str(
                     touch_key.as_deref().unwrap_or(""),
-                    "BUG: progress touch key exceeds u16::MAX bytes",
+                    "progress touch key exceeds u16::MAX bytes",
                 );
                 self.f32(*track_h);
                 self.u8(mode.kind().into());
@@ -453,14 +530,14 @@ impl Writer<'_> {
                 self.f32(*y);
                 self.f32(*w);
                 self.f32(*h);
-                encode_fill(self.0, fill);
+                encode_fill(self.out, fill);
             }
             Draw::Circle { cx, cy, r, fill } => {
                 self.u8(DRAW_CIRCLE);
                 self.f32(*cx);
                 self.f32(*cy);
                 self.f32(*r);
-                encode_fill(self.0, fill);
+                encode_fill(self.out, fill);
             }
             Draw::Arc {
                 cx,
@@ -480,9 +557,9 @@ impl Writer<'_> {
                 self.f32(*start_angle);
                 self.f32(*end_angle);
                 self.f32(*width);
-                encode_arc_fill(self.0, fill);
-                encode_arc_segments(self.0, segments);
-                encode_arc_cap(self.0, *cap);
+                encode_arc_fill(self.out, fill);
+                encode_arc_segments(self.out, segments);
+                encode_arc_cap(self.out, *cap);
             }
             Draw::Svg {
                 x,
@@ -502,12 +579,12 @@ impl Writer<'_> {
                 self.color(*color);
                 self.svg_id(*icon_id);
                 self.u8(u8::from(*anti_alias));
-                self.u16(
-                    u16::try_from(fills.len())
-                        .expect("BUG: Draw::Svg has more than u16::MAX fill overrides"),
+                self.count_u16(
+                    fills.len(),
+                    "Draw::Svg has more than u16::MAX fill overrides",
                 );
                 for (id, color) in fills {
-                    self.str(id, "BUG: SVG path id exceeds u16::MAX bytes");
+                    self.str(id, "SVG path id exceeds u16::MAX bytes");
                     self.color(*color);
                 }
             }
@@ -539,7 +616,7 @@ impl Writer<'_> {
                 self.color(style.dark);
                 self.color(style.light);
                 self.u8(style.quiet_zone);
-                self.str(text, "BUG: QR text exceeds u16::MAX bytes");
+                self.str(text, "QR text exceeds u16::MAX bytes");
             }
             Draw::Centered { inner } => {
                 self.u8(DRAW_CENTERED);
@@ -592,8 +669,7 @@ impl Writer<'_> {
                 self.u8(flags);
 
                 if !animations.is_empty() {
-                    self.u8(u8::try_from(animations.len())
-                        .expect("BUG: node animations exceed u8::MAX"));
+                    self.count_u8(animations.len(), "node animations exceed u8::MAX");
                     for anim in animations {
                         self.u8(anim.property as u8);
                         self.f32(anim.from);
@@ -634,13 +710,13 @@ impl Writer<'_> {
                 }
                 self.u8(DRAW_PATH);
                 self.u8(flags);
-                self.u16(u16::try_from(points.len()).expect("BUG: path points exceed u16::MAX"));
+                self.count_u16(points.len(), "path points exceed u16::MAX");
                 for &(x, y) in points {
                     self.f32(x);
                     self.f32(y);
                 }
                 match paint {
-                    PathPaint::Fill(fill) => encode_fill(self.0, fill),
+                    PathPaint::Fill(fill) => encode_fill(self.out, fill),
                     PathPaint::Stroke { color, width, dash } => {
                         self.color(*color);
                         self.f32(*width);
@@ -656,7 +732,7 @@ impl Writer<'_> {
                 self.f32(*x);
                 self.f32(*y);
                 self.text_style(style);
-                self.str(text, "BUG: draw text exceeds u16::MAX bytes");
+                self.str(text, "draw text exceeds u16::MAX bytes");
             }
             Draw::CurvedText {
                 cx,
@@ -676,7 +752,7 @@ impl Writer<'_> {
                 self.u8(u8::from(*anchor));
                 self.u8(u8::from(*facing));
                 self.text_style(style);
-                self.str(text, "BUG: Draw::CurvedText text exceeds u16::MAX bytes");
+                self.str(text, "Draw::CurvedText text exceeds u16::MAX bytes");
             }
             Draw::AutofitText {
                 x,
@@ -698,7 +774,7 @@ impl Writer<'_> {
                 self.u16(*min_size);
                 self.u16(*max_size);
                 self.text_style(style);
-                self.str(text, "BUG: Draw::AutofitText text exceeds u16::MAX bytes");
+                self.str(text, "Draw::AutofitText text exceeds u16::MAX bytes");
             }
             Draw::Sphere {
                 x,
@@ -2756,7 +2832,7 @@ mod tests {
         let red = Color::from_rgb(0xFF, 0, 0);
         let blue = Color::from_rgb(0, 0, 0xFF);
         let mut bytes = Vec::new();
-        Writer(&mut bytes).draw(&Draw::rect(
+        Writer::new(&mut bytes).draw(&Draw::rect(
             1.0,
             2.0,
             3.0,
@@ -2770,21 +2846,38 @@ mod tests {
         );
     }
 
+    fn canvas_with_overlong_curved_text() -> Node {
+        let text = "x".repeat(usize::from(u16::MAX) + 1);
+        Node::Canvas {
+            props: PropsData::default(),
+            touch_key: None,
+            draws: vec![Draw::curved_text(
+                0.0,
+                0.0,
+                10.0,
+                0.0,
+                ArcAnchor::Center,
+                ArcTextFacing::Outward,
+                text,
+                TextStyle::default(),
+            )],
+        }
+    }
+
     #[test]
     #[should_panic(expected = "BUG: Draw::CurvedText text exceeds u16::MAX bytes")]
     fn curved_text_past_the_wire_length_is_a_bug() {
-        let text = "x".repeat(usize::from(u16::MAX) + 1);
-        let draw = Draw::curved_text(
-            0.0,
-            0.0,
-            10.0,
-            0.0,
-            ArcAnchor::Center,
-            ArcTextFacing::Outward,
-            text,
-            TextStyle::default(),
+        let _ = encode(&canvas_with_overlong_curved_text());
+    }
+
+    #[test]
+    fn a_tree_past_the_wire_format_is_refused_and_leaves_the_buffer_alone() {
+        let mut buf = vec![1, 2, 3];
+        assert_eq!(
+            try_encode_into(&mut buf, &canvas_with_overlong_curved_text()),
+            Err(EncodeError("Draw::CurvedText text exceeds u16::MAX bytes"))
         );
-        Writer(&mut Vec::new()).draw(&draw);
+        assert_eq!(buf, [1, 2, 3]);
     }
 
     #[test]
