@@ -20,6 +20,7 @@
 
 use super::fixtures::*;
 use super::*;
+use indoc::indoc;
 use nix_archive::nar::{CaseHack, restore};
 
 /// Unpack `tree` the way the device does and validate it.
@@ -795,4 +796,70 @@ fn a_widget_folder_the_profile_links_to_is_searched() {
         example_package().uid_clash(widgets.path()),
         Some(PathBuf::from("clock"))
     );
+}
+
+fn with_programs(programs: serde_json::Value) -> BTreeMap<String, Node> {
+    let mut widget = widget_dir("example", "1.0.0");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&manifest_json("example", "1.0.0")).expect("BUG: fixture manifest");
+    manifest["programs"] = programs;
+    set(
+        &mut widget,
+        "manifest.json",
+        file(manifest.to_string().as_bytes()),
+    );
+    widget
+}
+
+#[test]
+fn a_manifest_declaring_a_params_migrator_is_refused() {
+    let error = validate_dir(with_programs(
+        serde_json::json!({"params_migrator": {"path": "bin/example-migrate"}}),
+    ))
+    .expect_err("BUG: a migrator must be refused");
+    assert!(matches!(error, WidgetPackageError::Programs));
+    assert!(
+        error.to_string().contains("programs"),
+        "the error names the field: {error}"
+    );
+}
+
+#[test]
+fn a_package_shipping_its_declared_migrator_is_refused_for_the_programs() {
+    let mut widget =
+        with_programs(serde_json::json!({"params_migrator": {"path": "bin/example-migrate"}}));
+    set(
+        &mut widget,
+        "bin/example-migrate",
+        executable(indoc! {b"
+            #!/bin/sh
+            echo '{}'
+        "}),
+    );
+    let error = validate_dir(widget).expect_err("BUG: a shipped migrator must be refused");
+    assert!(
+        matches!(error, WidgetPackageError::Programs),
+        "the error names the programs block, not the shipped file: {error}"
+    );
+}
+
+#[test]
+fn a_program_kind_this_version_does_not_know_is_refused() {
+    let error = validate_dir(with_programs(
+        serde_json::json!({"future_tool": {"path": "bin/example-tool"}}),
+    ))
+    .expect_err("BUG: the typed manifest drops an unknown kind, so only the raw check sees it");
+    assert!(matches!(error, WidgetPackageError::Programs));
+}
+
+#[test]
+fn an_empty_programs_block_is_refused() {
+    let error = validate_dir(with_programs(serde_json::json!({})))
+        .expect_err("BUG: any programs block is refused until an upload can ship programs");
+    assert!(matches!(error, WidgetPackageError::Programs));
+}
+
+#[test]
+fn the_same_package_without_the_declaration_is_accepted() {
+    assert!(validate_dir(widget_dir("example", "1.0.0")).is_ok());
 }

@@ -39,6 +39,7 @@ url.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+indoc.workspace = true
 semver.workspace = true
 
 [features]

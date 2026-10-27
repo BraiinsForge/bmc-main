@@ -1486,6 +1486,7 @@ dependencies = [
  "futures",
  "index-bmc",
  "index-common",
+ "indoc",
  "nix-archive",
  "reqwest",
  "ring",
