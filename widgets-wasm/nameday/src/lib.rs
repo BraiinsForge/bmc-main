@@ -31,7 +31,6 @@ mod wasm_glue {
 
     use super::manifest_params;
     use super::render;
-    use std::cell::RefCell;
 
     use bmc_wasm_sdk::*;
 
@@ -74,43 +73,11 @@ mod wasm_glue {
         }
     }
 
-    thread_local! {
-        static NAMEDAY_DATA: RefCell<Option<NamedayData>> = const { RefCell::new(None) };
-        static POLL_HANDLE: RefCell<Option<PollHandle>> = const { RefCell::new(None) };
-        // Localized timestamp for which we requested the nameday data in the last fetch.
-        // If the request comes OK, this is copied to NamedayData.
-        static FETCHED_NAMEDAY_TIMESTAMP: RefCell<Option<TimeWithTimezone>> = const { RefCell::new(None) };
-    }
-
-    fn build_request(_handle: &PollHandle) -> Option<FetchSpec> {
-        let tz = system::current().timezone().map(Tz::from_runtime)?;
-        let time = SystemTime::now();
-        let local_time = time.local(&tz)?;
-
-        let request_url = NAMEDAY_API_URL_TEMPLATE
-            .replace("{DAY_PLACEHOLDER}", &local_time.day.to_string())
-            .replace("{MONTH_PLACEHOLDER}", &local_time.month.to_string());
-
-        // Store the date for which the currently fetched namedays apply.
-        FETCHED_NAMEDAY_TIMESTAMP.with_borrow_mut(|d| {
-            *d = Some(TimeWithTimezone { time, tz });
-        });
-
-        Some(FetchSpec::get(request_url))
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn init() {
-        let handle = register_poll(
-            build_request,
-            on_nameday_data,
-            PollConfig {
-                debounce_ms: 0,
-                ..Default::default()
-            },
-        );
-
-        POLL_HANDLE.with(|h| *h.borrow_mut() = Some(handle));
+    struct Nameday {
+        data: Option<NamedayData>,
+        poll: PollHandle,
+        /// What the last fetch asked for; an accepted reply copies it to [`NamedayData`].
+        requested_for: Option<TimeWithTimezone>,
     }
 
     /// Milliseconds from now until the next local midnight.
@@ -146,82 +113,111 @@ mod wasm_glue {
         local_now.month == local_time.month && local_now.day == local_time.day
     }
 
-    fn on_nameday_data(handle: &PollHandle, response: &FetchResponse) {
-        if response.ok() {
-            // Parse the response once and pull out the names for every supported
-            // country, so switching country later needs no new fetch. A country
-            // the response omits is stored as `None` rather than failing the whole
-            // parse, so one missing field never discards the others.
-            let json = response.json();
+    impl Nameday {
+        fn build_request(&mut self, _handle: &PollHandle) -> Option<FetchSpec> {
+            let tz = system::current().timezone().map(Tz::from_runtime)?;
+            let time = SystemTime::now();
+            let local_time = time.local(&tz)?;
 
-            let mut names_per_country: [Option<String>; Country::ALL.len()] = Default::default();
-            let mut data_found = false;
+            let request_url = NAMEDAY_API_URL_TEMPLATE
+                .replace("{DAY_PLACEHOLDER}", &local_time.day.to_string())
+                .replace("{MONTH_PLACEHOLDER}", &local_time.month.to_string());
+            self.requested_for = Some(TimeWithTimezone { time, tz });
 
-            for country in Country::ALL {
-                let json_path_to_names = fmt!("/data/{}", country.as_manifest_value());
-
-                // Treat missing, empty, and the API's "n/a" sentinel alike: no
-                // nameday for this country today.
-                match json.str(&json_path_to_names) {
-                    Some(names) if !names.is_empty() && names != "n/a" => {
-                        names_per_country[*country as usize] = Some(names);
-                        data_found = true;
-                    }
-                    _ => {}
-                }
-            }
-
-            let fetched_at = FETCHED_NAMEDAY_TIMESTAMP
-                .with_borrow(std::clone::Clone::clone)
-                .expect("BUG: build_request did not populate FETCHED_NAMEDAY_TIMESTAMP.");
-
-            if !is_today(&fetched_at) {
-                // Data were fetched for incorrect date. This happens when NTP sync occurs
-                // after scheduling the fetch before the fetch successfully completes
-                // (it fails on TLS cert validation before time is synced).
-                handle.retry();
-            } else if data_found {
-                NAMEDAY_DATA.with(|d| {
-                    *d.borrow_mut() = Some(NamedayData {
-                        names_per_country,
-                        fetched_at,
-                    });
-                });
-
-                handle.retry_after(ms_to_next_local_midnight());
-            } else {
-                // No country parsed at all => `/data` is absent or the schema
-                // changed; the response is genuinely unusable, so retry soon.
-                if let Some(response_text) = response.text() {
-                    log_warn!(
-                        "nameday: response had no usable /data, raw data: {}",
-                        response_text
-                    );
-                }
-
-                // If response is OK but parsing failed, poll engine will NOT reschedule
-                // new fetch automatically => we need to reschedule explicitly.
-                handle.retry();
-            }
-        } else {
-            // If response is not OK, poll engine will reschedule new fetch automatically.
-            log_warn!("nameday: fetch failed (status {})", response.status);
+            Some(FetchSpec::get(request_url))
         }
 
-        request_frame();
+        fn on_nameday_data(&mut self, handle: &PollHandle, response: &FetchResponse) {
+            if response.ok() {
+                // Parse the response once and pull out the names for every supported
+                // country, so switching country later needs no new fetch. A country
+                // the response omits is stored as `None` rather than failing the whole
+                // parse, so one missing field never discards the others.
+                let json = response.json();
+
+                let mut names_per_country: [Option<String>; Country::ALL.len()] =
+                    Default::default();
+                let mut data_found = false;
+
+                for country in Country::ALL {
+                    let json_path_to_names = fmt!("/data/{}", country.as_manifest_value());
+
+                    // Treat missing, empty, and the API's "n/a" sentinel alike: no
+                    // nameday for this country today.
+                    match json.str(&json_path_to_names) {
+                        Some(names) if !names.is_empty() && names != "n/a" => {
+                            names_per_country[*country as usize] = Some(names);
+                            data_found = true;
+                        }
+                        _ => {}
+                    }
+                }
+
+                match self.requested_for.clone().filter(is_today) {
+                    None => {
+                        // Data were fetched for incorrect date. This happens when NTP sync occurs
+                        // after scheduling the fetch before the fetch successfully completes
+                        // (it fails on TLS cert validation before time is synced).
+                        handle.retry();
+                    }
+                    Some(requested_for) if data_found => {
+                        self.data = Some(NamedayData {
+                            names_per_country,
+                            fetched_at: requested_for,
+                        });
+
+                        handle.retry_after(ms_to_next_local_midnight());
+                    }
+                    Some(_) => {
+                        // No country parsed at all => `/data` is absent or the schema
+                        // changed; the response is genuinely unusable, so retry soon.
+                        if let Some(response_text) = response.text() {
+                            log_warn!(
+                                "nameday: response had no usable /data, raw data: {}",
+                                response_text
+                            );
+                        }
+
+                        // If response is OK but parsing failed, poll engine will NOT reschedule
+                        // new fetch automatically => we need to reschedule explicitly.
+                        handle.retry();
+                    }
+                }
+            } else {
+                // If response is not OK, poll engine will reschedule new fetch automatically.
+                log_warn!("nameday: fetch failed (status {})", response.status);
+            }
+
+            request_frame();
+        }
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn render(_delta_ms: u32) {
-        let ws = widget_size();
-        let params = manifest_params::Params::current();
-        let mut root_children: Vec<Node> = vec![country_draw(ws, params.country)];
-        let mut stale_anchor: Option<SystemTime> = None;
+    #[widget]
+    impl Widget for Nameday {
+        fn init(me: &Building<Self>) -> Self {
+            let poll = PollHandle::register(
+                me,
+                Self::build_request,
+                Self::on_nameday_data,
+                PollConfig {
+                    debounce_ms: 0,
+                    ..Default::default()
+                },
+            );
+            Self {
+                data: None,
+                poll,
+                requested_for: None,
+            }
+        }
 
-        NAMEDAY_DATA.with(|d| {
-            let data = d.borrow();
+        fn render(&mut self, _delta_ms: u32) {
+            let ws = widget_size();
+            let params = manifest_params::Params::current();
+            let mut root_children: Vec<Node> = vec![country_draw(ws, params.country)];
+            let mut stale_anchor: Option<SystemTime> = None;
 
-            let names_string: &str = match data.as_ref() {
+            let names_string: &str = match self.data.as_ref() {
                 Some(data) => data
                     .names_for(params.country)
                     .unwrap_or(NOT_APPLICABLE_TEXT),
@@ -231,7 +227,7 @@ mod wasm_glue {
             root_children.push(render::names_draw(ws, names_string));
 
             if params.show_date {
-                match data.as_ref() {
+                match self.data.as_ref() {
                     Some(data) => {
                         let date_string = format_date(
                             data.fetched_at.time,
@@ -253,42 +249,32 @@ mod wasm_glue {
                     }
                 }
             }
-        });
 
-        let mut root = col(props!(background: BLACK), root_children);
-        if let Some(anchor) = stale_anchor {
-            root = with_stale_overlay(root, anchor, widget_viewport().shape);
+            let mut root = col(props!(background: BLACK), root_children);
+            if let Some(anchor) = stale_anchor {
+                root = with_stale_overlay(root, anchor, widget_viewport().shape);
+            }
+
+            let _ = render_ui(ws.width, ws.height, root);
+
+            // If the data are outdated, schedule a new retrieval.
+            if let Some(timestamp) = &self.requested_for
+                && !is_today(timestamp)
+            {
+                self.poll.invalidate();
+            } else {
+                request_frame_after(RERENDER_AFTER_MS);
+            }
         }
 
-        let _ = render_ui(ws.width, ws.height, root);
-
-        // If the data are outdated, schedule a new retrieval.
-        // TODO: Reimplement using scheduler after it's ready.
-        if let Some(timestamp) = FETCHED_NAMEDAY_TIMESTAMP.with_borrow(std::clone::Clone::clone)
-            && !is_today(&timestamp)
-        {
-            POLL_HANDLE.with_borrow(|p| {
-                if let Some(handle) = p {
-                    handle.invalidate();
-                }
-            });
-        } else {
-            request_frame_after(RERENDER_AFTER_MS);
+        fn on_params_update(&mut self) {
+            // Names for all supported countries are cached in the state, so a country
+            // change (or any other param change) only needs a re-render, never a fetch.
+            request_frame();
         }
-    }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn on_params_update() {
-        // Names for all supported countries are cached in the state, so a country
-        // change (or any other param change) only needs a re-render, never a fetch.
-        request_frame();
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn on_system_update() {
-        // As validity of the nameday data is verified in the render,
-        // no logic needs to be here.
-        // TODO: After scheduler is implemented, move the logic back here.
-        request_frame();
+        fn on_system_update(&mut self) {
+            request_frame();
+        }
     }
 }
