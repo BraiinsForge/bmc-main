@@ -132,6 +132,8 @@ pub enum WidgetPackageError {
     Manifest(#[source] ManifestError),
     #[error("manifest.json declares binary '{}', expected '{}'", shown(.declared), shown(.expected))]
     BinaryPath { declared: String, expected: String },
+    #[error("manifest.json declares programs, which an upload cannot ship yet")]
+    Programs,
     #[error(
         "manifest.json icon '{}' must be an svg, png, webp, jpg or jpeg file under assets/",
         shown(.0)
@@ -509,6 +511,22 @@ fn is_widget_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Reads the raw manifest, since the typed one drops program kinds it does not know.
+/// A manifest that is no regular file, too large or malformed answers no:
+/// the later checks refuse it on its own terms.
+fn declares_programs(dir: &Path) -> bool {
+    #[derive(serde::Deserialize)]
+    struct ProgramsKey {
+        programs: Option<serde::de::IgnoredAny>,
+    }
+    std::fs::symlink_metadata(dir.join("manifest.json"))
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+        && read_capped(dir, "manifest.json", MAX_MANIFEST_BYTES)
+            .ok()
+            .and_then(|json| serde_json::from_slice::<ProgramsKey>(&json).ok())
+            .is_some_and(|keys| keys.programs.is_some())
+}
+
 fn validate_widget_dir(
     name: &str,
     dir: &Path,
@@ -516,6 +534,12 @@ fn validate_widget_dir(
 ) -> Result<Manifest, WidgetPackageError> {
     let wrapper_path = format!("bin/{name}");
     let wasm_path = format!("lib/wasm/{name}.wasm");
+
+    // Ahead of the walk, which would refuse a shipped program by its path
+    // and never say that programs are what an upload cannot carry.
+    if declares_programs(dir) {
+        return Err(WidgetPackageError::Programs);
+    }
 
     let mut manifest_seen = false;
     let mut wasm_seen = false;

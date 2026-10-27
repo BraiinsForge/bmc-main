@@ -380,6 +380,7 @@ pub fn package_error(error: WidgetPackageError) -> WidgetInstallError {
         | WidgetPackageError::UnexpectedExecutable(_)
         | WidgetPackageError::Manifest(_)
         | WidgetPackageError::BinaryPath { .. }
+        | WidgetPackageError::Programs
         | WidgetPackageError::Icon(_)
         | WidgetPackageError::WrapperNotExecutable(_)
         | WidgetPackageError::SdkMajor { .. }
