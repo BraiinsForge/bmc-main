@@ -35,6 +35,8 @@ use bmc_wasm_sdk::{Node, SystemTime, Tz, WidgetViewport, system};
 use crate::manifest_params::{ClockStyle, Params};
 use crate::model::{ClockHandTransition, Frame, face};
 
+pub use analog::HandAngles;
+
 /// A moment, the viewport it is drawn into, the operator's params
 /// and whether the hands sweep to the moment or snap.
 #[derive(Clone, Debug)]
@@ -47,7 +49,7 @@ pub struct ViewData {
 
 /// The face `view`'s viewport draws, at `view`'s moment.
 #[must_use]
-pub fn clock_view(view: &ViewData) -> Node {
+pub fn clock_view(view: &ViewData, angles: &mut HandAngles) -> Node {
     let frame = Frame::of(view.viewport);
     let tz = view
         .params
@@ -63,6 +65,7 @@ pub fn clock_view(view: &ViewData) -> Node {
             tz.as_ref(),
             &palette,
             view.hand_transition,
+            angles,
         ),
         ClockStyle::AnalogRect => analog::rect::render(
             view.now,
@@ -71,6 +74,7 @@ pub fn clock_view(view: &ViewData) -> Node {
             tz.as_ref(),
             &palette,
             view.hand_transition,
+            angles,
         ),
         ClockStyle::Digital => {
             digital::render(view.now, &view.params, frame, tz.as_ref(), &palette)
@@ -172,7 +176,7 @@ mod tests {
         install_prague(false);
         let view =
             fixtures::at_bucket(SizeBucket::Full, SEPTEMBER_NOON, fixtures::default_params());
-        let texts = texts(&clock_view(&view));
+        let texts = texts(&clock_view(&view, &mut HandAngles::default()));
         assert!(texts.contains(&"12:30:00".to_owned()), "{texts:?}");
         assert!(
             texts.contains(&"Mon 14 September 2026".to_owned()),
@@ -189,7 +193,7 @@ mod tests {
             ..fixtures::default_params()
         };
         let view = fixtures::at_bucket(SizeBucket::Large, SEPTEMBER_NOON, params);
-        let texts = texts(&clock_view(&view));
+        let texts = texts(&clock_view(&view, &mut HandAngles::default()));
         assert!(texts.contains(&"13:30:00".to_owned()), "{texts:?}");
         assert!(texts.contains(&"Helsinki (+3)".to_owned()), "{texts:?}");
     }
@@ -199,13 +203,17 @@ mod tests {
         install_prague(true);
         let full =
             fixtures::at_bucket(SizeBucket::Full, SEPTEMBER_NOON, fixtures::default_params());
-        assert!(texts(&clock_view(&full)).contains(&"06:30".to_owned()));
+        assert!(
+            texts(&clock_view(&full, &mut HandAngles::default())).contains(&"06:30".to_owned())
+        );
         let large = fixtures::at_bucket(
             SizeBucket::Large,
             SEPTEMBER_NOON,
             fixtures::default_params(),
         );
-        assert!(!texts(&clock_view(&large)).contains(&"06:30".to_owned()));
+        assert!(
+            !texts(&clock_view(&large, &mut HandAngles::default())).contains(&"06:30".to_owned())
+        );
     }
 
     /// The frame BMM101 was designed for: the zone above the digits,
@@ -224,7 +232,7 @@ mod tests {
             fixtures::DESIGN_MOMENT,
             fixtures::default_params(),
         );
-        let root = clock_view(&view);
+        let root = clock_view(&view, &mut HandAngles::default());
         let Node::Column(_, slots) = &root else {
             panic!("BUG: the digital face is a column of slots");
         };
@@ -251,7 +259,7 @@ mod tests {
             ..fixtures::default_params()
         };
         let view = fixtures::at_bucket(SizeBucket::Bmm101, fixtures::DESIGN_MOMENT, params);
-        let Node::Column(_, slots) = clock_view(&view) else {
+        let Node::Column(_, slots) = clock_view(&view, &mut HandAngles::default()) else {
             panic!("BUG: the digital face is a column of slots");
         };
         for slot in [&slots[1], &slots[5]] {
@@ -272,7 +280,7 @@ mod tests {
                 ..fixtures::default_params()
             };
             let view = fixtures::at_bucket(SizeBucket::Bmm101, fixtures::DESIGN_MOMENT, params);
-            let Node::Column(_, slots) = clock_view(&view) else {
+            let Node::Column(_, slots) = clock_view(&view, &mut HandAngles::default()) else {
                 panic!("BUG: the digital face is a column of slots");
             };
             let Node::Center(_, row) = &slots[3] else {
@@ -294,7 +302,7 @@ mod tests {
             ..fixtures::default_params()
         };
         let view = fixtures::at_bucket(SizeBucket::Full, SEPTEMBER_NOON, params);
-        let face = clock_view(&view);
+        let face = clock_view(&view, &mut HandAngles::default());
         let texts = texts(&face);
         for numeral in ["12", "3", "6", "9"] {
             assert!(texts.contains(&numeral.to_owned()), "{texts:?}");
@@ -326,7 +334,7 @@ mod tests {
     fn a_round_viewport_draws_the_round_dial_whatever_the_style() {
         install_prague(false);
         let view = fixtures::round(480, SEPTEMBER_NOON, fixtures::default_params());
-        let root = clock_view(&view);
+        let root = clock_view(&view, &mut HandAngles::default());
         let Node::Center(_, layers) = &root else {
             panic!("BUG: an analog face is its dial and hands, centred");
         };

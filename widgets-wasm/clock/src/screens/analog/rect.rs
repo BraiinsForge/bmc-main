@@ -30,7 +30,7 @@ use crate::screens::parts::{
     font_weight, push_utc_offset, resolve_tz_for_label, tz_offset,
 };
 
-use super::{hour_angle, local_clock_components, minute_angle, second_angle};
+use super::{HandAngles, local_clock_components};
 
 // ── Dials ──────────────────────────────────────────────────────────────
 //
@@ -170,6 +170,7 @@ pub(crate) fn render(
     tz: Option<&Tz>,
     palette: &ClockPalette,
     hand_transition: ClockHandTransition,
+    angles: &mut HandAngles,
 ) -> Node {
     let w = frame.size.width;
     let h = frame.size.height;
@@ -314,9 +315,9 @@ pub(crate) fn render(
         );
     }
 
-    let h_ang = hour_angle(hour12, minute);
-    let m_ang = minute_angle(minute);
-    let s_ang = params.show_seconds.then(|| second_angle(second));
+    let h_ang = angles.sweep_hour(hour12, minute);
+    let m_ang = angles.sweep_minute(minute);
+    let s_ang = params.show_seconds.then(|| angles.sweep_second(second));
     let hand_scale = viewport_h / HAND_SCALE_REF_HEIGHT;
     let mut hands: Vec<Draw> = Vec::with_capacity(8);
     super::push_hands_and_centre(

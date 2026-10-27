@@ -23,7 +23,7 @@
 
 use bmc_gallery::prelude::*;
 use clock::model::SizeBucket;
-use clock::screens::{clock_view, fixtures};
+use clock::screens::{HandAngles, clock_view, fixtures};
 use clock::{ClockStyle, NumbersFontStyle, Params};
 
 scene_meta! { title: "Widgets / Clock" }
@@ -103,7 +103,9 @@ fn face_stages(ctx: &mut SceneCtx, ui: &mut Ui, style: ClockStyle) {
             .filter(|(bucket, _)| only.is_none_or(|wanted| wanted == *bucket))
             .map(|(bucket, label)| {
                 let view = fixtures::at_bucket(bucket, now, params.clone());
-                titled(label, bucket.design_size(), move || clock_view(&view))
+                titled(label, bucket.design_size(), move || {
+                    clock_view(&view, &mut HandAngles::default())
+                })
             }),
     );
 }
@@ -135,7 +137,9 @@ fn bmm100(ctx: &mut SceneCtx, ui: &mut Ui) {
     system_settings(ctx);
     let (width, height) = BMM100_VIEWPORT;
     let view = fixtures::rectangular(width, height, now, params);
-    ctx.node_stage(ui, BMM100_VIEWPORT, move || clock_view(&view));
+    ctx.node_stage(ui, BMM100_VIEWPORT, move || {
+        clock_view(&view, &mut HandAngles::default())
+    });
 }
 
 /// The round panel, which draws the round dial whatever the configured style.
@@ -146,5 +150,7 @@ fn bfm100(ctx: &mut SceneCtx, ui: &mut Ui) {
     let view = fixtures::round(BFM100_DIAMETER, now, params);
     let diameter =
         usize::try_from(BFM100_DIAMETER).expect("BUG: a round frame is a few hundred pixels");
-    ctx.node_stage(ui, Round(diameter), move || clock_view(&view));
+    ctx.node_stage(ui, Round(diameter), move || {
+        clock_view(&view, &mut HandAngles::default())
+    });
 }

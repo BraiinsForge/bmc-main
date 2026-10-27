@@ -22,36 +22,47 @@
 //! plus an immediate one after every params or system delivery.
 
 use bmc_wasm_sdk::{
-    HostClock as _, SystemTime, render_ui, request_frame, request_frame_after, widget_viewport,
+    Building, HostClock as _, SystemTime, Widget, render_ui, request_frame, request_frame_after,
+    widget, widget_viewport,
 };
 
 use crate::manifest_params::Params;
 use crate::model::ClockHandTransition;
-use crate::screens::{ViewData, clock_view};
+use crate::screens::{HandAngles, ViewData, clock_view};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn render(delta_ms: u32) {
-    let view = ViewData {
-        now: SystemTime::now(),
-        viewport: widget_viewport(),
-        params: Params::current(),
-        hand_transition: ClockHandTransition::for_render_gap(delta_ms),
-    };
-    let root = clock_view(&view);
-    let _ = render_ui(view.viewport.width, view.viewport.height, root);
-    // Re-render once per second so the displayed time advances.
-    request_frame_after(1000);
+struct Clock {
+    angles: HandAngles,
 }
 
-/// An operator change must not wait for the next one-second tick.
-#[unsafe(no_mangle)]
-pub extern "C" fn on_params_update() {
-    request_frame();
-}
+#[widget]
+impl Widget for Clock {
+    fn init(_: &Building<Self>) -> Self {
+        Self {
+            angles: HandAngles::default(),
+        }
+    }
 
-/// Same for a system delivery: a night-mode flip must not sit on screen
-/// for up to a second before the palette swaps.
-#[unsafe(no_mangle)]
-pub extern "C" fn on_system_update() {
-    request_frame();
+    fn render(&mut self, delta_ms: u32) {
+        let view = ViewData {
+            now: SystemTime::now(),
+            viewport: widget_viewport(),
+            params: Params::current(),
+            hand_transition: ClockHandTransition::for_render_gap(delta_ms),
+        };
+        let root = clock_view(&view, &mut self.angles);
+        let _ = render_ui(view.viewport.width, view.viewport.height, root);
+        // Re-render once per second so the displayed time advances.
+        request_frame_after(1000);
+    }
+
+    /// An operator change must not wait for the next one-second tick.
+    fn on_params_update(&mut self) {
+        request_frame();
+    }
+
+    /// Same for a system delivery: a night-mode flip must not sit on screen
+    /// for up to a second before the palette swaps.
+    fn on_system_update(&mut self) {
+        request_frame();
+    }
 }

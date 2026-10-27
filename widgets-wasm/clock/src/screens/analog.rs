@@ -73,19 +73,38 @@ pub(crate) const HAND_SECOND_PIVOT_Y: f32 = 198.0 * HAND_SHRINK;
 
 // ── Angle bookkeeping ──────────────────────────────────────────────────
 
-// Per-hand unwrapped-angle state.
-// The SDK's transition lerps linearly between consecutive submitted angles,
-// so a wrap from ~2π back to 0 makes the host pick the long arc.
-// We accumulate signed short-arc deltas into these cells so the submitted angle
-// is monotonic and the lerp always travels the short way around.
-thread_local! {
-    static HOUR_ANGLE_STATE: core::cell::Cell<f32> = const { core::cell::Cell::new(0.0) };
-    static MINUTE_ANGLE_STATE: core::cell::Cell<f32> = const { core::cell::Cell::new(0.0) };
-    static SECOND_ANGLE_STATE: core::cell::Cell<f32> = const { core::cell::Cell::new(0.0) };
+/// Per-hand unwrapped angles.
+/// The SDK's transition lerps linearly between consecutive submitted angles,
+/// so a wrap from ~2π back to 0 makes the host pick the long arc.
+/// We accumulate signed short-arc deltas here so the submitted angle
+/// is monotonic and the lerp always travels the short way around.
+#[derive(Debug, Default)]
+pub struct HandAngles {
+    hour: f32,
+    minute: f32,
+    second: f32,
 }
 
-fn unwrap_angle(state: &core::cell::Cell<f32>, target_mod_tau: f32) -> f32 {
-    let last = state.get();
+impl HandAngles {
+    pub(crate) fn sweep_hour(&mut self, hour: u8, minute: u8) -> f32 {
+        let hour12 = f32::from(hour % 12);
+        let m = f32::from(minute);
+        let target = (hour12 * 30.0 + m * 0.5).to_radians();
+        unwrap_angle(&mut self.hour, target)
+    }
+
+    pub(crate) fn sweep_minute(&mut self, minute: u8) -> f32 {
+        let target = (f32::from(minute) * 6.0).to_radians();
+        unwrap_angle(&mut self.minute, target)
+    }
+
+    pub(crate) fn sweep_second(&mut self, second: u8) -> f32 {
+        let target = (f32::from(second) * 6.0).to_radians();
+        unwrap_angle(&mut self.second, target)
+    }
+}
+
+fn unwrap_angle(last: &mut f32, target_mod_tau: f32) -> f32 {
     let last_mod = last.rem_euclid(std::f32::consts::TAU);
     let mut delta = target_mod_tau - last_mod;
     if delta > std::f32::consts::PI {
@@ -93,26 +112,8 @@ fn unwrap_angle(state: &core::cell::Cell<f32>, target_mod_tau: f32) -> f32 {
     } else if delta < -std::f32::consts::PI {
         delta += std::f32::consts::TAU;
     }
-    let next = last + delta;
-    state.set(next);
-    next
-}
-
-pub(crate) fn hour_angle(hour: u8, minute: u8) -> f32 {
-    let hour12 = f32::from(hour % 12);
-    let m = f32::from(minute);
-    let target = (hour12 * 30.0 + m * 0.5).to_radians();
-    HOUR_ANGLE_STATE.with(|s| unwrap_angle(s, target))
-}
-
-pub(crate) fn minute_angle(minute: u8) -> f32 {
-    let target = (f32::from(minute) * 6.0).to_radians();
-    MINUTE_ANGLE_STATE.with(|s| unwrap_angle(s, target))
-}
-
-pub(crate) fn second_angle(second: u8) -> f32 {
-    let target = (f32::from(second) * 6.0).to_radians();
-    SECOND_ANGLE_STATE.with(|s| unwrap_angle(s, target))
+    *last += delta;
+    *last
 }
 
 pub(crate) fn local_clock_components(now: SystemTime, offset_secs: i32) -> (u8, u8, u8) {
