@@ -18,26 +18,30 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Compile-time embedding of binary assets, checked against their magic
-//! header. PNG is the only format covered so far; another one means a
-//! signature check beside [`is_png`] plus a macro that asserts on it.
+//! Compile-time embedding of binary assets, checked while compiling.
 //!
-//! An LFS-tracked asset is a text pointer file in a checkout that never
-//! fetched the object, and [`include_png!`](crate::include_png) rejects those
-//! while compiling instead of leaving a decode error to happen on the device.
-//! [`is_png`] is public because the macro's expansion calls it from the
-//! invoking crate.
+//! An LFS-tracked asset is a text pointer file in a checkout that never fetched the object;
+//! [`include_png!`](crate::include_png) and [`include_lfs!`](crate::include_lfs) reject those while compiling,
+//! instead of leaving a decode error to happen on the device.
+//! A PNG is checked against its signature;
+//! a format without one only against the pointer's own prefix.
+//! The checks are public because the macros' expansions call them from the invoking crate.
 
 /// Check whether provided bytes contain PNG signature at the beginning.
 #[must_use]
 pub const fn is_png(bytes: &[u8]) -> bool {
     const SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    if bytes.len() < SIG.len() {
+    starts_with(bytes, &SIG)
+}
+
+/// `<[u8]>::starts_with`, which is not `const`.
+const fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
+    if bytes.len() < prefix.len() {
         return false;
     }
     let mut i = 0;
-    while i < SIG.len() {
-        if bytes[i] != SIG[i] {
+    while i < prefix.len() {
+        if bytes[i] != prefix[i] {
             return false;
         }
         i += 1;
@@ -74,9 +78,41 @@ macro_rules! include_png {
     }};
 }
 
+/// Whether `bytes` are a git-lfs pointer standing in for an object the checkout never fetched.
+#[must_use]
+pub const fn is_lfs_pointer(bytes: &[u8]) -> bool {
+    starts_with(bytes, b"version https://git-lfs.github.com/spec/")
+}
+
+/// Embed an LFS-tracked file's bytes, failing the build when the checkout holds its pointer instead:
+/// [`include_png!`](crate::include_png) for a format with no signature to check, such as an ICU4X blob.
+///
+/// ```ignore
+/// const BASE: &[u8] = include_lfs!("../../../assets/intl/cldr-base.postcard");
+/// ```
+#[macro_export]
+macro_rules! include_lfs {
+    ($path: literal) => {{
+        const FILE_BYTES: &[u8] = ::core::include_bytes!($path);
+        const _: () = ::core::assert!(
+            !$crate::asset::is_lfs_pointer(FILE_BYTES),
+            ::core::concat!(
+                "A git-lfs pointer stub, not the file: '",
+                $path,
+                "'; run `git lfs pull`"
+            )
+        );
+        FILE_BYTES
+    }};
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_png;
+    use super::{is_lfs_pointer, is_png};
+
+    const LFS_POINTER: &str = "version https://git-lfs.github.com/spec/v1\n\
+                               oid sha256:72d28658ad6339e7c5b800047c40de69576e4f22cea45929646f60af56d9c027\n\
+                               size 6767\n";
 
     /// Real header: the eight signature bytes are `b"\x89PNG\r\n\x1a\n"`.
     #[test]
@@ -107,14 +143,10 @@ mod tests {
     /// pointer that opens with `version https://git-lfs.github.com/spec/v1`.
     #[test]
     fn test_rejects_git_lfs_pointer() {
-        let lfs_pointer = "version https://git-lfs.github.com/spec/v1\n\
-                                oid sha256:72d28658ad6339e7c5b800047c40de69576e4f22cea45929646f60af56d9c027\n\
-                                size 6767\n";
-
-        assert!(!is_png(lfs_pointer.as_bytes()));
+        assert!(!is_png(LFS_POINTER.as_bytes()));
     }
 
-    /// Guards the `bytes.len() < SIG.len()` early return — without it the
+    /// Guards the `bytes.len() < prefix.len()` early return — without it the
     /// comparison loop would index past the end of a short file.
     #[test]
     fn test_rejects_input_shorter_than_signature() {
@@ -128,5 +160,15 @@ mod tests {
         let empty: &[u8] = &[];
 
         assert!(!is_png(empty));
+    }
+
+    #[test]
+    fn test_recognises_git_lfs_pointer_but_not_a_blob() {
+        assert!(is_lfs_pointer(LFS_POINTER.as_bytes()));
+        assert!(
+            !is_lfs_pointer(&[0x03, 0xc4, 0x01, 0x00]),
+            "an ICU4X blob's head"
+        );
+        assert!(!is_lfs_pointer(b"version"), "shorter than the prefix");
     }
 }

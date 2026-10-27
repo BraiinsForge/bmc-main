@@ -1,20 +1,61 @@
-# Translator files of the host and the web: extraction, sync by id, the gate over them
-# and what waits for a translator — the `intl` binary of `bmc-intl-tools`.
-# Each build compiles the files into its own catalog.
+# Translator files of the host and the web: extraction, sync by id,
+# the gate over them and what waits for a translator.
+# Language packs: their CLDR data, unit patterns and flag, and the check a device makes of them.
 
 import '../../common.justfile'
 
-# Extract messages and sync every `lang/<key>.json` translator file by id.
-extract *SURFACES: (intl "extract" SURFACES)
+ROOT := source_directory() / "../.."
+BASE_BLOB := ROOT / "assets/intl/cldr-base.postcard"
+PROFILE_PACKS := ROOT / "assets/intl/profile-languages"
+
+# The dev shell entered by the flake's own path, so a recipe runs from wherever it was called.
+DEV_SHELL := if env("IN_NIX_SHELL", "") == "" { "nix develop " + quote(ROOT) + " --command " } else { "" }
+
+# A workspace binary, its paths taken as given.
+CARGO := DEV_SHELL + "cargo run --quiet --manifest-path " + quote(ROOT / "Cargo.toml") + " --package"
+INTL := CARGO + " bmc-intl-tools --"
+
+# Extract messages and sync every profile pack's translator file by id.
+[no-cd]
+[positional-arguments]
+extract *SURFACES:
+    {{ INTL }} extract "$@"
 
 # Fail on a surface whose translator files are stale or broken; an untranslated message fails nothing.
-verify *SURFACES: (intl "verify" SURFACES)
+[no-cd]
+[no-exit-message]
+[positional-arguments]
+verify *SURFACES:
+    {{ INTL }} verify "$@"
 
-# List the messages waiting for a translation; `--since <rev>` keeps those added or reworded after it.
-untranslated *ARGS: (intl "untranslated" ARGS)
+# List the messages waiting for a translation; `--since <rev>` keeps those newly waiting since it.
+[no-cd]
+[no-exit-message]
+[positional-arguments]
+untranslated *ARGS:
+    {{ INTL }} untranslated "$@"
 
-# From the repository root, where `nix develop` finds the flake without searching up for it.
-[private]
-[working-directory('../..')]
-intl COMMAND *ARGS:
-    {{ NIX_DEV }} cargo run --quiet --package bmc-intl-tools -- {{ COMMAND }} {{ ARGS }}
+# Write the ICU4X blob every binary embeds: English and root, with the data `bmc-intl` can request.
+cldr-data:
+    nix run {{ quote(ROOT) }}#intl-cldr-blob -- en {{ quote(BASE_BLOB) }}
+
+# Write a language pack's CLDR data, unit patterns and compiled flag, for the language DIR is named after.
+[no-cd]
+[positional-arguments]
+pack-data DIR:
+    nix run {{ quote(ROOT) }}#intl-cldr-blob -- "$(basename "$(realpath "$1")")" "$1/cldr.postcard"
+    {{ INTL }} cldr-units "$1"
+    if [ -f "$1/flag.svg" ]; then {{ CARGO }} bmc-languages -- compile-flag "$1/flag.svg" "$1/flag.bin"; fi
+
+# Print a pack's unit patterns as JSON; PACK is a language with a profile pack, such as `zh`, else a directory.
+[no-cd]
+[positional-arguments]
+show-units PACK:
+    {{ INTL }} show-units "$1"
+
+# Report what a device would make of the packs under ROOTS (one `<lang>/` per pack), laid over the firmware's own.
+[no-cd]
+[no-exit-message]
+[positional-arguments]
+check-packs +ROOTS:
+    {{ CARGO }} bmc-languages -- check {{ quote(PROFILE_PACKS) }} "$@"

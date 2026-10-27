@@ -88,7 +88,7 @@
           inherit (workspace.deps) fonts;
         };
         checks = import ./nix/checks.nix {
-          inherit pkgs python-lint-venv;
+          inherit pkgs python-lint-venv intl-cldr-blob intl-tools cldr-json;
           armv7Pkgs = workspace.bmc.armv7-nixpkgs;
           deckPackages = workspace.legacyPackages.deck-packages;
           inherit (workspace.deps) frontend fonts;
@@ -106,6 +106,16 @@
         ast-grep-scan = import ./nix/ast-grep.nix { inherit pkgs; };
         proto-plugins = pkgs.callPackage ./nix/proto-plugins.nix { };
         formatjs-cli = pkgs.callPackage ./nix/intl/formatjs-cli.nix { };
+        icu4x-datagen = pkgs.callPackage ./nix/intl/icu4x-datagen.nix { };
+        cldr-json = pkgs.callPackage ./nix/intl/cldr-json.nix { };
+
+        # Optimised, as shipped code is: `--markers-for-bin` counts every marker the binary still holds,
+        # and an unoptimised one keeps formatter paths `bmc-intl` never reaches, timezone names among them.
+        intl-markers = workspace.bmc.profiles.x86_64-debug.buildCrate workspace.bmc.crates.bmc-intl-markers { };
+        intl-cldr-blob = pkgs.callPackage ./nix/intl/cldr-blob.nix {
+          inherit icu4x-datagen cldr-json intl-markers;
+        };
+
         # `checks.nix` directly, not `nixlib.braiinschk.<system>`: that output bakes
         # in nixlib's own `pkgs`, whose `just` predates the `default-list` setting.
         content-checks = import "${nixlib}/checks.nix" pkgs {
@@ -205,6 +215,7 @@
             # The gallery's scenes dylib reaches bmc-system-overlay, which links gbm.
             pkgs.libgbm
           ];
+          CLDR_JSON = cldr-json;
         });
 
         # Format SVGs with the shared svgo config.
@@ -407,6 +418,12 @@
         apps.intl-untranslated = {
           type = "app";
           program = pkgs.lib.getExe intl-apps.untranslated;
+        };
+
+        # `nix run .#intl-cldr-blob -- LOCALE OUT`
+        apps.intl-cldr-blob = {
+          type = "app";
+          program = pkgs.lib.getExe intl-cldr-blob;
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)

@@ -23,10 +23,18 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use bmc_shared_utils::language::Language;
 use clap::ValueEnum;
+use icu_locale::LocaleFallbacker;
+use icu_locale::fallback::LocaleFallbackConfig;
+use icu_locale_core::LanguageIdentifier;
 use serde::Deserialize;
 
 use crate::console;
+use crate::translator::{ByLanguage, read_entries};
+
+/// The firmware's own language packs, one `<key>/` directory per language.
+pub const PROFILE_PACKS: &str = "assets/intl/profile-languages";
 
 /// A crate that depends on one of these can declare host copy:
 /// `format_message!` through the formatter, `message_descriptor!` through the lazy-message crate.
@@ -47,34 +55,54 @@ pub struct Surface {
     pub name: String,
     /// Globs of the sources, as `formatjs extract` takes them.
     pub sources: Vec<String>,
-    /// The directory of `<key>.json` translator files.
-    pub translations: PathBuf,
+    /// The language packs, one `<key>/` directory each, holding the surface's translator files.
+    pub packs: PathBuf,
+    /// Each pack's translator file for the surface.
+    pub file_name: &'static str,
     /// Globs `formatjs extract` skips.
     pub ignore: Vec<String>,
 }
 
 impl Surface {
-    /// One per language besides English; a language is added by adding its file.
+    /// One per language besides English; a language is added by adding its pack's file.
     ///
     /// # Errors
-    /// The directory named, when it is there but cannot be listed.
+    /// The packs' directory named, when it is there but cannot be listed.
     pub fn translator_files(&self) -> Result<Vec<PathBuf>, String> {
-        let listing = match std::fs::read_dir(&self.translations) {
+        let listing = match std::fs::read_dir(&self.packs) {
             Ok(listing) => listing,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(console::at(&self.translations, error)),
+            Err(error) => return Err(console::at(&self.packs, error)),
         };
         let mut files = Vec::new();
         for entry in listing {
-            let path = entry
-                .map_err(|error| console::at(&self.translations, error))?
-                .path();
-            if path.extension().is_some_and(|ext| ext == "json") {
-                files.push(path);
+            let file = entry
+                .map_err(|error| console::at(&self.packs, error))?
+                .path()
+                .join(self.file_name);
+            if file.is_file() {
+                files.push(file);
             }
         }
         files.sort();
         Ok(files)
+    }
+
+    /// The entries of every translator file the surface has.
+    ///
+    /// # Errors
+    /// As [`Self::translator_files`], or a translator file that cannot be read.
+    pub fn translator_entries(&self) -> Result<ByLanguage, String> {
+        self.translator_files()?
+            .iter()
+            .map(|file| Ok((language_of(file), read_entries(file)?)))
+            .collect()
+    }
+
+    /// `language`'s translator file for the surface, whether or not it exists.
+    #[must_use]
+    pub fn translator_file(&self, language: &str) -> PathBuf {
+        self.packs.join(language).join(self.file_name)
     }
 
     #[must_use]
@@ -83,13 +111,38 @@ impl Surface {
     }
 }
 
-/// The language a translator file translates into, as its name says.
+/// The language a translator file translates into, as its pack's directory names it.
 #[must_use]
 pub fn language_of(translator_file: &Path) -> String {
     translator_file
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
+        .parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// The languages `language`'s pack layers over, nearest first: `zh` for `zh-SG`.
+/// The device walks the same ICU4X fallback chain, over the same CLDR data,
+/// and loads no `en` pack, English being the source.
+#[must_use]
+pub fn parents_of(language: &str) -> Vec<String> {
+    let Ok(language) = Language::parse(language) else {
+        return Vec::new();
+    };
+    let mut step = LocaleFallbacker::new()
+        .for_config(LocaleFallbackConfig::default())
+        .fallback_for(LanguageIdentifier::from(language).into());
+    let mut chain = Vec::new();
+    while !step.get().is_unknown() {
+        chain.push(Language::from(step.get().into_locale().id));
+        step.step();
+    }
+    chain
+        .into_iter()
+        .skip(1)
+        .filter(|parent| *parent != Language::EN)
+        .map(Language::tag)
+        .collect()
 }
 
 /// The part of a `cargo metadata` package this reads.
@@ -164,7 +217,8 @@ fn surface(name: SurfaceName, repo: &Path) -> Result<Surface, String> {
         SurfaceName::Host => Surface {
             name: "host".to_owned(),
             sources: host_sources(&workspace_packages(repo)?),
-            translations: repo.join("bmc-intl/core/lang"),
+            packs: repo.join(PROFILE_PACKS),
+            file_name: "system.json",
             ignore: Vec::new(),
         },
         SurfaceName::Web => Surface {
@@ -174,7 +228,8 @@ fn surface(name: SurfaceName, repo: &Path) -> Result<Surface, String> {
                     .display()
                     .to_string(),
             ],
-            translations: repo.join("frontend/lang"),
+            packs: repo.join(PROFILE_PACKS),
+            file_name: "web.json",
             // A spec's messages are fixtures, not copy.
             ignore: vec!["**/*.d.ts".to_owned(), "**/*.spec.{ts,tsx}".to_owned()],
         },
@@ -248,15 +303,22 @@ fn host_sources(packages: &[Package]) -> Vec<String> {
     sources
 }
 
-/// A surface named `probe` over `root`'s `sources` glob, its translator files in `root/lang`.
+/// A surface named `probe` over `root`'s `sources` glob, its packs in `root/packs`.
 #[cfg(test)]
 pub fn probe_surface(root: &Path, sources: &str) -> Surface {
     Surface {
         name: "probe".to_owned(),
         sources: vec![root.join(sources).display().to_string()],
-        translations: root.join("lang"),
+        packs: root.join("packs"),
+        file_name: "system.json",
         ignore: Vec::new(),
     }
+}
+
+/// The probe surface's translator file for `language`.
+#[cfg(test)]
+pub fn probe_translator_file(root: &Path, language: &str) -> PathBuf {
+    probe_surface(root, "src/**/*.rs").translator_file(language)
 }
 
 #[cfg(test)]
@@ -298,17 +360,62 @@ mod tests {
     }
 
     #[test]
-    fn a_translator_directory_that_cannot_be_listed_is_named() {
+    fn each_pack_with_the_surfaces_file_is_one_language() {
         let dir = tempfile::tempdir().expect("BUG: a temporary directory");
-        let lang = dir.path().join("lang");
-        std::fs::write(&lang, "").expect("BUG: a writable temporary directory");
-        let surface = Surface {
-            translations: lang,
-            ..probe_surface(dir.path(), "src/**/*.rs")
-        };
-        let refused = surface.translator_files();
+        let root = dir.path();
+        for file in [
+            probe_translator_file(root, "zh"),
+            probe_translator_file(root, "cs"),
+            root.join("packs/de/web.json"),
+        ] {
+            crate::translator::write_json(&file, &crate::translator::Entries::new())
+                .expect("BUG: a writable temporary directory");
+        }
+        let files = probe_surface(root, "src/**/*.rs")
+            .translator_files()
+            .expect("BUG: a listable directory");
+        let languages: Vec<String> = files.iter().map(|file| language_of(file)).collect();
+        assert_eq!(
+            languages,
+            ["cs", "zh"],
+            "a pack without the surface's file is skipped"
+        );
+    }
+
+    #[test]
+    fn a_regional_pack_layers_over_each_step_of_its_fallback_chain() {
+        assert_eq!(parents_of("es-MX"), ["es-419", "es"]);
+    }
+
+    #[test]
+    fn a_base_language_layers_over_nothing() {
+        assert_eq!(parents_of("zh"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_pack_naming_no_language_layers_over_nothing() {
+        for name in ["und", "UND", "und-x-foo", "und-u-ca-buddhist", "und-fonipa"] {
+            assert_eq!(parents_of(name), Vec::<String>::new(), "{name}");
+        }
+    }
+
+    #[test]
+    fn no_pack_layers_over_english() {
+        assert_eq!(
+            parents_of("en-GB"),
+            ["en-001"],
+            "English is the source, not a pack"
+        );
+    }
+
+    #[test]
+    fn a_packs_directory_that_cannot_be_listed_is_named() {
+        let dir = tempfile::tempdir().expect("BUG: a temporary directory");
+        let packs = dir.path().join("packs");
+        std::fs::write(&packs, "").expect("BUG: a writable temporary directory");
+        let refused = probe_surface(dir.path(), "src/**/*.rs").translator_files();
         assert!(
-            refused.as_ref().is_err_and(|error| error.contains("lang")),
+            refused.as_ref().is_err_and(|error| error.contains("packs")),
             "{refused:?}"
         );
     }

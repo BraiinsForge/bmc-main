@@ -1,0 +1,22 @@
+[package]
+name = "bmc-languages"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Language packs on the author's computer: checked as a device reads them, their flag compiled"
+publish = false
+
+[package.metadata.nix]
+include = ["../../assets/intl/profile-languages/**"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bmc-intl.workspace = true
+bmc-intl-console.workspace = true
+bmc-svg-compiler.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

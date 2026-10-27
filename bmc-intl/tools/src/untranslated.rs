@@ -20,18 +20,20 @@
 
 //! `intl untranslated`: the messages still waiting for a translation.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::iter;
 use std::path::Path;
 use std::process::ExitCode;
 
 use crate::console;
 use crate::surface::{self, Surface, SurfaceName, git};
-use crate::translator::{self, Entries};
+use crate::translator::{self, ByLanguage, Entries};
 
 /// The `--since` that stands for the merge request's base.
 pub const MERGE_BASE: &str = "merge-base";
 
 /// List the messages still waiting for a translation, with `since` only those
-/// added or reworded after it, any of which is exit 1: the merge request's warning.
+/// newly waiting since it, any of which is exit 1: the merge request's warning.
 ///
 /// # Errors
 /// A `since` that is not a commit, no merge base, or a surface that cannot be read.
@@ -140,27 +142,27 @@ pub struct Waiting {
     pub english: String,
 }
 
-/// The surface's untranslated entries, file by file; with `since`
-/// (a checkout and a commit of it), less those already waiting
-/// there with the same English.
+/// The surface's untranslated entries, language by language;
+/// with `since` (a checkout and a commit of it),
+/// less those already waiting there with the same English.
 ///
 /// # Errors
 /// A translator file that cannot be read, now or at `since`.
 pub fn waiting(surface: &Surface, since: Option<(&Path, &str)>) -> Result<Vec<Waiting>, String> {
+    let by_language = surface.translator_entries()?;
+    let before = match since {
+        Some((repo, rev)) => at_commit_layered(surface, &by_language, repo, rev)?,
+        None => ByLanguage::new(),
+    };
     let mut found = Vec::new();
-    for path in surface.translator_files()? {
-        let entries = translator::read_entries(&path)?;
-        let before = match since {
-            Some((repo, rev)) => at_commit(repo, rev, &path)?,
-            None => Entries::new(),
-        };
-        let language = surface::language_of(&path);
+    for language in by_language.keys() {
+        let waiting_before: BTreeMap<_, _> = translator::untranslated(language, &before).collect();
         found.extend(
-            translator::untranslated(&entries)
+            translator::untranslated(language, &by_language)
                 .filter(|(id, entry)| {
-                    before.get(*id).is_none_or(|before| {
-                        before.translation.is_some() || before.source != entry.source
-                    })
+                    waiting_before
+                        .get(id)
+                        .is_none_or(|before| before.source != entry.source)
                 })
                 .map(|(id, entry)| Waiting {
                     language: language.clone(),
@@ -170,6 +172,27 @@ pub fn waiting(surface: &Surface, since: Option<(&Path, &str)>) -> Result<Vec<Wa
         );
     }
     Ok(found)
+}
+
+/// The entries of `now`'s languages and of every pack
+/// they layer over, as `rev` had them.
+fn at_commit_layered(
+    surface: &Surface,
+    now: &ByLanguage,
+    repo: &Path,
+    rev: &str,
+) -> Result<ByLanguage, String> {
+    let languages: BTreeSet<String> = now
+        .keys()
+        .flat_map(|language| iter::once(language.clone()).chain(surface::parents_of(language)))
+        .collect();
+    languages
+        .into_iter()
+        .map(|language| {
+            at_commit(repo, rev, &surface.translator_file(&language))
+                .map(|entries| (language, entries))
+        })
+        .collect()
 }
 
 /// A header per surface over a table of its untranslated messages:
@@ -204,10 +227,6 @@ mod tests {
         write_json(path, &entries).expect("BUG: a writable temporary directory");
     }
 
-    fn probe_surface(root: &Path) -> Surface {
-        surface::probe_surface(root, "src/**/*.rs")
-    }
-
     /// `git` in `repo` with a committer of its own, so no global config is needed.
     fn run_git(repo: &Path, args: &[&str]) -> String {
         let output = git(
@@ -233,11 +252,11 @@ mod tests {
     fn every_null_is_waiting_in_its_language() {
         let (_dir, root) = repo();
         write_translator_file(
-            &root.join("lang/zh.json"),
+            &surface::probe_translator_file(&root, "zh"),
             &[("aaa", "Clear", Some("晴")), ("bbb", "Loading…", None)],
         );
         assert_eq!(
-            waiting(&probe_surface(&root), None),
+            waiting(&surface::probe_surface(&root, "src/**/*.rs"), None),
             Ok(vec![Waiting {
                 language: "zh".to_owned(),
                 id: "bbb".to_owned(),
@@ -247,10 +266,98 @@ mod tests {
     }
 
     #[test]
+    fn a_regional_null_is_waiting_only_when_no_parent_translates_it() {
+        let (_dir, root) = repo();
+        write_translator_file(
+            &surface::probe_translator_file(&root, "zh"),
+            &[
+                ("parent", "Clear", Some("晴")),
+                ("neither", "Loading…", None),
+                ("override", "Rain", None),
+            ],
+        );
+        write_translator_file(
+            &surface::probe_translator_file(&root, "zh-SG"),
+            &[
+                ("parent", "Clear", None),
+                ("neither", "Loading…", None),
+                ("override", "Rain", Some("雨")),
+            ],
+        );
+        let found = waiting(&surface::probe_surface(&root, "src/**/*.rs"), None)
+            .expect("BUG: readable files");
+        let listed: Vec<(&str, &str)> = found
+            .iter()
+            .map(|row| (row.language.as_str(), row.id.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [("zh", "neither"), ("zh", "override"), ("zh-SG", "neither")],
+            "`zh-SG` shows `zh`'s word for `parent`, and its own for `override`"
+        );
+    }
+
+    #[test]
+    fn since_a_commit_a_regional_null_is_waiting_once_its_parent_stops_translating_it() {
+        let (_dir, root) = repo();
+        run_git(&root, &["init", "-q"]);
+        let parent = surface::probe_translator_file(&root, "zh");
+        let regional = surface::probe_translator_file(&root, "zh-SG");
+        write_translator_file(&parent, &[("clear", "Clear", Some("晴"))]);
+        write_translator_file(&regional, &[("clear", "Clear", None)]);
+        run_git(&root, &["add", "."]);
+        run_git(&root, &["commit", "-q", "-m", "base"]);
+        write_translator_file(&parent, &[("clear", "Clear", None)]);
+        let found = waiting(
+            &surface::probe_surface(&root, "src/**/*.rs"),
+            Some((&root, "HEAD")),
+        )
+        .expect("BUG: readable files");
+        let listed: Vec<(&str, &str)> = found
+            .iter()
+            .map(|row| (row.language.as_str(), row.id.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [("zh", "clear"), ("zh-SG", "clear")],
+            "`zh-SG` showed `zh`'s word at the base, and now shows English"
+        );
+    }
+
+    #[test]
+    fn since_a_commit_a_regional_null_is_waiting_once_its_parent_pack_is_gone() {
+        let (_dir, root) = repo();
+        run_git(&root, &["init", "-q"]);
+        let parent = surface::probe_translator_file(&root, "zh");
+        write_translator_file(&parent, &[("clear", "Clear", Some("晴"))]);
+        write_translator_file(
+            &surface::probe_translator_file(&root, "zh-SG"),
+            &[("clear", "Clear", None)],
+        );
+        run_git(&root, &["add", "."]);
+        run_git(&root, &["commit", "-q", "-m", "base"]);
+        std::fs::remove_file(&parent).expect("BUG: just written");
+        let found = waiting(
+            &surface::probe_surface(&root, "src/**/*.rs"),
+            Some((&root, "HEAD")),
+        )
+        .expect("BUG: readable files");
+        let listed: Vec<(&str, &str)> = found
+            .iter()
+            .map(|row| (row.language.as_str(), row.id.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [("zh-SG", "clear")],
+            "`zh-SG` showed `zh`'s word at the base, and now shows English"
+        );
+    }
+
+    #[test]
     fn since_a_commit_only_what_it_added_or_reworded_is_waiting() {
         let (_dir, root) = repo();
         run_git(&root, &["init", "-q"]);
-        let translator_file = root.join("lang/zh.json");
+        let translator_file = surface::probe_translator_file(&root, "zh");
         write_translator_file(
             &translator_file,
             &[
@@ -270,8 +377,11 @@ mod tests {
                 ("new", "Rain", None),
             ],
         );
-        let found =
-            waiting(&probe_surface(&root), Some((&root, "HEAD"))).expect("BUG: readable files");
+        let found = waiting(
+            &surface::probe_surface(&root, "src/**/*.rs"),
+            Some((&root, "HEAD")),
+        )
+        .expect("BUG: readable files");
         let ids: Vec<&str> = found.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(
             ids,

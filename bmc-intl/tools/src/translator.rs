@@ -27,6 +27,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::console;
+use crate::surface::parents_of;
 
 /// A message as `formatjs extract --format crowdin` writes it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -101,16 +102,36 @@ pub fn write_json(path: &Path, data: &impl Serialize) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|error| console::at(parent, error))?;
     }
     let mut text =
-        serde_json::to_string_pretty(data).expect("BUG: translator entries always serialize");
+        serde_json::to_string_pretty(data).expect("BUG: what is written here has string keys");
     text.push('\n');
     std::fs::write(path, text).map_err(|error| console::at(path, error))
 }
 
-/// The entries still waiting for a translator, their `translation` `None`.
-pub fn untranslated(entries: &Entries) -> impl Iterator<Item = (&String, &Entry)> {
-    entries
+/// One surface's translator entries, by pack language.
+pub type ByLanguage = BTreeMap<String, Entries>;
+
+/// `language`'s entries still waiting for a translator: untranslated in its own file
+/// and in every pack it layers over, as the device shows a parent's words in their place.
+pub fn untranslated<'e>(
+    language: &str,
+    by_language: &'e ByLanguage,
+) -> impl Iterator<Item = (&'e String, &'e Entry)> {
+    let beneath: Vec<&Entries> = parents_of(language)
         .iter()
-        .filter(|(_, entry)| entry.translation.is_none())
+        .filter_map(|parent| by_language.get(parent))
+        .collect();
+    let translated_beneath = move |id: &str| {
+        beneath.iter().any(|entries| {
+            entries
+                .get(id)
+                .is_some_and(|entry| entry.translation.is_some())
+        })
+    };
+    by_language
+        .get(language)
+        .into_iter()
+        .flatten()
+        .filter(move |(id, entry)| entry.translation.is_none() && !translated_beneath(id))
 }
 
 /// Translator entries for `extracted`, carrying over translations from `prior`.

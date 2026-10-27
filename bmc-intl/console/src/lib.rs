@@ -18,13 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! How `intl` reports, as `deck`'s console does: results to stdout,
-//! an error and the output explaining it together on stderr.
+//! How the intl and language-pack tools report, as `deck`'s console does:
+//! results to stdout, an error and the output explaining it together on stderr.
 
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::io::{ErrorKind, Write};
 use std::path::Path;
+use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use console::{StyledObject, Term, strip_ansi_codes};
@@ -73,8 +74,8 @@ fn out(text: &str) {
     }
 }
 
-/// A line of output.
-fn line(text: impl Display) {
+/// A line of output, as it is, such as a dump.
+pub fn line(text: impl Display) {
     out(&text.to_string());
     AFTER_BLANK.store(false, Ordering::Relaxed);
 }
@@ -89,10 +90,21 @@ fn err_line(text: impl Display) {
 }
 
 /// An empty line, to set output apart; none right after another.
-pub fn blank() {
+fn blank() {
     if !AFTER_BLANK.swap(true, Ordering::Relaxed) {
         out("");
     }
+}
+
+/// A tool's run, set apart by blank lines; its error is reported and exits 1.
+pub fn run(run: impl FnOnce() -> Result<ExitCode, String>) -> ExitCode {
+    blank();
+    let code = run().unwrap_or_else(|failed| {
+        error(&failed);
+        ExitCode::FAILURE
+    });
+    blank();
+    code
 }
 
 /// A success.
@@ -145,14 +157,20 @@ pub fn at(path: &Path, error: impl Display) -> String {
     format!("{}: {error}", self::path(path))
 }
 
+/// `missing`, which the dev shell provides: `formatjs is not on PATH`.
+#[must_use]
+pub fn outside_dev_shell(missing: &str) -> String {
+    format!(
+        "{missing}; enter the dev shell ({})",
+        command("nix develop")
+    )
+}
+
 /// Why `tool` would not start; not being on PATH means the dev shell is not entered.
 #[must_use]
 pub fn spawn_failed(tool: &str, error: &std::io::Error) -> String {
     if error.kind() == ErrorKind::NotFound {
-        format!(
-            "{tool} is not on PATH; enter the dev shell ({})",
-            command("nix develop")
-        )
+        outside_dev_shell(&format!("{tool} is not on PATH"))
     } else {
         format!("{tool}: {error}")
     }
@@ -219,15 +237,20 @@ pub fn table(columns: &[&str], rows: &[Vec<String>]) {
 fn framed(columns: &[&str], rows: &[Vec<String>], width: usize) -> Table {
     let mut builder = Builder::default();
     builder.push_record(columns.iter().map(|column| dim(column)));
+
     for row in rows {
         builder.push_record(row.iter().cloned());
     }
+
     let mut table = builder.build();
+
     // No vertical lines: a terminal's line spacing breaks them between rows.
     table.with(Style::blank().horizontals([(1, HorizontalLine::new('─').intersection('─'))]));
     table.modify(Segment::all(), BorderColor::filled(Color::DIMMED));
+
     // Every other row a step above the terminal's black.
     let shade = Color::rgb_bg(38, 38, 38);
+
     // Row 0 is the header; the shading starts at the second row under it,
     // and takes in the gaps between its cells so the row reads unbroken.
     for index in (2..=rows.len()).step_by(2) {
@@ -243,6 +266,7 @@ fn framed(columns: &[&str], rows: &[Vec<String>], width: usize) -> Table {
             .keep_words(true)
             .priority(Priority::max(true)),
     );
+
     table
 }
 

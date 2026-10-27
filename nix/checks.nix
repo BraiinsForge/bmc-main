@@ -21,6 +21,9 @@
 { pkgs
 , armv7Pkgs
 , python-lint-venv
+, intl-cldr-blob
+, intl-tools
+, cldr-json
 , profiles
 , crates
 , deckPackages
@@ -279,6 +282,8 @@ in
   };
 
   proto-bindings = pkgs.callPackage ./proto-bindings.nix { inherit protoPlugins frontendNodeModules; };
+
+  intl-cldr-data = pkgs.callPackage ./intl/cldr-data.nix { inherit intl-cldr-blob intl-tools cldr-json; };
 
   cargo-deny-wasm = profiles.wasm-widgets-debug.mkCargoDeny {
     config = ../deny-wasm.toml;

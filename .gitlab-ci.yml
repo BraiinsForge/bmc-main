@@ -94,7 +94,14 @@ intl-verify:
   script:
     - nix run .#intl-verify
 
-# The messages this branch adds or rewords without a translation.
+# Validate slices of pinned CLDR data in language packs.
+intl-cldr-data:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L --log-lines 0 .#checks.x86_64-linux.intl-cldr-data
+
+# The messages newly waiting for a translation on this branch.
 # A warning, not a gate: author and reviewer decide
 # whether the translations come now or later.
 intl-untranslated:

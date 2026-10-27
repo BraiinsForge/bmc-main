@@ -65,6 +65,71 @@ pub const SVG_FLAG_EVENODD: u8 = 0x04;
 /// per-path fills.
 pub const SVG_FLAG_HAS_ID: u8 = 0x08;
 
+/// The viewBox a compiled icon opens with, when both sides are positive and finite;
+/// `None` for data too short or sized so it cannot be drawn.
+#[must_use]
+pub fn svg_viewbox(data: &[u8]) -> Option<(f32, f32)> {
+    let side = |offset: usize| {
+        let bytes: [u8; 4] = data.get(offset..offset + 4)?.try_into().ok()?;
+        let side = f32::from_le_bytes(bytes);
+        (side.is_normal() && side > 0.0).then_some(side)
+    };
+    Some((side(0)?, side(4)?))
+}
+
+/// The length of the compiled icon `data` opens with, walked field by field as the host's parser reads it;
+/// `None` when the data ends inside it, an id is not UTF-8, or an op is one the parser does not know.
+#[must_use]
+pub fn compiled_svg_len(data: &[u8]) -> Option<usize> {
+    let mut cursor = Cursor { data, at: 0 };
+    cursor.take(8)?; // viewbox_w, viewbox_h
+    for _ in 0..cursor.u16()? {
+        let flags = cursor.u8()?;
+        if flags & SVG_FLAG_HAS_FILL != 0 {
+            cursor.take(4)?;
+        }
+        if flags & SVG_FLAG_HAS_STROKE != 0 {
+            cursor.take(8)?;
+        }
+        if flags & SVG_FLAG_HAS_ID != 0 {
+            let len = cursor.u16()?;
+            core::str::from_utf8(cursor.take(usize::from(len))?).ok()?;
+        }
+        for _ in 0..cursor.u16()? {
+            let floats = match cursor.u8()? {
+                SVG_OP_MOVE_TO | SVG_OP_LINE_TO => 2,
+                SVG_OP_QUAD_TO => 4,
+                SVG_OP_CUBIC_TO => 6,
+                SVG_OP_CLOSE => 0,
+                _ => return None,
+            };
+            cursor.take(floats * 4)?;
+        }
+    }
+    Some(cursor.at)
+}
+
+struct Cursor<'a> {
+    data: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn take(&mut self, len: usize) -> Option<&'a [u8]> {
+        let bytes = self.data.get(self.at..self.at.checked_add(len)?)?;
+        self.at += len;
+        Some(bytes)
+    }
+
+    fn u8(&mut self) -> Option<u8> {
+        self.take(1)?.first().copied()
+    }
+
+    fn u16(&mut self) -> Option<u16> {
+        Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
+    }
+}
+
 // ── Built-in icon IDs ───────────────────────────────────────────────
 // Reserved range `SVG_RESERVED_MIN..=0xFFFF` for host-bundled SVGs.
 // User-registered SVGs get IDs `1..SVG_RESERVED_MIN`; the host registry
@@ -141,3 +206,90 @@ pub const ICON_DEV_UPLOAD: SvgId = builtin(0xFE05);
 
 /// Broken link icon — disconnect / close (ws close, socket closed, ssdp/mdns removed).
 pub const ICON_DEV_UNLINK: SvgId = builtin(0xFE06);
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_ID, SVG_OP_CLOSE, SVG_OP_MOVE_TO, compiled_svg_len,
+        svg_viewbox,
+    };
+
+    fn header(width: f32, height: f32) -> Vec<u8> {
+        [width.to_le_bytes(), height.to_le_bytes()].concat()
+    }
+
+    /// One filled path with an id, moving to a point and closing.
+    fn icon() -> Vec<u8> {
+        [
+            header(24.0, 24.0),
+            1_u16.to_le_bytes().to_vec(),
+            vec![SVG_FLAG_HAS_FILL | SVG_FLAG_HAS_ID],
+            0xff00_00ff_u32.to_le_bytes().to_vec(),
+            2_u16.to_le_bytes().to_vec(),
+            b"cn".to_vec(),
+            2_u16.to_le_bytes().to_vec(),
+            vec![SVG_OP_MOVE_TO],
+            [1.0_f32.to_le_bytes(), 2.0_f32.to_le_bytes()].concat(),
+            vec![SVG_OP_CLOSE],
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn a_whole_icon_is_walked_to_its_end() {
+        let icon = icon();
+        assert_eq!(compiled_svg_len(&icon), Some(icon.len()));
+    }
+
+    #[test]
+    fn an_icon_cut_short_or_with_an_unknown_op_has_no_length() {
+        let icon = icon();
+        assert_eq!(
+            compiled_svg_len(&icon[..icon.len() - 1]),
+            None,
+            "missing its last op"
+        );
+        assert_eq!(
+            compiled_svg_len(&icon[..icon.len() - 4]),
+            None,
+            "cut inside an op's points"
+        );
+
+        let mut unknown = icon.clone();
+        let close = unknown.len() - 1;
+        unknown[close] = 0x7f;
+        assert_eq!(
+            compiled_svg_len(&unknown),
+            None,
+            "an op the parser does not know"
+        );
+
+        let pointer = b"version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 516\n";
+        assert_ne!(
+            compiled_svg_len(pointer),
+            Some(pointer.len()),
+            "a git-lfs pointer"
+        );
+    }
+
+    #[test]
+    fn bytes_past_the_icon_are_not_part_of_it() {
+        let mut icon = icon();
+        let len = icon.len();
+        icon.extend_from_slice(b"trailing");
+        assert_eq!(compiled_svg_len(&icon), Some(len));
+    }
+
+    #[test]
+    fn the_viewbox_is_read_off_the_header() {
+        assert_eq!(svg_viewbox(&header(24.0, 18.0)), Some((24.0, 18.0)));
+    }
+
+    #[test]
+    fn a_header_that_cannot_be_drawn_has_no_viewbox() {
+        assert_eq!(svg_viewbox(&header(0.0, 18.0)), None);
+        assert_eq!(svg_viewbox(&header(24.0, f32::NAN)), None);
+        assert_eq!(svg_viewbox(&header(-1.0, 18.0)), None);
+        assert_eq!(svg_viewbox(b"<svg"), None, "too short for a header");
+    }
+}

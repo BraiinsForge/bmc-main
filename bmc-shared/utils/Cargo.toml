@@ -4,9 +4,18 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
+[features]
+# The device `Language`, which parses BCP-47 tags with ICU4X:
+# off, so widgets that never name a language keep ICU4X out of their dependency graph.
+language = ["dep:icu_locale_core"]
+
 [dependencies]
 formato.workspace = true
+icu_locale_core = { workspace = true, optional = true }
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

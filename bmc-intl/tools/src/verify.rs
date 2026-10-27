@@ -106,18 +106,17 @@ pub fn summary(surface: &str, checked: &[Checked]) -> String {
 pub fn verify_surface(surface: &Surface, id_pattern: &str) -> Result<Vec<Checked>, String> {
     let extracted = formatjs::extract(surface, id_pattern)?;
     let fix = console::command(&surface.fix_command());
-    surface
-        .translator_files()?
-        .into_iter()
-        .map(|file| {
-            let entries = translator::read_entries(&file)?;
-            let mut problems = translator::stale_entries(&extracted, &entries, &fix);
-            problems.extend(check::translations(&extracted, &entries));
-            Ok(Checked {
-                untranslated: translator::untranslated(&entries).count(),
-                file,
+    let by_language = surface.translator_entries()?;
+    Ok(by_language
+        .iter()
+        .map(|(language, entries)| {
+            let mut problems = translator::stale_entries(&extracted, entries, &fix);
+            problems.extend(check::translations(&extracted, entries));
+            Checked {
+                file: surface.translator_file(language),
+                untranslated: translator::untranslated(language, &by_language).count(),
                 problems,
-            })
+            }
         })
-        .collect()
+        .collect())
 }

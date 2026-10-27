@@ -18,19 +18,19 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Locale selection and the embedded translation catalogs.
+//! Locale selection and the translations language packs bring.
 //!
 //! English is the source: every message carries its `default_message` inline and `en` has no catalog.
-//! Other languages are flat `{id: pattern}` maps compiled from the translator files and embedded here.
+//! Every other language is a pack read at run time ([`packs`]), with the CLDR data to format it by.
 //!
-//! Catalogs are keyed by the locale ICU4X's fallbacker minimises to — `zh` for Simplified Chinese
-//! (`zh-Hans`, `zh-CN` and `zh-Hans-CN` all resolve to it), `zh-Hant` for Traditional.
+//! A language's pack is filed under [`pack_language`], where negotiation starts its fallback chain:
+//! `zh` for Simplified Chinese, as `zh-Hans`, `zh-CN` and `zh-Hans-CN` all fall back to it.
 //! A catalog keyed `zh-Hans` is never a fallback candidate and can never be selected.
 //!
 //! Copy is declared where it is used, its placeholders checked against the English at compile time:
 //!
 //! ```
-//! let intl = bmc_intl::formatter(bmc_intl::Language::En);
+//! let intl = bmc_intl::formatter(bmc_intl::Language::EN);
 //! let text = bmc_intl::format_message!(intl, default_message: "Connect to {ssid}", values: { ssid: "deck" });
 //! assert_eq!(text, "Connect to deck");
 //! ```
@@ -38,50 +38,87 @@
 //! A placeholder the English has and the call does not give fails the build:
 //!
 //! ```compile_fail
-//! let intl = bmc_intl::formatter(bmc_intl::Language::En);
+//! let intl = bmc_intl::formatter(bmc_intl::Language::EN);
 //! bmc_intl::format_message!(intl, default_message: "Connect to {ssid}");
 //! ```
 //!
 //! So does a value the English has no placeholder for:
 //!
 //! ```compile_fail
-//! let intl = bmc_intl::formatter(bmc_intl::Language::En);
+//! let intl = bmc_intl::formatter(bmc_intl::Language::EN);
 //! bmc_intl::format_message!(intl, default_message: "Connect", values: { ssid: "deck" });
 //! ```
 
+mod data;
 mod formatter;
 mod localized;
+pub mod packs;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::sync::{Arc, LazyLock};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, RwLock};
 
 pub use bmc_intl_message::Message;
+pub use bmc_intl_units as units;
 pub use bmc_shared_utils::language::Language;
+pub use data::Data;
 use formatjs_icu_messageformat::Options;
 pub use formatjs_icu_messageformat::{Value, Values};
-pub use formatjs_icu_messageformat_parser::error::ParserError;
+use formatjs_icu_messageformat_parser::error::ParserError;
 use formatjs_icu_messageformat_parser::parser::Parser;
-use formatjs_intl::{IntlCache, MessageCatalog, MessageDescriptorRef};
+use formatjs_icu_messageformat_parser::{MessageFormatElement, message_arguments};
+use formatjs_intl::{IntlContext, MessageCatalog, MessageDescriptorRef};
 pub use formatjs_intl::{Messages, format_message};
 pub use formatter::Intl;
+use icu_locale::LocaleFallbacker;
+use icu_locale::fallback::LocaleFallbackConfig;
+use icu_locale_core::LanguageIdentifier;
 pub use localized::Localized;
-use thiserror::Error;
+pub use packs::{LanguageInfo, LoadReport, TextDirection};
 
 const DEFAULT_LOCALE: &str = "en";
 
-// `CATALOGS`: every `lang/<key>.json` translator file, compiled by `build.rs`.
-include!(concat!(env!("OUT_DIR"), "/catalogs.rs"));
+/// `pattern` parsed exactly as the runtime parses it.
+fn parse_pattern(pattern: &str) -> Result<Vec<MessageFormatElement>, ParserError> {
+    Parser::new(pattern, Options::default_parser_options()).parse()
+}
 
-/// Parse `pattern` exactly as the runtime will, for a build step
-/// to refuse a translation the device would otherwise silently fall back from.
+/// Whether `translation` names exactly the arguments its `source` names, across every branch:
+/// one it adds goes unfilled when the message formats, and one it drops loses a value.
 ///
-/// # Errors
-/// The parser's, when `pattern` is not ICU MessageFormat the runtime accepts.
-pub fn check_pattern(pattern: &str) -> Result<(), ParserError> {
-    Parser::new(pattern, Options::default_parser_options())
-        .parse()
-        .map(|_| ())
+/// A source that is not a pattern cannot be compared and passes.
+fn same_arguments(source: &str, translation: &[MessageFormatElement]) -> Result<(), String> {
+    let Ok(source) = parse_pattern(source) else {
+        return Ok(());
+    };
+    let names = |ast: &[MessageFormatElement]| -> BTreeSet<String> {
+        message_arguments(ast).into_keys().collect()
+    };
+    let (wanted, given) = (names(&source), names(translation));
+    if wanted == given {
+        return Ok(());
+    }
+    let braced = |names: &BTreeSet<String>| {
+        names
+            .iter()
+            .map(|name| format!("{{{name}}}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    Err(format!(
+        "the source's arguments are [{}], the translation's [{}]",
+        braced(&wanted),
+        braced(&given)
+    ))
+}
+
+/// A pack's translation as the runtime will take it: ICU MessageFormat that parses,
+/// with the same arguments as the `source` beside it when the entry carries one.
+pub(crate) fn check_translation(source: Option<&str>, translation: &str) -> Result<(), String> {
+    let parsed = parse_pattern(translation).map_err(|error| error.to_string())?;
+    source.map_or(Ok(()), |source| same_arguments(source, &parsed))
 }
 
 /// Word a [`Message`] declared elsewhere in `intl`'s language,
@@ -95,269 +132,430 @@ pub fn format_lazy(intl: &Intl, message: &Message) -> String {
     intl.format_message_to_string_or_default_ref(descriptor, &Values::new())
 }
 
-/// A formatter over the bundled catalogs for `language`.
+/// A formatter over the translations in effect for `language`.
 ///
-/// Not free: `Intl::try_new` parses two locales, builds an ICU4X `LocaleFallbacker`
-/// and walks its chain, allocating a string per candidate.
+/// Not free: building one negotiates the language against the catalogs,
+/// walking an ICU4X fallback chain and allocating a string per candidate.
 /// Hold the result and build a new one when the language changes — never per render.
 #[must_use]
 pub fn formatter(language: Language) -> Intl {
-    Translations::shared()
-        .formatter(language)
-        .expect("BUG: every device language has a valid catalog locale")
+    Translations::shared().formatter(language)
 }
 
-/// The process-wide formatter for `language`, built on first use and kept:
+/// The process-wide formatter for `language`, built on first use and again after a reload:
 /// for code answering many callers in many languages at once (a request handler)
 /// which has no one language to hold a [`Localized`] for.
 #[must_use]
-pub fn shared_formatter(language: Language) -> &'static Intl {
-    static EVERY: LazyLock<Vec<Intl>> =
-        LazyLock::new(|| Language::ALL.into_iter().map(formatter).collect());
-    let index = Language::ALL
-        .iter()
-        .position(|candidate| *candidate == language)
-        .expect("BUG: every language is listed in `Language::ALL`");
-    &EVERY[index]
+pub fn shared_formatter(language: Language) -> Arc<Intl> {
+    /// The formatters built over one [`Translations::version`].
+    type Formatters = (u64, HashMap<Language, Arc<Intl>>);
+    static EVERY: Mutex<Option<Formatters>> = Mutex::new(None);
+    let current = Translations::shared();
+    let mut every = EVERY.lock().unwrap_or_else(PoisonError::into_inner);
+    let (version, formatters) = every.get_or_insert_with(|| (current.version, HashMap::new()));
+    if *version != current.version {
+        *version = current.version;
+        formatters.clear();
+    }
+    formatters
+        .entry(language)
+        .or_insert_with(|| Arc::new(current.formatter(language)))
+        .clone()
 }
 
-/// Immutable translation catalogs and their shared compiled-message cache.
-#[derive(Clone)]
+/// `language` and what it falls back to, short of `und`, in the order formatjs negotiates them.
+fn fallback_chain(language: Language) -> Vec<Language> {
+    static FALLBACKER: LazyLock<LocaleFallbacker> = LazyLock::new(|| Data::builtin().fallbacker());
+    let mut step = FALLBACKER
+        .for_config(LocaleFallbackConfig::default())
+        .fallback_for(LanguageIdentifier::from(language).into());
+    let mut chain = Vec::new();
+    while !step.get().is_unknown() {
+        chain.push(Language::from(step.get().into_locale().id));
+        step.step();
+    }
+    chain
+}
+
+/// The directories of the packs `language`'s pack layers over, farthest first.
+fn layers(dirs: &BTreeMap<Language, Vec<PathBuf>>, language: Language) -> Vec<PathBuf> {
+    fallback_chain(language)
+        .iter()
+        .skip(1)
+        .rev()
+        .filter_map(|step| dirs.get(step))
+        .flatten()
+        .cloned()
+        .collect()
+}
+
+/// The first step of `language`'s fallback chain, which its pack is filed under:
+/// `zh-Hans` is `zh` and `zh-Hans-CN` is `zh-CN`, while `zh-Hant` and `en-US` stay as they are.
+/// Compare a setting with [`Translations::languages`] through this.
+#[must_use]
+pub fn pack_language(language: Language) -> Language {
+    fallback_chain(language)
+        .first()
+        .copied()
+        .unwrap_or(language)
+}
+
+/// The translations every [`Translations::shared`] hands out; `None` until the first use.
+static CURRENT: RwLock<Option<Arc<Translations>>> = RwLock::new(None);
+
+/// Held by every test that puts translations in effect for the whole process,
+/// as `cargo test` runs tests as threads of one process.
+#[cfg(test)]
+static PROCESS_WIDE: Mutex<()> = Mutex::new(());
+
+/// The packs' facts, read up front, and their translations and CLDR data, read on first use.
 pub struct Translations {
-    catalog: Arc<MessageCatalog>,
-    cache: Arc<IntlCache>,
+    /// Keyed by [`pack_language`].
+    packs: BTreeMap<Language, Pack>,
+    presentation: packs::Presentation,
+    facts_report: LoadReport,
+    /// For a language without a pack.
+    english: OnceLock<Formatting>,
+    version: u64,
 }
 
 impl fmt::Debug for Translations {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list()
-            .entries(self.catalog.available_locales())
-            .finish()
+        f.debug_struct("Translations")
+            .field("version", &self.version)
+            .field("packs", &self.packs.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
     }
 }
 
-impl Translations {
-    /// Catalogs from `(catalog key, messages)` pairs, beside the empty English one.
-    ///
-    /// # Errors
-    /// [`enum@Error`] when a key is not a well-formed BCP-47 tag.
-    pub fn from_catalogs<'a>(
-        catalogs: impl IntoIterator<Item = (&'a str, Messages)>,
-    ) -> Result<Self, Error> {
-        let mut catalog = MessageCatalog::new();
-        catalog.insert(DEFAULT_LOCALE, HashMap::new())?;
-        for (key, messages) in catalogs {
-            catalog.insert(key, messages)?;
-        }
-        Ok(Self {
+struct Pack {
+    dirs: Vec<PathBuf>,
+    layers: Vec<PathBuf>,
+    loaded: OnceLock<Loaded>,
+    #[cfg(test)]
+    loads: std::sync::atomic::AtomicUsize,
+}
+
+struct Loaded {
+    report: LoadReport,
+    /// `None` when the pack was refused.
+    contents: Option<PackContents>,
+}
+
+struct PackContents {
+    formatting: Formatting,
+    /// The web UI's; the device serves them, the browser formats them.
+    web: Option<Messages>,
+    /// By widget uid.
+    widgets: BTreeMap<String, Messages>,
+    units: Option<units::Loaded>,
+}
+
+/// What formatters over a catalog share: CLDR data and the parse cache.
+struct Formatting {
+    catalog: Arc<MessageCatalog>,
+    context: IntlContext,
+}
+
+impl Formatting {
+    fn new(mut catalog: MessageCatalog, context: IntlContext) -> Self {
+        catalog
+            .insert(DEFAULT_LOCALE, HashMap::new())
+            .expect("BUG: the default locale is a valid BCP-47 tag");
+        Self {
             catalog: Arc::new(catalog),
-            cache: Arc::new(IntlCache::new()),
+            context,
+        }
+    }
+}
+
+impl Pack {
+    fn new(dirs: Vec<PathBuf>, layers: Vec<PathBuf>) -> Self {
+        Self {
+            dirs,
+            layers,
+            loaded: OnceLock::new(),
+            #[cfg(test)]
+            loads: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Loads on the first call.
+    fn loaded(&self, language: Language, log: bool) -> &Loaded {
+        self.loaded.get_or_init(|| {
+            #[cfg(test)]
+            self.loads.fetch_add(1, Ordering::Relaxed);
+            let loaded = load_pack(language, &self.layers, &self.dirs);
+            if log {
+                log_report(&format!("language pack {language} loaded"), &loaded.report);
+            }
+            loaded
         })
     }
 
-    /// The catalogs embedded in the binary.
-    ///
-    /// # Errors
-    /// [`enum@Error`] when an embedded catalog is not valid JSON or FormatJS rejects it.
-    pub fn bundled() -> Result<Self, Error> {
-        let catalogs = CATALOGS
-            .iter()
-            .map(|(key, json)| Ok((*key, serde_json::from_str(json)?)))
-            .collect::<Result<Vec<_>, Error>>()?;
-        Self::from_catalogs(catalogs)
+    /// Whether a load has run and refused the pack; until one runs, only the facts speak for it.
+    fn refused(&self) -> bool {
+        self.loaded
+            .get()
+            .is_some_and(|loaded| loaded.contents.is_none())
     }
+}
 
-    /// The bundled catalogs, loaded once per process.
+/// Refused when its CLDR data lacks its own locale, as it would format with root data.
+fn load_pack(language: Language, layers: &[PathBuf], dirs: &[PathBuf]) -> Loaded {
+    let mut report = LoadReport::default();
+    let contents = packs::read_contents(layers, dirs, &mut report);
+    // Over the base data and this pack's blob alone:
+    // a pack carries its own language's data, as it must on a device that holds no other pack.
+    let context = Data::with_packs(
+        contents
+            .blob
+            .into_iter()
+            .map(|blob| (language, blob))
+            .collect(),
+    )
+    .context();
+
+    let mut catalog = MessageCatalog::new();
+    let checked = catalog
+        .insert(language.tag(), contents.system)
+        .and_then(|()| context.check_catalog(&catalog));
+    if let Err(error) = checked {
+        report.refused.push((language, error.to_string()));
+        for file in &contents.own_files {
+            report
+                .skipped
+                .push(format!("{file} in {language}: the language is not offered"));
+        }
+        return Loaded {
+            report,
+            contents: None,
+        };
+    }
+    report.languages.push(language);
+    Loaded {
+        report,
+        contents: Some(PackContents {
+            formatting: Formatting::new(catalog, context),
+            web: contents.web,
+            widgets: contents.widgets,
+            units: contents.units,
+        }),
+    }
+}
+
+fn log_report(what: &str, report: &LoadReport) {
+    if report.is_clean() {
+        tracing::info!("{what}: {report}");
+    } else {
+        tracing::warn!("{what}: {report}");
+    }
+}
+
+fn next_version() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+impl Translations {
+    /// The packs under `roots`, only their facts read; the rest loads on first use.
     #[must_use]
-    pub fn shared() -> &'static Self {
-        static SHARED: LazyLock<Translations> = LazyLock::new(|| {
-            Translations::bundled().expect("BUG: `build.rs` embeds only catalogs that parse")
-        });
-        &SHARED
+    pub fn read(roots: &[PathBuf]) -> (Self, LoadReport) {
+        let mut report = LoadReport::default();
+        let facts = packs::read(roots, &mut report);
+        report.languages = facts.dirs.keys().copied().collect();
+        let translations = Self {
+            packs: facts
+                .dirs
+                .iter()
+                .map(|(&language, dirs)| {
+                    (
+                        language,
+                        Pack::new(dirs.clone(), layers(&facts.text_dirs, language)),
+                    )
+                })
+                .collect(),
+            presentation: facts.presentation,
+            facts_report: report.clone(),
+            english: OnceLock::new(),
+            version: next_version(),
+        };
+        (translations, report)
     }
 
-    /// A formatter for one language over these catalogs.
-    ///
-    /// # Errors
-    /// [`enum@Error`] when FormatJS rejects the locale configuration.
-    pub fn formatter(&self, language: Language) -> Result<Intl, Error> {
-        Intl::over(language, self.catalog.clone(), self.cache.clone())
-    }
-}
-
-/// Localisation setup failure.
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("invalid embedded translation catalog: {0}")]
-    Catalog(#[from] serde_json::Error),
-    #[error("localisation runtime failed: {0}")]
-    Runtime(#[from] formatjs_intl::Error),
-    #[error("not a BCP-47 locale: {0}")]
-    Locale(#[from] icu_locale_core::ParseError),
-}
-
-#[cfg(test)]
-mod build_compile {
-    include!("../build/compile.rs");
-
-    #[test]
-    fn a_translator_file_compiles_to_its_translations() {
-        let catalog = compile(
-            "lang/zh.json",
-            r#"{
-                "a": { "source": "Connect", "translation": "连接" },
-                "b": { "source": "Cancel", "translation": null, "description": "A button" }
-            }"#,
-        )
-        .expect("BUG: the fixture is a valid translator file");
-        assert_eq!(
-            catalog,
-            BTreeMap::from([("a".to_owned(), "连接".to_owned())]),
-            "the untranslated entry is left out"
-        );
-    }
-
-    #[test]
-    fn a_broken_pattern_names_the_file_and_the_entry() {
-        let error = compile(
-            "lang/zh.json",
-            r#"{ "broken": { "source": "Connect to {ssid}", "translation": "连接到 {ssid" } }"#,
-        )
-        .expect_err("an unclosed argument is not ICU MessageFormat");
-        assert!(error.contains("lang/zh.json"), "{error}");
-        assert!(error.contains("`broken`"), "{error}");
-        assert!(error.contains("连接到 {ssid"), "{error}");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use formatjs_icu_messageformat::Locale;
-    use formatjs_intl::negotiate_locale;
-
-    use super::*;
-
-    /// Whether a catalog keyed `locale` can ever be reached: whether some device language negotiates to it.
-    /// `zh-Hans` cannot — the fallback chain from the device's `zh-Hans` is `zh`, `und` —
-    /// so a catalog under that key is dead weight nobody notices.
-    fn catalog_locale_is_reachable(locale: &str) -> Result<bool, Error> {
-        let mut offered = MessageCatalog::new();
-        offered.insert(DEFAULT_LOCALE, HashMap::new())?;
-        offered.insert(locale, HashMap::new())?;
-        let key = locale.parse::<Locale>()?.to_string();
-        let default_locale: Locale = DEFAULT_LOCALE.parse()?;
-        for language in Language::ALL {
-            if negotiate_locale([language.tag()], &default_locale, &offered)?.to_string() == key {
-                return Ok(true);
+    /// Load every pack now, leaving out each the load refuses.
+    #[must_use]
+    pub fn load_all(mut self) -> (Self, LoadReport) {
+        let mut report = LoadReport {
+            languages: Vec::new(),
+            ..self.facts_report.clone()
+        };
+        let mut refused = Vec::new();
+        for (language, pack) in &self.packs {
+            let loaded = pack.loaded(*language, false);
+            report.extend(&loaded.report);
+            if loaded.contents.is_none() {
+                refused.push(*language);
             }
         }
-        Ok(false)
-    }
-
-    fn chinese(messages: &[(&str, &str)]) -> Result<Translations, Error> {
-        let messages = messages
-            .iter()
-            .map(|(id, translation)| ((*id).to_owned(), (*translation).to_owned()))
-            .collect();
-        Translations::from_catalogs([(Language::ZhHans.catalog_key(), messages)])
-    }
-
-    #[test]
-    fn a_message_speaks_english_with_no_catalog() -> Result<(), Error> {
-        let intl = Translations::from_catalogs([])?.formatter(Language::ZhHans)?;
-        let text = format_message!(intl, id: "probe", default_message: "Connect to {ssid}", values: { ssid: "deck" });
-        assert_eq!(text, "Connect to deck");
-        Ok(())
-    }
-
-    #[test]
-    fn a_message_speaks_its_translation_once_the_catalog_is_loaded() -> Result<(), Error> {
-        let translations = chinese(&[("probe", "连接到 {ssid}")])?;
-
-        let zh = translations.formatter(Language::ZhHans)?;
-        let text = format_message!(zh, id: "probe", default_message: "Connect to {ssid}", values: { ssid: "deck" });
-        assert_eq!(text, "连接到 deck");
-
-        let en = translations.formatter(Language::En)?;
-        let text = format_message!(en, id: "probe", default_message: "Connect to {ssid}", values: { ssid: "deck" });
-        assert_eq!(text, "Connect to deck");
-        Ok(())
-    }
-
-    #[test]
-    fn every_simplified_chinese_spelling_reaches_the_zh_catalog() -> Result<(), Error> {
-        let translations = chinese(&[])?;
-        for requested in ["zh-Hans", "zh-CN", "zh-Hans-CN"] {
-            let intl = formatjs_intl::Intl::try_new(
-                [requested],
-                DEFAULT_LOCALE,
-                translations.catalog.clone(),
-                translations.cache.clone(),
-            )?;
-            assert_eq!(intl.locale().to_string(), "zh", "requested {requested}");
+        for language in refused {
+            self.packs.remove(&language);
+            self.presentation.remove(language);
         }
-        Ok(())
+        (self, report)
     }
 
-    #[test]
-    fn a_lazy_message_is_worded_by_id_and_falls_back_to_its_english() -> Result<(), Error> {
-        let translations = chinese(&[("probe", "探针")])?;
-        let translated = Message {
-            id: "probe",
-            default_message: "Probe",
-            description: Some("A test fixture"),
-        };
-        let untranslated = Message {
-            id: "probe.untranslated",
-            default_message: "Untranslated probe",
-            description: None,
-        };
-
-        let zh = translations.formatter(Language::ZhHans)?;
-        assert_eq!(format_lazy(&zh, &translated), "探针");
-        assert_eq!(format_lazy(&zh, &untranslated), "Untranslated probe");
-
-        let en = translations.formatter(Language::En)?;
-        assert_eq!(format_lazy(&en, &translated), "Probe");
-        Ok(())
+    #[must_use]
+    pub fn load(roots: &[PathBuf]) -> (Self, LoadReport) {
+        Self::read(roots).0.load_all()
     }
 
-    #[test]
-    fn the_bundle_holds_the_default_locale_and_every_translator_file() -> Result<(), Error> {
-        let bundled = Translations::bundled()?;
-        let mut locales: Vec<&str> = bundled.catalog.available_locales().collect();
-        locales.sort_unstable();
-        let mut expected: Vec<&str> = CATALOGS.iter().map(|(key, _)| *key).collect();
-        expected.push(DEFAULT_LOCALE);
-        expected.sort_unstable();
-        expected.dedup();
-        assert_eq!(locales, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn only_minimised_catalog_keys_are_reachable() -> Result<(), Error> {
-        // The table in `bmc_shared_utils` is hand-written; ICU4X is the judge.
-        for language in Language::ALL {
-            assert!(
-                catalog_locale_is_reachable(language.catalog_key())?,
-                "{language:?}'s catalog key is not where ICU4X negotiates its tag to"
-            );
+    /// The translations in effect, until [`Self::reload`] or [`Self::install`].
+    /// The first call [`Self::read`]s [`packs::roots`];
+    /// install [`Self::load_all`]'s to check every pack up front.
+    #[must_use]
+    pub fn shared() -> Arc<Self> {
+        if let Some(current) = CURRENT
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            return current.clone();
         }
-        assert!(!catalog_locale_is_reachable("zh-Hans")?);
-        assert!(!catalog_locale_is_reachable("zh-CN")?);
-        assert!(!catalog_locale_is_reachable("de")?);
-        assert!(catalog_locale_is_reachable("zh_CN").is_err());
-        Ok(())
+        CURRENT
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(|| {
+                let (translations, report) = Self::read(&packs::roots());
+                log_report(
+                    "language packs named, each checked when first used",
+                    &report,
+                );
+                Arc::new(translations)
+            })
+            .clone()
     }
 
-    #[test]
-    fn check_pattern_refuses_what_the_runtime_refuses() {
-        assert!(check_pattern("Connect to {ssid}").is_ok());
-        assert!(check_pattern("Connect to {ssid").is_err());
-        assert!(
-            check_pattern("{count, plural, one {{count} probe}}").is_err(),
-            "the runtime requires an `other` branch"
+    /// Load [`packs::roots`] afresh and put them in effect;
+    /// a formatter already built keeps the translations it was built over.
+    #[must_use = "the report says what the load refused and skipped"]
+    pub fn reload() -> LoadReport {
+        let (fresh, report) = Self::load(&packs::roots());
+        Self::install(fresh);
+        report
+    }
+
+    pub fn install(translations: Self) {
+        *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(translations));
+    }
+
+    /// Higher for a later load.
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// English, then the packs'.
+    #[must_use]
+    pub fn languages(&self) -> Vec<Language> {
+        std::iter::once(Language::EN)
+            .chain(
+                self.packs
+                    .iter()
+                    .filter(|(_, pack)| !pack.refused())
+                    .map(|(language, _)| *language),
+            )
+            .collect()
+    }
+
+    /// The first pack along `language`'s fallback chain no load has refused.
+    fn pack_for(&self, language: Language) -> Option<Language> {
+        fallback_chain(language)
+            .into_iter()
+            .find(|step| self.packs.get(step).is_some_and(|pack| !pack.refused()))
+    }
+
+    /// The first pack along `language`'s fallback chain the load does not refuse,
+    /// as negotiation passes a language with no catalog.
+    fn contents_for(&self, language: Language) -> Option<&PackContents> {
+        fallback_chain(language)
+            .into_iter()
+            .find_map(|step| self.packs.get(&step)?.loaded(step, true).contents.as_ref())
+    }
+
+    /// The `info.json` of the pack it resolves to, else the tag as the name.
+    #[must_use]
+    pub fn info(&self, language: Language) -> LanguageInfo {
+        self.pack_for(language)
+            .and_then(|pack| self.presentation.info.get(&pack).cloned())
+            .unwrap_or_else(|| LanguageInfo {
+                // No pack is ever filed under English.
+                native_name: if language == Language::EN {
+                    "English".to_owned()
+                } else {
+                    language.tag()
+                },
+                text_direction: TextDirection::Ltr,
+            })
+    }
+
+    #[must_use]
+    pub fn web(&self, language: Language) -> Option<Messages> {
+        self.contents_for(language)?.web.clone()
+    }
+
+    #[must_use]
+    pub fn widget(&self, uid: &str, language: Language) -> Option<Messages> {
+        self.contents_for(language)?.widgets.get(uid).cloned()
+    }
+
+    /// At most [`packs::MAX_FLAG_BYTES`] long.
+    #[must_use]
+    pub fn flag_svg(&self, language: Language) -> Option<&Path> {
+        self.flag(&self.presentation.flags_svg, language)
+    }
+
+    /// The flag compiled to the icon format the device draws.
+    #[must_use]
+    pub fn flag_bin(&self, language: Language) -> Option<&Path> {
+        self.flag(&self.presentation.flags_bin, language)
+    }
+
+    /// The flag of the pack it resolves to: a flag names a region, so a parent's never fills in.
+    fn flag<'a>(
+        &self,
+        flags: &'a BTreeMap<Language, PathBuf>,
+        language: Language,
+    ) -> Option<&'a Path> {
+        flags.get(&self.pack_for(language)?).map(PathBuf::as_path)
+    }
+
+    #[must_use]
+    pub fn units(&self, language: Language) -> Option<units::Loaded> {
+        self.contents_for(language)?.units.clone()
+    }
+
+    #[must_use]
+    pub fn formatter(&self, language: Language) -> Intl {
+        let formatting = self.contents_for(language).map_or_else(
+            || {
+                self.english.get_or_init(|| {
+                    Formatting::new(MessageCatalog::new(), Data::builtin().context())
+                })
+            },
+            |contents| &contents.formatting,
         );
+        // FormatJS's third refusal, a poisoned cache, takes a precompiled catalog; none here is.
+        Intl::over(language, formatting.catalog.clone(), &formatting.context)
+            .expect("BUG: `en` is in every catalog and a Language's tag parses")
+    }
+
+    /// How many times `language`'s pack has loaded.
+    #[cfg(test)]
+    fn loads(&self, language: Language) -> usize {
+        self.packs[&language].loads.load(Ordering::Relaxed)
     }
 }
+
+#[cfg(test)]
+mod tests;

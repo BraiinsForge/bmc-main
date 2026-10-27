@@ -37,7 +37,9 @@ validate: format clippy python
     just test bmc-netsim
     nix run ".#content-checks"
     nix run ".#ast-grep"
+    # Translator files against the code; then what is cut from the pinned CLDR against the cut it gives now.
     nix run ".#intl-verify"
+    nix build -L --log-lines 0 ".#checks.{{ NIX_SYSTEM }}.intl-cldr-data"
 
     # Dependency policy, host and wasm.
     nix build {{ NIX_LOG }} ".#checks.{{ NIX_SYSTEM }}.cargo-deny"

@@ -3,7 +3,7 @@ name = "bmc-intl-tools"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "The `intl` translation pipeline: extracts, verifies and lists translator copy"
+description = "The `intl` translation pipeline: extracts, verifies and lists translator copy, and cuts a language pack's unit patterns"
 
 [[bin]]
 name = "intl"
@@ -16,17 +16,21 @@ include = ["../../frontend/message-id.json"]
 workspace = true
 
 [dependencies]
+bmc-intl-console.workspace = true
+bmc-intl-units.workspace = true
+bmc-shared-utils = { workspace = true, features = ["language"] }
 clap.workspace = true
 clap-cargo.workspace = true
-console.workspace = true
 formatjs_icu_messageformat.workspace = true
 formatjs_icu_messageformat_parser.workspace = true
+icu_locale = { workspace = true, features = ["compiled_data"] }
+icu_locale_core.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-tabled.workspace = true
 
 [dev-dependencies]
 bmc-intl-message.workspace = true
+console.workspace = true
 prettyplease.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true

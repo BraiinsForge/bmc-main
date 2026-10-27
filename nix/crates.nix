@@ -60,6 +60,10 @@ wasmWidgetCrates // {
     packageName = "bmc-intl-tools";
     binName = "intl";
   };
+  bmc-intl-markers = defineCrate {
+    path = "bmc-intl/markers";
+    packageName = "bmc-intl-markers";
+  };
   bmc-nix-cli = defineCrate {
     path = "bmc-nix";
     packageName = "bmc-nix";

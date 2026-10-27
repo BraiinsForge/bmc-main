@@ -3,25 +3,30 @@ name = "bmc-intl"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "The message runtime every Rust surface words its copy through"
+description = "The message runtime every Rust surface words its copy through, and the language packs it reads"
 
 [package.metadata.nix]
-include = ["lang/*"]
+include = ["../../assets/intl/**", "fixtures/**"]
 
 [lints]
 workspace = true
 
 [dependencies]
 bmc-intl-message.workspace = true
-bmc-shared-utils.workspace = true
-formatjs_icu_messageformat = { workspace = true, features = ["compiled_data"] }
-formatjs_icu_messageformat_parser.workspace = true
-formatjs_intl.workspace = true
-icu_locale_core.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-
-[build-dependencies]
+bmc-intl-units.workspace = true
+bmc-shared-utils = { workspace = true, features = ["language"] }
+bmc-ui.workspace = true
 formatjs_icu_messageformat.workspace = true
 formatjs_icu_messageformat_parser.workspace = true
+formatjs_intl.workspace = true
+icu_locale.workspace = true
+icu_locale_core.workspace = true
+icu_provider.workspace = true
+icu_provider_adapters.workspace = true
+icu_provider_blob.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

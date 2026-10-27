@@ -37,3 +37,5 @@ frontend/**/*.mts linguist-language=typescript
 *.ppm filter=lfs diff=lfs merge=lfs -text
 *.ff filter=lfs diff=lfs merge=lfs -text
 *.hdr filter=lfs diff=lfs merge=lfs -text
+*.postcard filter=lfs diff=lfs merge=lfs -text
+*.bin filter=lfs diff=lfs merge=lfs -text

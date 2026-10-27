@@ -1,0 +1,15 @@
+[package]
+name = "bmc-intl-markers"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Links every ICU4X data request bmc-intl makes, for `icu4x-datagen --markers-for-bin`"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+formatjs_intl.workspace = true
+icu_locale.workspace = true
+icu_provider_blob.workspace = true

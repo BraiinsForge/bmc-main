@@ -24,9 +24,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use formatjs_icu_messageformat::Locale;
-use formatjs_intl::{IntlCache, MessageCatalog, MessageDescriptor, MessageDescriptorRef};
+use formatjs_intl::{IntlContext, MessageCatalog, MessageDescriptor, MessageDescriptorRef};
 
-use crate::{DEFAULT_LOCALE, Error, Language, Values};
+use crate::{DEFAULT_LOCALE, Language, Values};
 
 /// A `formatjs_intl::Intl` for one device language.
 ///
@@ -37,19 +37,21 @@ pub struct Intl {
 }
 
 impl Intl {
-    /// A formatter for `language` over `catalog`, resolving the language's tag
-    /// to the catalog it negotiates to; `cache` holds the parsed patterns.
-    ///
-    /// # Errors
-    /// [`enum@Error`] when FormatJS rejects the locale configuration.
-    pub fn over(
+    /// `language` resolved to the catalog it negotiates to;
+    /// `context` holds the CLDR data and the parsed patterns.
+    pub(crate) fn over(
         language: Language,
         catalog: Arc<MessageCatalog>,
-        cache: Arc<IntlCache>,
-    ) -> Result<Self, Error> {
+        context: &IntlContext,
+    ) -> Result<Self, formatjs_intl::Error> {
         Ok(Self {
             language,
-            inner: formatjs_intl::Intl::try_new([language.tag()], DEFAULT_LOCALE, catalog, cache)?,
+            inner: formatjs_intl::Intl::try_new_with_context(
+                [language.tag()],
+                DEFAULT_LOCALE,
+                catalog,
+                context,
+            )?,
         })
     }
 

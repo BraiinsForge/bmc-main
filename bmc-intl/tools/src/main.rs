@@ -23,15 +23,19 @@
 //!  - intl verify
 //!  - intl untranslated
 //!
+//! and a language pack's unit data, cut from the pinned cldr-json:
+//!  - intl cldr-units
+//!  - intl show-units
+//!
 //! A *surface* is a source tree whose message sites are one extraction,
-//! with a translator file per language: `bmc-intl/core/lang/<key>.json`
-//! for `host`, every crate that can declare copy, and `frontend/lang/<key>.json`
-//! for `web`, the web app. Each build compiles the files into its own catalog.
+//! with a translator file in each of the firmware's language packs (`assets/intl/profile-languages/<key>/`):
+//! `system.json` for `host`, every crate that can declare copy, and `web.json` for `web`, the web app.
+//! The device reads the packs at run time, so the translator file is the only artifact.
 //!
 //! `formatjs` is the CLI `nix/intl/formatjs-cli.nix` builds, on PATH in the dev shell.
 
 mod check;
-mod console;
+mod cldr;
 mod extract;
 mod formatjs;
 mod surface;
@@ -42,6 +46,7 @@ mod verify;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use bmc_intl_console as console;
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Args, Parser, Subcommand};
 
@@ -54,7 +59,8 @@ const HELP: Styles = clap_cargo::style::CLAP_STYLING.error(AnsiColor::Red.on_def
 #[derive(Parser)]
 #[command(
     name = "intl",
-    about = "Translator files of every surface: extract, verify, and list what waits for a translator",
+    about = "Translator files of every surface: extract, verify, and list what waits for a translator; \
+             and the unit patterns of a language pack",
     styles = HELP
 )]
 struct Cli {
@@ -75,7 +81,8 @@ enum Command {
     /// `source` and `description` are refreshed.
     ///
     /// Never writes a translation.
-    /// A language is added by adding an empty `lang/<key>.json`.
+    /// A language is added by adding an empty `<key>/system.json` or `<key>/web.json`
+    /// under `assets/intl/profile-languages/`.
     Extract(Surfaces),
     /// Fail on a surface whose translator files are stale or broken.
     ///
@@ -91,7 +98,7 @@ enum Command {
     /// List the messages still waiting for a translation, per surface and language.
     ///
     /// An untranslated message shows in English and fails nothing.
-    /// With `--since`, only those added or reworded after that commit
+    /// With `--since`, only those newly waiting since that commit
     /// are listed, and any of them is exit 1: the merge request's warning.
     Untranslated {
         #[command(flatten)]
@@ -100,6 +107,17 @@ enum Command {
         /// or `merge-base` for the merge request's base.
         #[arg(long)]
         since: Option<String>,
+    },
+    /// Write a language pack's `units.postcard` from the pinned cldr-json,
+    /// for the language its directory is named after.
+    CldrUnits {
+        /// The pack's directory, such as `assets/intl/profile-languages/zh`.
+        pack: PathBuf,
+    },
+    /// Print a language pack's `units.postcard` as JSON, to review what it holds.
+    ShowUnits {
+        /// A language with a profile pack, such as `zh`, else a pack's directory, such as `./zh`.
+        pack: PathBuf,
     },
 }
 
@@ -112,21 +130,16 @@ struct Surfaces {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let repo = cli.repo.unwrap_or_else(surface::repo_root);
-    console::blank();
-    let ran = match &cli.command {
+    console::run(|| match &cli.command {
         Command::Extract(Surfaces { surfaces }) => extract::run(surfaces, &repo),
         Command::Verify(Surfaces { surfaces }) => verify::run(surfaces, &repo),
         Command::Untranslated {
             surfaces: Surfaces { surfaces },
             since,
         } => untranslated::run(surfaces, since.as_deref(), &repo),
-    };
-    let code = ran.unwrap_or_else(|error| {
-        console::error(&error);
-        ExitCode::FAILURE
-    });
-    console::blank();
-    code
+        Command::CldrUnits { pack } => cldr::cut(pack),
+        Command::ShowUnits { pack } => cldr::show(pack, &repo),
+    })
 }
 
 #[cfg(test)]
@@ -136,7 +149,7 @@ mod tests {
     use clap::CommandFactory;
 
     use super::*;
-    use crate::surface::{Surface, probe_surface};
+    use crate::surface::{Surface, language_of, probe_surface, probe_translator_file};
     use crate::translator::{read_entries, write_json};
 
     /// The id pattern the checkout hashes by, read as the tool reads it.
@@ -164,7 +177,16 @@ mod tests {
             .get_subcommands()
             .map(|command| command.get_name().to_owned())
             .collect();
-        assert_eq!(names, ["extract", "verify", "untranslated"]);
+        assert_eq!(
+            names,
+            [
+                "extract",
+                "verify",
+                "untranslated",
+                "cldr-units",
+                "show-units"
+            ]
+        );
     }
 
     #[test]
@@ -214,8 +236,15 @@ mod tests {
                 }
             },
         );
-        std::fs::create_dir_all(root.join("lang")).expect("BUG: a writable temporary directory");
         probe_surface(root, "src/**/*.rs")
+    }
+
+    /// An empty `zh` translator file for the probe surface over `root`.
+    fn empty_translator_file(root: &Path) -> PathBuf {
+        let file = probe_translator_file(root, "zh");
+        write_json(&file, &translator::Entries::new())
+            .expect("BUG: a writable temporary directory");
+        file
     }
 
     #[test]
@@ -239,8 +268,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: a temporary directory");
         let root = dir.path();
         let surface = rust_surface(root, "Hello {name}");
-        let translator_file = root.join("lang/zh.json");
-        std::fs::write(&translator_file, "{}\n").expect("BUG: a writable temporary directory");
+        let translator_file = empty_translator_file(root);
         let pattern = id_pattern();
 
         extract::extract_surface(&surface, &pattern).expect("BUG: an extraction");
@@ -298,8 +326,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: a temporary directory");
         let root = dir.path();
         let surface = rust_surface(root, "Hello {name}");
-        let translator_file = root.join("lang/zh.json");
-        std::fs::write(&translator_file, "{}\n").expect("BUG: a writable temporary directory");
+        let translator_file = empty_translator_file(root);
         let pattern = id_pattern();
         extract::extract_surface(&surface, &pattern).expect("BUG: an extraction");
         let first = std::fs::read(&translator_file).expect("BUG: just written");
@@ -347,9 +374,42 @@ mod tests {
     }
 
     #[test]
+    fn verify_counts_a_regional_null_its_parent_translates_as_translated() {
+        let dir = tempfile::tempdir().expect("BUG: a temporary directory");
+        let root = dir.path();
+        let surface = rust_surface(root, "Hello {name}");
+        let pattern = id_pattern();
+        for language in ["zh", "zh-SG"] {
+            write_json(
+                &probe_translator_file(root, language),
+                &translator::Entries::new(),
+            )
+            .expect("BUG: a writable temporary directory");
+        }
+        extract::extract_surface(&surface, &pattern).expect("BUG: an extraction");
+        let parent = probe_translator_file(root, "zh");
+        let mut entries = read_entries(&parent).expect("BUG: just written");
+        for entry in entries.values_mut() {
+            entry.translation = Some("你好 {name}".to_owned());
+        }
+        write_json(&parent, &entries).expect("BUG: writable");
+
+        let counts: Vec<(String, usize)> = verify::verify_surface(&surface, &pattern)
+            .expect("BUG: readable")
+            .iter()
+            .map(|file| (language_of(&file.file), file.untranslated))
+            .collect();
+        assert_eq!(
+            counts,
+            [("zh".to_owned(), 0), ("zh-SG".to_owned(), 0)],
+            "`zh-SG` shows `zh`'s word"
+        );
+    }
+
+    #[test]
     fn verify_counts_what_waits_on_the_surface_line() {
         let checked = |language: &str, untranslated| verify::Checked {
-            file: format!("lang/{language}.json").into(),
+            file: format!("packs/{language}/system.json").into(),
             untranslated,
             problems: Vec::new(),
         };

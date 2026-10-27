@@ -5,9 +5,9 @@ description: Use when adding, changing or moving any user-facing text — on the
 
 # User-facing copy
 
-Every sentence a person reads is an ICU MessageFormat message in English, declared in code, extracted into a translator
-file and compiled into a catalog at build time. English is the source; there is no `en` catalog. The rules below are
-what the gates enforce and what they cannot.
+Every sentence a person reads is an ICU MessageFormat message in English, declared in code and extracted into a
+translator file in a language pack, which the device reads at run time. English is the source; there is no `en` catalog.
+The rules below are what the gates enforce and what they cannot.
 
 ## Where a message is declared
 
@@ -81,19 +81,24 @@ ungrouped (`{millis}` with `1234` is `1234`), and so does the web for a simple a
 - A newline, tab or doubled space in a default message is collapsed before hashing. A deliberate line break is an
   argument the translation places: `{br}` with `"\n"`. `no-whitespace-run-in-message`.
 - A missing or extra argument in a `format_message!` fails to compile; in a translation, `intl verify` refuses it.
-- Broken ICU in a translator file fails `intl verify` naming the file and the entry; a host one fails `bmc-intl`'s build
-  too.
+- Broken ICU in a translator file fails `intl verify` naming the file and the entry. A device leaves the entry out and
+  reports it; `just intl::check-packs <roots>` shows a pack author the same report.
 
 ## The round trip
 
 1. Declare or change the message in code.
-2. `just intl::extract [host|web]` rewrites every `lang/<key>.json` of the surface: new entries with
+2. `just intl::extract [host|web]` rewrites the surface's translator file in every firmware pack,
+   `assets/intl/profile-languages/<key>/system.json` for the host and `web.json` for the web: new entries with
    `"translation": null`, gone entries dropped, `source` and `description` refreshed. Ids of untouched messages survive.
-   A language is added by adding an empty `lang/<key>.json` — `bmc-intl/core/lang/` for the host, `frontend/lang/` for
-   the web — keyed as ICU4X minimises the locale: `zh` for Simplified Chinese, never `zh-Hans`.
+   A language is added by adding its pack: the directory named by `bmc_intl::pack_language` (`zh` for Simplified
+   Chinese, never `zh-Hans`; the load report names the spelling when it skips another), its CLDR data from
+   `just intl::pack-data <dir>`, and empty translator files. A regional pack (`zh-SG`) holds every entry, as `extract`
+   writes it, but fills only what differs from its parent (`zh`): a `null` there shows the parent's text. Its CLDR data,
+   unit patterns, name and flags are its own.
 3. Fill the `null`s. Reuse the terms the files already use; leave product names as they are; match the register of
-   neighbouring entries. One you cannot fill stays `null`: it shows in English and fails nothing.
-   `just intl::untranslated` lists every one, and the merge request's `intl-untranslated` job lists those it adds.
+   neighbouring entries. One you cannot fill stays `null` and fails nothing: it shows the parent pack's text, if any,
+   else the English. `just intl::untranslated` lists every one that reaches English, and the merge request's
+   `intl-untranslated` job lists those newly waiting on the branch.
 4. `just intl::verify` — every surface must pass. It runs in `just validate` and CI.
 5. Never write a test that asserts one of your own translations; assert the English default only. Language coverage is
    the tooling's job.

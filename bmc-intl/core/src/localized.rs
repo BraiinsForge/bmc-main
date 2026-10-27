@@ -20,12 +20,14 @@
 
 //! The language a surface renders in, with the formatter for it.
 
-use crate::{Intl, Language};
+use crate::{Intl, Language, Translations};
 
 /// The device language as last announced and the formatter built for it.
 /// Building an [`Intl`] is not free, so it happens here, once per change, never per render.
 pub struct Localized {
     language: Language,
+    /// The [`Translations::version`] the formatter was built over.
+    version: u64,
     intl: Intl,
 }
 
@@ -34,21 +36,30 @@ impl Localized {
     #[must_use]
     pub fn new() -> Self {
         let language = Language::default();
+        let translations = Translations::shared();
         Self {
             language,
-            intl: crate::formatter(language),
+            version: translations.version(),
+            intl: translations.formatter(language),
         }
     }
 
     /// Switch to `language`; `true` when it differs from the current one
-    /// and the caller should mark its content dirty.
+    /// or the translations were reloaded since, and the caller should mark its content dirty.
     pub fn set(&mut self, language: Language) -> bool {
-        if language == self.language {
+        let translations = Translations::shared();
+        if language == self.language && translations.version() == self.version {
             return false;
         }
         self.language = language;
-        self.intl = crate::formatter(language);
+        self.version = translations.version();
+        self.intl = translations.formatter(language);
         true
+    }
+
+    /// Rebuild over the translations in effect if they were reloaded; `true` when they were.
+    pub fn refresh(&mut self) -> bool {
+        self.set(self.language)
     }
 
     #[must_use]
@@ -72,6 +83,7 @@ impl std::fmt::Debug for Localized {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Localized")
             .field("language", &self.language)
+            .field("version", &self.version)
             .finish_non_exhaustive()
     }
 }
@@ -81,31 +93,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_different_language_is_a_change() {
+    fn only_a_different_language_or_a_reload_is_a_change() {
+        let _process_wide = crate::PROCESS_WIDE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut localized = Localized::new();
-        assert_eq!(localized.language(), Language::En);
+        assert_eq!(localized.language(), Language::EN);
         assert!(
-            !localized.set(Language::En),
+            !localized.set(Language::EN),
             "the starting language again is not a change"
         );
-        assert!(localized.set(Language::ZhHans));
-        assert_eq!(localized.language(), Language::ZhHans);
+        assert!(localized.set(Language::ZH));
+        assert_eq!(localized.intl().language(), Language::ZH);
         assert!(
-            !localized.set(Language::ZhHans),
+            !localized.set(Language::ZH),
             "the same language again is not a change"
         );
-        assert!(localized.set(Language::En));
-    }
-
-    #[test]
-    fn the_formatter_follows_the_language() {
-        let mut localized = Localized::new();
-        assert_eq!(localized.intl().language(), Language::En);
-        localized.set(Language::ZhHans);
-        assert_eq!(
-            localized.intl().language(),
-            Language::ZhHans,
-            "the formatter is rebuilt for the new language"
-        );
+        Translations::install(Translations::load(&[]).0);
+        assert!(localized.refresh(), "a reload is a change");
+        assert!(!localized.refresh(), "until it has been taken");
     }
 }

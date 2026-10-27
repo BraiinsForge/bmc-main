@@ -1,0 +1,18 @@
+[package]
+name = "bmc-intl-units"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A language's unit patterns cut from CLDR, read in place from the bytes of its `units.postcard`"
+
+[dependencies]
+postcard.workspace = true
+serde = { workspace = true, features = ["derive"] }
+yoke.workspace = true
+zerovec.workspace = true
+
+[dev-dependencies]
+bmc-shared-utils.workspace = true
+
+[lints]
+workspace = true
