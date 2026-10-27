@@ -2722,4 +2722,70 @@ mod tests {
             Err(ManifestError::EmptyViewports)
         ));
     }
+
+    #[test]
+    fn a_manifest_without_programs_has_none() {
+        let manifest: Manifest = minimal_manifest_json()
+            .parse()
+            .expect("BUG: minimal manifest");
+        assert!(manifest.programs.is_empty());
+        assert!(manifest.programs.params_migrator.is_none());
+    }
+
+    fn parse_with_programs(programs: serde_json::Value) -> Result<Manifest, ManifestError> {
+        let mut json: serde_json::Value =
+            serde_json::from_str(minimal_manifest_json()).expect("BUG: minimal manifest");
+        json["programs"] = programs;
+        json.to_string().parse()
+    }
+
+    fn manifest_with_programs(programs: serde_json::Value) -> Manifest {
+        parse_with_programs(programs).expect("BUG: manifest with a migrator")
+    }
+
+    #[test]
+    fn a_params_migrator_parses_with_protocol_defaulting_to_zero() {
+        let manifest = manifest_with_programs(
+            serde_json::json!({"params_migrator": {"path": "bin/test-migrate-params"}}),
+        );
+        let migrator = manifest
+            .programs
+            .params_migrator
+            .expect("BUG: migrator declared");
+        assert_eq!(
+            migrator.path,
+            std::path::PathBuf::from("bin/test-migrate-params")
+        );
+        assert_eq!(migrator.protocol, 0);
+    }
+
+    #[test]
+    fn a_params_migrator_keeps_an_explicit_protocol() {
+        let manifest = manifest_with_programs(
+            serde_json::json!({"params_migrator": {"path": "bin/m", "protocol": 3}}),
+        );
+        assert_eq!(
+            manifest.programs.params_migrator.map(|m| m.protocol),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn a_params_migrator_outside_the_package_is_refused() {
+        for path in [
+            "/bin/sh",
+            "/nix/store/0000-coreutils/bin/rm",
+            "../other-widget/bin/x",
+            "bin/../../x",
+            "./bin/x",
+            "",
+        ] {
+            let parsed =
+                parse_with_programs(serde_json::json!({"params_migrator": {"path": path}}));
+            assert!(
+                matches!(parsed, Err(ManifestError::ProgramOutsidePackage(_))),
+                "{path:?} would run a program the package does not ship: {parsed:?}"
+            );
+        }
+    }
 }

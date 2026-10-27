@@ -667,6 +667,12 @@ fn fixtures() -> Vec<Negative> {
             schema_accepts: true,
             manifest_accepts: false,
         },
+        Negative {
+            label: "params_migrator without a path",
+            manifest: manifest_with("programs", json!({ "params_migrator": { "protocol": 0 } })),
+            schema_accepts: false,
+            manifest_accepts: false,
+        },
     ]
 }
 
