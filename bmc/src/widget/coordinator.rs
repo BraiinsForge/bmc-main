@@ -4099,6 +4099,7 @@ mod support_tests {
             supported_viewports: vec![constraint],
             params: indexmap::IndexMap::new(),
             credentials: indexmap::IndexMap::new(),
+            programs: bmc_widget_manifest::Programs::default(),
         };
         WidgetRegistry::new(vec![WidgetInfo::for_test(
             manifest,

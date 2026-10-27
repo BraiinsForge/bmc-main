@@ -69,6 +69,10 @@
         }
       }
     },
+    "programs": {
+      "description": "Helper programs the package ships.",
+      "$ref": "#/$defs/Programs"
+    },
     "settings": {
       "description": "System-provided settings the widget wants injected (locale, timezone, night mode, etc.).\nOrder is preserved.",
       "type": "array",
@@ -896,6 +900,43 @@
           }
         }
       ]
+    },
+    "ProgramEntry": {
+      "description": "One helper program: where it is and which protocol it speaks.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Program path, relative to the widget directory; no absolute paths or `..`.",
+          "type": "string"
+        },
+        "protocol": {
+          "description": "Protocol version of the program's stdin/stdout contract.\nA version the BMC application does not implement is skipped with a warning.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "Programs": {
+      "description": "Helper programs a package ships beside its binary, run by the BMC application rather than the compositor.",
+      "type": "object",
+      "properties": {
+        "params_migrator": {
+          "description": "Rewrites a widget instance's stored params when their stamp predates this package version.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProgramEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     },
     "ScalarField": {
       "description": "A named field that is always a scalar: a field of an object item, or of a credential type.\nBeing scalar is what keeps objects from nesting and credentials to one piece of text each.",

@@ -41,7 +41,7 @@
 
 use std::fmt;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use std::str::FromStr;
 
 pub use bmc_field_schema::credential;
@@ -160,6 +160,9 @@ pub enum ManifestError {
 
     #[error("credential slot {slot:?}: label must not be empty")]
     EmptyCredentialLabel { slot: String },
+
+    #[error("program path {0:?} must be relative and stay inside the package")]
+    ProgramOutsidePackage(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -190,6 +193,8 @@ struct RawManifest {
     params: IndexMap<ParamKey, ParamDefinition>,
     #[serde(default, deserialize_with = "deserialize_unique_credentials")]
     credentials: IndexMap<CredentialKey, CredentialSlot>,
+    #[serde(default)]
+    programs: Programs,
 }
 
 fn deserialize_unique_credentials<'de, D>(
@@ -199,6 +204,49 @@ where
     D: Deserializer<'de>,
 {
     bmc_field_schema::deserialize_unique_keyed(deserializer, "credential slot")
+}
+
+/// Helper programs a package ships beside its binary, run by the BMC application rather than the compositor.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Programs {
+    /// Rewrites a widget instance's stored params when their stamp predates this package version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params_migrator: Option<ProgramEntry>,
+}
+
+impl Programs {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.params_migrator.is_none()
+    }
+}
+
+/// One helper program: where it is and which protocol it speaks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProgramEntry {
+    /// Program path, relative to the widget directory; no absolute paths or `..`.
+    #[schemars(with = "String")]
+    pub path: PathBuf,
+    /// Protocol version of the program's stdin/stdout contract.
+    /// A version the BMC application does not implement is skipped with a warning.
+    // Wire-format number, hence `u32`.
+    #[serde(default)]
+    pub protocol: u32,
+}
+
+impl ProgramEntry {
+    /// The path comes from an uploaded manifest;
+    /// one that leaves the package could name any program on the device.
+    fn validate(&self) -> Result<(), ManifestError> {
+        let mut components = self.path.components().peekable();
+        let inside = components.peek().is_some()
+            && components.all(|component| matches!(component, Component::Normal(_)));
+        if inside {
+            Ok(())
+        } else {
+            Err(ManifestError::ProgramOutsidePackage(self.path.clone()))
+        }
+    }
 }
 
 /// One credential slot a widget declares: which kind of account it accepts, and how the operator
@@ -334,6 +382,9 @@ pub struct Manifest {
     /// Iteration order matches manifest order.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub credentials: IndexMap<CredentialKey, CredentialSlot>,
+    /// Helper programs the package ships.
+    #[serde(default, skip_serializing_if = "Programs::is_empty")]
+    pub programs: Programs,
 }
 
 impl FromStr for Manifest {
@@ -429,6 +480,7 @@ impl Manifest {
             supported_viewports: raw.supported_viewports,
             params: raw.params,
             credentials: raw.credentials,
+            programs: raw.programs,
         };
 
         for param in manifest.params.values_mut() {
@@ -503,6 +555,10 @@ impl Manifest {
 
         for (key, slot) in &self.credentials {
             slot.validate(key.as_str())?;
+        }
+
+        if let Some(migrator) = &self.programs.params_migrator {
+            migrator.validate()?;
         }
 
         Ok(())

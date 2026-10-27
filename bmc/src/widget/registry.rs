@@ -370,6 +370,7 @@ mod tests {
             supported_viewports: viewports,
             params: indexmap::IndexMap::new(),
             credentials: indexmap::IndexMap::new(),
+            programs: bmc_widget_manifest::Programs::default(),
         };
 
         let widget_dir = PathBuf::from("/test/widgets").join(name);

@@ -2860,6 +2860,7 @@ mod tests {
             }],
             params,
             credentials: indexmap::IndexMap::new(),
+            programs: bmc_widget_manifest::Programs::default(),
         }
     }
 
@@ -2901,6 +2902,7 @@ mod tests {
             }],
             params,
             credentials: indexmap::IndexMap::new(),
+            programs: bmc_widget_manifest::Programs::default(),
         }
     }
 
@@ -4268,6 +4270,7 @@ mod tests {
             }],
             params: indexmap::IndexMap::new(),
             credentials: indexmap::IndexMap::new(),
+            programs: bmc_widget_manifest::Programs::default(),
         };
         let widget_registry = Arc::new(WidgetRegistry::new(vec![
             crate::widget::WidgetInfo::for_test(

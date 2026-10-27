@@ -1428,6 +1428,7 @@ mod tests {
             }],
             params: indexmap::IndexMap::new(),
             credentials: indexmap::IndexMap::new(),
+            programs: bmc_widget_manifest::Programs::default(),
         };
 
         test_widget_build(manifest, "/test/widgets/test-widget")
