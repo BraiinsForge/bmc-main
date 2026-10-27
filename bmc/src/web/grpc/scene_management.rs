@@ -566,6 +566,7 @@ impl SceneManagementService {
                     .map_err(bad_request_status)?
             }
         };
+        let params_changed = existing.params != typed_params;
         let mut widget = scene::Widget {
             id: widget_id,
             position: parsed.position,
@@ -573,7 +574,11 @@ impl SceneManagementService {
             widget_type_id: existing.widget_type_id,
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: typed_params,
-            params_version: existing.params_version.clone(),
+            params_version: if params_changed {
+                Some(info.manifest.version.clone())
+            } else {
+                existing.params_version.clone()
+            },
             credential_bindings: typed_bindings,
         };
         stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
@@ -581,7 +586,7 @@ impl SceneManagementService {
 
         Ok(ValidatedWidgetUpdate {
             placement_changed: existing.placement != widget.placement,
-            params_changed: existing.params != widget.params,
+            params_changed,
             widget,
         })
     }
@@ -1469,6 +1474,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let mut scene = scene::Scene::fullscreen(widget_uid, typed_params);
         for widget in scene.widgets.values_mut() {
             stamp_widget_viewport_shape_from_caps(widget, &self.capabilities);
+            widget.params_version = Some(manifest.version.clone());
         }
         let scene_id = scene.id.to_string();
 
@@ -1949,6 +1955,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         let mut widget = scene::Widget::new(widget_uid, typed_params, position, placement);
         stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
+        widget.params_version = Some(manifest.version.clone());
         let widget_id = widget.id.to_string();
         let requested_bindings = config_req
             .credential_bindings
