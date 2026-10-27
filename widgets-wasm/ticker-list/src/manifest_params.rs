@@ -52,16 +52,25 @@ impl Period {
 }
 bmc_wasm_sdk::impl_manifest_str_enum!(Period);
 #[derive(Clone, Debug, PartialEq)]
+pub struct SymbolsItem {
+    pub base: String,
+    pub quote: Option<String>,
+}
+impl snapshot::typed::ValueRead for SymbolsItem {
+    fn from_value(value: snapshot::Value<'_>) -> Result<Self, snapshot::typed::ReadError> {
+        let row = value
+            .as_object()
+            .ok_or(snapshot::typed::ReadError::Mismatch)?;
+        Ok(Self {
+            base: snapshot::typed::required_field(&row, "base")?,
+            quote: snapshot::typed::optional_field(&row, "quote")?,
+        })
+    }
+}
+#[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub period: Period,
-    pub symbol_1: Option<String>,
-    pub symbol_2: Option<String>,
-    pub symbol_3: Option<String>,
-    pub symbol_4: Option<String>,
-    pub symbol_5: Option<String>,
-    pub symbol_6: Option<String>,
-    pub symbol_7: Option<String>,
-    pub symbol_8: Option<String>,
+    pub symbols: Vec<SymbolsItem>,
 }
 impl Params {
     /// Materialise a typed snapshot from a dynamic [`snapshot::Params`].
@@ -69,14 +78,7 @@ impl Params {
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
             period: <Period as ParamRead>::read_required(snap, "period"),
-            symbol_1: <String as ParamRead>::read_optional(snap, "symbol_1"),
-            symbol_2: <String as ParamRead>::read_optional(snap, "symbol_2"),
-            symbol_3: <String as ParamRead>::read_optional(snap, "symbol_3"),
-            symbol_4: <String as ParamRead>::read_optional(snap, "symbol_4"),
-            symbol_5: <String as ParamRead>::read_optional(snap, "symbol_5"),
-            symbol_6: <String as ParamRead>::read_optional(snap, "symbol_6"),
-            symbol_7: <String as ParamRead>::read_optional(snap, "symbol_7"),
-            symbol_8: <String as ParamRead>::read_optional(snap, "symbol_8"),
+            symbols: <Vec<SymbolsItem> as ParamRead>::read_required(snap, "symbols"),
         }
     }
     /// Latest typed snapshot delivered for this widget instance.
@@ -125,29 +127,8 @@ impl Params {
         if self.period != other.period {
             out.push("period");
         }
-        if self.symbol_1 != other.symbol_1 {
-            out.push("symbol_1");
-        }
-        if self.symbol_2 != other.symbol_2 {
-            out.push("symbol_2");
-        }
-        if self.symbol_3 != other.symbol_3 {
-            out.push("symbol_3");
-        }
-        if self.symbol_4 != other.symbol_4 {
-            out.push("symbol_4");
-        }
-        if self.symbol_5 != other.symbol_5 {
-            out.push("symbol_5");
-        }
-        if self.symbol_6 != other.symbol_6 {
-            out.push("symbol_6");
-        }
-        if self.symbol_7 != other.symbol_7 {
-            out.push("symbol_7");
-        }
-        if self.symbol_8 != other.symbol_8 {
-            out.push("symbol_8");
+        if self.symbols != other.symbols {
+            out.push("symbols");
         }
         out
     }

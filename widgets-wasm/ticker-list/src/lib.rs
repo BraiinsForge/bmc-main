@@ -316,11 +316,11 @@ mod wasm_glue {
         .expect("BUG: every manifest period token is a Nexus window")
     }
 
-    /// Collect the `symbol_N` slot params and reset only rows whose effective
-    /// symbol changed. An all-empty configuration leaves the list empty.
+    /// Collect the `symbols` rows and reset only rows whose effective
+    /// symbol changed. An all-blank configuration leaves the list empty.
     fn reload_symbols() -> [bool; symbols::MAX_SYMBOLS] {
         let params = manifest_params::Params::current();
-        let list = symbols::collect_symbols(&symbols::slots(&params));
+        let list = symbols::collect_symbols(&params.symbols);
         let n = list.len();
         let changed = SYMBOLS.with(|symbols| {
             let mut symbols = symbols.borrow_mut();
@@ -591,12 +591,11 @@ mod wasm_glue {
     pub extern "C" fn on_params_update() {
         let prev = manifest_params::Params::previous();
         let cur = manifest_params::Params::current();
-        // Compare the effective lists, not the raw slots: a cosmetic edit
-        // (added whitespace, a blank slot moved) must not blank every row
+        // Compare the effective lists, not the raw rows: a cosmetic edit
+        // (added whitespace, a blank row moved) must not blank every row
         // into Loading and refetch.
         let symbols_changed = prev.as_ref().is_none_or(|p| {
-            symbols::collect_symbols(&symbols::slots(p))
-                != symbols::collect_symbols(&symbols::slots(&cur))
+            symbols::collect_symbols(&p.symbols) != symbols::collect_symbols(&cur.symbols)
         });
         let period_changed = prev.as_ref().is_none_or(|p| p.period != cur.period);
         let changed = symbols_changed || period_changed;

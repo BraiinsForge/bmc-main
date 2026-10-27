@@ -123,7 +123,7 @@ const NAMEDAY_COUNTRIES: &[&str] = &[
 const DEFAULT_TICKER_PAIR: &str = "BTC-USD";
 /// Ticker `period` fallback — both ticker manifests' `default_value`.
 const DEFAULT_TICKER_PERIOD: &str = "7d";
-/// Ticker-list `symbol_1`..`symbol_8` fallbacks — ticker-list manifest
+/// Ticker-list `symbol_1`..`symbol_8` fallbacks — the 0.1.0 manifest
 /// `default_value`s, in slot order.
 const TICKER_LIST_SYMBOL_DEFAULTS: [&str; 8] =
     ["NVDA", "AAPL", "TSLA", "MSTR", "JPM", "META", "SPY", "NFLX"];
@@ -818,13 +818,14 @@ fn dispatch_ticker_single_params(params: &Value, view: &'static str) -> Value {
 /// Translate the inner `params` of a legacy `ticker-list` remote widget
 /// into the current Financial Ticker List widget ([`TICKER_LIST_UID`]).
 ///
-/// v0 stored the rows as a JSON `symbols` array; the current manifest has
-/// no array type, so each row is its own `symbol_N` param. Usable entries
-/// (strings with non-blank content) fill the eight slots in order, and the
-/// remaining optional slots stay absent, which the widget reads as skipped
-/// rows, not defaulted ones. A `symbols` that is
-/// absent, not an array, or yields no usable entry falls back to the
-/// manifest defaults, the same stance every other dispatch takes.
+/// v0 stored the rows as a JSON `symbols` array of strings.
+/// This writes them as the 0.1.0 `symbol_N` slots, unstamped,
+/// so the installed ticker-list's own migrator turns them into rows
+/// and a 0.1.0 package reads them as they are.
+/// Usable entries (strings with non-blank content) fill the slots in order,
+/// and the remaining slots stay absent: skipped rows, not defaulted ones.
+/// A `symbols` that is absent, not an array, or yields no usable entry
+/// falls back to the 0.1.0 defaults, the same stance every other dispatch takes.
 fn dispatch_ticker_list_params(params: &Value) -> Value {
     let configured: Vec<&str> = params
         .get("symbols")

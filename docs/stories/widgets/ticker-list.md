@@ -11,13 +11,15 @@ fetched independently so one bad symbol never blanks the others.
 
 > As a user, I want a single widget that lists the prices I follow so I do not need one widget per symbol.
 
-- Up to eight symbols are configured through the *Symbol 1* … *Symbol 8* parameters, which default to `NVDA`, `AAPL`,
-  `TSLA`, `MSTR`, `JPM`, `META`, `SPY`, and `NFLX`.
+- Up to eight rows are configured through the *Symbols* list. Each row is a *Symbol* (`AAPL`, `^GSPC`, `EUR`) and, for a
+  pair, a *Quote currency* (`USD`). The list defaults to `NVDA`, `AAPL`, `TSLA`, `MSTR`, `JPM`, `META`, `SPY` and
+  `NFLX`.
 - Each row shows the symbol, the instrument's name beneath it, the current price, and a signed percentage change.
-- Leaving a slot empty skips it and the remaining symbols move up, so a blank slot never leaves a gap in the list.
-- Clearing every slot shows `No symbols provided`.
-- Supported examples include the stock `AAPL`, the S&P 500 index `^GSPC`, the currency pair `EUR-USD`, and the
-  cryptocurrency pair `BTC-USD`. Availability varies by instrument; other symbol forms may not be supported.
+- Rows render in list order; a row whose symbol is only whitespace is skipped, and when every row is, the widget shows
+  `No symbols provided`.
+- Supported examples include the stock `AAPL`, the S&P 500 index `^GSPC`, the currency pair `EUR` with quote `USD`
+  (shown `EUR-USD`), and the cryptocurrency pair `BTC` with quote `USD`. Availability varies by instrument; other symbol
+  forms may not be supported.
 
 ### See as many rows as the tile can hold
 
@@ -87,8 +89,9 @@ fetched independently so one bad symbol never blanks the others.
 - Other rectangular viewports keep the closest shared size classification and scale by the widget fit factor; BMM100's
   320x240 renders the `small` layout. Row and column counts and the sparkline toggle are layout structure and do not
   scale.
-- *Symbol 1* … *Symbol 8* and *Time Period* are manifest-driven widget parameters, configurable from the web UI. The
-  manifest format has no list type, so the symbols are eight separate string parameters rather than one array.
+- *Symbols* and *Time Period* are manifest-driven widget parameters, configurable from the web UI. A device upgraded
+  from 0.1.x keeps its eight *Symbol N* values: the package's params migrator turns them into rows in order, dropping
+  empty and repeated slots and splitting `EUR-USD` into a base and a quote.
 - The manifest subscribes to the device `localization` setting. The percentage change is deliberately not localized.
 - Price data comes from `https://nexus.braiinsforge.com/api/v1/data/prices/`; each row polls every 300 seconds with a 15
   second per-request timeout, sized above the Nexus cold long-poll. A response that cannot be parsed is retried after 10

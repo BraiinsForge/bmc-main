@@ -1,16 +1,22 @@
 {
   "$schema": "../../bmc-widget-manifest/manifest.schema.json",
   "uid": "51f48290-a8fd-466d-8693-1911b06c68c8",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "Financial Ticker List",
   "description": "Display multiple financial symbols with prices, changes, and sparkline charts",
-  "config_help": "Enter a stock symbol, index, or pair.\n\n**Currency pairs:** write pairs as `BASE-QUOTE`; `-` separates the base and quote currencies.\n\n- `EUR-USD` (Euro to US Dollar)\n- `USD-CZK` (US Dollar to Czech Koruna)\n- `EUR-CZK` (Euro to Czech Koruna)\n- `USD-JPY` (US Dollar to Japanese Yen)\n- `BTC-USD` (Bitcoin to US Dollar)\n\n**Indexes:** prefix index symbols with `^`.\n\n- `^GSPC` (S&P 500)\n- `^DJI` (Dow Jones Industrial Average)\n- `^IXIC` (Nasdaq Composite)\n- `^RUT` (Russell 2000)\n- `^VIX` (CBOE Volatility Index)\n\n**Stocks:** prices use the stock market's base currency.\n\n- `AAPL` (Apple)\n- `MSFT` (Microsoft)\n- `NVDA` (Nvidia)\n- `TSLA` (Tesla)\n- `AMZN` (Amazon)\n\n**Gold:**\n\n- `XAU-USD` (Gold to US Dollar)\n\nAvailability varies by instrument; other symbol forms may not be supported.",
+  "config_help": "Add a row per instrument. For a pair put the base in *Symbol* and the quote in *Quote currency*.\n\n**Currency pairs:** the base and the quote currency go in separate fields.\n\n- `EUR` / `USD` (Euro to US Dollar)\n- `USD` / `CZK` (US Dollar to Czech Koruna)\n- `EUR` / `CZK` (Euro to Czech Koruna)\n- `USD` / `JPY` (US Dollar to Japanese Yen)\n- `BTC` / `USD` (Bitcoin to US Dollar)\n\n**Indexes:** prefix index symbols with `^`.\n\n- `^GSPC` (S&P 500)\n- `^DJI` (Dow Jones Industrial Average)\n- `^IXIC` (Nasdaq Composite)\n- `^RUT` (Russell 2000)\n- `^VIX` (CBOE Volatility Index)\n\n**Stocks:** prices use the stock market's base currency.\n\n- `AAPL` (Apple)\n- `MSFT` (Microsoft)\n- `NVDA` (Nvidia)\n- `TSLA` (Tesla)\n- `AMZN` (Amazon)\n\n**Gold:**\n\n- `XAU` / `USD` (Gold to US Dollar)\n\nAvailability varies by instrument; other symbol forms may not be supported.",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/ticker-list",
   "icon": "assets/icon.svg",
+  "programs": {
+    "params_migrator": {
+      "path": "bin/ticker-list-migrate-params",
+      "protocol": 0
+    }
+  },
   "category": "finance",
   "settings": [
     "localization"
@@ -25,61 +31,56 @@
     }
   ],
   "params": {
-    "symbol_1": {
-      "name": "Symbol 1",
-      "description": "Financial symbol; leave empty to skip this row",
-      "type": "string",
-      "optional": true,
-      "default_value": "NVDA"
-    },
-    "symbol_2": {
-      "name": "Symbol 2",
-      "description": "Financial symbol; leave empty to skip this row",
-      "type": "string",
-      "optional": true,
-      "default_value": "AAPL"
-    },
-    "symbol_3": {
-      "name": "Symbol 3",
-      "description": "Financial symbol; leave empty to skip this row",
-      "type": "string",
-      "optional": true,
-      "default_value": "TSLA"
-    },
-    "symbol_4": {
-      "name": "Symbol 4",
-      "description": "Financial symbol; leave empty to skip this row",
-      "type": "string",
-      "optional": true,
-      "default_value": "MSTR"
-    },
-    "symbol_5": {
-      "name": "Symbol 5",
-      "description": "Financial symbol; leave empty to skip this row",
-      "type": "string",
-      "optional": true,
-      "default_value": "JPM"
-    },
-    "symbol_6": {
-      "name": "Symbol 6",
-      "description": "Financial symbol; leave empty to skip this row",
-      "type": "string",
-      "optional": true,
-      "default_value": "META"
-    },
-    "symbol_7": {
-      "name": "Symbol 7",
-      "description": "Financial symbol; leave empty to skip this row",
-      "type": "string",
-      "optional": true,
-      "default_value": "SPY"
-    },
-    "symbol_8": {
-      "name": "Symbol 8",
-      "description": "Financial symbol; leave empty to skip this row",
-      "type": "string",
-      "optional": true,
-      "default_value": "NFLX"
+    "symbols": {
+      "name": "Symbols",
+      "description": "Rows in display order: a stock, index or pair base, and a quote currency for pairs",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "fields": {
+          "base": {
+            "name": "Symbol",
+            "description": "Stock, index or pair base, such as AAPL, ^GSPC or EUR",
+            "type": "string",
+            "min_length": 1
+          },
+          "quote": {
+            "name": "Quote currency",
+            "description": "Only for pairs: USD in EUR-USD",
+            "type": "string",
+            "optional": true
+          }
+        }
+      },
+      "min_items": 1,
+      "max_items": 8,
+      "unique_items": true,
+      "default_value": [
+        {
+          "base": "NVDA"
+        },
+        {
+          "base": "AAPL"
+        },
+        {
+          "base": "TSLA"
+        },
+        {
+          "base": "MSTR"
+        },
+        {
+          "base": "JPM"
+        },
+        {
+          "base": "META"
+        },
+        {
+          "base": "SPY"
+        },
+        {
+          "base": "NFLX"
+        }
+      ]
     },
     "period": {
       "name": "Time Period",

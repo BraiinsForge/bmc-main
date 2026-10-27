@@ -1,8 +1,11 @@
 [package]
 name = "ticker-list"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
+
+[package.metadata.nix]
+include = ["manifest.json"]
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -13,6 +16,9 @@ scene = []
 [dependencies]
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 prices = { path = "../lib/prices" }
+
+[dev-dependencies]
+serde_json = "1.0.154"
 
 [lints]
 workspace = true

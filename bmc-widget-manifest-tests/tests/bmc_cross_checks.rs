@@ -311,12 +311,6 @@ fn ticker_migration_fallbacks_match_the_shipped_manifests() {
         string_default(&ticker_list, "period"),
         expected.ticker_period
     );
-    for (index, default) in expected.ticker_list_symbols.iter().enumerate() {
-        assert_eq!(
-            &string_default(&ticker_list, &format!("symbol_{}", index + 1)),
-            default
-        );
-    }
 
     let single_periods = string_enum(&ticker_single, "period");
     let list_periods = string_enum(&ticker_list, "period");
