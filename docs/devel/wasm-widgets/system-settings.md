@@ -41,27 +41,35 @@ Read `system::current()` from `init`, `render`, or `on_system_update`.
 use bmc_wasm_sdk::system;
 use bmc_wasm_sdk::*;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn render(delta_ms: u32) {
-    let sys = system::current();
-    let viewport = widget_viewport();
+struct Status;
 
-    let timezone = sys.timezone().unwrap_or("UTC");
-    let mode = if sys.night_mode().unwrap_or(false) {
-        "night"
-    } else {
-        "day"
-    };
+#[widget]
+impl Widget for Status {
+    fn init(_: &Building<Self>) -> Self {
+        Self
+    }
 
-    render_ui(
-        viewport.width,
-        viewport.height,
-        col(props!(padding: 16.0, gap: 8.0), [
-            text(timezone, style!(size: 22)),
-            text(mode, style!(size: 18)),
-        ]),
-    );
-    request_frame_after(1_000);
+    fn render(&mut self, _delta_ms: u32) {
+        let sys = system::current();
+        let viewport = widget_viewport();
+
+        let timezone = sys.timezone().unwrap_or("UTC");
+        let mode = if sys.night_mode().unwrap_or(false) {
+            "night"
+        } else {
+            "day"
+        };
+
+        render_ui(
+            viewport.width,
+            viewport.height,
+            col(props!(padding: 16.0, gap: 8.0), [
+                text(timezone, style!(size: 22)),
+                text(mode, style!(size: 18)),
+            ]),
+        );
+        request_frame_after(1_000);
+    }
 }
 ```
 
@@ -83,18 +91,22 @@ the hook only when the update changes visible output; otherwise the cached work 
 For example, this widget repaints only when one of the system fields it displays has changed:
 
 ```rust
-use bmc_wasm_sdk::{request_frame, system};
+use bmc_wasm_sdk::{Widget, request_frame, system, widget};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn on_system_update() {
-    let current = system::current();
-    let previous = system::previous();
+#[widget]
+impl Widget for Clock {
+    // init, render, …
 
-    let visible_output_changed = current.timezone() != previous.timezone()
-        || current.time_format() != previous.time_format()
-        || current.night_mode() != previous.night_mode();
-    if visible_output_changed {
-        request_frame();
+    fn on_system_update(&mut self) {
+        let current = system::current();
+        let previous = system::previous();
+
+        let visible_output_changed = current.timezone() != previous.timezone()
+            || current.time_format() != previous.time_format()
+            || current.night_mode() != previous.night_mode();
+        if visible_output_changed {
+            request_frame();
+        }
     }
 }
 ```

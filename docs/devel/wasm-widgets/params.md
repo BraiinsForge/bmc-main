@@ -158,19 +158,27 @@ mod manifest_params;
 use bmc_wasm_sdk::*;
 use manifest_params::Params;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn render(delta_ms: u32) {
-    let params = Params::current();
-    let viewport = widget_viewport();
+struct SecondsLabel;
 
-    let label = if params.show_seconds {
-        "seconds enabled"
-    } else {
-        "seconds disabled"
-    };
+#[widget]
+impl Widget for SecondsLabel {
+    fn init(_: &Building<Self>) -> Self {
+        Self
+    }
 
-    render_ui(viewport.width, viewport.height, text(label, style!(size: 24)));
-    request_frame_after(1_000);
+    fn render(&mut self, _delta_ms: u32) {
+        let params = Params::current();
+        let viewport = widget_viewport();
+
+        let label = if params.show_seconds {
+            "seconds enabled"
+        } else {
+            "seconds disabled"
+        };
+
+        render_ui(viewport.width, viewport.height, text(label, style!(size: 24)));
+        request_frame_after(1_000);
+    }
 }
 ```
 
@@ -234,24 +242,29 @@ the next naturally scheduled render.
 Use the hook when a params change needs to update cached state, start debounced work, or repaint changed UI.
 
 ```rust
-#[unsafe(no_mangle)]
-pub extern "C" fn on_params_update() {
-    let Some(previous) = Params::previous() else {
-        return;
-    };
+#[widget]
+impl Widget for Weather {
+    // init, render, …
 
-    let changed = Params::current().changed_keys(&previous);
-    if changed.contains(&"city") {
-        // Repaint the visible city output.
-        request_frame();
+    fn on_params_update(&mut self) {
+        let Some(previous) = Params::previous() else {
+            return;
+        };
+
+        let changed = Params::current().changed_keys(&previous);
+        if changed.contains(&"city") {
+            // Repaint the visible city output.
+            request_frame();
+        }
     }
 }
 ```
 
 Omitting the hook is correct only when the widget already guarantees another render cadence and accepts the resulting
-latency. A static widget whose visible output depends on params must export `on_params_update` and request a frame.
-Mining-clock, for example, exports the hook to refresh authentication state but deliberately does not request a frame:
-its existing one-second cadence displays the new values on the next tick without shifting the second hand's even steps.
+latency. A static widget whose visible output depends on params must implement `on_params_update` and request a frame.
+Mining-clock, for example, implements the hook to refresh authentication state but deliberately does not request a
+frame: its existing one-second cadence displays the new values on the next tick without shifting the second hand's even
+steps.
 
 The operator UI can send live-preview updates before saving. Treat preview and committed updates the same way. Debounce
 network fetches and other expensive side effects triggered by params changes.
@@ -316,6 +329,6 @@ cargo run --features testbed --bin testbed \
   --manifest=widgets-wasm/<widget-name>/manifest.json
 ```
 
-Changing a value in the Params panel calls `deliver_params_update` for every previewed size and immediately invokes an
-exported `on_params_update` hook. Visible changes repaint immediately only when the hook requests a frame. The
-`params-demo` widget highlights changed rows, which makes it the best example to inspect when wiring update behavior.
+Changing a value in the Params panel calls `deliver_params_update` for every previewed size and immediately runs the
+widget's `on_params_update`. Visible changes repaint immediately only when the hook requests a frame. The `params-demo`
+widget highlights changed rows, which makes it the best example to inspect when wiring update behavior.

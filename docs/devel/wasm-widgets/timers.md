@@ -8,41 +8,40 @@ while the widget renders.
 
 ## Start And Stop A Timer
 
-`timer::start(period_ms, callback)` returns a `Timer` handle, the only one for that timer: it cannot be copied, and
-dropping it stops the timer. The first tick arrives one period after the call, and every tick calls `callback` with a
-reference to the timer and the number of periods the tick covers.
+`Timer::start(to, period_ms, Self::method)` starts a timer whose ticks run that method on `to`, and returns a `Timer`
+handle, the only one for that timer: it cannot be copied, and dropping it stops the timer. The first tick arrives one
+period after the call, and every tick calls the method with a reference to the timer and the number of periods the tick
+covers.
 
 ```rust
-use std::cell::{Cell, RefCell};
-
-use bmc_wasm_sdk::timer::{self, Timer};
+use bmc_wasm_sdk::timer::Timer;
 use bmc_wasm_sdk::*;
 
-thread_local! {
+struct Chart {
     // Set by the widget's fetch reply handler.
-    static LATEST_HASHRATE: Cell<Option<f64>> = const { Cell::new(None) };
+    latest_hashrate: Option<f64>,
     // One entry per minute; `None` marks a minute with no sample.
-    static SAMPLES: RefCell<Vec<Option<f64>>> = const { RefCell::new(Vec::new()) };
-    static SAMPLER: RefCell<Option<Timer>> = const { RefCell::new(None) };
-    static HISTORY_UNAVAILABLE: Cell<bool> = const { Cell::new(false) };
+    samples: Vec<Option<f64>>,
+    sampler: Option<Timer>,
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn init() {
-    let sampler = timer::start(60_000, sample_hashrate);
-    if sampler.is_none() {
-        HISTORY_UNAVAILABLE.set(true);
+impl Chart {
+    fn sample_hashrate(&mut self, _timer: &Timer, elapsed_periods: u32) {
+        let missed_periods = elapsed_periods as usize - 1;
+        self.samples.resize(self.samples.len() + missed_periods, None);
+        self.samples.push(self.latest_hashrate);
+        request_frame();
     }
-    SAMPLER.set(sampler);
 }
 
-fn sample_hashrate(_timer: &Timer, elapsed_periods: u32) {
-    let missed_periods = elapsed_periods as usize - 1;
-    SAMPLES.with_borrow_mut(|samples| {
-        samples.resize(samples.len() + missed_periods, None);
-        samples.push(LATEST_HASHRATE.get());
-    });
-    request_frame();
+#[widget]
+impl Widget for Chart {
+    fn init(me: &Building<Self>) -> Self {
+        let sampler = Timer::start(me, 60_000, Self::sample_hashrate);
+        Self { latest_hashrate: None, samples: Vec::new(), sampler }
+    }
+
+    fn render(&mut self, _delta_ms: u32) { /* … */ }
 }
 ```
 
@@ -51,6 +50,10 @@ tick by itself.
 
 `start` returns `None` when the host refuses the timer, and the host logs why. Keep the handle, and when there is none,
 make the widget show that the chart has no history instead of leaving it empty.
+
+`Timer::start(&part, period_ms, T::method)` starts a timer whose ticks run a method of the value in a `Part<T>` instead;
+see [Widget Struct](widget-struct.md) for every receiver. `timer::start(period_ms, callback)` takes a plain function,
+and stays only so that a widget not yet ported still builds.
 
 `Timer::set_period(period_ms)` moves a running timer to a new period. It keeps its id and callback, and its next tick
 arrives one new period after the call; a tick of the old period already due in the same delivery pass is dropped. It
@@ -64,12 +67,12 @@ A callback may start and stop timers. The argument is only borrowed, so a callba
 stored handle:
 
 ```rust
-if let Some(sampler) = SAMPLER.take() {
+if let Some(sampler) = self.sampler.take() {
     sampler.stop();
 }
 ```
 
-Several timers can share one callback. For a fixed set, give each timer a one-line callback that names which timer it is
+Several timers can share one callback. For a fixed set, give each timer a one-line method that names which timer it is
 and calls the shared function. For a set that changes at run time, compare the argument with the stored handles to find
 the one that fired.
 

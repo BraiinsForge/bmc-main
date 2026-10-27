@@ -9,6 +9,7 @@ the other documents go deeper on individual topics.
 
 - [Boundaries](boundaries.md) — what a widget must not and should not do on a device.
 - [Best Practices](best-practices.md) — the conventions every widget follows.
+- [Widget Struct](widget-struct.md) — the widget as a struct, callbacks as its methods, parts for sub-objects.
 - [Params](params.md) — per-instance operator configuration.
 - [Credentials](credentials.md) — the accounts a widget needs, whose secrets only the host sees.
 - [System Settings](system-settings.md) — the host's system-wide settings and their updates.

@@ -33,25 +33,34 @@ architecture details.
 ```rust
 use bmc_wasm_sdk::*;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn render(_delta_ms: u32) {
-    let WidgetSize { width: w, height: h, .. } = widget_size();
-    let root = col(props!(padding: 24.0, gap: 16.0, background: BLACK), [
-        text("Hello", style!(size: 32, weight: 600)),
-        row(props!(gap: 12.0), [
-            button!("Click me", style: Primary),
-            button!("Cancel", style: Secondary),
-        ]),
-        spacer(1.0),
-    ]);
-    render_ui(w, h, root);
-    request_frame_after(1_000);
+struct Hello;
+
+#[widget]
+impl Widget for Hello {
+    fn init(_: &Building<Self>) -> Self {
+        Self
+    }
+
+    fn render(&mut self, _delta_ms: u32) {
+        let WidgetSize { width: w, height: h, .. } = widget_size();
+        let root = col(props!(padding: 24.0, gap: 16.0, background: BLACK), [
+            text("Hello", style!(size: 32, weight: 600)),
+            row(props!(gap: 12.0), [
+                button!("Click me", style: Primary),
+                button!("Cancel", style: Secondary),
+            ]),
+            spacer(1.0),
+        ]);
+        render_ui(w, h, root);
+        request_frame_after(1_000);
+    }
 }
 ```
 
-`init` / `on_params_update` / `on_system_update` / `unload` are all optional — define them only when you need them. The
-full widget lifecycle (when each hook fires, which host imports are legal in each phase, the trap-vs-soft-fail guard
-matrix) lives in the [`bmc_wasm_sdk`](sdk/src/lib.rs) crate-level rustdoc — render it locally with `just wasm::docs`.
+`on_params_update` / `on_system_update` / `unload` and the other hooks are optional — write them only when you need
+them. The full widget lifecycle (when each hook fires, which host imports are legal in each phase, the trap-vs-soft-fail
+guard matrix) lives in the [`bmc_wasm_sdk`](sdk/src/lib.rs) crate-level rustdoc — render it locally with
+`just wasm::docs`.
 
 ## Development
 

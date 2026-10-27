@@ -4,6 +4,20 @@ Read this before writing or changing a WASM widget. It collects the conventions 
 every widget under `widgets-wasm/` (and the SDK examples) should follow. The other pages in [WASM Widgets](README.md) go
 deeper on individual topics. What a widget must not and should not do is in [Boundaries](boundaries.md).
 
+## Write the widget as a struct
+
+A widget is a struct implementing `Widget`, with `#[widget]` on the impl block. Its state lives in fields, and its hooks
+and SDK callbacks are its methods: `Timer::start(self, period_ms, Self::tick)`,
+`PollHandle::register(me, Self::build, Self::on_reply, config)` in `init`. See [Widget Struct](widget-struct.md).
+
+Give a sub-object its own `Part<T>` when its callbacks touch only its own state, such as a list row that polls its own
+price or a loader that chains a fetch into a decode. A sub-object whose callbacks write the widget's state stays a plain
+struct, driven from the widget's own methods.
+
+Hand-written `#[unsafe(no_mangle)] pub extern "C"` exports and state in `thread_local!` cells are obsolete. The
+free-function forms (`timer::start`, `register_poll`, `request.send`, …) stay only so that a widget not yet ported still
+builds.
+
 ## Split pure logic from the wasm boundary
 
 Keep formatting, layout decisions, data models, and payload parsing in plain functions that take values and return
@@ -30,8 +44,8 @@ let rate = format_number!(93.42, 2); //      "93.42"   / "93,42"
 ## Read system settings and react to changes
 
 Read `system::current()` on the render path. Because values are formatted from raw state on each frame, a setting change
-shows on the next frame. Export `on_system_update` and call `request_frame()` when a change should appear immediately
-instead of waiting for the next data tick. See [System Settings](system-settings.md).
+shows on the next frame. Implement the `on_system_update` hook and call `request_frame()` from it when a change should
+appear immediately instead of waiting for the next data tick. See [System Settings](system-settings.md).
 
 ## Align both axes CSS-style
 
@@ -127,8 +141,8 @@ See [Memory](memory.md) for the 64 KiB stack budget, measured high-water marks, 
 
 The host gives each widget a small, fixed set of background resources, listed with their defaults in
 [`RuntimeResourceLimits`](../../../bmc-wasm-runtime/src/runtime_limits.rs). The tightest is image decoding: one decode
-in flight per widget. A request past a limit is refused, not queued: `BitmapSlot::set_fit` and `FetchRequest::send`
-return `None`, and `set_fit_ref` hands the body back.
+in flight per widget. A request past a limit is refused, not queued: each `BitmapSlot::set_fit` and `FetchRequest::send`
+form, the method forms included, returns `None`, and each `set_fit_ref` form hands the body back.
 
 Do not fan work out in parallel. Keep the waiting work in a queue inside the widget, and start the next decode from the
 callback that reports the previous one. The device also runs one decode at a time across all widgets, so parallel

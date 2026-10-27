@@ -120,19 +120,30 @@ becomes true on a second attempt. Rebinding the slot or fixing the placeholder i
 
 ### On a WebSocket
 
-`ws_connect` substitutes placeholders in the URL and headers, and `Ws::send` in every message. A message has no URL of
+`Ws::connect` substitutes placeholders in the URL and headers, and `Ws::send` in every message. A message has no URL of
 its own, so the host judges it against the host and port the socket connected to. The handshake follows no redirect: a
 3xx answer fails the connect, so the socket only ever talks to the host its URL names, the one the pin judged. A service
 that authenticates on the socket, as Home Assistant does, takes the token in a message:
 
 ```rust
-let Some(ws) = ws_connect(credentials::home::WEBSOCKET_URL, None, on_event) else {
-    return; // past the socket limit
-};
+#[widget]
+impl Widget for Home {
+    fn init(me: &Building<Self>) -> Self {
+        // `None` means past the socket limit.
+        let ws = Ws::connect(me, credentials::home::WEBSOCKET_URL, None, Self::on_event);
+        Self { ws, /* … */ }
+    }
+    // …
+}
 
-// Once `on_event` sees `WsEvent::Open`:
-let auth = fmt!(r#"{{"type":"auth","access_token":"{}"}}"#, credentials::home::TOKEN);
-ws.send(&auth);
+impl Home {
+    fn on_event(&mut self, ws: &Ws, event: &WsEvent<'_>) {
+        if matches!(event, WsEvent::Open) {
+            let auth = fmt!(r#"{{"type":"auth","access_token":"{}"}}"#, credentials::home::TOKEN);
+            ws.send(&auth);
+        }
+    }
+}
 ```
 
 The same two causes stop it. As with fetch, the widget learns of either from a host callback, never inside the call that
@@ -189,14 +200,18 @@ frame.
 Request a frame only when the changed credentials affect visible output:
 
 ```rust
-use bmc_wasm_sdk::{credentials, request_frame};
+use bmc_wasm_sdk::{Widget, credentials, request_frame, widget};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn on_credentials_update() {
-    let current = credentials::current();
-    let previous = credentials::previous();
-    if current != previous {
-        request_frame();
+#[widget]
+impl Widget for Account {
+    // init, render, …
+
+    fn on_credentials_update(&mut self) {
+        let current = credentials::current();
+        let previous = credentials::previous();
+        if current != previous {
+            request_frame();
+        }
     }
 }
 ```

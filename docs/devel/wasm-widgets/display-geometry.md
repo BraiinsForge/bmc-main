@@ -35,17 +35,25 @@ advisory.
 Use `widget_viewport()` for the actual render target:
 
 ```rust
-use bmc_wasm_sdk::{render_ui, widget_viewport};
+use bmc_wasm_sdk::{Building, Widget, render_ui, widget, widget_viewport};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn render(delta_ms: u32) {
-    let viewport = widget_viewport();
+struct Panel;
 
-    render_ui(
-        viewport.width,
-        viewport.height,
-        // build UI for viewport.shape here
-    );
+#[widget]
+impl Widget for Panel {
+    fn init(_: &Building<Self>) -> Self {
+        Self
+    }
+
+    fn render(&mut self, _delta_ms: u32) {
+        let viewport = widget_viewport();
+
+        render_ui(
+            viewport.width,
+            viewport.height,
+            // build UI for viewport.shape here
+        );
+    }
 }
 ```
 

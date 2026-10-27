@@ -15,10 +15,10 @@ the device.
 - Brightness, night mode, alarms, the scene list and the widget's own params belong to the user. A widget that moves
   them overrides the person who set them and changes the conditions every other widget runs under.
 - The SDK has no call for any of this. The only route is the internal API below.
-- Instead: keep state inside the widget. A companion app talks to the widget through `http_listen(0, …)`. The host picks
-  a free port, since a fixed one fails when something else holds it, and `listener.port()` then reads `0`. The port
-  changes across restarts, so advertise it with `mdns` and have the app find the widget there. Anyone on the LAN can
-  reach the listener, so authenticate the app with a pairing code shown on the screen.
+- Instead: keep state inside the widget. A companion app talks to the widget through `HttpListener::listen(self, 0, …)`.
+  The host picks a free port, since a fixed one fails when something else holds it, and `listener.port()` then reads
+  `0`. The port changes across restarts, so advertise it with `mdns` and have the app find the widget there. Anyone on
+  the LAN can reach the listener, so authenticate the app with a pairing code shown on the screen.
 
 **Must not: ship anything but a WASM widget.**
 
