@@ -632,4 +632,47 @@ mod tests {
             bmc_widget_manifest::ViewportShape::Rectangular
         );
     }
+
+    #[test]
+    fn an_unstamped_widget_writes_no_params_version_key() {
+        let json = serde_json::to_value(widget_at_origin()).expect("BUG: serialize widget");
+        assert!(
+            json.get("params_version").is_none(),
+            "an absent stamp must stay out of the config file so older code ignores it"
+        );
+    }
+
+    #[test]
+    fn a_stamped_widget_round_trips_its_version() {
+        let mut widget = widget_at_origin();
+        widget.params_version = Some(semver::Version::new(0, 2, 0));
+        let json = serde_json::to_value(&widget).expect("BUG: serialize widget");
+        assert_eq!(json["params_version"], "0.2.0");
+        let back: Widget = serde_json::from_value(json).expect("BUG: parse widget");
+        assert_eq!(back.params_version, Some(semver::Version::new(0, 2, 0)));
+    }
+
+    #[test]
+    fn a_config_written_before_the_stamp_parses_as_unstamped() {
+        let json = serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000000",
+            "widget_type_id": "00000000-0000-0000-0000-000000000000",
+            "row": 0, "col": 0,
+            "placement": "fullscreen",
+            "viewport_shape": "rectangular",
+            "params": { "symbol_1": "NVDA" },
+        });
+        let widget: Widget =
+            serde_json::from_value(json).expect("BUG: a 26.10 widget must still parse");
+        assert_eq!(widget.params_version, None);
+    }
+
+    #[test]
+    fn cloning_a_widget_copies_its_stamp() {
+        let mut widget = widget_at_origin();
+        widget.params_version = Some(semver::Version::new(1, 2, 3));
+        let cloned = widget.clone_with_new_id();
+        assert_ne!(cloned.id, widget.id);
+        assert_eq!(cloned.params_version, widget.params_version);
+    }
 }
