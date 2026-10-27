@@ -29,8 +29,54 @@ use crate::translator::Extraction;
 
 const FORMATJS: &str = "formatjs";
 
+/// Pins the `formatjs` release.
+const CLI_PIN: &str = "nix/intl/formatjs-cli.nix";
+
 /// The file holding how a message's id is hashed, which the web build reads too.
 const MESSAGE_ID: &str = "frontend/message-id.json";
+
+/// Refuse a `formatjs` other than the pinned release:
+/// another can hash message ids differently from the macros and the web build.
+///
+/// # Errors
+/// The release on PATH when it is not the pinned one, or why it would not start.
+pub fn require_pinned(repo: &Path) -> Result<(), String> {
+    let output = Command::new(FORMATJS)
+        .arg("--version")
+        .output()
+        .map_err(|error| console::spawn_failed(FORMATJS, &error))?;
+    pinned_or_refused(&String::from_utf8_lossy(&output.stdout), repo)
+}
+
+/// `printed` is what `formatjs --version` prints: `formatjs 1.8.2`.
+fn pinned_or_refused(printed: &str, repo: &Path) -> Result<(), String> {
+    let found = printed
+        .split_whitespace()
+        .last()
+        .unwrap_or("of an unknown version");
+    let pinned = cli_pin(repo, "version")?;
+    if found == pinned {
+        return Ok(());
+    }
+    Err(console::outside_dev_shell(&format!(
+        "{FORMATJS} {found} is on PATH, {CLI_PIN} pins {pinned}"
+    )))
+}
+
+/// The `name = "…";` binding of [`CLI_PIN`].
+fn cli_pin(repo: &Path, name: &str) -> Result<String, String> {
+    let path = repo.join(CLI_PIN);
+    let text = std::fs::read_to_string(&path).map_err(|error| console::at(&path, error))?;
+    text.lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(name)?
+                .strip_prefix(" = \"")?
+                .strip_suffix("\";")
+        })
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{} binds no `{name}`", console::path(&path)))
+}
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,4 +135,30 @@ pub fn extract(surface: &Surface, id_pattern: &str) -> Result<Extraction, String
             surface.name
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn checkout() -> &'static Path {
+        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+    }
+
+    #[test]
+    fn only_the_pinned_cli_is_accepted() {
+        let pinned = cli_pin(checkout(), "version").expect("BUG: the checkout pins a version");
+        assert_eq!(
+            pinned_or_refused(&format!("formatjs {pinned}\n"), checkout()),
+            Ok(())
+        );
+        let refused = pinned_or_refused("formatjs 1.4.2\n", checkout())
+            .expect_err("BUG: another release is refused");
+        assert!(
+            refused.contains(&format!(
+                "formatjs 1.4.2 is on PATH, {CLI_PIN} pins {pinned}"
+            )),
+            "{refused}"
+        );
+    }
 }

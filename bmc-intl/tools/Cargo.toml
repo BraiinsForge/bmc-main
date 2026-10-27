@@ -10,7 +10,7 @@ name = "intl"
 path = "src/main.rs"
 
 [package.metadata.nix]
-include = ["../../frontend/message-id.json"]
+include = ["../../frontend/message-id.json", "../../nix/intl/formatjs-cli.nix"]
 
 [lints]
 workspace = true

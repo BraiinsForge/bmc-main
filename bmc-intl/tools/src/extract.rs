@@ -30,6 +30,7 @@ use crate::{console, formatjs, translator};
 /// # Errors
 /// A missing tool, or an extraction or translator file that fails.
 pub fn run(surfaces: &[SurfaceName], repo: &Path) -> Result<ExitCode, String> {
+    formatjs::require_pinned(repo)?;
     let id_pattern = formatjs::id_pattern(repo)?;
     for surface in surface::select(surfaces, repo)? {
         extract_surface(&surface, &id_pattern)?;
