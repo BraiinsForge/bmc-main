@@ -23,7 +23,8 @@
 use std::path::{Path, PathBuf};
 
 use bmc_widget_manifest::{
-    Manifest, ParamKey, Programs, ViewportShape, WidgetCategory, WidgetViewportConstraint,
+    EnumControl, Manifest, ParamDefinition, ParamKey, ParamKind, Programs, StringParam,
+    ViewportShape, WidgetCategory, WidgetViewportConstraint,
 };
 use indexmap::IndexMap;
 use uuid::Uuid;
@@ -76,4 +77,29 @@ pub(crate) fn write_manifest(dir: &Path, manifest: &Manifest) {
 
 pub(crate) fn param_key(name: &str) -> ParamKey {
     ParamKey::try_new(name.to_owned()).expect("BUG: a valid test key")
+}
+
+pub(crate) fn string_param(default: &str) -> ParamDefinition {
+    required(ParamKind::String(plain_string(Some(default.to_owned()))))
+}
+
+fn required(kind: ParamKind) -> ParamDefinition {
+    ParamDefinition {
+        name: "T".to_owned(),
+        description: None,
+        is_optional: false,
+        kind,
+    }
+}
+
+fn plain_string(default_value: Option<String>) -> StringParam {
+    StringParam {
+        format: None,
+        min_length: None,
+        max_length: None,
+        enum_values: vec![],
+        enum_control: EnumControl::default(),
+        default_value,
+        placeholder: None,
+    }
 }

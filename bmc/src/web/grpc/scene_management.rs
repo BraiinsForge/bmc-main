@@ -2034,6 +2034,8 @@ mod tests {
     use bmc_grpc::google::rpc::bad_request::FieldViolation;
     use connectrpc::ErrorCode;
 
+    mod params_version;
+
     fn wrapped_string(value: &str) -> StringValue {
         StringValue {
             value: value.to_owned(),
