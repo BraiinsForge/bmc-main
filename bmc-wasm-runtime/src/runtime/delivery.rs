@@ -433,7 +433,7 @@ impl WasmWidgetRuntime {
             // Widget did not opt into async image decode; drop the results.
             return Ok(());
         };
-        // Fired while dormant to reclaim the guest's pending entry (optional export).
+        // Fired while dormant to end the guest's pending decode (optional export).
         let on_dropped = self
             .instance
             .get_typed_func::<u32, ()>(&self.store, "__on_image_dropped")
@@ -493,7 +493,7 @@ impl WasmWidgetRuntime {
                 tracing::error!("set_fuel failed: {e}");
                 continue;
             }
-            // Dormant: reclaim the pending entry but don't drive the widget.
+            // Dormant: end the guest's pending decode without uploading the bitmap.
             if dormant {
                 if let Some(on_dropped) = on_dropped
                     && let Err(e) = on_dropped.call(&mut self.store, done.job_id.to_wire())

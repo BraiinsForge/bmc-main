@@ -48,12 +48,14 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use bmc_ui::{AudioId, BitmapId, MeshId, SvgId};
 use bmc_wasm_protocol::ImageJobId;
 
 use crate::host;
 use crate::net::FetchBodyRef;
+use crate::widget::{Receiver, Target};
 
 macro_rules! define_slot {
     (
@@ -103,6 +105,33 @@ define_slot! {
     |name, data| host::register_bitmap(name, data)
 }
 
+/// How a decode scales an image to a `w`×`h` box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    /// Shrink the image to fit within the box, keeping its aspect; a smaller image keeps its size.
+    Within { w: u32, h: u32 },
+    /// Scale the image to cover the box and crop the overflow.
+    Cover { w: u32, h: u32 },
+}
+
+impl Fit {
+    fn from_cover(max_w: u32, max_h: u32, cover: bool) -> Self {
+        if cover {
+            Fit::Cover { w: max_w, h: max_h }
+        } else {
+            Fit::Within { w: max_w, h: max_h }
+        }
+    }
+
+    /// The host's box and `cover` flag for this fit.
+    fn to_host(self) -> (u32, u32, bool) {
+        match self {
+            Fit::Within { w, h } => (w, h, false),
+            Fit::Cover { w, h } => (w, h, true),
+        }
+    }
+}
+
 impl BitmapSlot {
     /// Decode `data` to fit within (`cover` false) or cover-crop to (`cover` true)
     /// `max_w`×`max_h`, off the render thread; `on_ready` fires when it replaces
@@ -121,6 +150,23 @@ impl BitmapSlot {
         set_bitmap_fit(self.name, data, max_w, max_h, cover, identity, on_ready)
     }
 
+    /// [`set_fit`](Self::set_fit) whose result runs `method` on `to`,
+    /// with the box and `cover` as a [`Fit`].
+    ///
+    /// Refused through a [`PartHandle`](crate::PartHandle) whose part is dropped,
+    /// and a part dropped before the decode finishes gets no result.
+    #[must_use]
+    pub fn set_fit_on<T: 'static>(
+        &self,
+        to: &impl Receiver<T>,
+        data: &[u8],
+        fit: Fit,
+        identity: &[u8],
+        method: ImageReadyMethod<T>,
+    ) -> Option<ImageJobId> {
+        set_bitmap_fit_on(to, self.name, data, fit, identity, method)
+    }
+
     /// Decode a callback-scoped host fetch body without copying it into WASM.
     pub fn set_fit_ref<'a>(
         &self,
@@ -131,15 +177,50 @@ impl BitmapSlot {
         identity: &[u8],
         on_ready: ImageReadyCallback,
     ) -> Result<ImageJobId, FetchBodyRef<'a>> {
+        self.set_fit_ref_with(
+            body,
+            Fit::from_cover(max_w, max_h, cover),
+            identity,
+            Awaiting::Callback(on_ready),
+        )
+    }
+
+    /// [`set_fit_ref`](Self::set_fit_ref) whose result runs `method` on `to`,
+    /// with the box and `cover` as a [`Fit`].
+    ///
+    /// Refused through a [`PartHandle`](crate::PartHandle) whose part is dropped,
+    /// handing `body` back as a refused decode does,
+    /// and a part dropped before the decode finishes gets no result.
+    pub fn set_fit_ref_on<'a, T: 'static>(
+        &self,
+        to: &impl Receiver<T>,
+        body: FetchBodyRef<'a>,
+        fit: Fit,
+        identity: &[u8],
+        method: ImageReadyMethod<T>,
+    ) -> Result<ImageJobId, FetchBodyRef<'a>> {
+        let Some(target) = to.__target() else {
+            return Err(body);
+        };
+        self.set_fit_ref_with(body, fit, identity, on_target(target, method))
+    }
+
+    fn set_fit_ref_with<'a>(
+        &self,
+        body: FetchBodyRef<'a>,
+        fit: Fit,
+        identity: &[u8],
+        awaiting: Awaiting,
+    ) -> Result<ImageJobId, FetchBodyRef<'a>> {
+        let (max_w, max_h, cover) = fit.to_host();
         let job_id = host::register_bitmap_fit_ref(self.name, body, max_w, max_h, cover, identity)?;
-        remember_image_callback(job_id, on_ready);
+        remember_image_callback(job_id, awaiting);
         Ok(job_id)
     }
 }
 
-fn remember_image_callback(job_id: ImageJobId, on_ready: ImageReadyCallback) {
-    let idx = register_image_callback(on_ready);
-    IMAGE_PENDING.with(|p| p.borrow_mut().insert(job_id, idx));
+fn remember_image_callback(job_id: ImageJobId, awaiting: Awaiting) {
+    IMAGE_PENDING.with(|p| p.borrow_mut().insert(job_id, awaiting));
 }
 
 /// [`BitmapSlot::set_fit`] against a tag chosen at runtime, for widgets
@@ -158,39 +239,109 @@ pub fn set_bitmap_fit(
     identity: &[u8],
     on_ready: ImageReadyCallback,
 ) -> Option<ImageJobId> {
+    set_bitmap_fit_with(
+        tag,
+        data,
+        Fit::from_cover(max_w, max_h, cover),
+        identity,
+        Awaiting::Callback(on_ready),
+    )
+}
+
+/// [`set_bitmap_fit`] whose result runs `method` on `to`, with the box and `cover` as a [`Fit`].
+///
+/// Refused through a [`PartHandle`](crate::PartHandle) whose part is dropped,
+/// and a part dropped before the decode finishes gets no result.
+#[must_use]
+pub fn set_bitmap_fit_on<T: 'static>(
+    to: &impl Receiver<T>,
+    tag: &str,
+    data: &[u8],
+    fit: Fit,
+    identity: &[u8],
+    method: ImageReadyMethod<T>,
+) -> Option<ImageJobId> {
+    let handler = on_target(to.__target()?, method);
+    set_bitmap_fit_with(tag, data, fit, identity, handler)
+}
+
+fn set_bitmap_fit_with(
+    tag: &str,
+    data: &[u8],
+    fit: Fit,
+    identity: &[u8],
+    awaiting: Awaiting,
+) -> Option<ImageJobId> {
+    let (max_w, max_h, cover) = fit.to_host();
     let job_id = host::register_bitmap_fit(tag, data, max_w, max_h, cover, identity)?;
-    remember_image_callback(job_id, on_ready);
+    remember_image_callback(job_id, awaiting);
     Some(job_id)
 }
 
 /// Async-decode result: the job handle, and `Some(id)` on success / `None` on failure.
 pub type ImageReadyCallback = fn(ImageJobId, Option<BitmapId>);
 
-thread_local! {
-    static IMAGE_CALLBACKS: RefCell<Vec<ImageReadyCallback>> = const { RefCell::new(Vec::new()) };
-    static IMAGE_PENDING: RefCell<HashMap<ImageJobId, usize>> = RefCell::new(HashMap::new());
+/// An async-decode result as a method of the value it is delivered to.
+pub type ImageReadyMethod<T> = fn(&mut T, ImageJobId, DecodeOutcome);
+
+/// How a decode started through a method form ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeOutcome {
+    /// The bitmap replaced the slot's previous one.
+    Ready(BitmapId),
+    /// The decode or its upload failed.
+    Failed,
+    /// The decode ended while the widget slept, and the host reports no more than that:
+    /// it may have failed, or its pixels may not have been kept,
+    /// so the tag need not show this image.
+    /// If the widget needs the image, check the cache after `on_wake`:
+    /// an older entry can still sit under the tag, and another decode may have replaced it,
+    /// so note its [`crate::cache::Stat::saved_at`] before asking for the decode,
+    /// take the entry only if that stamp has changed since
+    /// and its [`crate::cache::Stat::metadata`] names the identity asked for,
+    /// and fetch and decode it again otherwise.
+    WhileDormant,
 }
 
-/// Register a callback, deduping by function pointer; returns its index.
-fn register_image_callback(cb: ImageReadyCallback) -> usize {
-    IMAGE_CALLBACKS.with(|cbs| {
-        let mut cbs = cbs.borrow_mut();
-        for (i, existing) in cbs.iter().enumerate() {
-            if *existing as usize == cb as usize {
-                return i;
-            }
+/// What a pending decode reports to.
+enum Awaiting {
+    /// A free callback, which hears nothing of a decode that finished while dormant.
+    Callback(ImageReadyCallback),
+    Method(Rc<dyn Fn(ImageJobId, DecodeOutcome)>),
+}
+
+thread_local! {
+    static IMAGE_PENDING: RefCell<HashMap<ImageJobId, Awaiting>> = RefCell::new(HashMap::new());
+}
+
+fn on_target<T: 'static>(target: Target<T>, method: ImageReadyMethod<T>) -> Awaiting {
+    Awaiting::Method(Rc::new(move |job_id, outcome| {
+        target.deliver(|value| method(value, job_id, outcome));
+    }))
+}
+
+/// Hand a finished decode to its callback, if the widget still awaits it.
+fn deliver(job_id: ImageJobId, outcome: DecodeOutcome) {
+    // Taken out before invoking (the callback may start another decode).
+    let awaiting = IMAGE_PENDING.with(|p| p.borrow_mut().remove(&job_id));
+    let Some(awaiting) = awaiting else {
+        return;
+    };
+    match (awaiting, outcome) {
+        (Awaiting::Method(method), _) => method(job_id, outcome),
+        (Awaiting::Callback(callback), DecodeOutcome::Ready(bitmap)) => {
+            callback(job_id, Some(bitmap));
         }
-        let idx = cbs.len();
-        cbs.push(cb);
-        idx
-    })
+        (Awaiting::Callback(callback), DecodeOutcome::Failed) => callback(job_id, None),
+        (Awaiting::Callback(_), DecodeOutcome::WhileDormant) => {}
+    }
 }
 
 /// Whether the host has still to report this decode.
 ///
 /// Both `__on_image_ready` and `__on_image_dropped` clear the entry, so `false`
 /// says no callback is coming: either it already ran, or the decode finished
-/// while the widget was dormant and only the asset cache holds its result.
+/// while the widget was dormant, which a free callback never hears.
 #[must_use]
 pub fn image_decode_is_pending(job_id: ImageJobId) -> bool {
     IMAGE_PENDING.with(|p| p.borrow().contains_key(&job_id))
@@ -201,31 +352,173 @@ mod wasm {
     use bmc_ui::BitmapId;
     use bmc_wasm_protocol::ImageJobId;
 
-    use super::{IMAGE_CALLBACKS, IMAGE_PENDING};
+    use super::{DecodeOutcome, deliver};
+    use crate::widget;
 
     /// Host entry point: dispatch a finished decode to its `set_fit` callback.
     #[unsafe(no_mangle)]
     pub extern "C" fn __on_image_ready(job_id: u32, bitmap_id: u32) {
-        let Some(job_id) = ImageJobId::from_wire(job_id) else {
-            return;
-        };
-        let bitmap = BitmapId::from_ffi(bitmap_id);
-        let cb = IMAGE_PENDING
-            .with(|p| p.borrow_mut().remove(&job_id))
-            .and_then(|idx| IMAGE_CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
-        if let Some(cb) = cb {
-            cb(job_id, bitmap);
+        widget::export(|| {
+            if let Some(job_id) = ImageJobId::from_wire(job_id) {
+                deliver(
+                    job_id,
+                    BitmapId::from_ffi(bitmap_id)
+                        .map_or(DecodeOutcome::Failed, DecodeOutcome::Ready),
+                );
+            }
+        });
+    }
+
+    /// Host entry point for a decode that finished while dormant.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __on_image_dropped(job_id: u32) {
+        widget::export(|| {
+            if let Some(job_id) = ImageJobId::from_wire(job_id) {
+                deliver(job_id, DecodeOutcome::WhileDormant);
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_ui::BitmapId;
+    use bmc_wasm_protocol::ImageJobId;
+
+    use std::cell::RefCell;
+
+    use super::{
+        Awaiting, DecodeOutcome, deliver, image_decode_is_pending, on_target,
+        remember_image_callback,
+    };
+    use crate::wasm_test;
+    use crate::widget::Part;
+
+    struct Gallery {
+        results: Vec<DecodeOutcome>,
+    }
+
+    impl Gallery {
+        fn on_ready(&mut self, _job_id: ImageJobId, outcome: DecodeOutcome) {
+            self.results.push(outcome);
         }
     }
 
-    /// Reclaim a decode's pending entry without dispatching — fired when the decode
-    /// finished while dormant (the result stays cached until a draw uses it).
-    #[unsafe(no_mangle)]
-    pub extern "C" fn __on_image_dropped(job_id: u32) {
-        let Some(job_id) = ImageJobId::from_wire(job_id) else {
-            return;
-        };
-        IMAGE_PENDING.with(|p| p.borrow_mut().remove(&job_id));
+    fn gallery_awaiting(wire: u32) -> Part<Gallery> {
+        let part = Part::new(Gallery {
+            results: Vec::new(),
+        });
+        remember_image_callback(job(wire), on_target(part.target(), Gallery::on_ready));
+        part
+    }
+
+    thread_local! {
+        static CALLBACK_RESULTS: RefCell<Vec<Option<BitmapId>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn record_callback(_job_id: ImageJobId, bitmap: Option<BitmapId>) {
+        CALLBACK_RESULTS.with_borrow_mut(|results| results.push(bitmap));
+    }
+
+    fn callback_results() -> Vec<Option<BitmapId>> {
+        CALLBACK_RESULTS.with_borrow(Clone::clone)
+    }
+
+    fn job(wire: u32) -> ImageJobId {
+        ImageJobId::from_wire(wire).expect("BUG: test ids are non-zero")
+    }
+
+    #[wasm_test]
+    fn a_result_from_the_host_runs_as_a_method_of_the_part() {
+        let part = gallery_awaiting(4);
+
+        crate::widget::as_host(|| super::wasm::__on_image_ready(4, 7));
+
+        assert_eq!(
+            part.with(|value| value.results.clone()),
+            vec![DecodeOutcome::Ready(
+                BitmapId::from_ffi(7).expect("BUG: 7 is a valid bitmap id")
+            )]
+        );
+    }
+
+    #[wasm_test]
+    fn a_failed_decode_reaches_the_method_as_failed() {
+        let part = gallery_awaiting(6);
+
+        crate::widget::as_host(|| super::wasm::__on_image_ready(6, 0));
+
+        assert_eq!(
+            part.with(|value| value.results.clone()),
+            vec![DecodeOutcome::Failed]
+        );
+    }
+
+    #[wasm_test]
+    fn a_decode_finished_while_dormant_reaches_the_method() {
+        let part = gallery_awaiting(8);
+
+        crate::widget::as_host(|| super::wasm::__on_image_dropped(8));
+
+        assert_eq!(
+            part.with(|value| value.results.clone()),
+            vec![DecodeOutcome::WhileDormant],
+            "the method learns its decode will not report a bitmap, without polling"
+        );
+    }
+
+    #[wasm_test]
+    fn a_decode_finished_while_dormant_runs_no_free_callback() {
+        remember_image_callback(job(9), Awaiting::Callback(record_callback));
+
+        crate::widget::as_host(|| super::wasm::__on_image_dropped(9));
+
+        assert_eq!(callback_results(), vec![]);
+        assert!(!image_decode_is_pending(job(9)));
+    }
+
+    #[wasm_test]
+    fn a_result_from_the_host_reaches_a_free_callback() {
+        remember_image_callback(job(10), Awaiting::Callback(record_callback));
+
+        crate::widget::as_host(|| super::wasm::__on_image_ready(10, 7));
+
+        assert_eq!(callback_results(), vec![BitmapId::from_ffi(7)]);
+    }
+
+    #[wasm_test]
+    fn a_failed_decode_reaches_a_free_callback_as_none() {
+        remember_image_callback(job(11), Awaiting::Callback(record_callback));
+
+        crate::widget::as_host(|| super::wasm::__on_image_ready(11, 0));
+
+        assert_eq!(
+            callback_results(),
+            vec![None],
+            "an image widget learns its decode failed only from this None"
+        );
+    }
+
+    #[wasm_test]
+    fn a_result_ends_the_pending_decode() {
+        let _part = gallery_awaiting(2);
+
+        deliver(job(2), DecodeOutcome::Failed);
+
+        assert!(!image_decode_is_pending(job(2)));
+    }
+
+    #[wasm_test]
+    fn a_dropped_part_still_clears_its_decode() {
+        let part = gallery_awaiting(3);
+
+        drop(part);
+        deliver(job(3), DecodeOutcome::Failed);
+
+        assert!(
+            !image_decode_is_pending(job(3)),
+            "the decode is reported once"
+        );
     }
 }
 

@@ -117,9 +117,10 @@ RGBA and dimensions to the per-instance cache, and only then reports the result 
 the bitmap cache-backed.
 
 If the result arrives while the widget is active, the host uploads the decoded pixels immediately and returns the bitmap
-ID through `__on_image_ready`. If it arrives while dormant, the host keeps only the suspended reservation and drops the
-guest's pending callback entry through `__on_image_dropped`. The image widget's `on_wake` cache check preserves the same
-ID on a hit and refetches on a miss.
+ID through `__on_image_ready`. If it arrives while dormant, the host uploads nothing, keeps a suspended reservation only
+for pixels it cached, and ends the guest's pending decode through `__on_image_dropped`: a method form hears
+`DecodeOutcome::WhileDormant` whatever the result, a free callback nothing. The image widget's `on_wake` cache check
+preserves the same ID on a hit and refetches on a miss.
 
 If the cache write fails while active, the decoded bitmap can remain volatile for that session. If it fails while
 dormant, the host does not create an unrestorable resident bitmap.
