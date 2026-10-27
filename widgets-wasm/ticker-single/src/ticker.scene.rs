@@ -108,7 +108,7 @@ fn ticker_single(ctx: &mut SceneCtx, ui: &mut Ui) {
                 if candlestick {
                     candlestick::series_view(&series, "AAPL", Period::D7, Period::D7.window(), size)
                 } else {
-                    sparkline::series_view(&series, "AAPL", Period::D1.window(), size)
+                    sparkline::series_view(&series, "AAPL", Period::D1.window(), None, size)
                 }
             })
         }),

@@ -54,12 +54,23 @@ fn effective_pair(params: &manifest_params::Params) -> &str {
     params.pair.as_deref().unwrap_or("").trim()
 }
 
+/// The operator's price decimals; `None` keeps the automatic rule.
+/// A negative value, which the manifest's `min` refuses, falls back to it too.
+#[cfg(any(target_arch = "wasm32", test))]
+fn price_decimals(params: &manifest_params::Params) -> Option<u32> {
+    params
+        .precision
+        .and_then(|digits| u32::try_from(digits).ok())
+}
+
 /// How much of the tile a parameter update invalidates.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ParamChange {
     /// Nothing that reaches the request or the drawing.
     None,
+    /// Only the drawing changes; the held series stays valid.
+    Redraw,
     /// The same instrument drawn over a different window or in a different
     /// view: the series reloads, but everything the reference resource said
     /// about the instrument still holds.
@@ -80,6 +91,8 @@ fn param_change(
         ParamChange::Instrument
     } else if prev.period != cur.period || prev.view != cur.view {
         ParamChange::Presentation
+    } else if prev.precision != cur.precision {
+        ParamChange::Redraw
     } else {
         ParamChange::None
     }
@@ -138,6 +151,7 @@ mod tests {
             pair: Some("  BTC-USD  ".to_owned()),
             period: manifest_params::Period::_7d,
             view: manifest_params::View::Sparkline,
+            precision: None,
         };
         assert_eq!(effective_pair(&params), "BTC-USD");
 
@@ -154,7 +168,29 @@ mod tests {
             pair: Some(pair.to_owned()),
             period,
             view,
+            precision: None,
         }
+    }
+
+    #[wasm_test]
+    fn changing_the_precision_only_redraws() {
+        use manifest_params::{Period, View};
+        let before = params("AAPL", Period::_7d, View::Sparkline);
+        let after = manifest_params::Params {
+            precision: Some(3),
+            ..before.clone()
+        };
+        assert_eq!(param_change(Some(&before), &after), ParamChange::Redraw);
+    }
+
+    #[wasm_test]
+    fn a_negative_precision_falls_back_to_the_automatic_rule() {
+        use manifest_params::{Period, View};
+        let mut p = params("AAPL", Period::_7d, View::Sparkline);
+        p.precision = Some(-1);
+        assert_eq!(price_decimals(&p), None);
+        p.precision = Some(4);
+        assert_eq!(price_decimals(&p), Some(4));
     }
 
     #[wasm_test]
@@ -348,7 +384,7 @@ mod tests {
 mod wasm_glue {
     use super::{
         ParamChange, State, Transition, apply_reference, effective_pair, manifest_params, model,
-        param_change, render, system_affects_render,
+        param_change, price_decimals, render, system_affects_render,
     };
     use std::cell::{Cell, RefCell};
 
@@ -515,8 +551,13 @@ mod wasm_glue {
         let prev = manifest_params::Params::previous();
         let cur = manifest_params::Params::current();
         let change = param_change(prev.as_ref(), &cur);
-        if change == ParamChange::None {
-            return;
+        match change {
+            ParamChange::None => return,
+            ParamChange::Redraw => {
+                request_frame();
+                return;
+            }
+            ParamChange::Presentation | ParamChange::Instrument => {}
         }
         if change == ParamChange::Instrument {
             MARKET_OPEN.with(|market_open| market_open.set(None));
@@ -578,6 +619,7 @@ mod wasm_glue {
                             series,
                             symbol,
                             params.period.as_manifest_value(),
+                            price_decimals(&params),
                             ws,
                         ),
                         manifest_params::View::Candlestick => render::candlestick::series_view(
