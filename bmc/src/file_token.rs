@@ -233,45 +233,11 @@ pub fn token_paths(accounts: &IndexMap<AccountId, Account>) -> BTreeSet<PathBuf>
 #[cfg(test)]
 mod tests {
     use std::os::unix::net::UnixListener;
-    use std::sync::Mutex;
 
     use tracing_subscriber::fmt;
-    use tracing_subscriber::fmt::MakeWriter;
     use tracing_subscriber::prelude::*;
 
     use super::*;
-
-    #[derive(Clone, Default)]
-    struct SharedBuf(Arc<Mutex<Vec<u8>>>);
-
-    impl SharedBuf {
-        fn text(&self) -> String {
-            String::from_utf8(self.0.lock().expect("BUG: log buffer poisoned").clone())
-                .expect("BUG: log output not utf8")
-        }
-    }
-
-    impl std::io::Write for SharedBuf {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .expect("BUG: log buffer poisoned")
-                .extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> MakeWriter<'a> for SharedBuf {
-        type Writer = SharedBuf;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
 
     fn dir() -> tempfile::TempDir {
         tempfile::tempdir().expect("BUG: tempdir")
@@ -404,7 +370,7 @@ mod tests {
         let d = dir();
         let path = d.path().join("token");
         let cache = FileTokenCache::new();
-        let logs = SharedBuf::default();
+        let logs = crate::test_support::LogCapture::default();
         let subscriber = tracing_subscriber::registry()
             .with(fmt::layer().with_ansi(false).with_writer(logs.clone()));
         let _guard = tracing::subscriber::set_default(subscriber);

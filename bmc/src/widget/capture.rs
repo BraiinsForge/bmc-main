@@ -67,65 +67,35 @@ pub(crate) async fn forward_widget_output<R>(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
     use tracing_subscriber::fmt;
-    use tracing_subscriber::fmt::MakeWriter;
     use tracing_subscriber::prelude::*;
 
     use super::forward_widget_output;
 
-    #[derive(Clone, Default)]
-    struct SharedBuf(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for SharedBuf {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .expect("BUG: log buffer poisoned")
-                .extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> MakeWriter<'a> for SharedBuf {
-        type Writer = SharedBuf;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
-
     #[tokio::test]
     async fn forwards_lines_with_widget_prefix() {
-        let buf = SharedBuf::default();
+        let buf = crate::test_support::LogCapture::default();
         let subscriber = tracing_subscriber::registry()
             .with(fmt::layer().with_ansi(false).with_writer(buf.clone()));
         let _guard = tracing::subscriber::set_default(subscriber);
 
         forward_widget_output(&b"first line\nsecond line\n"[..], "weather", "a1b2c3d4", 42).await;
 
-        let output = String::from_utf8(buf.0.lock().expect("BUG: log buffer poisoned").clone())
-            .expect("BUG: log output not utf8");
+        let output = buf.text();
         assert!(output.contains("weather[a1b2c3d4/42]: first line"));
         assert!(output.contains("weather[a1b2c3d4/42]: second line"));
     }
 
     #[tokio::test]
     async fn emits_final_line_without_trailing_newline() {
-        let buf = SharedBuf::default();
+        let buf = crate::test_support::LogCapture::default();
         let subscriber = tracing_subscriber::registry()
             .with(fmt::layer().with_ansi(false).with_writer(buf.clone()));
         let _guard = tracing::subscriber::set_default(subscriber);
 
         forward_widget_output(&b"tail without newline"[..], "weather", "a1b2c3d4", 7).await;
 
-        let output = String::from_utf8(buf.0.lock().expect("BUG: log buffer poisoned").clone())
-            .expect("BUG: log output not utf8");
+        let output = buf.text();
         assert!(output.contains("weather[a1b2c3d4/7]: tail without newline"));
     }
 }
