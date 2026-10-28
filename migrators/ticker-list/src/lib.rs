@@ -97,3 +97,6 @@ fn row(symbol: &str) -> Row<'_> {
         },
     }
 }
+
+#[cfg(test)]
+mod tests;
