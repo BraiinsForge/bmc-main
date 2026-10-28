@@ -2030,7 +2030,6 @@ mod tests {
     use crate::web::grpc::tests::{no_session, wire_request};
     use bmc_grpc::google::rpc::bad_request::FieldViolation;
     use connectrpc::ErrorCode;
-    use std::os::unix::fs::PermissionsExt;
 
     fn wrapped_string(value: &str) -> StringValue {
         StringValue {
@@ -5040,10 +5039,10 @@ mod tests {
             ),
         )
         .expect("BUG: write widget manifest");
-        let binary = package.join("widget");
-        std::fs::write(&binary, "#!/bin/sh\nexec sleep 30\n").expect("BUG: write widget binary");
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
-            .expect("BUG: make widget executable");
+        crate::test_support::write_executable(
+            &package.join("widget"),
+            "#!/bin/sh\nexec sleep 30\n",
+        );
 
         let manager =
             crate::widget::WidgetManager::init(vec![temp.path().to_path_buf()], false).await;

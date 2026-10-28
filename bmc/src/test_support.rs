@@ -165,3 +165,28 @@ impl BmcManager for StubManager {
         self.network.as_ref().expect(UNREACHABLE)
     }
 }
+
+/// Write an executable script through a child process, so this process never
+/// holds a write descriptor to it: a test thread forking meanwhile inherits
+/// one until its exec, and running the script then fails with ETXTBSY.
+pub(crate) fn write_executable(path: &Path, body: &str) {
+    use std::io::Write as _;
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", r#"cat > "$1" && chmod 755 "$1""#, "sh"])
+        .arg(path)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("BUG: spawn sh");
+    child
+        .stdin
+        .take()
+        .expect("BUG: stdin was piped")
+        .write_all(body.as_bytes())
+        .expect("BUG: feed the script to sh");
+    let status = child.wait().expect("BUG: wait for sh");
+    assert!(
+        status.success(),
+        "writing {} failed: {status}",
+        path.display()
+    );
+}

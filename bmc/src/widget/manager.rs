@@ -1261,7 +1261,6 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::time::Instant;
     use std::{
@@ -1288,10 +1287,7 @@ mod tests {
             r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"1.0.0","name":"manager-test","description":"manager test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}]}"#,
         )
         .expect("BUG: write manifest");
-        let binary = root.join("widget");
-        std::fs::write(&binary, body).expect("BUG: write widget binary");
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
-            .expect("BUG: chmod widget binary");
+        crate::test_support::write_executable(&root.join("widget"), body);
     }
 
     async fn spawn(manager: &WidgetManager, instance_id: &str) {

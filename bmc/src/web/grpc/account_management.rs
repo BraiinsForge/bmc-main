@@ -536,7 +536,6 @@ enum CredentialCheckError {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::os::unix::fs::PermissionsExt;
 
     use bmc_grpc::google::rpc::bad_request::FieldViolation;
     use bmc_grpc::web::AccountManagementService as _;
@@ -834,10 +833,13 @@ mod tests {
             ),
         )
         .expect("BUG: write test widget manifest");
-        let binary = package.join("widget");
-        std::fs::write(&binary, "#!/bin/sh\nexit 0\n").expect("BUG: write test widget binary");
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
-            .expect("BUG: make test widget executable");
+        crate::test_support::write_executable(
+            &package.join("widget"),
+            indoc::indoc! {"
+                #!/bin/sh
+                exit 0
+            "},
+        );
         vec![tmp.path().to_path_buf()]
     }
 

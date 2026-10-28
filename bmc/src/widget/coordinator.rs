@@ -1911,7 +1911,6 @@ mod tests {
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
-    use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
     #[test]
@@ -1987,10 +1986,7 @@ mod tests {
         )
         .expect("BUG: write manifest");
         if let Some(body) = binary {
-            let path = widget_dir.join("widget");
-            std::fs::write(&path, body).expect("BUG: write widget");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-                .expect("BUG: make widget executable");
+            crate::test_support::write_executable(&widget_dir.join("widget"), body);
         }
         let manager = WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
         let registry = manager.registry();
@@ -2539,10 +2535,10 @@ mod tests {
             r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"2.0.0","name":"coordinator-test","description":"coordinator test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}]}"#,
         )
         .expect("BUG: replace manifest build");
-        let binary = temp.path().join("widget-package/widget");
-        std::fs::write(&binary, "#!/bin/sh\nexec sleep 30\n").expect("BUG: replace widget binary");
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
-            .expect("BUG: make replacement executable");
+        crate::test_support::write_executable(
+            &temp.path().join("widget-package/widget"),
+            "#!/bin/sh\nexec sleep 30\n",
+        );
 
         coordinator.reload_changed_widgets(&config).await;
 
