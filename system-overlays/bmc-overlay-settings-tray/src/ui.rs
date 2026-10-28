@@ -24,6 +24,7 @@
 
 use std::time::Duration;
 
+use bmc_intl::{Intl, format_message};
 use bmc_render::ui::{Color, Node, PropsData, SvgId, col};
 use bmc_system_overlay::DisplayShape;
 
@@ -583,8 +584,9 @@ fn layout_for(panel: &Panel) -> Layout {
 /// What the tray shows, before a layout decides where.
 /// `wifi_button` already carries the hold button's gate: reconfiguration is supported
 /// and setup is not running, so setup mode keeps its badge and loses the button.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct Content<'a> {
+    intl: &'a Intl,
     hostname: Option<&'a str>,
     ip: Option<&'a str>,
     wifi_signal: Option<i32>,
@@ -600,6 +602,7 @@ struct Content<'a> {
 /// The control rows the content calls for, in the row split the tier wants.
 fn control_row_nodes(content: Content<'_>, tier: Tier) -> Vec<Node> {
     let (pairs, singles) = control_groups(
+        content.intl,
         tier,
         &content.controls,
         content.notice,
@@ -617,6 +620,7 @@ fn control_row_nodes(content: Content<'_>, tier: Tier) -> Vec<Node> {
     reason = "overlay state is a flat set of display fields"
 )]
 pub fn build_tree(
+    intl: &Intl,
     hostname: Option<&str>,
     ip: Option<&str>,
     wifi_signal: Option<i32>,
@@ -630,11 +634,17 @@ pub fn build_tree(
 ) -> Node {
     let tier = tier_for(&panel);
     let notice = Notice::new(status);
+    let no_network = format_message!(
+        intl,
+        default_message: "Not configured",
+        description: "Settings tray, in place of the network name when no Wi-Fi is configured",
+    );
     let content = Content {
+        intl,
         hostname,
         ip,
         wifi_signal,
-        ssid: ssid.unwrap_or("Not configured"),
+        ssid: ssid.unwrap_or(&no_network),
         wifi_view,
         wifi_button: panel.wifi_button && !matches!(wifi_view, WifiView::Setup { .. }),
         icons,
@@ -918,6 +928,7 @@ mod tests {
             {
                 let tier = tier_for(&panel);
                 let tree = build_tree(
+                    &english(),
                     Some("braiins-deck"),
                     Some("10.0.0.2"),
                     Some(-55),
@@ -983,6 +994,7 @@ mod tests {
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
             for ip in [Some("10.0.0.2"), None] {
                 let tree = build_tree(
+                    &english(),
                     Some("braiins-deck"),
                     ip,
                     Some(-55),
@@ -1016,6 +1028,7 @@ mod tests {
             .expect("BUG: distinct icons are all set");
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_tree(
+                &english(),
                 Some("braiins-deck"),
                 Some("10.0.0.2"),
                 Some(-55),
@@ -1051,6 +1064,7 @@ mod tests {
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
             for ip in [Some("10.0.0.2"), Some("255.255.255.255"), None] {
                 let tree = build_tree(
+                    &english(),
                     Some("braiins-deck"),
                     ip,
                     Some(-55),
@@ -1240,6 +1254,7 @@ mod tests {
         let ip = "10.0.0.2";
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_tree(
+                &english(),
                 Some(&hostname),
                 Some(ip),
                 Some(-55),
@@ -1286,6 +1301,7 @@ mod tests {
 
     fn held_on(panel: Panel, ip: &str, progress: f32) -> Node {
         build_tree(
+            &english(),
             Some("braiins-deck"),
             Some(ip),
             Some(-55),
@@ -1355,6 +1371,7 @@ mod tests {
             for view in views {
                 for status in &statuses {
                     let tree = build_tree(
+                        &english(),
                         Some("braiins-deck"),
                         Some("10.0.0.2"),
                         Some(-55),

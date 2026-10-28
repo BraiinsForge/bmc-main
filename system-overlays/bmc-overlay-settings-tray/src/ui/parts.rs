@@ -27,6 +27,7 @@ use super::{
 };
 use std::time::Duration;
 
+use bmc_intl::{Intl, format_message};
 use bmc_render::ui::{
     AnimProperty, AnimationDef, BLACK, Color, ColorSpace, CrossAlign, Draw, Easing, Fill,
     FontWeight, GREEN_50, LoopMode, Node, PropsData, QrStyle, SvgId, TRANSPARENT, TextAlign,
@@ -111,9 +112,13 @@ pub(super) fn header_row(header: &str, size: u32) -> Node {
 
 /// The SETUP badge before a setup AP's SSID: what tells the user this is
 /// a network to join from a phone, not the one the device is on.
-pub(super) fn setup_badge(size: u32) -> Node {
+pub(super) fn setup_badge(intl: &Intl, size: u32) -> Node {
     text(
-        "SETUP",
+        format_message!(
+            intl,
+            default_message: "SETUP",
+            description: "Settings tray, short badge in capitals beside the Wi-Fi setup network's name; five characters or fewer",
+        ),
         TextStyle {
             size,
             weight: FontWeight::BOLD,
@@ -128,7 +133,37 @@ pub(super) fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>, size: f32) -
 }
 
 /// The name the cable goes by beside its glyph.
-pub(super) const ETHERNET: &str = "Ethernet";
+pub(super) fn ethernet(intl: &Intl) -> String {
+    format_message!(
+        intl,
+        default_message: "Ethernet",
+        description: "Settings tray, in place of the network name while the device is online through its cable",
+    )
+}
+
+pub(super) fn hostname_label(intl: &Intl) -> String {
+    format_message!(
+        intl,
+        default_message: "Hostname",
+        description: "Settings tray, label of the device's host name",
+    )
+}
+
+pub(super) fn ip_label(intl: &Intl) -> String {
+    format_message!(
+        intl,
+        default_message: "IP Address",
+        description: "Settings tray, label of the device's IP address",
+    )
+}
+
+pub(super) fn connection_label(intl: &Intl) -> String {
+    format_message!(
+        intl,
+        default_message: "Connection",
+        description: "Settings tray, label of what the device is online through: a Wi-Fi network or its cable",
+    )
+}
 
 /// What the device is online through, as every layout draws it:
 /// the cable glyph, tinted like the text beside it, else the signal icon,

@@ -23,6 +23,7 @@
 //! but the action's own button dims and stops taking touches.
 
 use super::{Action, Hold, Phase, Status};
+use bmc_intl::{Intl, format_message};
 use bmc_render::ui::{
     CrossAlign, FontWeight, Justify, Node, PropsData, TextAlign, TextStyle, WHITE, col, dimmed,
     text,
@@ -41,33 +42,91 @@ pub(super) const DIMMED: f32 = 1.0 - DIM_ALPHA;
 /// Size of both notice lines where the layout names none of its own.
 pub(super) const NOTICE_SIZE: u32 = 20;
 
-const KEEP_HOLDING: &str = "Keep holding, or release to cancel";
-const TRY_AGAIN: &str = "Try again";
-
 /// The notice's lines: what is happening, then, if anything,
 /// what the user can do about it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct NoticeText<'a> {
-    pub(super) title: &'static str,
-    pub(super) body: Option<&'a str>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NoticeText {
+    pub(super) title: String,
+    pub(super) body: Option<String>,
 }
 
-impl<'a> NoticeText<'a> {
+impl NoticeText {
     /// bmc words its own decline: the reason is a sentence,
     /// shown as the body under the tray's title. A timeout with no word from bmc is the tray's.
-    pub(super) fn for_status(status: &'a Status) -> Self {
+    pub(super) fn for_status(intl: &Intl, status: &Status) -> Self {
+        let keep_holding = || {
+            format_message!(
+                intl,
+                default_message: "Keep holding, or release to cancel",
+                description: "Settings tray notice, under the title while a hold-to-confirm button is held",
+            )
+        };
+        let try_again = || {
+            format_message!(
+                intl,
+                default_message: "Try again",
+                description: "Settings tray notice, under a failure title: the button can be held again",
+            )
+        };
         let (title, body) = match (status.action, status.phase) {
-            (Action::Restart, Phase::Holding(_)) => ("Restart the device?", Some(KEEP_HOLDING)),
-            (Action::Restart, Phase::Pending) => ("Restarting the device…", None),
+            (Action::Restart, Phase::Holding(_)) => (
+                format_message!(
+                    intl,
+                    default_message: "Restart the device?",
+                    description: "Settings tray notice title while the restart button is held",
+                ),
+                Some(keep_holding()),
+            ),
+            (Action::Restart, Phase::Pending) => (
+                format_message!(
+                    intl,
+                    default_message: "Restarting the device…",
+                    description: "Settings tray notice title after the restart hold completed",
+                ),
+                None,
+            ),
             (Action::Restart, Phase::Failed) => match status.reason.as_deref() {
-                Some(reason) => ("Can't restart now", Some(reason)),
-                None => ("Restart failed", Some(TRY_AGAIN)),
+                Some(reason) => (
+                    format_message!(
+                        intl,
+                        default_message: "Can't restart now",
+                        description: "Settings tray notice title when the device declined to restart; its reason follows under it",
+                    ),
+                    Some(reason.to_owned()),
+                ),
+                None => (
+                    format_message!(
+                        intl,
+                        default_message: "Restart failed",
+                        description: "Settings tray notice title when the restart did not happen and no reason came",
+                    ),
+                    Some(try_again()),
+                ),
             },
-            (Action::WifiReconfig, Phase::Holding(_)) => ("Reconfigure Wi-Fi?", Some(KEEP_HOLDING)),
-            (Action::WifiReconfig, Phase::Pending) => ("Starting Wi-Fi setup…", None),
-            (Action::WifiReconfig, Phase::Failed) => {
-                ("Couldn't start Wi-Fi setup", Some(TRY_AGAIN))
-            }
+            (Action::WifiReconfig, Phase::Holding(_)) => (
+                format_message!(
+                    intl,
+                    default_message: "Reconfigure Wi-Fi?",
+                    description: "Settings tray notice title while the Wi-Fi reconfigure button is held",
+                ),
+                Some(keep_holding()),
+            ),
+            (Action::WifiReconfig, Phase::Pending) => (
+                format_message!(
+                    intl,
+                    default_message: "Starting Wi-Fi setup…",
+                    description: "Settings tray notice title after the Wi-Fi reconfigure hold completed",
+                ),
+                None,
+            ),
+            (Action::WifiReconfig, Phase::Failed) => (
+                format_message!(
+                    intl,
+                    default_message: "Couldn't start Wi-Fi setup",
+                    description: "Settings tray notice title when Wi-Fi setup did not start in time",
+                ),
+                Some(try_again()),
+            ),
         };
         Self { title, body }
     }
@@ -122,7 +181,13 @@ impl<'a> Notice<'a> {
 
     /// The section above the buttons: a column of `children`,
     /// dimmed under a lit notice of `size` while one is up.
-    pub(super) fn with_notice(self, props: PropsData, size: u32, children: Vec<Node>) -> Node {
+    pub(super) fn with_notice(
+        self,
+        intl: &Intl,
+        props: PropsData,
+        size: u32,
+        children: Vec<Node>,
+    ) -> Node {
         let Some(status) = self.0 else {
             return col(props, children);
         };
@@ -130,7 +195,7 @@ impl<'a> Notice<'a> {
             .into_iter()
             .map(|kid| self.surroundings(kid))
             .collect();
-        kids.push(notice_overlay(NoticeText::for_status(status), size));
+        kids.push(notice_overlay(&NoticeText::for_status(intl, status), size));
         col(props, kids)
     }
 }
@@ -166,7 +231,7 @@ fn disable(node: &mut Node) {
 /// The notice, centered in an out-of-flow column. Zero insets on every side
 /// stretch it over the section it ends, and painting follows child order,
 /// so the lines land over the section's dimmed content.
-fn notice_overlay(notice: NoticeText<'_>, size: u32) -> Node {
+fn notice_overlay(notice: &NoticeText, size: u32) -> Node {
     let line = |s: &str, weight: FontWeight| {
         text(
             s,
@@ -179,8 +244,13 @@ fn notice_overlay(notice: NoticeText<'_>, size: u32) -> Node {
             },
         )
     };
-    let mut lines = vec![line(notice.title, FontWeight::BOLD)];
-    lines.extend(notice.body.map(|body| line(body, FontWeight::REGULAR)));
+    let mut lines = vec![line(&notice.title, FontWeight::BOLD)];
+    lines.extend(
+        notice
+            .body
+            .as_deref()
+            .map(|body| line(body, FontWeight::REGULAR)),
+    );
     col(
         PropsData {
             inset_top: 0.0,
@@ -276,9 +346,9 @@ mod tests {
                     Some(DIMMED),
                     "{what}: close"
                 );
-                let title = NoticeText::for_status(&status).title;
+                let title = NoticeText::for_status(&english(), &status).title;
                 assert_eq!(
-                    text_brightness(&tree, title),
+                    text_brightness(&tree, &title),
                     Some(1.0),
                     "{what}: the notice stays lit"
                 );
@@ -294,44 +364,46 @@ mod tests {
                 phase,
                 reason: reason.map(str::to_owned),
             };
-            let text = NoticeText::for_status(&status);
-            (text.title, text.body.map(str::to_owned))
+            let text = NoticeText::for_status(&english(), &status);
+            (text.title, text.body)
         };
+        let keep_holding = || Some("Keep holding, or release to cancel".to_owned());
+        let try_again = || Some("Try again".to_owned());
         let holding = holding(0.5);
         let restart = Action::Restart;
         let wifi = Action::WifiReconfig;
         assert_eq!(
             text(restart, holding, None),
-            ("Restart the device?", Some(KEEP_HOLDING.to_owned()))
+            ("Restart the device?".to_owned(), keep_holding())
         );
         assert_eq!(
             text(restart, Phase::Pending, None),
-            ("Restarting the device…", None)
+            ("Restarting the device…".to_owned(), None)
         );
         assert_eq!(
             text(restart, Phase::Failed, Some("An upgrade is in progress")),
             (
-                "Can't restart now",
+                "Can't restart now".to_owned(),
                 Some("An upgrade is in progress".to_owned())
             ),
             "bmc's sentence is the body, as it came"
         );
         assert_eq!(
             text(restart, Phase::Failed, None),
-            ("Restart failed", Some(TRY_AGAIN.to_owned())),
+            ("Restart failed".to_owned(), try_again()),
             "a pending timeout carries no reason"
         );
         assert_eq!(
             text(wifi, holding, None),
-            ("Reconfigure Wi-Fi?", Some(KEEP_HOLDING.to_owned()))
+            ("Reconfigure Wi-Fi?".to_owned(), keep_holding())
         );
         assert_eq!(
             text(wifi, Phase::Pending, None),
-            ("Starting Wi-Fi setup…", None)
+            ("Starting Wi-Fi setup…".to_owned(), None)
         );
         assert_eq!(
             text(wifi, Phase::Failed, None),
-            ("Couldn't start Wi-Fi setup", Some(TRY_AGAIN.to_owned()))
+            ("Couldn't start Wi-Fi setup".to_owned(), try_again())
         );
     }
 
@@ -416,7 +488,12 @@ mod tests {
                         FontWeight::BOLD,
                         WHITE
                     ),
-                    (KEEP_HOLDING.to_owned(), size, FontWeight::REGULAR, WHITE),
+                    (
+                        "Keep holding, or release to cancel".to_owned(),
+                        size,
+                        FontWeight::REGULAR,
+                        WHITE
+                    ),
                 ],
                 "{panel:?}: a bold title over a regular body, both {size}px white"
             );

@@ -35,11 +35,12 @@ pub mod ui;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
+use bmc_intl::{Intl, Localized};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, FrameKind, InputRegion, Layer, LayerConfig, NextFrame, OverlayViewport, RenderOutcome,
-    ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
-    VersionedSnapshot,
+    Anchor, FrameKind, InputRegion, Language, Layer, LayerConfig, NextFrame, OverlayViewport,
+    RenderOutcome, ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome,
+    TouchEvent, TreeUi, VersionedSnapshot,
 };
 
 use crate::dismiss::Pt;
@@ -429,6 +430,7 @@ pub struct SettingsTrayOverlay {
     snapshot_version: Option<SnapshotVersion>,
     /// WiFi setup-AP SSID from `on_wifi_ap` (`None` = not in setup mode).
     setup_ssid: Option<String>,
+    localized: Localized,
 
     button: ButtonState,
 
@@ -485,6 +487,7 @@ impl SettingsTrayOverlay {
             cable_uplink: false,
             snapshot_version: None,
             setup_ssid: None,
+            localized: Localized::new(),
             button: ButtonState::default(),
             restart: RestartState::default(),
             declined_reason: None,
@@ -842,6 +845,12 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
+    fn on_language(&mut self, language: Option<Language>) {
+        if self.localized.set(language.unwrap_or_default()) {
+            self.content_dirty = true;
+        }
+    }
+
     fn on_restart_declined(&mut self, reason: &str) {
         self.declined_reason = Some(reason.to_owned());
         self.restart.on_declined(Instant::now());
@@ -946,6 +955,7 @@ impl SystemOverlay for SettingsTrayOverlay {
             viewport,
             &mut self.render_state,
             &view,
+            self.localized.intl(),
             now,
             FrameKind::Fresh,
         );
@@ -964,6 +974,7 @@ impl SystemOverlay for SettingsTrayOverlay {
             viewport,
             &mut self.render_state,
             &view,
+            self.localized.intl(),
             now,
             frame,
         );
@@ -1046,6 +1057,7 @@ pub fn render_settings_tray(
     viewport: OverlayViewport,
     state: &mut SettingsTrayRenderState,
     view: &SettingsTrayView,
+    intl: &Intl,
     now: Instant,
     frame: FrameKind,
 ) -> SettingsTrayRenderOutput {
@@ -1075,6 +1087,7 @@ pub fn render_settings_tray(
     };
     let build = || {
         ui::build_tree(
+            intl,
             view.hostname.as_deref(),
             view.ip.as_deref(),
             view.wifi_signal,
@@ -1393,6 +1406,50 @@ mod view_tests {
         assert!(
             !overlay.content_dirty(),
             "unchanged rendered signal band must preserve the attached content"
+        );
+    }
+
+    #[test]
+    fn a_language_change_dirties_content_once() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new(None, now);
+        let _ = overlay.take_content_dirty();
+
+        overlay.on_language(Some(Language::ZH));
+        assert!(
+            overlay.take_content_dirty(),
+            "a new language is new content"
+        );
+        overlay.on_language(Some(Language::ZH));
+        assert!(
+            !overlay.content_dirty(),
+            "the language already shown is not a change"
+        );
+    }
+
+    #[test]
+    #[serial(translations)]
+    fn the_tray_speaks_the_language_it_was_handed() {
+        use bmc_render::renderer::test_support::ShapingRecorder;
+
+        let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/intl/profile-languages");
+        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
+        let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
+        overlay.env = Box::new(NoNetworkEnv);
+        overlay.on_language(Some(Language::ZH));
+
+        let mut recorder = ShapingRecorder::new(1_280.0, 480.0);
+        let _ = overlay.render(
+            &mut recorder,
+            OverlayViewport::rectangular(1_280, 480),
+            FrameKind::Fresh,
+        );
+
+        let drawn = recorder.drawn_texts();
+        assert!(
+            drawn.contains(&"亮度"),
+            "the tray must speak the language it was handed: {drawn:?}"
         );
     }
 
@@ -2057,7 +2114,17 @@ mod replay_tests {
     ) -> RenderOutcome {
         let mut recorder = ShapingRecorder::new(480.0, 320.0);
         let viewport = OverlayViewport::rectangular(480, 320);
-        render_settings_tray(&mut recorder, viewport, state, view, Instant::now(), kind).outcome
+        let english = bmc_intl::formatter(Language::default());
+        render_settings_tray(
+            &mut recorder,
+            viewport,
+            state,
+            view,
+            &english,
+            Instant::now(),
+            kind,
+        )
+        .outcome
     }
 
     #[test]
@@ -2175,8 +2242,16 @@ mod slider_release_tests {
         now: Instant,
     ) -> (SettingsTrayRenderOutput, ShapingRecorder) {
         let mut recorder = ShapingRecorder::new(480.0, 320.0);
-        let output =
-            render_settings_tray(&mut recorder, bmm101(), state, view, now, FrameKind::Fresh);
+        let english = bmc_intl::formatter(Language::default());
+        let output = render_settings_tray(
+            &mut recorder,
+            bmm101(),
+            state,
+            view,
+            &english,
+            now,
+            FrameKind::Fresh,
+        );
         (output, recorder)
     }
 

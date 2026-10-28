@@ -24,8 +24,8 @@
 use super::controls::{control_groups, control_rows};
 use super::notice::NOTICE_SIZE;
 use super::parts::{
-    ETHERNET, close_origin, connection_icon, fixed_width, ip_qr, pad_horizontal, setup_badge,
-    svg_icon, text_style,
+    close_origin, connection_icon, connection_label, ethernet, fixed_width, hostname_label,
+    ip_label, ip_qr, pad_horizontal, setup_badge, svg_icon, text_style,
 };
 use super::{
     BRIGHTNESS_ICON_SIZE, BRIGHTNESS_SLIDER_KEY, COMPACT_CLOSE_MARGIN, COMPACT_CONNECTION_GAP,
@@ -62,11 +62,11 @@ fn compact_connection_value(content: Content<'_>, style: TextStyle) -> Node {
         COMPACT_CONNECTION_ICON_SIZE,
     );
     let name = match content.wifi_view {
-        WifiView::Cable => text(ETHERNET, style),
+        WifiView::Cable => text(ethernet(content.intl), style),
         WifiView::Idle => text(content.ssid, style),
         // The AP SSID stays off, unlike on the other layouts: this cell has
         // sixteen characters, and the device-info screen names it in full.
-        WifiView::Setup { .. } => setup_badge(style.size),
+        WifiView::Setup { .. } => setup_badge(content.intl, style.size),
     };
     row(
         PropsData {
@@ -99,14 +99,17 @@ fn compact_info_row(content: Content<'_>, panel: Panel, tier: Tier) -> Node {
 
     let rows = [
         (
-            "Hostname",
+            hostname_label(content.intl),
             text(content.hostname.unwrap_or(NO_DATA_PLACEHOLDER), value_style),
         ),
         (
-            "IP Address",
+            ip_label(content.intl),
             text(content.ip.unwrap_or(NO_DATA_PLACEHOLDER), value_style),
         ),
-        ("Connection", compact_connection_value(content, value_style)),
+        (
+            connection_label(content.intl),
+            compact_connection_value(content, value_style),
+        ),
     ];
     let (label_nodes, value_nodes): (Vec<_>, Vec<_>) = rows
         .into_iter()
@@ -160,6 +163,7 @@ fn compact_brightness_row(icons: ControlIcons, brightness: u8) -> Node {
 /// above, and no product on this layout has sound, so the ± pairs are empty.
 fn compact_control_rows(content: Content<'_>, tier: Tier) -> Vec<Node> {
     let (_, singles) = control_groups(
+        content.intl,
         tier,
         &content.controls,
         content.notice,
@@ -187,11 +191,12 @@ pub(super) fn compact_children(content: Content<'_>, panel: Panel, tier: Tier) -
         ));
         section.push(fixed_height(COMPACT_GAP));
     }
-    let mut children = vec![
-        content
-            .notice
-            .with_notice(PropsData::default(), NOTICE_SIZE, section),
-    ];
+    let mut children =
+        vec![
+            content
+                .notice
+                .with_notice(content.intl, PropsData::default(), NOTICE_SIZE, section),
+        ];
     children.extend(compact_control_rows(content, tier));
     children
 }
@@ -225,6 +230,7 @@ mod tests {
 
     fn tray(wifi_signal: Option<i32>, view: WifiView<'_>) -> Node {
         build_tree(
+            &english(),
             Some("braiins-mini"),
             Some("10.0.0.42"),
             wifi_signal,

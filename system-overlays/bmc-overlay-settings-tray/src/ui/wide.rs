@@ -22,8 +22,8 @@
 
 use super::notice::Notice;
 use super::parts::{
-    ETHERNET, capped_text, connection_icon, fixed_width, ip_qr, pad_horizontal, setup_badge,
-    text_style,
+    capped_text, connection_icon, connection_label, ethernet, fixed_width, hostname_label,
+    ip_label, ip_qr, pad_horizontal, setup_badge, text_style,
 };
 use super::{
     Content, INFO_HEADER_GAP, INFO_HEADER_SIZE, NO_DATA_PLACEHOLDER, Tier, WIDE_HOSTNAME_WIDTH,
@@ -32,12 +32,13 @@ use super::{
     WIDE_SSID_WIDTH, WIDE_TOP_PAD, WIDE_WIFI_GAP, WIDE_WIFI_ICON_SIZE, WifiIcons, WifiView,
     control_row_nodes,
 };
+use bmc_intl::{Intl, format_message};
 use bmc_render::ui::{
     CrossAlign, GRAY_50, Node, PropsData, WHITE, col, fixed_height, row, spacer, text,
 };
 
 /// One Large-tier info block: a small gray header over a white value node.
-fn info_block(header: &'static str, value: Node) -> Node {
+fn info_block(header: String, value: Node) -> Node {
     col(
         PropsData {
             gap: INFO_HEADER_GAP,
@@ -54,6 +55,7 @@ fn info_block(header: &'static str, value: Node) -> Node {
 /// In setup mode the WiFi block carries the SETUP badge, the AP SSID,
 /// and the join hint instead of the station info; on the cable it names Ethernet.
 pub(super) fn wide_header(
+    intl: &Intl,
     hostname: &str,
     ip: Option<&str>,
     icons: WifiIcons,
@@ -73,42 +75,53 @@ pub(super) fn wide_header(
             vec![icon.clone(), name],
         )
     };
+    let wifi_connection = || {
+        format_message!(
+            intl,
+            default_message: "Wi-Fi Connection",
+            description: "Settings tray, header over the connected network",
+        )
+    };
     let wifi_block = match wifi_view {
         WifiView::Cable => info_block(
-            "Connection",
-            line(text(ETHERNET, text_style(value_size, WHITE))),
+            connection_label(intl),
+            line(text(ethernet(intl), text_style(value_size, WHITE))),
         ),
         WifiView::Idle => info_block(
-            "Wi-Fi Connection",
+            wifi_connection(),
             line(capped_text(ssid, value_size, WIDE_SSID_WIDTH)),
         ),
-        WifiView::Setup { ap_ssid } => info_block(
-            "Wi-Fi Connection",
-            col(
-                PropsData {
-                    gap: 6.0,
-                    ..PropsData::default()
-                },
-                vec![
-                    row(
-                        PropsData {
-                            cross_align: CrossAlign::Center,
-                            gap: 12.0,
-                            ..PropsData::default()
-                        },
-                        vec![
-                            icon.clone(),
-                            setup_badge(WIDE_SETUP_BADGE_SIZE),
-                            capped_text(ap_ssid, value_size, WIDE_SSID_WIDTH),
-                        ],
-                    ),
-                    text(
-                        "Join this network from your phone to reconfigure Wi-Fi.",
-                        text_style(INFO_HEADER_SIZE, GRAY_50),
-                    ),
-                ],
-            ),
-        ),
+        WifiView::Setup { ap_ssid } => {
+            let hint = format_message!(
+                intl,
+                default_message: "Join this network from your phone to reconfigure Wi-Fi.",
+                description: "Settings tray, hint under the setup network's name",
+            );
+            info_block(
+                wifi_connection(),
+                col(
+                    PropsData {
+                        gap: 6.0,
+                        ..PropsData::default()
+                    },
+                    vec![
+                        row(
+                            PropsData {
+                                cross_align: CrossAlign::Center,
+                                gap: 12.0,
+                                ..PropsData::default()
+                            },
+                            vec![
+                                icon.clone(),
+                                setup_badge(intl, WIDE_SETUP_BADGE_SIZE),
+                                capped_text(ap_ssid, value_size, WIDE_SSID_WIDTH),
+                            ],
+                        ),
+                        text(hint, text_style(INFO_HEADER_SIZE, GRAY_50)),
+                    ],
+                ),
+            )
+        }
     };
 
     let addresses = col(
@@ -118,14 +131,14 @@ pub(super) fn wide_header(
         },
         vec![
             info_block(
-                "IP Address",
+                ip_label(intl),
                 text(
                     ip.unwrap_or(NO_DATA_PLACEHOLDER),
                     text_style(value_size, WHITE),
                 ),
             ),
             info_block(
-                "Hostname",
+                hostname_label(intl),
                 capped_text(hostname, value_size, WIDE_HOSTNAME_WIDTH),
             ),
         ],
@@ -157,7 +170,13 @@ pub(super) fn wide_header(
 /// block's top edge to the vertical middle, matching the stable design. The
 /// top half holds the info header and, while one is up, the notice over it;
 /// the bottom half the control rows.
-fn wide_halves(header: Node, rows: Vec<Node>, h_pad: f32, notice: Notice<'_>) -> [Node; 2] {
+fn wide_halves(
+    intl: &Intl,
+    header: Node,
+    rows: Vec<Node>,
+    h_pad: f32,
+    notice: Notice<'_>,
+) -> [Node; 2] {
     let half = PropsData {
         flex: 1.0,
         ..PropsData::default()
@@ -169,6 +188,7 @@ fn wide_halves(header: Node, rows: Vec<Node>, h_pad: f32, notice: Notice<'_>) ->
     }
     [
         notice.with_notice(
+            intl,
             half,
             WIDE_NOTICE_SIZE,
             vec![fixed_height(WIDE_TOP_PAD), header],
@@ -181,6 +201,7 @@ fn wide_halves(header: Node, rows: Vec<Node>, h_pad: f32, notice: Notice<'_>) ->
 /// the labeled control row in the bottom half.
 pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<Node> {
     let header = wide_header(
+        content.intl,
         content.hostname.unwrap_or(NO_DATA_PLACEHOLDER),
         content.ip,
         content.icons,
@@ -189,7 +210,7 @@ pub(super) fn wide_children(content: Content<'_>, tier: Tier) -> Vec<Node> {
         content.wifi_view,
     );
     let rows = control_row_nodes(content, tier);
-    wide_halves(header, rows, tier.padding, content.notice).into()
+    wide_halves(content.intl, header, rows, tier.padding, content.notice).into()
 }
 
 #[cfg(test)]

@@ -36,6 +36,7 @@ use bmc_render::ui::{Node, PropsData, fixed_height, spacer};
 pub(super) fn round_children(content: Content<'_>, panel: Panel, tier: Tier) -> Vec<Node> {
     let header_h = ROUND_HEADER_SIZE as f32 * LINE_H;
     let mut children = vec![content.notice.with_notice(
+        content.intl,
         PropsData::default(),
         NOTICE_SIZE,
         vec![

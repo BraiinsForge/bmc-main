@@ -1267,6 +1267,7 @@ name = "bmc-overlay-settings-tray"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-intl",
  "bmc-net-observe",
  "bmc-render",
  "bmc-system-overlay",

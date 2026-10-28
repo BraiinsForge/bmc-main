@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use crate::ui::{Hold, Phase};
 
 /// Hold duration to confirm a WiFi action.
-const HOLD: Duration = Duration::from_secs(5);
+pub(crate) const WIFI_HOLD: Duration = Duration::from_secs(5);
 /// Max wait after firing reconfigure before giving up and showing the error.
 /// bmc confirms only once the setup AP is up, and it keeps trying for about 24 s:
 /// the AP activation wait polls 20 × 1 s (`ATTEMPTS_TO_ACTIVATE_AP` in bmc-net-drv),
@@ -85,7 +85,7 @@ impl ButtonState {
             ButtonState::Holding { since } => {
                 if !pressed {
                     (ButtonState::default(), FsmAction::None)
-                } else if now.duration_since(since) >= HOLD {
+                } else if now.duration_since(since) >= WIFI_HOLD {
                     (
                         ButtonState::Pending { since: now },
                         FsmAction::SendReconfigure,
@@ -131,7 +131,7 @@ impl ButtonState {
             ButtonState::Idle {
                 error_since: Some(since),
             } => Some(since + ERROR_DISPLAY),
-            ButtonState::Holding { since } => Some(since + HOLD),
+            ButtonState::Holding { since } => Some(since + WIFI_HOLD),
             ButtonState::Pending { since } => Some(since + RECONFIGURE_TIMEOUT),
             ButtonState::Idle { error_since: None } | ButtonState::Active => None,
         }
@@ -143,7 +143,7 @@ impl ButtonState {
     pub fn phase(self, now: Instant) -> Option<Phase> {
         match self {
             ButtonState::Idle { error_since: None } | ButtonState::Active => None,
-            ButtonState::Holding { since } => Some(holding(since, now, HOLD)),
+            ButtonState::Holding { since } => Some(holding(since, now, WIFI_HOLD)),
             ButtonState::Pending { .. } => Some(Phase::Pending),
             ButtonState::Idle {
                 error_since: Some(_),
@@ -152,7 +152,7 @@ impl ButtonState {
     }
 }
 
-const RESTART_HOLD: Duration = Duration::from_secs(5);
+pub(crate) const RESTART_HOLD: Duration = Duration::from_secs(5);
 
 /// Hold-to-confirm state machine for the restart button. Restart is
 /// relay-routed so bmc can decline it (e.g. during an upgrade); a decline or a
@@ -583,7 +583,7 @@ mod tests {
         assert_eq!(ButtonState::default().next_edge(), None);
         assert_eq!(
             ButtonState::Holding { since: t0 }.next_edge(),
-            Some(t0 + HOLD)
+            Some(t0 + WIFI_HOLD)
         );
         assert_eq!(
             ButtonState::Pending { since: t0 }.next_edge(),

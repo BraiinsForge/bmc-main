@@ -40,6 +40,7 @@
 
 use std::time::{Duration, Instant};
 
+use bmc_intl::{Intl, Language};
 use bmc_overlay_settings_tray::ui::{Action, Hold, Phase, Status};
 use bmc_overlay_settings_tray::{SettingsTrayRenderState, SettingsTrayView, render_settings_tray};
 use bmc_render::gpu::mesh::MeshDrawArgs;
@@ -71,6 +72,10 @@ const BMM101_CAPS: SettingsCaps = SettingsCaps {
     sound: false,
     wifi_setup: false,
 };
+
+fn english() -> Intl {
+    bmc_intl::formatter(Language::default())
+}
 
 /// Records circle fills at absolute coordinates, the box width every
 /// paragraph is drawn into and the absolute bottom edge it reaches;
@@ -481,6 +486,7 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
         DECK,
         &mut state,
         &view,
+        &english(),
         now,
         FrameKind::Fresh,
     );
@@ -538,6 +544,7 @@ fn bmm101_controls_fit_between_the_close_target_and_the_bottom_edge() {
             BMM101,
             &mut state,
             &view,
+            &english(),
             now,
             FrameKind::Fresh,
         );
@@ -594,6 +601,7 @@ fn large_tier_hold_circle_is_centered_on_its_button() {
         DECK,
         &mut state,
         &view,
+        &english(),
         now,
         FrameKind::Fresh,
     );
@@ -627,6 +635,7 @@ fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
         BMM101,
         &mut state,
         &view,
+        &english(),
         now,
         FrameKind::Fresh,
     );
@@ -658,6 +667,7 @@ fn the_layout_follows_the_size_the_tray_renders_at() {
             size,
             &mut state,
             &view,
+            &english(),
             now,
             FrameKind::Fresh,
         );

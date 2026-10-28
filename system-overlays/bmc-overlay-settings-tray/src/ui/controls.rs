@@ -20,13 +20,17 @@
 
 //! The control buttons: the plus/minus pairs and the single hold buttons.
 
+use std::time::Duration;
+
 use super::notice::Notice;
 use super::parts::{ButtonIcon, press_fill, press_tint, round_button};
 use super::{
     Action, BRIGHTNESS_DOWN_KEY, BRIGHTNESS_UP_KEY, CIRCLE_FILL, ControlIcons, Controls, Hold,
-    NIGHT_ACTIVE, NIGHT_MODE_KEY, RESTART_KEY, Tier, VOLUME_DOWN_KEY, VOLUME_UP_KEY,
+    NIGHT_ACTIVE, NIGHT_MODE_KEY, NightMode, RESTART_KEY, Tier, VOLUME_DOWN_KEY, VOLUME_UP_KEY,
     WIFI_RECONFIG_KEY, WifiIcons,
 };
+use crate::fsm::{RESTART_HOLD, WIFI_HOLD};
+use bmc_intl::{Intl, format_message};
 use bmc_render::ui::{
     Color, CrossAlign, FontWeight, GRAY_50, Node, PropsData, SvgId, TRANSPARENT, TextAlign,
     TextStyle, WHITE, col, fixed_height, row, text,
@@ -166,6 +170,59 @@ fn single_group(
     )
 }
 
+fn hold_hint(intl: &Intl, hold: Duration) -> String {
+    format_message!(
+        intl,
+        default_message: "hold {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
+        description: "Settings tray, under a hold-to-confirm button: how long to hold it; seconds is a whole number",
+        values: { seconds: hold.as_secs() },
+    )
+}
+
+fn night_mode_group(intl: &Intl, tier: Tier, icons: ControlIcons, night: NightMode<'_>) -> Node {
+    // The boundary reads as "current state lasts until HH:MM" in both states:
+    // the end of the night window while active, its next start while inactive
+    // (absent when the schedule is disabled).
+    let sublabel = night.until.map_or_else(String::new, |until| {
+        format_message!(
+            intl,
+            default_message: "Until {time}",
+            description: "Settings tray, under the night mode button; time is when the current state ends, a time of day as the device formats it",
+            values: { time: until },
+        )
+    });
+    let label = if night.active {
+        format_message!(
+            intl,
+            default_message: "Night Mode: On",
+            description: "Settings tray, label under the night mode button while active",
+        )
+    } else {
+        format_message!(
+            intl,
+            default_message: "Night Mode: Off",
+            description: "Settings tray, label under the night mode button while inactive",
+        )
+    };
+    single_group(
+        tier,
+        NIGHT_MODE_KEY,
+        ButtonIcon {
+            id: icons.night_mode,
+            aspect: icons.night_mode_aspect,
+        },
+        if night.active {
+            NIGHT_ACTIVE
+        } else {
+            CIRCLE_FILL
+        },
+        TRANSPARENT,
+        None,
+        &label,
+        &sublabel,
+    )
+}
+
 /// All control groups in spec order, split into the ± pair groups
 /// (volume/brightness) and the single-button groups. On the Large tier
 /// the two halves concatenate into one row; medium/small render them as two rows.
@@ -173,6 +230,7 @@ fn single_group(
 /// in setup mode). While the notice is up, every group but the action's own
 /// is dimmed and disabled.
 pub(super) fn control_groups(
+    intl: &Intl,
     tier: Tier,
     controls: &Controls<'_>,
     notice: Notice<'_>,
@@ -182,6 +240,11 @@ pub(super) fn control_groups(
 ) -> (Vec<Node>, Vec<Node>) {
     let mut pairs = Vec::new();
     if let Some(v) = controls.volume {
+        let label = format_message!(
+            intl,
+            default_message: "Volume",
+            description: "Settings tray, label under the volume buttons",
+        );
         pairs.push(notice.button(
             VOLUME_UP_KEY,
             pair_group(
@@ -191,12 +254,17 @@ pub(super) fn control_groups(
                 icons.sound_low,
                 icons.sound_high,
                 v,
-                "Volume",
+                &label,
                 controls.pressed,
             ),
         ));
     }
     if let Some(b) = controls.brightness {
+        let label = format_message!(
+            intl,
+            default_message: "Brightness",
+            description: "Settings tray, label under the brightness buttons",
+        );
         pairs.push(notice.button(
             BRIGHTNESS_UP_KEY,
             pair_group(
@@ -206,7 +274,7 @@ pub(super) fn control_groups(
                 icons.brightness_low,
                 icons.brightness_high,
                 b,
-                "Brightness",
+                &label,
                 controls.pressed,
             ),
         ));
@@ -214,38 +282,14 @@ pub(super) fn control_groups(
 
     let mut singles = Vec::new();
     if let Some(night) = controls.night_mode {
-        // The boundary reads as "current state lasts until HH:MM" in both
-        // states: the end of the night window while active, its next start
-        // while inactive (absent when the schedule is disabled).
-        let sublabel = night
-            .until
-            .map_or_else(String::new, |until| format!("Until {until}"));
-        singles.push(notice.button(
-            NIGHT_MODE_KEY,
-            single_group(
-                tier,
-                NIGHT_MODE_KEY,
-                ButtonIcon {
-                    id: icons.night_mode,
-                    aspect: icons.night_mode_aspect,
-                },
-                if night.active {
-                    NIGHT_ACTIVE
-                } else {
-                    CIRCLE_FILL
-                },
-                TRANSPARENT,
-                None,
-                if night.active {
-                    "Night Mode: On"
-                } else {
-                    "Night Mode: Off"
-                },
-                &sublabel,
-            ),
-        ));
+        singles.push(notice.button(NIGHT_MODE_KEY, night_mode_group(intl, tier, icons, night)));
     }
     if controls.restart {
+        let label = format_message!(
+            intl,
+            default_message: "Restart",
+            description: "Settings tray, label under the restart button",
+        );
         let p = controls.pressed == Some(RESTART_KEY);
         singles.push(notice.button(
             RESTART_KEY,
@@ -256,12 +300,17 @@ pub(super) fn control_groups(
                 press_fill(p),
                 press_tint(p),
                 notice.hold(Action::Restart),
-                "Restart",
-                "hold 5 seconds",
+                &label,
+                &hold_hint(intl, RESTART_HOLD),
             ),
         ));
     }
     if wifi {
+        let label = format_message!(
+            intl,
+            default_message: "Reconfigure Wi-Fi",
+            description: "Settings tray, label under the Wi-Fi reconfigure button",
+        );
         let p = controls.pressed == Some(WIFI_RECONFIG_KEY);
         singles.push(notice.button(
             WIFI_RECONFIG_KEY,
@@ -272,8 +321,8 @@ pub(super) fn control_groups(
                 press_fill(p),
                 press_tint(p),
                 notice.hold(Action::WifiReconfig),
-                "Reconfigure Wi-Fi",
-                "hold 5 seconds",
+                &label,
+                &hold_hint(intl, WIFI_HOLD),
             ),
         ));
     }
@@ -378,6 +427,7 @@ mod tests {
             let mut out = Vec::new();
             canvas_keys(
                 &build_tree(
+                    &english(),
                     Some("braiins-deck"),
                     Some("10.0.0.2"),
                     Some(-55),
@@ -602,6 +652,7 @@ mod tests {
     fn assert_control_rows_fit(status: Option<&Status>) {
         for panel in [wide_panel(), narrow_panel(), round_panel()] {
             let tree = build_tree(
+                &english(),
                 Some("braiins-deck"),
                 Some("10.0.0.2"),
                 Some(-55),

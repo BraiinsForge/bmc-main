@@ -21,7 +21,7 @@
 //! The disc's bottom line: what the device is online through,
 //! or the setup AP while provisioning runs.
 
-use super::parts::{ETHERNET, connection_icon, setup_badge, text_style};
+use super::parts::{connection_icon, ethernet, setup_badge, text_style};
 use super::{Content, ROUND_WIFI_ICON_SIZE, ROUND_WIFI_TEXT_SIZE, WifiView};
 use bmc_render::ui::{
     CrossAlign, Justify, Node, PropsData, TextOverflow, TextStyle, WHITE, row, text,
@@ -62,10 +62,12 @@ pub(super) fn station_line(content: Content<'_>) -> Node {
         ROUND_WIFI_ICON_SIZE,
     );
     centered_line(match content.wifi_view {
-        WifiView::Cable => vec![icon, ssid_text(ETHERNET)],
+        WifiView::Cable => vec![icon, ssid_text(&ethernet(content.intl))],
         WifiView::Idle => vec![icon, ssid_text(content.ssid)],
-        WifiView::Setup { ap_ssid } => {
-            vec![icon, setup_badge(ROUND_WIFI_TEXT_SIZE), ssid_text(ap_ssid)]
-        }
+        WifiView::Setup { ap_ssid } => vec![
+            icon,
+            setup_badge(content.intl, ROUND_WIFI_TEXT_SIZE),
+            ssid_text(ap_ssid),
+        ],
     })
 }

@@ -460,9 +460,17 @@ fn settings_tray_cell(
             height: h as u32,
             shape,
         };
+        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
         state_key.with_borrow_mut(|state| {
-            let _ =
-                render_settings_tray(r, viewport, state, &view, Instant::now(), FrameKind::Fresh);
+            let _ = render_settings_tray(
+                r,
+                viewport,
+                state,
+                &view,
+                &intl,
+                Instant::now(),
+                FrameKind::Fresh,
+            );
         });
         // Reveal and press feedback are timed off the clock it is handed, and it
         // reports taps rather than whether either is still running.

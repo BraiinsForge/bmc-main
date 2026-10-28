@@ -100,8 +100,13 @@ pub(super) fn held_status() -> Status {
     status_at(Action::Restart, holding(0.5))
 }
 
+pub(super) fn english() -> Intl {
+    bmc_intl::formatter(bmc_intl::Language::default())
+}
+
 pub(super) fn build(panel: Panel, view: WifiView<'_>) -> Node {
     build_tree(
+        &english(),
         Some("braiins-deck"),
         Some("10.0.0.2"),
         Some(-55),
@@ -121,6 +126,7 @@ pub(super) fn build_with_controls(
     status: Option<&Status>,
 ) -> Node {
     build_tree(
+        &english(),
         Some("braiins-deck"),
         Some("10.0.0.2"),
         Some(-55),
