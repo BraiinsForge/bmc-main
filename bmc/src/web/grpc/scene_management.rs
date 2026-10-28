@@ -610,16 +610,16 @@ impl SceneManagementService {
             let preview = self.preview_scene_id.lock().await;
             let mut config = self.config_handle.write().await;
             let accounts = self.secret_store.read().await;
-            let scene = config.scenes_mut().get_mut(&scene_id_key).ok_or_else(|| {
+            let scene = config.edit_scene(&scene_id_key).ok_or_else(|| {
                 ConnectError::not_found(format!("scene not found: {}", parsed.scene_id))
             })?;
 
             reject_update_widget_in_fullscreen(
-                &scene.kind,
+                &scene.get().kind,
                 &parsed.proto_position,
                 &parsed.placement,
             )?;
-            if scene.kind == scene::SceneKind::Combined {
+            if scene.get().kind == scene::SceneKind::Combined {
                 reject_combined_when_no_slot_grid(&self.capabilities)?;
             }
 
@@ -627,9 +627,14 @@ impl SceneManagementService {
                 widget,
                 placement_changed,
                 params_changed,
-            } = self.validate_widget_update(scene, widget_id_key, parsed, accounts.accounts())?;
-            let showing = scene.enabled || *preview == Some(scene_id_key);
-            scene.widgets.insert(widget.id, widget.clone());
+            } = self.validate_widget_update(
+                scene.get(),
+                widget_id_key,
+                parsed,
+                accounts.accounts(),
+            )?;
+            let showing = scene.get().enabled || *preview == Some(scene_id_key);
+            scene.into_mut().widgets.insert(widget.id, widget.clone());
             Self::save_config(&mut config).await?;
 
             let replacement = if showing && placement_changed {
