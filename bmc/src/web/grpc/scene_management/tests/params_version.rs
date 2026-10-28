@@ -155,7 +155,7 @@ pub(super) async fn add_small_widget(fixture: &Fixture, label: &str) -> scene::W
     stored_widget(fixture, fixture.scene_id).await
 }
 
-fn update_request(
+pub(super) fn update_request(
     fixture: &Fixture,
     widget: &scene::Widget,
     label: &str,
