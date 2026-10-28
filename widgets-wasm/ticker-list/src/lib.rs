@@ -83,9 +83,116 @@ fn apply_row_reference(
     }
 }
 
+/// Where a row of the new symbol list takes its data from. A symbol that
+/// only moved keeps what its old row had fetched instead of flashing
+/// through Loading; a dropped row counts as fresh so its slot resets.
 #[cfg(any(target_arch = "wasm32", test))]
-fn changed_symbol_rows(previous: &[String], current: &[String]) -> [bool; symbols::MAX_SYMBOLS] {
-    std::array::from_fn(|index| previous.get(index) != current.get(index))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowOrigin {
+    Kept,
+    MovedFrom(usize),
+    Fresh,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn row_origins(previous: &[String], current: &[String]) -> [RowOrigin; symbols::MAX_SYMBOLS] {
+    let mut origins = [RowOrigin::Kept; symbols::MAX_SYMBOLS];
+    let mut used = [false; symbols::MAX_SYMBOLS];
+    for (index, slot) in origins.iter_mut().enumerate() {
+        let before = previous.get(index);
+        let now = current.get(index);
+        if before.is_none() && now.is_none() {
+            continue;
+        }
+        if before == now {
+            used[index] = true;
+        } else {
+            *slot = RowOrigin::Fresh;
+        }
+    }
+    for (index, symbol) in current.iter().enumerate() {
+        if origins[index] == RowOrigin::Kept {
+            continue;
+        }
+        let moved_from = previous
+            .iter()
+            .zip(&used)
+            .position(|(before, taken)| !taken && before == symbol);
+        if let Some(from) = moved_from {
+            used[from] = true;
+            origins[index] = RowOrigin::MovedFrom(from);
+        }
+    }
+    origins
+}
+
+/// Lay the previous per-row values out in the new row order.
+#[cfg(any(target_arch = "wasm32", test))]
+fn rearranged<T>(previous: Vec<T>, origins: &[RowOrigin], fresh: impl Fn() -> T) -> Vec<T> {
+    let mut previous: Vec<Option<T>> = previous.into_iter().map(Some).collect();
+    origins
+        .iter()
+        .enumerate()
+        .map(|(index, origin)| {
+            let source = match origin {
+                RowOrigin::Kept => index,
+                RowOrigin::MovedFrom(from) => *from,
+                RowOrigin::Fresh => return fresh(),
+            };
+            previous
+                .get_mut(source)
+                .and_then(Option::take)
+                .unwrap_or_else(&fresh)
+        })
+        .collect()
+}
+
+/// Each previous row's new place, so a row's polls travel with its symbol
+/// and keep their schedule and staleness; a new symbol takes the polls
+/// a dropped one left free.
+#[cfg(any(target_arch = "wasm32", test))]
+fn poll_rows(origins: &[RowOrigin; symbols::MAX_SYMBOLS]) -> [usize; symbols::MAX_SYMBOLS] {
+    let mut rows: [usize; symbols::MAX_SYMBOLS] = std::array::from_fn(|slot| slot);
+    let mut taken = [false; symbols::MAX_SYMBOLS];
+    for (row, origin) in origins.iter().enumerate() {
+        match origin {
+            RowOrigin::Kept => taken[row] = true,
+            RowOrigin::MovedFrom(from) => {
+                rows[*from] = row;
+                taken[*from] = true;
+            }
+            RowOrigin::Fresh => {}
+        }
+    }
+    let mut free = (0..symbols::MAX_SYMBOLS).filter(|slot| !taken[*slot]);
+    for (row, origin) in origins.iter().enumerate() {
+        if *origin == RowOrigin::Fresh
+            && let Some(slot) = free.next()
+        {
+            rows[slot] = row;
+        }
+    }
+    rows
+}
+
+/// Put per-row items in their new order, given each one's new row.
+#[cfg(any(target_arch = "wasm32", test))]
+fn in_row_order<T>(items: Vec<T>, rows: &[usize]) -> Vec<T> {
+    let mut placed: Vec<(usize, T)> = rows.iter().copied().zip(items).collect();
+    placed.sort_by_key(|(row, _)| *row);
+    placed.into_iter().map(|(_, item)| item).collect()
+}
+
+/// A moved row's poll keeps fetching where it goes, unless it sat past
+/// the size's capacity, where its poll lay dormant.
+#[cfg(any(target_arch = "wasm32", test))]
+fn refetches_price(origin: RowOrigin, capacity: usize, period_changed: bool) -> bool {
+    period_changed
+        || match origin {
+            RowOrigin::Kept => false,
+            RowOrigin::MovedFrom(from) => from >= capacity,
+            RowOrigin::Fresh => true,
+        }
 }
 
 #[cfg(test)]
@@ -117,12 +224,102 @@ mod tests {
 
     #[wasm_test]
     fn changing_one_symbol_preserves_every_other_row() {
+        use RowOrigin::{Fresh, Kept};
         let previous = ["A", "B", "C"].map(str::to_owned);
         let current = ["A", "X", "C"].map(str::to_owned);
         assert_eq!(
-            changed_symbol_rows(&previous, &current),
-            [false, true, false, false, false, false, false, false]
+            row_origins(&previous, &current),
+            [Kept, Fresh, Kept, Kept, Kept, Kept, Kept, Kept]
         );
+    }
+
+    #[wasm_test]
+    fn moving_a_symbol_carries_its_row_along() {
+        use RowOrigin::{Kept, MovedFrom};
+        let previous = ["A", "B", "C"].map(str::to_owned);
+        let current = ["B", "A", "C"].map(str::to_owned);
+        assert_eq!(
+            row_origins(&previous, &current),
+            [
+                MovedFrom(1),
+                MovedFrom(0),
+                Kept,
+                Kept,
+                Kept,
+                Kept,
+                Kept,
+                Kept
+            ],
+            "a reorder only moves rows, it must not blank them into Loading and refetch"
+        );
+    }
+
+    #[wasm_test]
+    fn a_dropped_last_row_resets_its_slot() {
+        use RowOrigin::{Fresh, Kept};
+        let previous = ["A", "B"].map(str::to_owned);
+        let current = ["A"].map(str::to_owned);
+        assert_eq!(
+            row_origins(&previous, &current),
+            [Kept, Fresh, Kept, Kept, Kept, Kept, Kept, Kept]
+        );
+    }
+
+    #[wasm_test]
+    fn rearranged_rows_follow_their_origins() {
+        use RowOrigin::{Fresh, Kept, MovedFrom};
+        let previous = vec![Some("a"), Some("b"), Some("c")];
+        assert_eq!(
+            rearranged(previous, &[MovedFrom(1), Fresh, Kept], || None),
+            [Some("b"), None, Some("c")]
+        );
+    }
+
+    #[wasm_test]
+    fn a_reorder_moves_each_row_s_polls_with_it_and_refetches_none() {
+        let previous = ["A", "B", "C"].map(str::to_owned);
+        let current = ["B", "A", "C"].map(str::to_owned);
+        let origins = row_origins(&previous, &current);
+        let polls = in_row_order((0..symbols::MAX_SYMBOLS).collect(), &poll_rows(&origins));
+        assert_eq!(
+            polls[..3],
+            [1, 0, 2],
+            "each row keeps the polls that fetched its symbol"
+        );
+        assert!(
+            origins
+                .iter()
+                .all(|origin| !refetches_price(*origin, symbols::MAX_SYMBOLS, false)),
+            "a reorder alone must not refetch: the moved polls already hold their symbols"
+        );
+    }
+
+    #[wasm_test]
+    fn a_new_symbol_takes_the_polls_a_dropped_one_left() {
+        let previous = ["A", "B", "C"].map(str::to_owned);
+        let current = ["C", "D"].map(str::to_owned);
+        let origins = row_origins(&previous, &current);
+        let polls = in_row_order((0..symbols::MAX_SYMBOLS).collect(), &poll_rows(&origins));
+        assert_eq!(
+            polls,
+            [2, 0, 1, 3, 4, 5, 6, 7],
+            "every poll stays in use, once"
+        );
+        assert!(refetches_price(origins[1], symbols::MAX_SYMBOLS, false));
+    }
+
+    #[wasm_test]
+    fn a_row_moved_in_from_past_the_capacity_refetches() {
+        assert!(
+            refetches_price(RowOrigin::MovedFrom(5), 4, false),
+            "a row past the capacity never fetched, so its poll is dormant"
+        );
+        assert!(!refetches_price(RowOrigin::MovedFrom(1), 4, false));
+    }
+
+    #[wasm_test]
+    fn a_period_change_refetches_even_an_unmoved_row() {
+        assert!(refetches_price(RowOrigin::Kept, symbols::MAX_SYMBOLS, true));
     }
 
     #[wasm_test]
@@ -273,10 +470,10 @@ mod tests {
 #[cfg(target_arch = "wasm32")]
 mod wasm_glue {
     use super::{
-        Transition, apply_row_reference, changed_symbol_rows, layout, manifest_params, model,
-        render, symbols, wants_reference,
+        RowOrigin, Transition, apply_row_reference, in_row_order, layout, manifest_params, model,
+        poll_rows, rearranged, refetches_price, render, row_origins, symbols, wants_reference,
     };
-    use std::cell::{Cell, RefCell};
+    use std::cell::RefCell;
 
     use bmc_wasm_sdk::*;
     use prices::fetch::{self, FetchClass};
@@ -303,8 +500,6 @@ mod wasm_glue {
         static REFERENCE: RefCell<Vec<ReferenceOutcome>> = const { RefCell::new(Vec::new()) };
         static PRICE_HANDLES: RefCell<Vec<PollHandle>> = const { RefCell::new(Vec::new()) };
         static REF_HANDLES: RefCell<Vec<PollHandle>> = const { RefCell::new(Vec::new()) };
-        static PRICE_BASE: Cell<Option<usize>> = const { Cell::new(None) };
-        static REF_BASE: Cell<Option<usize>> = const { Cell::new(None) };
     }
 
     fn period_of() -> Period {
@@ -316,55 +511,41 @@ mod wasm_glue {
         .expect("BUG: every manifest period token is a Nexus window")
     }
 
-    /// Collect the `symbols` rows and reset only rows whose effective
-    /// symbol changed. An all-blank configuration leaves the list empty.
-    fn reload_symbols() -> [bool; symbols::MAX_SYMBOLS] {
+    /// Collect the `symbols` rows and carry each row's data to where its
+    /// symbol now sits; only a new symbol starts from scratch. An all-blank
+    /// configuration leaves the list empty.
+    fn reload_symbols() -> [RowOrigin; symbols::MAX_SYMBOLS] {
         let params = manifest_params::Params::current();
         let list = symbols::collect_symbols(&params.symbols);
         let n = list.len();
-        let changed = SYMBOLS.with(|symbols| {
+        let origins = SYMBOLS.with(|symbols| {
             let mut symbols = symbols.borrow_mut();
-            let changed = changed_symbol_rows(&symbols, &list);
+            let origins = row_origins(&symbols, &list);
             *symbols = list;
-            changed
+            origins
         });
-        STATES.with(|s| {
-            let mut st = s.borrow_mut();
-            st.resize_with(n, || model::RowState::Loading);
-            for (index, slot) in st.iter_mut().enumerate() {
-                if changed[index] {
-                    *slot = model::RowState::Loading;
-                }
-            }
+        let rows = &origins[..n];
+        STATES.with(|states| {
+            let mut states = states.borrow_mut();
+            *states = rearranged(std::mem::take(&mut *states), rows, || {
+                model::RowState::Loading
+            });
         });
-        NAMES.with(|s| {
-            let mut nm = s.borrow_mut();
-            nm.resize(n, None);
-            for (index, slot) in nm.iter_mut().enumerate() {
-                if changed[index] {
-                    *slot = None;
-                }
-            }
+        NAMES.with(|names| {
+            let mut names = names.borrow_mut();
+            *names = rearranged(std::mem::take(&mut *names), rows, || None);
         });
         MARKET_OPEN.with(|states| {
             let mut states = states.borrow_mut();
-            states.resize(n, None);
-            for (index, state) in states.iter_mut().enumerate() {
-                if changed[index] {
-                    *state = None;
-                }
-            }
+            *states = rearranged(std::mem::take(&mut *states), rows, || None);
         });
         REFERENCE.with(|states| {
             let mut states = states.borrow_mut();
-            states.resize(n, ReferenceOutcome::Unknown);
-            for (index, state) in states.iter_mut().enumerate() {
-                if changed[index] {
-                    *state = ReferenceOutcome::Unknown;
-                }
-            }
+            *states = rearranged(std::mem::take(&mut *states), rows, || {
+                ReferenceOutcome::Unknown
+            });
         });
-        changed
+        origins
     }
 
     /// Rows that are both configured and within the current size's capacity.
@@ -378,64 +559,55 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn init() {
         let _ = reload_symbols();
-        let mut price = Vec::with_capacity(symbols::MAX_SYMBOLS);
-        price.push(register_poll(
-            build_price,
-            on_price_reply,
-            PollConfig {
-                interval_ms: Some(PRICE_INTERVAL_MS),
-                ..PollConfig::default()
-            },
-        ));
-        PRICE_BASE.with(|b| b.set(Some(price[0].index())));
-        // Registration builds synchronously; retry row 0 after its base exists.
-        price[0].invalidate();
-        for _ in 1..symbols::MAX_SYMBOLS {
-            price.push(register_poll(
-                build_price,
-                on_price_reply,
-                PollConfig {
-                    interval_ms: Some(PRICE_INTERVAL_MS),
-                    ..PollConfig::default()
-                },
-            ));
-        }
-        let mut reference_handles = Vec::with_capacity(symbols::MAX_SYMBOLS);
-        reference_handles.push(register_poll(
-            build_reference,
-            on_reference_reply,
-            PollConfig {
-                interval_ms: Some(reference::REFERENCE_REFRESH_MS),
-                enabled: false,
-                ..PollConfig::default()
-            },
-        ));
-        REF_BASE.with(|b| b.set(Some(reference_handles[0].index())));
-        for _ in 1..symbols::MAX_SYMBOLS {
-            reference_handles.push(register_poll(
-                build_reference,
-                on_reference_reply,
-                PollConfig {
-                    // Armed lazily by the first price reply that wants it;
-                    // from then on the interval keeps the row's name
-                    // and market state fresh.
-                    interval_ms: Some(reference::REFERENCE_REFRESH_MS),
-                    enabled: false,
-                    ..PollConfig::default()
-                },
-            ));
-        }
+        let price: Vec<PollHandle> = (0..symbols::MAX_SYMBOLS)
+            .map(|_| {
+                register_poll(
+                    build_price,
+                    on_price_reply,
+                    PollConfig {
+                        interval_ms: Some(PRICE_INTERVAL_MS),
+                        ..PollConfig::default()
+                    },
+                )
+            })
+            .collect();
+        let reference_handles: Vec<PollHandle> = (0..symbols::MAX_SYMBOLS)
+            .map(|_| {
+                register_poll(
+                    build_reference,
+                    on_reference_reply,
+                    PollConfig {
+                        // Armed lazily by the first price reply that wants it;
+                        // from then on the interval keeps the row's name
+                        // and market state fresh.
+                        interval_ms: Some(reference::REFERENCE_REFRESH_MS),
+                        enabled: false,
+                        ..PollConfig::default()
+                    },
+                )
+            })
+            .collect();
         PRICE_HANDLES.with(|h| *h.borrow_mut() = price);
         REF_HANDLES.with(|h| *h.borrow_mut() = reference_handles);
+        // Registration builds before a poll has a row; build again now.
+        PRICE_HANDLES.with(|handles| handles.borrow().iter().for_each(PollHandle::invalidate));
         request_frame();
     }
 
+    /// The handles sit in row order and move with their symbols.
+    fn row_of(handles: &RefCell<Vec<PollHandle>>, handle: &PollHandle) -> Option<usize> {
+        handles
+            .borrow()
+            .iter()
+            .position(|poll| poll.index() == handle.index())
+    }
+
     fn price_row(handle: &PollHandle) -> Option<usize> {
-        handle.index().checked_sub(PRICE_BASE.with(Cell::get)?)
+        PRICE_HANDLES.with(|handles| row_of(handles, handle))
     }
 
     fn reference_row(handle: &PollHandle) -> Option<usize> {
-        handle.index().checked_sub(REF_BASE.with(Cell::get)?)
+        REF_HANDLES.with(|handles| row_of(handles, handle))
     }
 
     fn build_price(handle: &PollHandle) -> Option<FetchSpec> {
@@ -601,14 +773,21 @@ mod wasm_glue {
         let changed = symbols_changed || period_changed;
 
         if changed {
-            let changed_rows = if symbols_changed {
+            let origins = if symbols_changed {
                 reload_symbols()
             } else {
-                [false; symbols::MAX_SYMBOLS]
+                [RowOrigin::Kept; symbols::MAX_SYMBOLS]
             };
-            REF_HANDLES.with(|h| {
-                for (index, handle) in h.borrow().iter().enumerate() {
-                    if changed_rows[index] {
+            let rows = poll_rows(&origins);
+            for handles in [&PRICE_HANDLES, &REF_HANDLES] {
+                handles.with(|handles| {
+                    let mut handles = handles.borrow_mut();
+                    *handles = in_row_order(std::mem::take(&mut *handles), &rows);
+                });
+            }
+            REF_HANDLES.with(|handles| {
+                for (handle, origin) in handles.borrow().iter().zip(&origins) {
+                    if *origin == RowOrigin::Fresh {
                         handle.set_enabled(false);
                     }
                 }
@@ -620,9 +799,10 @@ mod wasm_glue {
                     }
                 });
             }
-            PRICE_HANDLES.with(|h| {
-                for (index, handle) in h.borrow().iter().enumerate() {
-                    if changed_rows[index] || period_changed {
+            let capacity = layout::capacity(widget_size());
+            PRICE_HANDLES.with(|handles| {
+                for (handle, origin) in handles.borrow().iter().zip(&origins) {
+                    if refetches_price(*origin, capacity, period_changed) {
                         handle.reset_staleness();
                         handle.set_enabled(true);
                         handle.invalidate();

@@ -17,6 +17,7 @@ fetched independently so one bad symbol never blanks the others.
 - Each row shows the symbol, the instrument's name beneath it, the current price, and a signed percentage change.
 - Rows render in list order; a row whose symbol is only whitespace is skipped, and when every row is, the widget shows
   `No symbols provided`.
+- Reordering the list moves the rows with their prices and sparklines; a reorder alone fetches nothing.
 - Supported examples include the stock `AAPL`, the S&P 500 index `^GSPC`, the currency pair `EUR` with quote `USD`
   (shown `EUR-USD`), and the cryptocurrency pair `BTC` with quote `USD`. Availability varies by instrument; other symbol
   forms may not be supported.
