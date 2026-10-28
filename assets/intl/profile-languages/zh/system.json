@@ -29,6 +29,11 @@
     "translation": "正在校验",
     "description": "Upgrade overlay, short title before a percentage on a small display: verifying"
   },
+  "Hyj2FLeG53": {
+    "source": "Snooze",
+    "translation": "稍后提醒",
+    "description": "Ringing alarm screen, button that silences the alarm and rings it again a few minutes later"
+  },
   "OWV4zp14B/": {
     "source": "Activating packages",
     "translation": "正在启用软件包",
@@ -43,6 +48,11 @@
     "source": "Update Failed",
     "translation": "更新失败",
     "description": "Upgrade overlay title once the upgrade has failed"
+  },
+  "S6DYT1b/D3": {
+    "source": "Alarm",
+    "translation": "闹钟",
+    "description": "Ringing alarm screen, above the time, when the owner gave the alarm no name"
   },
   "WPLNkBNuHa": {
     "source": "Downloading firmware",
@@ -88,6 +98,11 @@
     "source": "Preparing update",
     "translation": "正在准备更新",
     "description": "Upgrade overlay title before the upgrade reports its first phase"
+  },
+  "v8yqe1Qm2t": {
+    "source": "Stop Alarm",
+    "translation": "停止闹钟",
+    "description": "Ringing alarm screen, button that dismisses the alarm"
   },
   "vZ+Z0Il3rV": {
     "source": "Applying",

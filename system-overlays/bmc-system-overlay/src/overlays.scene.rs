@@ -310,8 +310,16 @@ fn alarm_cell(
 ) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
+        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
         state_key.with_borrow_mut(|state| {
-            render_alarm(r, (w as u32, h as u32), state, &view, FrameKind::Fresh);
+            render_alarm(
+                r,
+                (w as u32, h as u32),
+                state,
+                &view,
+                &intl,
+                FrameKind::Fresh,
+            );
         });
         // The rings run off a clock of their own, so this never comes to rest.
         true

@@ -28,6 +28,7 @@
 use std::time::Instant;
 use std::vec;
 
+use bmc_intl::{Intl, Localized, format_message};
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
     ArcCap, ArcFill, ArcSegments, BLACK, Color, CrossAlign, Draw, Fill, FontFamily, FontWeight,
@@ -35,7 +36,7 @@ use bmc_render::ui::{
     TRANSPARENT, TextAlign, TextStyle, VerticalAlign, WHITE, col, fixed_height, row, text,
 };
 use bmc_system_overlay::{
-    AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
+    AlarmRequest, Anchor, FrameKind, InputRegion, Language, Layer, LayerConfig, OverlayViewport,
     RenderOutcome, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
 };
 
@@ -89,6 +90,7 @@ pub struct AlarmOverlay {
     pending: Vec<AlarmRequest>,
     /// Content changed since the last paint; asks the framework for a redraw.
     dirty: bool,
+    localized: Localized,
     /// UI rendering context.
     render_state: AlarmRenderState,
 }
@@ -289,13 +291,17 @@ fn build_time_row(view: &AlarmView) -> Node {
 }
 
 #[must_use]
-pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> Node {
+pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32), intl: &Intl) -> Node {
     // Fall back to a generic name for an unlabelled alarm so the screen never
     // shows a blank line above the time.
     let label = if view.label.is_empty() {
-        "Alarm"
+        format_message!(
+            intl,
+            default_message: "Alarm",
+            description: "Ringing alarm screen, above the time, when the owner gave the alarm no name",
+        )
     } else {
-        view.label.as_str()
+        view.label.clone()
     };
     let label_node = text(
         label,
@@ -312,16 +318,26 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> Node {
 
     let time_row = build_time_row(view);
 
+    let stop = format_message!(
+        intl,
+        default_message: "Stop Alarm",
+        description: "Ringing alarm screen, button that dismisses the alarm",
+    );
     let mut buttons = vec![alarm_button(
         STOP_ALARM_KEY,
-        "Stop Alarm",
+        &stop,
         Fill::Solid(ORANGE_50),
         None,
     )];
     if view.snooze_allowed {
+        let snooze = format_message!(
+            intl,
+            default_message: "Snooze",
+            description: "Ringing alarm screen, button that silences the alarm and rings it again a few minutes later",
+        );
         buttons.push(alarm_button(
             SNOOZE_ALARM_KEY,
-            "Snooze",
+            &snooze,
             Fill::Solid(TRANSPARENT),
             Some(GRAY_30),
         ));
@@ -365,6 +381,7 @@ pub fn render_alarm(
     size: (u32, u32),
     state: &mut AlarmRenderState,
     view: &AlarmView,
+    intl: &Intl,
     frame: FrameKind,
 ) -> RenderAlarmOutput {
     let now = Instant::now();
@@ -372,10 +389,9 @@ pub fn render_alarm(
         .unwrap_or(u32::MAX);
     state.last_render = now;
 
-    let tree_frame = match state
-        .tree
-        .render(frame, size, delta_ms, r, || build_alarm_ui_tree(view, size))
-    {
+    let tree_frame = match state.tree.render(frame, size, delta_ms, r, || {
+        build_alarm_ui_tree(view, size, intl)
+    }) {
         Ok(tree_frame) => tree_frame,
         Err(err) => {
             tracing::error!("alarm tree render failed: {err}");
@@ -403,6 +419,7 @@ impl AlarmOverlay {
             ringing: None,
             pending: Vec::new(),
             dirty: false,
+            localized: Localized::new(),
             render_state: AlarmRenderState::new(now),
         }
     }
@@ -445,6 +462,10 @@ impl SystemOverlay for AlarmOverlay {
         self.ringing = None;
     }
 
+    fn on_language(&mut self, language: Option<Language>) {
+        self.dirty |= self.localized.set(language.unwrap_or_default());
+    }
+
     fn tick(&mut self, _now: Instant) -> TickOutcome {
         TickOutcome {
             visible: self.ringing.is_some(),
@@ -484,7 +505,14 @@ impl SystemOverlay for AlarmOverlay {
             snooze_allowed: ring.snooze_allowed,
         };
 
-        let output = render_alarm(r, viewport.size(), &mut self.render_state, &view, frame);
+        let output = render_alarm(
+            r,
+            viewport.size(),
+            &mut self.render_state,
+            &view,
+            self.localized.intl(),
+            frame,
+        );
 
         if output.stop {
             self.pending.push(AlarmRequest::Dismiss);
@@ -504,6 +532,7 @@ mod tests {
     use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
     use bmc_render::partition::tree_static_key;
     use bmc_render::renderer::test_support::ShapingRecorder;
+    use serial_test::serial;
 
     use super::*;
 
@@ -520,7 +549,54 @@ mod tests {
 
     fn render(state: &mut AlarmRenderState, frame: FrameKind) {
         let mut recorder = ShapingRecorder::new(480.0, 1280.0);
-        let _ = render_alarm(&mut recorder, SIZE, state, &view(), frame);
+        let english = bmc_intl::formatter(Language::default());
+        let _ = render_alarm(&mut recorder, SIZE, state, &view(), &english, frame);
+    }
+
+    #[test]
+    #[serial(translations)]
+    fn a_new_language_redraws_the_ringing_alarm() {
+        let now = Instant::now();
+        let mut overlay = AlarmOverlay::new(now);
+        overlay.on_alarm_ring("7:30", "AM", "", true);
+        assert!(overlay.tick(now).wants_render, "the ring needs a frame");
+
+        overlay.on_language(Some(Language::default()));
+        assert!(
+            !overlay.tick(now).wants_render,
+            "the language it already speaks"
+        );
+
+        overlay.on_language(Some(Language::ZH));
+        assert!(
+            overlay.tick(now).wants_render,
+            "a new language needs a frame"
+        );
+    }
+
+    #[test]
+    #[serial(translations)]
+    fn the_ringing_alarm_speaks_the_language_it_was_handed() {
+        let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/intl/profile-languages");
+        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
+        let now = Instant::now();
+        let mut overlay = AlarmOverlay::new(now);
+        overlay.on_alarm_ring("7:30", "AM", "", true);
+        overlay.on_language(Some(Language::ZH));
+
+        let mut recorder = ShapingRecorder::new(480.0, 1280.0);
+        let _ = overlay.render(
+            &mut recorder,
+            OverlayViewport::rectangular(SIZE.0, SIZE.1),
+            FrameKind::Fresh,
+        );
+
+        let drawn = recorder.drawn_texts();
+        assert!(
+            drawn.contains(&"停止闹钟"),
+            "the alarm must speak the language it was handed: {drawn:?}"
+        );
     }
 
     #[test]
@@ -552,16 +628,18 @@ mod tests {
             time: "7:31".to_owned(),
             ..view()
         };
+        let english = bmc_intl::formatter(Language::default());
         assert_ne!(
-            static_key(&build_alarm_ui_tree(&view(), SIZE)),
-            static_key(&build_alarm_ui_tree(&later, SIZE)),
+            static_key(&build_alarm_ui_tree(&view(), SIZE, &english)),
+            static_key(&build_alarm_ui_tree(&later, SIZE, &english)),
         );
     }
 
     /// The alarm does not animate yet, so it gains a spinner to move.
     #[test]
     fn the_static_key_holds_when_only_dynamic_content_moves() {
-        let mut tree = build_alarm_ui_tree(&view(), SIZE);
+        let mut tree =
+            build_alarm_ui_tree(&view(), SIZE, &bmc_intl::formatter(Language::default()));
         assert!(add_animated_draw(&mut tree), "the alarm has no canvas");
         let mut moved = tree.clone();
         assert!(move_dynamic_content(&mut moved) > 0);
@@ -581,10 +659,11 @@ mod tests {
                 ..view()
             },
         ];
+        let english = bmc_intl::formatter(Language::default());
         for size in [SIZE, (1_280, 480), (480, 480), (480, 320), (320, 240)] {
             for view in &views {
                 assert!(
-                    tree_static_key(&build_alarm_ui_tree(view, size)).is_some(),
+                    tree_static_key(&build_alarm_ui_tree(view, size, &english)).is_some(),
                     "{view:?} at {size:?}"
                 );
             }

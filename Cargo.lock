@@ -1227,8 +1227,10 @@ name = "bmc-overlay-alarm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-intl",
  "bmc-render",
  "bmc-system-overlay",
+ "serial_test",
  "tracing",
 ]
 
