@@ -54,6 +54,11 @@
     "translation": "正在重启 {device_name}…",
     "description": "Device-info setup failure line while the BMC application restarts the device; device_name is the product name"
   },
+  "5E2DQVd7xu": {
+    "source": "This widget has been stopped",
+    "translation": "此小组件已停止",
+    "description": "Banner title over a widget the host suspended for using too many resources"
+  },
   "5G6S3R/wX9": {
     "source": "Scan the code!",
     "translation": "扫描二维码！",
@@ -188,6 +193,11 @@
     "source": "Alarm",
     "translation": "闹钟",
     "description": "Ringing alarm screen, above the time, when the owner gave the alarm no name"
+  },
+  "SfQ6MwX6ZT": {
+    "source": "It used too many resources and was suspended.",
+    "translation": "它占用了过多资源，已被暂停。",
+    "description": "Banner line under the stopped-widget title"
   },
   "UkW/zUhInw": {
     "source": "SETUP",

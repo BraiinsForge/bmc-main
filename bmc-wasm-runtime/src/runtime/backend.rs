@@ -27,6 +27,7 @@ use std::ptr::NonNull;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
+use bmc_intl::{Language, format_message};
 use bmc_ui::{BLACK, BitmapId, Color, ICON_METER, MeshId, RED_60, SVG_RESERVED_MIN, SvgId};
 use bmc_wasm_protocol::{ON_TIMER_EXPORT, SDK_INIT_EXPORT, SDK_VERSION, version_unpack};
 use chrono::{DateTime, FixedOffset};
@@ -1642,16 +1643,25 @@ impl WasmWidgetRuntime {
         let canvas_w = renderer.width();
         let canvas_h = renderer.height();
 
-        let title = "This widget has been stopped";
-        let subtitle = "It used too many resources and was suspended.";
+        let intl = &*state.host_intl;
+        let title = format_message!(
+            intl,
+            default_message: "This widget has been stopped",
+            description: "Banner title over a widget the host suspended for using too many resources",
+        );
+        let subtitle = format_message!(
+            intl,
+            default_message: "It used too many resources and was suspended.",
+            description: "Banner line under the stopped-widget title",
+        );
         let banner_w = f32::clamp(canvas_w * 0.6, 250.0, 400.0);
-        let banner_h = tree::measure_notification_banner(title, subtitle, banner_w, renderer);
+        let banner_h = tree::measure_notification_banner(&title, &subtitle, banner_w, renderer);
 
         renderer.fill_rect(0.0, 0.0, canvas_w, canvas_h, background.scrim());
 
         tree::render_notification_banner(
-            title,
-            subtitle,
+            &title,
+            &subtitle,
             RED_60,
             ICON_METER,
             (canvas_w - banner_w) / 2.0,
@@ -1782,6 +1792,12 @@ impl WasmWidgetRuntime {
             "on_system_update",
             Lifecycle::SystemUpdate,
         )
+    }
+
+    /// Set the device language the host words its own text in, such as the stopped-widget banner.
+    /// Fires no hook: widgets do not see the language.
+    pub fn set_language(&mut self, language: Language) {
+        self.store.data_mut().host_intl = bmc_intl::shared_formatter(language);
     }
 
     /// Set the Deck's network info for the `host_network_info` getter.
@@ -3002,6 +3018,37 @@ mod tests {
         runtime.fuel_dead = true;
 
         assert!(!runtime.next_frame_preserves_target(480.0, 480.0));
+    }
+
+    #[test]
+    fn a_stopped_widget_is_announced_in_the_language_it_was_handed() {
+        let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/intl/profile-languages");
+        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
+        let drawn_in = |language| {
+            let mut runtime = minimal_runtime();
+            runtime.set_language(language);
+            runtime.fuel_dead = true;
+            let mut renderer =
+                bmc_render::renderer::test_support::ShapingRecorder::new(480.0, 480.0);
+            runtime
+                .with_renderer(renderer_ptr(&mut renderer), |runtime| {
+                    runtime.render(16, crate::TargetContents::Cleared)
+                })
+                .expect("BUG: the minimal fixture renders");
+            renderer
+        };
+        let english = drawn_in(bmc_intl::Language::EN_GB);
+        let english = english.drawn_texts();
+        let chinese = drawn_in(bmc_intl::Language::ZH);
+        let chinese = chinese.drawn_texts();
+
+        let title = "This widget has been stopped";
+        assert!(english.contains(&title), "{english:?}");
+        assert!(
+            !chinese.contains(&title) && chinese.len() == english.len(),
+            "the banner must speak the language it was handed: {chinese:?}"
+        );
     }
 
     #[test]

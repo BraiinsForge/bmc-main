@@ -1675,6 +1675,7 @@ dependencies = [
  "askama",
  "base64 0.22.1",
  "binpack2d",
+ "bmc-intl",
  "bmc-led",
  "bmc-platform",
  "bmc-render",

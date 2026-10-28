@@ -392,7 +392,7 @@ impl WidgetSlot {
         // What orphans a temp is a crash, and a crash ends in this restart.
         bmc_wasm_runtime::reclaim_orphaned_temps(&cache_dir);
         let (led_tx, led_rx) = mpsc::channel();
-        let (runtime, module_lease) = instantiate_cached_runtime(
+        let (mut runtime, module_lease) = instantiate_cached_runtime(
             module_load.lease,
             initial.width,
             initial.height,
@@ -418,6 +418,16 @@ impl WidgetSlot {
                 ..RuntimeConfig::default()
             },
         )?;
+        let initial_language = initial.settings.iter().rev().find_map(|setting| {
+            if let SettingUpdate::Language(language) = setting {
+                Some(*language)
+            } else {
+                None
+            }
+        });
+        if let Some(language) = initial_language {
+            runtime.set_language(language.unwrap_or_default());
+        }
         tracing::info!(
             ?peer_pid,
             wasm = %wasm_path.display(),
@@ -591,6 +601,9 @@ impl<S: SlotSurface> WidgetSlot<S> {
                 continue;
             }
             match event {
+                WidgetEvent::Setting(SettingUpdate::Language(language)) => {
+                    self.runtime.set_language(language.unwrap_or_default());
+                }
                 WidgetEvent::Setting(setting) => {
                     apply_setting_update(&mut self.pending_system, &setting);
                     system_dirty = true;
@@ -1326,7 +1339,7 @@ fn apply_setting_update(snap: &mut SystemSnapshot, update: &SettingUpdate) {
             snap.next_alarm = na.as_ref().map(next_alarm_to_runtime);
         }
         SettingUpdate::NightMode(active) => snap.night_mode = *active,
-        // The widget SDK has no language field yet.
+        // The language goes to the runtime beside the snapshot: the widget SDK has no field for it.
         SettingUpdate::Language(_) | SettingUpdate::Languages(_) => {}
     }
 }

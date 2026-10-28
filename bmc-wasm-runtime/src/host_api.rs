@@ -1257,6 +1257,11 @@ pub(crate) struct HostState {
     /// `on_network_update`, which re-reads it through the getter.
     pub network_info: NetworkInfo,
 
+    /// The host's own formatter, for the text the host words rather than the widget.
+    /// The process-wide one for the device language the embedder hands in,
+    /// so a widget costs a pointer and a frame takes no lock; widgets do not see it.
+    pub(crate) host_intl: std::sync::Arc<bmc_intl::Intl>,
+
     /// Third channel of the same shape as `params` and `system`.
     pub credentials: VersionedSnapshotCache<CredentialView>,
 
@@ -1589,6 +1594,7 @@ impl HostState {
             recorded_events: Vec::new(),
             system: VersionedSnapshotCache::new(SystemSnapshot::default()),
             network_info: NetworkInfo::default(),
+            host_intl: bmc_intl::shared_formatter(bmc_intl::Language::default()),
             credentials: VersionedSnapshotCache::new(CredentialView::default()),
             credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             last_timings: FrameTimings::default(),
