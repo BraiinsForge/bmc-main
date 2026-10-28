@@ -1274,9 +1274,11 @@ name = "bmc-overlay-upgrade"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-intl",
  "bmc-platform",
  "bmc-render",
  "bmc-system-overlay",
+ "serial_test",
  "tracing",
 ]
 
@@ -2860,6 +2862,7 @@ dependencies = [
 name = "deck-upgrade-v1"
 version = "0.1.0"
 dependencies = [
+ "bmc-intl-message",
  "wayland-backend",
  "wayland-client",
  "wayland-scanner",

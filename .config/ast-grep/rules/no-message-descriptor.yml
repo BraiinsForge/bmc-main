@@ -19,6 +19,7 @@ files:
 ignores:
   - "bmc-grpc/src/gen/**"
   - "bmc-intl/message/**"
+  - "deck-upgrade-v1/**"
   # The `intl` extractor's tests feed it copy in the shapes it must find.
   - "bmc-intl/tools/**"
 

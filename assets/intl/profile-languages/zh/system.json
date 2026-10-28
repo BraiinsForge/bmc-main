@@ -1,0 +1,97 @@
+{
+  "/UvA/X77Kt": {
+    "source": "Building",
+    "translation": "正在构建",
+    "description": "Upgrade overlay, short title before a percentage on a small display: building packages"
+  },
+  "2D5xRkSeHq": {
+    "source": "Verifying firmware",
+    "translation": "正在校验固件",
+    "description": "Upgrade overlay title while the downloaded firmware is checked"
+  },
+  "2Iz1yoG1of": {
+    "source": "{label} {percent}%...",
+    "translation": "{label} {percent}%…",
+    "description": "Upgrade overlay title during a download; label is the phase title (e.g. Downloading firmware), percent a whole number"
+  },
+  "5cpSLnDaAQ": {
+    "source": "Building packages",
+    "translation": "正在构建软件包",
+    "description": "Upgrade overlay title while the packages are built"
+  },
+  "Ep9jX08a/n": {
+    "source": "{downloaded} MB of {total} MB",
+    "translation": "{downloaded} MB，共 {total} MB",
+    "description": "Upgrade overlay, below the progress bar; downloaded and total are amounts in megabytes, e.g. 82 and 151"
+  },
+  "FcloNeoS34": {
+    "source": "Verifying",
+    "translation": "正在校验",
+    "description": "Upgrade overlay, short title before a percentage on a small display: verifying"
+  },
+  "OWV4zp14B/": {
+    "source": "Activating packages",
+    "translation": "正在启用软件包",
+    "description": "Upgrade overlay title while the new packages are switched in"
+  },
+  "PSTdgryZCA": {
+    "source": "Activating",
+    "translation": "正在启用",
+    "description": "Upgrade overlay, short title before a percentage on a small display: activating packages"
+  },
+  "RKPljShnpm": {
+    "source": "Update Failed",
+    "translation": "更新失败",
+    "description": "Upgrade overlay title once the upgrade has failed"
+  },
+  "WPLNkBNuHa": {
+    "source": "Downloading firmware",
+    "translation": "正在下载固件",
+    "description": "Upgrade overlay title during the firmware download"
+  },
+  "ZpT42pFYon": {
+    "source": "Applying firmware",
+    "translation": "正在写入固件",
+    "description": "Upgrade overlay title while the firmware is written"
+  },
+  "ZytF+u89Vc": {
+    "source": "Keep the device plugged in and online during the update",
+    "translation": "更新期间请保持设备接通电源并联网",
+    "description": "Firmware upgrade overlay, below the title: warning not to unplug or disconnect the device"
+  },
+  "bFKhQ/MiVz": {
+    "source": "Downloading packages",
+    "translation": "正在下载软件包",
+    "description": "Upgrade overlay title during the package download"
+  },
+  "d9K8NSW9TS": {
+    "source": "Update Finished",
+    "translation": "更新完成",
+    "description": "Upgrade overlay title once the upgrade has completed"
+  },
+  "kmFsbpoffG": {
+    "source": "Downloading",
+    "translation": "正在下载",
+    "description": "Upgrade overlay, short title before a percentage on a small display: downloading"
+  },
+  "n8XlxYQaXU": {
+    "source": "Rebooting",
+    "translation": "正在重启",
+    "description": "Upgrade overlay title while the device restarts into the upgrade"
+  },
+  "pNBxerckHU": {
+    "source": "Verifying packages",
+    "translation": "正在校验软件包",
+    "description": "Upgrade overlay title while the downloaded packages are checked"
+  },
+  "uDS7/RsopS": {
+    "source": "Preparing update",
+    "translation": "正在准备更新",
+    "description": "Upgrade overlay title before the upgrade reports its first phase"
+  },
+  "vZ+Z0Il3rV": {
+    "source": "Applying",
+    "translation": "正在写入",
+    "description": "Upgrade overlay, short title before a percentage on a small display: applying firmware"
+  }
+}

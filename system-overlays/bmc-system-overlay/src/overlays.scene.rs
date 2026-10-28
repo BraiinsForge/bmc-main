@@ -359,8 +359,17 @@ fn upgrade_cell(
             height: h as u32,
             tier,
         };
+        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
         state_key.with_borrow_mut(|state| {
-            let _ = render_upgrade(r, surface, state, &view, Instant::now(), FrameKind::Fresh);
+            let _ = render_upgrade(
+                r,
+                surface,
+                state,
+                &view,
+                &intl,
+                Instant::now(),
+                FrameKind::Fresh,
+            );
         });
         // Handed a clock of its own, so it can animate — the running phases never settle.
         true

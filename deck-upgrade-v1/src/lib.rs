@@ -23,6 +23,7 @@
 
 mod decoder;
 
+use bmc_intl_message::{Message, message_descriptor};
 pub use decoder::{DownloadProgress, UpgradeDecoder, UpgradeSnapshot, UpgradeState, UpgradeUpdate};
 
 /// Split a byte count into the high and low words carried by the protocol.
@@ -56,35 +57,76 @@ impl server::deck_upgrade_v1::DeckUpgradeV1 {
     }
 }
 
+/// The titles live with the enum because it is `#[non_exhaustive]` outside this crate.
+/// Only here can a match cover every phase without a wildcard,
+/// and a phase added to the protocol XML is a compile error until it is named.
 impl client::deck_upgrade_v1::Phase {
-    /// Label without its subject noun, for a surface too narrow to hold the
-    /// [`Display`](std::fmt::Display) form beside a percentage.
+    /// The phase as an upgrade overlay titles it.
     #[must_use]
-    pub fn short_label(self) -> &'static str {
+    pub fn title(self) -> Message {
         match self {
-            Self::FirmwareDownloading | Self::PackageRealizing => "Downloading",
-            Self::FirmwareVerifying | Self::PackageVerifying => "Verifying",
-            Self::FirmwareApplying => "Applying",
-            Self::PackageBuilding => "Building",
-            Self::PackageActivating => "Activating",
-            Self::Rebooting => "Rebooting",
+            Self::FirmwareDownloading => message_descriptor!(
+                default_message: "Downloading firmware",
+                description: "Upgrade overlay title during the firmware download",
+            ),
+            Self::FirmwareVerifying => message_descriptor!(
+                default_message: "Verifying firmware",
+                description: "Upgrade overlay title while the downloaded firmware is checked",
+            ),
+            Self::FirmwareApplying => message_descriptor!(
+                default_message: "Applying firmware",
+                description: "Upgrade overlay title while the firmware is written",
+            ),
+            Self::PackageRealizing => message_descriptor!(
+                default_message: "Downloading packages",
+                description: "Upgrade overlay title during the package download",
+            ),
+            Self::PackageVerifying => message_descriptor!(
+                default_message: "Verifying packages",
+                description: "Upgrade overlay title while the downloaded packages are checked",
+            ),
+            Self::PackageBuilding => message_descriptor!(
+                default_message: "Building packages",
+                description: "Upgrade overlay title while the packages are built",
+            ),
+            Self::PackageActivating => message_descriptor!(
+                default_message: "Activating packages",
+                description: "Upgrade overlay title while the new packages are switched in",
+            ),
+            Self::Rebooting => message_descriptor!(
+                default_message: "Rebooting",
+                description: "Upgrade overlay title while the device restarts into the upgrade",
+            ),
         }
     }
-}
 
-/// User-facing upgrade-overlay label for the phase.
-impl std::fmt::Display for client::deck_upgrade_v1::Phase {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::FirmwareDownloading => "Downloading firmware",
-            Self::FirmwareVerifying => "Verifying firmware",
-            Self::FirmwareApplying => "Applying firmware",
-            Self::PackageRealizing => "Downloading packages",
-            Self::PackageVerifying => "Verifying packages",
-            Self::PackageBuilding => "Building packages",
-            Self::PackageActivating => "Activating packages",
-            Self::Rebooting => "Rebooting",
-        })
+    /// [`Self::title`] without its subject noun, for a surface too narrow
+    /// to hold the title beside a percentage.
+    #[must_use]
+    pub fn short_title(self) -> Message {
+        match self {
+            Self::FirmwareDownloading | Self::PackageRealizing => message_descriptor!(
+                default_message: "Downloading",
+                description: "Upgrade overlay, short title before a percentage on a small display: downloading",
+            ),
+            Self::FirmwareVerifying | Self::PackageVerifying => message_descriptor!(
+                default_message: "Verifying",
+                description: "Upgrade overlay, short title before a percentage on a small display: verifying",
+            ),
+            Self::FirmwareApplying => message_descriptor!(
+                default_message: "Applying",
+                description: "Upgrade overlay, short title before a percentage on a small display: applying firmware",
+            ),
+            Self::PackageBuilding => message_descriptor!(
+                default_message: "Building",
+                description: "Upgrade overlay, short title before a percentage on a small display: building packages",
+            ),
+            Self::PackageActivating => message_descriptor!(
+                default_message: "Activating",
+                description: "Upgrade overlay, short title before a percentage on a small display: activating packages",
+            ),
+            Self::Rebooting => self.title(),
+        }
     }
 }
 
@@ -149,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn every_phase_displays_a_stable_overlay_label() {
+    fn every_phase_has_a_title_and_a_short_one() {
         for phase in [
             ClientPhase::FirmwareDownloading,
             ClientPhase::FirmwareVerifying,
@@ -161,8 +203,12 @@ mod tests {
             ClientPhase::Rebooting,
         ] {
             assert!(
-                !phase.to_string().is_empty(),
-                "{phase:?} must render a label"
+                !phase.title().default_message.is_empty(),
+                "{phase:?} must have a title"
+            );
+            assert!(
+                !phase.short_title().default_message.is_empty(),
+                "{phase:?} must have a short title"
             );
         }
     }

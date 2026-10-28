@@ -25,12 +25,13 @@ mod ui;
 
 use std::time::Instant;
 
+use bmc_intl::{Intl, Localized};
 use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, DownloadProgress, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
-    RenderOutcome, SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot,
-    UpgradeState,
+    Anchor, DownloadProgress, FrameKind, InputRegion, Language, Layer, LayerConfig,
+    OverlayViewport, RenderOutcome, SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase,
+    UpgradeSnapshot, UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -196,6 +197,7 @@ pub fn render_upgrade(
     surface: Surface,
     state: &mut UpgradeRenderState,
     view: &UpgradeView,
+    intl: &Intl,
     now: Instant,
     frame: FrameKind,
 ) -> RenderOutcome {
@@ -206,7 +208,7 @@ pub fn render_upgrade(
         .unwrap_or(u32::MAX);
     state.last_render = now;
     let size = (surface.width, surface.height);
-    let build = || ui::build_upgrade_tree(view, surface, icons);
+    let build = || ui::build_upgrade_tree(view, surface, icons, intl);
     match state.tree.render(frame, size, delta_ms, renderer, build) {
         Ok(tree_frame) => tree_frame.outcome,
         Err(err) => {
@@ -226,6 +228,7 @@ struct OverlayState {
     view: Option<UpgradeView>,
     terminal_deadline: Option<Instant>,
     dirty: bool,
+    localized: Localized,
     render_state: UpgradeRenderState,
 }
 
@@ -237,8 +240,13 @@ impl OverlayState {
             view: None,
             terminal_deadline: None,
             dirty: false,
+            localized: Localized::new(),
             render_state: UpgradeRenderState::new(Instant::now()),
         }
+    }
+
+    fn set_language(&mut self, language: Language) {
+        self.dirty |= self.localized.set(language);
     }
 
     fn clear(&mut self) {
@@ -312,6 +320,7 @@ impl OverlayState {
             surface,
             &mut self.render_state,
             &view,
+            self.localized.intl(),
             Instant::now(),
             frame,
         )
@@ -400,6 +409,10 @@ impl SystemOverlay for UpgradeOverlay {
         self.state.clear();
     }
 
+    fn on_language(&mut self, language: Option<Language>) {
+        self.state.set_language(language.unwrap_or_default());
+    }
+
     fn tick(&mut self, now: Instant) -> TickOutcome {
         self.state.tick(now)
     }
@@ -429,6 +442,7 @@ mod tests {
     use bmc_platform::Product;
     use bmc_render::renderer::test_support::ShapingRecorder;
     use bmc_system_overlay::NextFrame;
+    use serial_test::serial;
 
     use super::*;
 
@@ -535,6 +549,24 @@ mod tests {
         assert_eq!(state.terminal_deadline, Some(now + Duration::from_secs(4)));
     }
 
+    #[test]
+    #[serial(translations)]
+    fn a_new_language_redraws_unchanged_content() {
+        let now = Instant::now();
+        let mut state = OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge));
+        state.receive(running(UpgradeKind::Packages), now);
+        assert!(state.tick(now).wants_render, "the new view needs a frame");
+
+        state.set_language(Language::default());
+        assert!(
+            !state.tick(now).wants_render,
+            "the language it already speaks"
+        );
+
+        state.set_language(Language::ZH);
+        assert!(state.tick(now).wants_render, "a new language needs a frame");
+    }
+
     fn verifying_packages() -> UpgradeSnapshot {
         UpgradeSnapshot {
             kind: UpgradeKind::Packages,
@@ -550,6 +582,34 @@ mod tests {
         #[expect(clippy::cast_precision_loss, reason = "card sizes are small")]
         let mut recorder = ShapingRecorder::new(width as f32, height as f32);
         state.render(&mut recorder, PACKAGE_CARD_SURFACE_SIZE_LARGE, frame)
+    }
+
+    #[test]
+    #[serial(translations)]
+    fn the_progress_speaks_the_language_it_was_handed() {
+        let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/intl/profile-languages");
+        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
+        let mut overlay = UpgradeOverlay {
+            state: OverlayState::new(UpgradeKind::Packages, Some(SurfaceTier::CardLarge)),
+        };
+        overlay.state.receive(verifying_packages(), Instant::now());
+        overlay.on_language(Some(Language::ZH));
+
+        let (width, height) = PACKAGE_CARD_SURFACE_SIZE_LARGE;
+        #[expect(clippy::cast_precision_loss, reason = "card sizes are small")]
+        let mut recorder = ShapingRecorder::new(width as f32, height as f32);
+        let _ = overlay.state.render(
+            &mut recorder,
+            PACKAGE_CARD_SURFACE_SIZE_LARGE,
+            FrameKind::Fresh,
+        );
+
+        let drawn = recorder.drawn_texts();
+        assert!(
+            drawn.iter().any(|text| text.contains("正在校验")),
+            "the progress must speak the language it was handed: {drawn:?}"
+        );
     }
 
     #[test]

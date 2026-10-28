@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_intl::{Intl, format_lazy, format_message};
 use bmc_render::ui::{
     AnimProperty, AnimationDef, AutoFit, BLACK, Color, ColorSpace, Draw, Easing, Fill, FontFamily,
     FontWeight, GRAY_50, GRAY_70, LoopMode, Node, PropsData, SvgId, TRANSPARENT, TextAlign,
@@ -28,7 +29,6 @@ use bmc_system_overlay::{DownloadProgress, UpgradeKind, UpgradePhase};
 use crate::icons::UpgradeIcons;
 use crate::{SurfaceTier, UpgradeView};
 
-const SAFETY_TEXT: &str = "Keep the device plugged in and online during the update";
 const ACTIVE_BAR_TRAVEL_MS: u32 = 800;
 /// Divider along the compact card's top and left edges. Both the card and the
 /// widgets behind it are black, so without it the card has no visible extent.
@@ -88,12 +88,16 @@ pub fn decimal_megabytes(bytes: u64) -> String {
 }
 
 #[must_use]
-pub fn transfer_text(progress: DownloadProgress) -> Option<String> {
+pub fn transfer_text(intl: &Intl, progress: DownloadProgress) -> Option<String> {
     progress.total_bytes.map(|total| {
-        format!(
-            "{} MB of {} MB",
-            decimal_megabytes(progress.downloaded_bytes),
-            decimal_megabytes(total)
+        format_message!(
+            intl,
+            default_message: "{downloaded} MB of {total} MB",
+            description: "Upgrade overlay, below the progress bar; downloaded and total are amounts in megabytes, e.g. 82 and 151",
+            values: {
+                downloaded: decimal_megabytes(progress.downloaded_bytes),
+                total: decimal_megabytes(total),
+            },
         )
     })
 }
@@ -190,7 +194,7 @@ struct Tier {
     transfer_line: bool,
     /// Whether the determinate caption drops its subject noun. It is the longest
     /// string either surface draws — a phase label, a percentage and an ellipsis
-    /// — so the narrow card asks for [`UpgradePhase::short_label`] instead.
+    /// — so the narrow card asks for [`UpgradePhase::short_title`] instead.
     short_percent_caption: bool,
     safety: SafetyText,
 }
@@ -296,12 +300,17 @@ fn tier_for(surface: Surface) -> Tier {
     clippy::cast_precision_loss,
     reason = "type sizes are a couple of dozen pixels"
 )]
-fn safety_draw(safety: SafetyText, width: f32, center_y: f32, size: u32) -> Draw {
+fn safety_draw(intl: &Intl, safety: SafetyText, width: f32, center_y: f32, size: u32) -> Draw {
+    let text = format_message!(
+        intl,
+        default_message: "Keep the device plugged in and online during the update",
+        description: "Firmware upgrade overlay, below the title: warning not to unplug or disconnect the device",
+    );
     let SafetyText::Wrapped { lines, inset } = safety else {
         return text_draw(
             width / 2.0,
             center_y,
-            SAFETY_TEXT,
+            text,
             size,
             GRAY_50,
             FontWeight::REGULAR,
@@ -323,7 +332,7 @@ fn safety_draw(safety: SafetyText, width: f32, center_y: f32, size: u32) -> Draw
         mode: AutoFit::Shrink,
         min_size: floor,
         max_size: floor,
-        text: SAFETY_TEXT.to_owned(),
+        text,
         style: TextStyle {
             size,
             color: GRAY_50,
@@ -378,7 +387,12 @@ fn active_bar(draws: &mut Vec<Draw>, x: f32, y: f32, width: f32, height: f32) {
     reason = "a flat mapping keeps every phase's arrangement directly comparable"
 )]
 #[must_use]
-pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIcons) -> Node {
+pub fn build_upgrade_tree(
+    view: &UpgradeView,
+    surface: Surface,
+    icons: UpgradeIcons,
+    intl: &Intl,
+) -> Node {
     let (width, height) = (surface.width as f32, surface.height as f32);
     // Content follows the upgrade kind; sizing follows the surface.
     let packages = matches!(view.kind(), UpgradeKind::Packages);
@@ -430,23 +444,34 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
         UpgradeView::Running {
             phase, progress, ..
         } => {
-            let label = match phase {
-                Some(phase) => phase.to_string(),
-                None => "Preparing update".to_owned(),
+            let label = if let Some(phase) = phase {
+                format_lazy(intl, &phase.title())
+            } else {
+                format_message!(
+                    intl,
+                    default_message: "Preparing update",
+                    description: "Upgrade overlay title before the upgrade reports its first phase",
+                )
             };
             match progress_mode(*phase, *progress) {
                 ProgressMode::Determinate(fraction) => {
-                    let percent = (fraction * 100.0).round();
+                    let percent = format!("{:.0}", (fraction * 100.0).round());
                     // Determinate progress only ever runs under a download
                     // phase, so a phase is always in hand for the short form.
                     let label = match (tier.short_percent_caption, phase) {
-                        (true, Some(phase)) => phase.short_label().to_owned(),
+                        (true, Some(phase)) => format_lazy(intl, &phase.short_title()),
                         (true, None) | (false, _) => label,
                     };
+                    let caption = format_message!(
+                        intl,
+                        default_message: "{label} {percent}%...",
+                        description: "Upgrade overlay title during a download; label is the phase title (e.g. Downloading firmware), percent a whole number",
+                        values: { label: label, percent: percent },
+                    );
                     draws.push(text_draw(
                         width / 2.0 + tier.caption_nudge,
                         title_center_y,
-                        format!("{label} {percent:.0}%..."),
+                        caption,
                         title_size,
                         WHITE,
                         FontWeight::BOLD,
@@ -467,7 +492,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
                     });
                     if let Some(progress) = (*progress)
                         .filter(|_| tier.transfer_line)
-                        .and_then(transfer_text)
+                        .and_then(|progress| transfer_text(intl, progress))
                     {
                         draws.push(text_draw(
                             width / 2.0,
@@ -503,6 +528,7 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
                         active_bar(&mut draws, bar_x, below_title_y, bar_w, bar_height);
                     } else if !packages {
                         draws.push(safety_draw(
+                            intl,
                             tier.safety,
                             width,
                             below_title_y + body_size as f32 / 2.0,
@@ -512,22 +538,36 @@ pub fn build_upgrade_tree(view: &UpgradeView, surface: Surface, icons: UpgradeIc
                 }
             }
         }
-        UpgradeView::Succeeded { .. } => draws.push(text_draw(
-            width / 2.0,
-            title_center_y,
-            "Update Finished",
-            title_size,
-            WHITE,
-            FontWeight::BOLD,
-        )),
-        UpgradeView::Failed { .. } => draws.push(text_draw(
-            width / 2.0,
-            title_center_y,
-            "Update Failed",
-            title_size,
-            WHITE,
-            FontWeight::BOLD,
-        )),
+        UpgradeView::Succeeded { .. } => {
+            let title = format_message!(
+                intl,
+                default_message: "Update Finished",
+                description: "Upgrade overlay title once the upgrade has completed",
+            );
+            draws.push(text_draw(
+                width / 2.0,
+                title_center_y,
+                title,
+                title_size,
+                WHITE,
+                FontWeight::BOLD,
+            ));
+        }
+        UpgradeView::Failed { .. } => {
+            let title = format_message!(
+                intl,
+                default_message: "Update Failed",
+                description: "Upgrade overlay title once the upgrade has failed",
+            );
+            draws.push(text_draw(
+                width / 2.0,
+                title_center_y,
+                title,
+                title_size,
+                WHITE,
+                FontWeight::BOLD,
+            ));
+        }
     }
     Node::Canvas {
         props: PropsData {
@@ -546,6 +586,12 @@ mod tests {
     use bmc_render::partition::tree_static_key;
 
     use super::*;
+
+    const SAFETY_TEXT: &str = "Keep the device plugged in and online during the update";
+
+    fn english() -> Intl {
+        bmc_intl::formatter(bmc_intl::Language::default())
+    }
 
     fn test_icons() -> UpgradeIcons {
         let id = |raw| SvgId::from_wire(raw).expect("BUG: test SVG id must be non-zero");
@@ -578,7 +624,9 @@ mod tests {
             height: size.1,
             tier,
         };
-        let Node::Canvas { draws, .. } = build_upgrade_tree(view, surface, test_icons()) else {
+        let Node::Canvas { draws, .. } =
+            build_upgrade_tree(view, surface, test_icons(), &english())
+        else {
             panic!("BUG: upgrade presentation must remain a canvas");
         };
         draws
@@ -643,10 +691,13 @@ mod tests {
             "a value that rounds to a whole megabyte must drop the decimal"
         );
         assert_eq!(
-            transfer_text(DownloadProgress {
-                downloaded_bytes: 82_000_000,
-                total_bytes: Some(151_000_000)
-            }),
+            transfer_text(
+                &english(),
+                DownloadProgress {
+                    downloaded_bytes: 82_000_000,
+                    total_bytes: Some(151_000_000)
+                }
+            ),
             Some("82 MB of 151 MB".to_owned())
         );
     }
@@ -1151,6 +1202,7 @@ mod tests {
                 tier: SurfaceTier::fullscreen_for_width(1_280),
             },
             test_icons(),
+            &english(),
         )
     }
 
@@ -1195,7 +1247,8 @@ mod tests {
                     tier,
                 };
                 assert!(
-                    tree_static_key(&build_upgrade_tree(view, surface, test_icons())).is_some(),
+                    tree_static_key(&build_upgrade_tree(view, surface, test_icons(), &english()))
+                        .is_some(),
                     "{view:?} on {tier:?} {size:?}"
                 );
             }
