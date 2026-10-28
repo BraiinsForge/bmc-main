@@ -1894,6 +1894,7 @@ dependencies = [
  "jsonschema",
  "roxmltree 0.20.0",
  "serde_json",
+ "ticker-list-migrate-params",
 ]
 
 [[package]]

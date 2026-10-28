@@ -18,13 +18,16 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::str::FromStr;
 
-use bmc::manifest_test_support::{default_widgets, migration_manifest_expectations, widget_uids};
+use bmc::manifest_test_support::{
+    default_widgets, migrate_unstamped_params, migration_manifest_expectations, widget_uids,
+};
 use bmc_widget_manifest::{
-    BooleanParam, CredentialKey, IntegerParam, Manifest, ParamKind, ParamValue, StringParam,
+    ArrayParam, BooleanParam, CredentialKey, IntegerParam, Manifest, ParamKey, ParamKind,
+    ParamValue, StringParam,
 };
 
 fn load_wasm_manifest(name: &str) -> Manifest {
@@ -170,6 +173,40 @@ fn string_default(manifest: &Manifest, key: &str) -> String {
         .unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
 }
 
+fn list_default(manifest: &Manifest, key: &str) -> ParamValue {
+    let ParamKind::Array(ArrayParam { default_value, .. }) = param_kind(manifest, key) else {
+        panic!("BUG: manifest param {key:?} is not an array");
+    };
+    ParamValue::List(default_value.clone())
+}
+
+fn run_ticker_list_migrator(input: &[u8]) -> Vec<u8> {
+    let mut output = Vec::new();
+    ticker_list_migrate_params::run(input, &mut output)
+        .expect("BUG: the migrator reads the input the BMC application writes");
+    output
+}
+
+fn string_params<'a>(
+    params: impl IntoIterator<Item = (String, &'a str)>,
+) -> BTreeMap<ParamKey, ParamValue> {
+    params
+        .into_iter()
+        .map(|(key, value)| {
+            let key = ParamKey::try_new(key).expect("BUG: a test param key is valid");
+            (key, ParamValue::String(value.to_owned()))
+        })
+        .collect()
+}
+
+fn params_json(params: &BTreeMap<ParamKey, ParamValue>) -> serde_json::Value {
+    params
+        .iter()
+        .map(|(key, value)| (key.as_str().to_owned(), value.to_json_value()))
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
 fn integer_default(manifest: &Manifest, key: &str) -> i32 {
     let ParamKind::Integer(IntegerParam { default_value, .. }) = param_kind(manifest, key) else {
         panic!("BUG: manifest param {key:?} is not an integer");
@@ -311,6 +348,20 @@ fn ticker_migration_fallbacks_match_the_shipped_manifests() {
         string_default(&ticker_list, "period"),
         expected.ticker_period
     );
+    let default_slots = string_params(
+        expected
+            .ticker_list_symbols
+            .iter()
+            .enumerate()
+            .map(|(index, symbol)| (format!("symbol_{}", index + 1), *symbol)),
+    );
+    let migrated = migrate_unstamped_params(&ticker_list, &default_slots, run_ticker_list_migrator)
+        .expect("BUG: the default slots migrate");
+    assert_eq!(
+        migrated.get("symbols"),
+        Some(&list_default(&ticker_list, "symbols")),
+        "a default scene must migrate to the list a new instance starts with"
+    );
 
     let single_periods = string_enum(&ticker_single, "period");
     let list_periods = string_enum(&ticker_list, "period");
@@ -333,4 +384,85 @@ fn ticker_migration_fallbacks_match_the_shipped_manifests() {
             "dispatched view {view:?} is not in the ticker-single view enum"
         );
     }
+}
+
+#[test]
+fn the_shipped_ticker_list_migrator_satisfies_its_own_manifest() {
+    let ticker_list = load_wasm_manifest("ticker-list");
+    let legacy = string_params(
+        [
+            ("symbol_1", "NVDA"),
+            ("symbol_2", "EUR-USD"),
+            ("symbol_3", " AAPL "),
+            ("symbol_4", "AAPL"),
+            ("symbol_5", ""),
+            ("symbol_6", "BTC-USD"),
+            ("period", "1d"),
+        ]
+        .map(|(key, value)| (key.to_owned(), value)),
+    );
+
+    let migrated = migrate_unstamped_params(&ticker_list, &legacy, run_ticker_list_migrator)
+        .expect("BUG: the shipped migrator's answer must pass the shipped manifest, or the widget never leaves the legacy shape");
+
+    assert_eq!(
+        params_json(&migrated),
+        serde_json::json!({
+            "period": "1d",
+            "symbols": [
+                {"base": "NVDA", "quote": null},
+                {"base": "EUR", "quote": "USD"},
+                {"base": "AAPL", "quote": null},
+                {"base": "BTC", "quote": "USD"},
+            ],
+        }),
+        "slots become trimmed, deduplicated rows and the period carries over"
+    );
+}
+
+#[test]
+fn a_v0_ticker_list_reaches_the_installed_rows_through_the_shipped_migrator() {
+    let v0 = r#"{"scenes": [{
+        "id": "8fe7bce4-3ca9-4b88-b5e2-af687cfba6ee",
+        "enabled": true,
+        "kind": "fullscreen",
+        "widgets": [{
+            "id": "a9edfa3e-88ac-467a-b8ce-51dd3b89fd7a",
+            "row": 0, "col": 0, "size": "full", "kind": "remote_widget",
+            "params": {
+                "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+                "params": {"symbols": ["BTC-USD", " AAPL ", "", "EUR-USD", "BTC-USD"], "period": "24h"}
+            }
+        }]
+    }]}"#;
+    let loaded: bmc::config_migration::LoadedConfig = v0.parse().expect("BUG: the v0 config loads");
+    let widget = loaded
+        .current()
+        .scenes()
+        .values()
+        .flat_map(|scene| scene.widgets.values())
+        .next()
+        .expect("BUG: the ticker-list widget survives the upgrade");
+    let ticker_list = load_wasm_manifest("ticker-list");
+    assert_eq!(widget.widget_type_id, ticker_list.uid);
+    assert_eq!(
+        widget.params_version, None,
+        "the v0 upgrade writes the 0.1.0 slots, so it must not claim any package's shape"
+    );
+
+    let migrated = migrate_unstamped_params(&ticker_list, &widget.params, run_ticker_list_migrator)
+        .expect("BUG: the shipped migrator takes the v0 upgrade's slots");
+
+    assert_eq!(
+        params_json(&migrated),
+        serde_json::json!({
+            "period": "1d",
+            "symbols": [
+                {"base": "BTC", "quote": "USD"},
+                {"base": "AAPL", "quote": null},
+                {"base": "EUR", "quote": "USD"},
+            ],
+        }),
+        "dashed pairs split, blanks and repeats drop, and the v0 period translates"
+    );
 }

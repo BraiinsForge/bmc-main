@@ -481,6 +481,7 @@ taffy = "0.9"
 tap = "1.0.1"
 tempfile = "3.21.0"
 thiserror = "1.0.69"
+ticker-list-migrate-params = { path = "migrators/ticker-list" }
 time = { version = "0.3.41", default-features = false }
 tokio = { version = "1.47.0", features = ["full"] }
 tokio-cron-scheduler = { git = "https://github.com/BraiinsForge/tokio-cron-scheduler.git", rev = "ff74921fc53f7374782b4333b7e5724a88c82213" }
