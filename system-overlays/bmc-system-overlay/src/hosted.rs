@@ -187,7 +187,7 @@ impl HostedOverlay {
                 self.overlay.on_night_mode(active, until.as_deref());
             }
             if let Some(reason) = self.client.take_restart_declined() {
-                self.overlay.on_restart_declined(&reason);
+                self.overlay.on_restart_declined(reason);
             }
             if let Some(active) = self.client.take_preempted() {
                 self.overlay.on_preempted(active);

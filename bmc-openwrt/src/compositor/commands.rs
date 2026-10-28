@@ -19,8 +19,8 @@
 // the grant above.
 
 use bmc::compositor::{
-    AccessPointInfo, CompositorEvent, SceneCycling, SceneLayout, SetupProgress, UpgradeRunSnapshot,
-    WidgetAction, WidgetInstanceKey, WidgetRegistration,
+    AccessPointInfo, CompositorEvent, DeclineReason, SceneCycling, SceneLayout, SetupProgress,
+    UpgradeRunSnapshot, WidgetAction, WidgetInstanceKey, WidgetRegistration,
 };
 use bmc::manager::BmcState;
 use bmc_widget_protocol::SettingUpdate;
@@ -79,7 +79,7 @@ pub enum CompositorCommand {
     },
     ClearUpgradeState,
     RestartDeclined {
-        reason: String,
+        reason: DeclineReason,
     },
     /// Push fresh params to a running widget without respawning it.
     /// Only valid when geometry (size) is unchanged; the widget keeps

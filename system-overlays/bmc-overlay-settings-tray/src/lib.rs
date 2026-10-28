@@ -35,12 +35,12 @@ pub mod ui;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use bmc_intl::{Intl, Localized};
+use bmc_intl::{Intl, Localized, format_lazy};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
     Anchor, FrameKind, InputRegion, Language, Layer, LayerConfig, NextFrame, OverlayViewport,
-    RenderOutcome, ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome,
-    TouchEvent, TreeUi, VersionedSnapshot,
+    RenderOutcome, RestartDeclined, ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay,
+    TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
 };
 
 use crate::dismiss::Pt;
@@ -435,9 +435,9 @@ pub struct SettingsTrayOverlay {
     button: ButtonState,
 
     restart: RestartState,
-    /// Reason from the last `restart_declined` event, shown in place of the
-    /// generic message while the restart FSM surfaces one.
-    declined_reason: Option<String>,
+    /// Reason from the last declined restart, shown in place
+    /// of the generic message while the restart FSM surfaces one.
+    declined_reason: Option<RestartDeclined>,
 
     render_state: SettingsTrayRenderState,
 
@@ -557,9 +557,11 @@ impl SettingsTrayOverlay {
         let restart = self.restart.phase(now).map(|phase| ui::Status {
             action: ui::Action::Restart,
             phase,
-            reason: matches!(phase, ui::Phase::Failed)
-                .then(|| self.declined_reason.clone())
-                .flatten(),
+            reason: self
+                .declined_reason
+                .as_ref()
+                .filter(|_| matches!(phase, ui::Phase::Failed))
+                .and_then(|reason| self.declined_sentence(reason)),
         });
         restart.or_else(|| {
             self.button.phase(now).map(|phase| ui::Status {
@@ -568,6 +570,18 @@ impl SettingsTrayOverlay {
                 reason: None,
             })
         })
+    }
+
+    /// The decline's sentence in the tray's language,
+    /// or `None` for a reason it has no words for.
+    fn declined_sentence(&self, reason: &RestartDeclined) -> Option<String> {
+        match reason {
+            RestartDeclined::Reason(reason) => {
+                Some(format_lazy(self.localized.intl(), &reason.sentence()))
+            }
+            RestartDeclined::Worded(sentence) => Some(sentence.clone()),
+            RestartDeclined::Unknown => None,
+        }
     }
 
     /// Advance both hold FSMs from the tree's press state and queue the
@@ -851,8 +865,8 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
-    fn on_restart_declined(&mut self, reason: &str) {
-        self.declined_reason = Some(reason.to_owned());
+    fn on_restart_declined(&mut self, reason: RestartDeclined) {
+        self.declined_reason = Some(reason);
         self.restart.on_declined(Instant::now());
         self.content_dirty = true;
     }
@@ -1154,7 +1168,8 @@ pub fn render_settings_tray(
 
 #[cfg(test)]
 mod view_tests {
-    use bmc_system_overlay::Snapshot;
+    use bmc_system_overlay::{DeclineReason, Snapshot};
+    use serial_test::serial;
 
     use super::*;
 
@@ -1192,7 +1207,7 @@ mod view_tests {
     fn a_decline_reaches_the_status_with_its_reason() {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new(None, now);
-        overlay.on_restart_declined("An upgrade is in progress");
+        overlay.on_restart_declined(RestartDeclined::Reason(DeclineReason::UpgradeInProgress));
         assert_eq!(
             overlay.view(Instant::now()).status,
             Some(ui::Status {
@@ -1200,6 +1215,25 @@ mod view_tests {
                 phase: ui::Phase::Failed,
                 reason: Some("An upgrade is in progress".to_owned()),
             })
+        );
+    }
+
+    #[test]
+    #[serial(translations)]
+    fn a_shown_decline_reason_follows_a_language_switch() {
+        let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/intl/profile-languages");
+        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new(None, now);
+        overlay.on_restart_declined(RestartDeclined::Reason(DeclineReason::UpgradeInProgress));
+
+        overlay.on_language(Some(Language::ZH));
+
+        assert_eq!(
+            overlay.view(now).status.and_then(|status| status.reason),
+            Some("正在进行更新".to_owned()),
+            "the reason under the title must not stay in the language it was declined in"
         );
     }
 
@@ -1410,6 +1444,7 @@ mod view_tests {
     }
 
     #[test]
+    #[serial(translations)]
     fn a_language_change_dirties_content_once() {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new(None, now);

@@ -18,8 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Vendored `deck_settings_v1` Wayland protocol: a compositor-relayed IPC for
-//! the settings-tray overlay to control display brightness and WiFi-setup mode.
+//! Vendored `deck_settings_v1` Wayland protocol: a compositor-relayed IPC
+//! for the settings tray to control the system settings it shows.
 //! The compositor hand-writes the server `Dispatch`; the overlay binds the
 //! client side through `bmc-system-overlay`.
 
@@ -61,4 +61,40 @@ pub mod client {
     use self::__interfaces::*;
 
     wayland_scanner::generate_client_code!("./protocol/deck-settings-v1.xml");
+}
+
+use bmc_intl_message::{Message, message_descriptor};
+
+/// The sentences live with the enum because it is `#[non_exhaustive]` outside this crate.
+/// Only here can a match cover every reason without a wildcard,
+/// and a reason added to the protocol XML is a compile error until it is worded.
+impl client::deck_settings_v1::DeclineReason {
+    /// The reason as the settings tray words it,
+    /// under the title of a declined restart.
+    #[must_use]
+    pub fn sentence(self) -> Message {
+        match self {
+            Self::UpgradeInProgress => message_descriptor!(
+                default_message: "An upgrade is in progress",
+                description: "Settings tray notice, under its title when the restart is declined: an upgrade is running",
+            ),
+            Self::RestartFailed => message_descriptor!(
+                default_message: "The restart command failed",
+                description: "Settings tray notice, under its title when the restart is declined: the device's reboot call failed",
+            ),
+        }
+    }
+}
+
+impl server::deck_settings_v1::DeclineReason {
+    /// The sentence for a tray bound below version 4,
+    /// sent in English as `restart_declined` and shown as it came.
+    #[must_use]
+    pub fn english(self) -> &'static str {
+        let reason = match self {
+            Self::UpgradeInProgress => client::deck_settings_v1::DeclineReason::UpgradeInProgress,
+            Self::RestartFailed => client::deck_settings_v1::DeclineReason::RestartFailed,
+        };
+        reason.sentence().default_message
+    }
 }

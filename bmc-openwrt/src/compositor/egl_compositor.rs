@@ -37,8 +37,8 @@ use super::{
 };
 use bmc::compositor::{
     AccessPointInfo, ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent,
-    InstanceId, LedRequestStatusEvent, SceneLayout, SettingsCommand, SetupProgress, WidgetAction,
-    WidgetInstanceKey, WidgetRegistration,
+    DeclineReason, InstanceId, LedRequestStatusEvent, SceneLayout, SettingsCommand, SetupProgress,
+    WidgetAction, WidgetInstanceKey, WidgetRegistration,
 };
 use bmc::manager::BmcState;
 use bmc_platform::TouchTransform;
@@ -2352,7 +2352,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.upgrade.clear();
         }
         CompositorCommand::RestartDeclined { reason } => {
-            state.compositor.settings.restart_declined(&reason);
+            state.compositor.settings.restart_declined(reason);
         }
         CompositorCommand::UpdateWidgetParams { key, params } => {
             tracing::debug!("Updating widget params: {key}");
@@ -2817,11 +2817,9 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
-    fn broadcast_restart_declined(&self, reason: &str) -> Result<(), CompositorError> {
+    fn broadcast_restart_declined(&self, reason: DeclineReason) -> Result<(), CompositorError> {
         self.command_tx
-            .send(CompositorCommand::RestartDeclined {
-                reason: reason.to_owned(),
-            })
+            .send(CompositorCommand::RestartDeclined { reason })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

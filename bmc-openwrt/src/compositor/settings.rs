@@ -27,6 +27,7 @@
 //! buffer are testable without live Wayland resources.
 
 use ::deck_settings_v1::server::deck_settings_v1::{self, Capability, DeckSettingsV1};
+use bmc::compositor::DeclineReason;
 use bmc_platform::{HardwareCapabilities, HardwareProfile, Product};
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
@@ -148,10 +149,18 @@ impl SettingsState {
     }
 
     /// One-shot decline notification: no cache, no bind replay.
-    pub fn restart_declined(&mut self, reason: &str) {
+    pub fn restart_declined(&mut self, reason: DeclineReason) {
+        let reason = match reason {
+            DeclineReason::UpgradeInProgress => deck_settings_v1::DeclineReason::UpgradeInProgress,
+            DeclineReason::RestartFailed => deck_settings_v1::DeclineReason::RestartFailed,
+        };
         self.prune();
         for r in self.resources.iter().filter(|r| r.version() >= 2) {
-            r.restart_declined(reason.to_owned());
+            if r.version() >= deck_settings_v1::EVT_RESTART_DECLINED_REASON_SINCE {
+                r.restart_declined_reason(reason);
+            } else {
+                r.restart_declined(reason.english().to_owned());
+            }
         }
     }
 
@@ -272,7 +281,10 @@ impl Dispatch<DeckSettingsV1, ()> for CompositorState {
 
 /// Advertise the `deck_settings_v1` global.
 pub fn create_global(display: &DisplayHandle) {
-    display.create_global::<CompositorState, DeckSettingsV1, ()>(3, ());
+    display.create_global::<CompositorState, DeckSettingsV1, ()>(
+        DeckSettingsV1::interface().version,
+        (),
+    );
 }
 
 #[cfg(test)]
@@ -330,7 +342,7 @@ mod tests {
     #[test]
     fn restart_declined_populates_no_replay_cache() {
         let mut s = SettingsState::new(caps_for_product(Product::Bmc100));
-        s.restart_declined("An upgrade is in progress");
+        s.restart_declined(DeclineReason::UpgradeInProgress);
         assert_eq!(s.last_brightness, None);
         assert_eq!(s.last_volume, None);
         assert_eq!(s.last_wifi_ap, None);
@@ -355,5 +367,163 @@ mod tests {
             assert!(!bmm.contains(Capability::Sound));
             assert!(!bmm.contains(Capability::WifiSetup));
         }
+    }
+}
+
+/// Drives a real in-process Wayland client/server pair
+/// so a declined restart is checked as each tray sees it:
+/// a v3 bind is sent the English sentence, a v4 bind the reason as a kind.
+#[cfg(test)]
+mod bind_wire_test {
+    use std::io::ErrorKind;
+    use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
+
+    use ::deck_settings_v1::client::deck_settings_v1::{self as client_api, DeclineReason};
+    use bmc::compositor::DeclineReason as BmcDeclineReason;
+    use bmc_platform::{HardwareProfile, Product};
+    use smithay::reexports::wayland_server::Display;
+    use wayland_client::backend::WaylandError;
+    use wayland_client::protocol::wl_registry;
+    use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+
+    use crate::compositor::state::{ClientState, CompositorState};
+
+    #[derive(Default)]
+    struct TestClient {
+        bind_version: u32,
+        settings: Option<client_api::DeckSettingsV1>,
+        sentences: Vec<String>,
+        reasons: Vec<WEnum<DeclineReason>>,
+    }
+
+    impl Dispatch<wl_registry::WlRegistry, ()> for TestClient {
+        fn event(
+            state: &mut Self,
+            registry: &wl_registry::WlRegistry,
+            event: wl_registry::Event,
+            (): &(),
+            _: &Connection,
+            qh: &QueueHandle<Self>,
+        ) {
+            if let wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } = event
+                && interface == "deck_settings_v1"
+            {
+                state.settings = Some(registry.bind::<client_api::DeckSettingsV1, _, _>(
+                    name,
+                    version.min(state.bind_version),
+                    qh,
+                    (),
+                ));
+            }
+        }
+    }
+
+    impl Dispatch<client_api::DeckSettingsV1, ()> for TestClient {
+        fn event(
+            state: &mut Self,
+            _: &client_api::DeckSettingsV1,
+            event: client_api::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            if let client_api::Event::RestartDeclined { reason } = event {
+                state.sentences.push(reason);
+            } else if let client_api::Event::RestartDeclinedReason { reason } = event {
+                state.reasons.push(reason);
+            }
+        }
+    }
+
+    /// What a tray bound at `bind_version` hears of a restart declined for an upgrade in progress.
+    fn decline_as_seen_at(bind_version: u32) -> TestClient {
+        let mut display: Display<CompositorState> =
+            Display::new().expect("BUG: test Wayland display should initialize");
+        let mut compositor = CompositorState::new(
+            &display,
+            480,
+            1280,
+            480,
+            1280,
+            60_000,
+            "test-seat",
+            &HardwareProfile::for_product(Product::Bmc100),
+        );
+        let (server_stream, client_stream) =
+            UnixStream::pair().expect("BUG: unix socket pair should be creatable");
+        display
+            .handle()
+            .insert_client(server_stream, Arc::new(ClientState::default()))
+            .expect("BUG: test client stream should be insertable into a fresh display");
+        let conn = Connection::from_socket(client_stream)
+            .expect("BUG: test client socket should form a valid connection");
+        let mut queue: EventQueue<TestClient> = conn.new_event_queue();
+        let qh = queue.handle();
+        let mut client = TestClient {
+            bind_version,
+            ..TestClient::default()
+        };
+
+        conn.display().get_registry(&qh, ());
+        // The registry's globals, then the bind and what it replays.
+        for _ in 0..2 {
+            conn.flush()
+                .expect("BUG: test client flush should succeed on a live socket pair");
+            display
+                .dispatch_clients(&mut compositor)
+                .expect("BUG: test server dispatch should succeed on a live socket pair");
+            display
+                .flush_clients()
+                .expect("BUG: test server flush should succeed on a live socket pair");
+            queue
+                .blocking_dispatch(&mut client)
+                .expect("BUG: test client dispatch should succeed once the server has replied");
+        }
+        assert!(
+            client.settings.is_some(),
+            "BUG: deck_settings_v1 global should have been advertised"
+        );
+
+        compositor
+            .settings
+            .restart_declined(BmcDeclineReason::UpgradeInProgress);
+        display
+            .flush_clients()
+            .expect("BUG: test server flush should succeed on a live socket pair");
+        // What the server sent is already in the socket. Read only that,
+        // so a decline that sends nothing fails the test rather than hanging it.
+        if let Some(guard) = queue.prepare_read() {
+            match guard.read() {
+                Ok(_) => {}
+                Err(WaylandError::Io(error)) if error.kind() == ErrorKind::WouldBlock => {}
+                Err(error) => panic!("BUG: test client read failed: {error}"),
+            }
+        }
+        queue
+            .dispatch_pending(&mut client)
+            .expect("BUG: test client dispatch should succeed on what it has read");
+        client
+    }
+
+    #[test]
+    fn a_v3_tray_is_sent_the_english_sentence() {
+        let client = decline_as_seen_at(3);
+        assert_eq!(client.sentences, ["An upgrade is in progress"]);
+        assert!(client.reasons.is_empty(), "{:?}", client.reasons);
+    }
+
+    #[test]
+    fn a_v4_tray_is_sent_the_reason() {
+        let client = decline_as_seen_at(4);
+        assert_eq!(
+            client.reasons,
+            [WEnum::Value(DeclineReason::UpgradeInProgress)]
+        );
+        assert!(client.sentences.is_empty(), "{:?}", client.sentences);
     }
 }

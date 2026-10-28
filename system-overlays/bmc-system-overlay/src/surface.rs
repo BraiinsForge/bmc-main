@@ -54,7 +54,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
-use crate::overlay::{AlarmEvent, InputRegion, LayerConfig, ScreenEdge};
+use crate::overlay::{AlarmEvent, InputRegion, LayerConfig, RestartDeclined, ScreenEdge};
 use ::deck_settings_v1::client::deck_settings_v1::{self, Capability, DeckSettingsV1};
 use bmc_widget::egl::DmaBufInfo;
 use bmc_widget::surface::{
@@ -107,7 +107,7 @@ struct State {
     /// Set on a `night_mode` event.
     pending_night_mode: Option<(bool, Option<String>)>,
     /// Set on a one-shot `restart_declined` event.
-    pending_restart_declined: Option<String>,
+    pending_restart_declined: Option<RestartDeclined>,
     /// Set on a `preempted` event; `true` when a modal full-screen overlay is
     /// covering the scene, drained by the framework into `on_preempted`.
     pending_preempted: Option<bool>,
@@ -768,7 +768,7 @@ impl LayerSurfaceClient {
         self.state.pending_night_mode.take()
     }
 
-    pub fn take_restart_declined(&mut self) -> Option<String> {
+    pub fn take_restart_declined(&mut self) -> Option<RestartDeclined> {
         self.state.pending_restart_declined.take()
     }
 
@@ -1001,7 +1001,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "deck_settings_v1" if state.wants_settings => {
                     let settings =
-                        registry.bind::<DeckSettingsV1, _, _>(name, version.min(3), qh, ());
+                        registry.bind::<DeckSettingsV1, _, _>(name, version.min(4), qh, ());
                     state.settings = Some(settings);
                 }
                 "deck_alarm_v1" if state.wants_alarm => {
@@ -1133,7 +1133,13 @@ impl Dispatch<DeckSettingsV1, ()> for State {
                 state.pending_night_mode = Some((active != 0, until));
             }
             deck_settings_v1::Event::RestartDeclined { reason } => {
-                state.pending_restart_declined = Some(reason);
+                state.pending_restart_declined = Some(RestartDeclined::Worded(reason));
+            }
+            deck_settings_v1::Event::RestartDeclinedReason { reason } => {
+                state.pending_restart_declined = Some(match reason {
+                    WEnum::Value(reason) => RestartDeclined::Reason(reason),
+                    WEnum::Unknown(_) => RestartDeclined::Unknown,
+                });
             }
             deck_settings_v1::Event::Preempted { active } => {
                 state.pending_preempted = Some(active != 0);

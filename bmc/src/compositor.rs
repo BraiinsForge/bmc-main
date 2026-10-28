@@ -196,6 +196,13 @@ impl SceneLayout {
     }
 }
 
+/// Why the BMC application declined a restart the settings tray asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclineReason {
+    UpgradeInProgress,
+    RestartFailed,
+}
+
 #[derive(Debug, Clone)]
 pub struct WidgetAction {
     pub instance_id: InstanceId,
@@ -463,8 +470,8 @@ pub trait Compositor: Send + Sync {
     }
 
     /// Report a declined restart request to the settings-tray overlay via the
-    /// one-shot `deck_settings_v1` `restart_declined` event. Default: no-op.
-    fn broadcast_restart_declined(&self, _reason: &str) -> Result<(), CompositorError> {
+    /// one-shot `deck_settings_v1` event. Default: no-op.
+    fn broadcast_restart_declined(&self, _reason: DeclineReason) -> Result<(), CompositorError> {
         Ok(())
     }
 

@@ -224,7 +224,7 @@ fn deliver_settings_events(client: &mut LayerSurfaceClient, overlay: &mut dyn Sy
         overlay.on_night_mode(active, until.as_deref());
     }
     if let Some(reason) = client.take_restart_declined() {
-        overlay.on_restart_declined(&reason);
+        overlay.on_restart_declined(reason);
     }
     if let Some(active) = client.take_preempted() {
         overlay.on_preempted(active);

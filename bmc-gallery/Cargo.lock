@@ -1805,6 +1805,7 @@ name = "deck-settings-v1"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
+ "bmc-intl-message",
  "wayland-backend",
  "wayland-client",
  "wayland-scanner",

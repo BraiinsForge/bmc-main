@@ -38,10 +38,11 @@ pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
 pub use icon::register_icon;
 pub use overlay::{
-    AccessPoint, AlarmEvent, AlarmRequest, DeviceState, DownloadProgress, FrameKind, InputRegion,
-    LayerConfig, LocalizationRequest, NextFrame, OverlayViewport, PlatformCaps, RenderOutcome,
-    ScreenEdge, SettingsCaps, SettingsRequest, SetupStep, SystemOverlay, TickOutcome, TouchEvent,
-    UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState, UpgradeUpdate,
+    AccessPoint, AlarmEvent, AlarmRequest, DeclineReason, DeviceState, DownloadProgress, FrameKind,
+    InputRegion, LayerConfig, LocalizationRequest, NextFrame, OverlayViewport, PlatformCaps,
+    RenderOutcome, RestartDeclined, ScreenEdge, SettingsCaps, SettingsRequest, SetupStep,
+    SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase, UpgradeSnapshot,
+    UpgradeState, UpgradeUpdate,
 };
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;

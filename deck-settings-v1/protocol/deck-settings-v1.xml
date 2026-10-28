@@ -10,7 +10,7 @@
     dismiss request is dropped: hide is owned by deck_screen_edge_v1.
   </copyright>
 
-  <interface name="deck_settings_v1" version="3">
+  <interface name="deck_settings_v1" version="4">
     <description summary="Deck settings control interface">
       Lightweight compositor-relayed IPC for the settings-tray overlay to control
       system state it must not touch directly. The target platform (OpenWrt/ARMv7)
@@ -130,7 +130,8 @@
       <description summary="a restart request was declined">
         One-shot notification that a restart request was not honored, with a
         short human-readable reason the tray shows as it is, as one sentence
-        under its own title. Not state: never replayed on bind.
+        under its own title. Not state: never replayed on bind. From version 4
+        the compositor sends restart_declined_reason instead.
       </description>
       <arg name="reason" type="string" summary="why the restart was declined, as shown"/>
     </event>
@@ -146,6 +147,22 @@
         bind.
       </description>
       <arg name="active" type="uint" summary="1 = a modal overlay is covering the screen, 0 = clear"/>
+    </event>
+
+    <enum name="decline_reason" since="4">
+      <description summary="why a restart was declined"/>
+      <entry name="upgrade_in_progress" value="0" summary="a firmware or package upgrade is running"/>
+      <entry name="restart_failed" value="1" summary="the device's reboot call failed"/>
+    </enum>
+
+    <event name="restart_declined_reason" since="4">
+      <description summary="a restart request was declined">
+        One-shot notification that a restart request was not honored, with the
+        reason as a kind the tray words in its own language, so the sentence
+        follows a language switch while it is shown. Not state: never replayed
+        on bind.
+      </description>
+      <arg name="reason" type="uint" enum="decline_reason" summary="why the restart was declined"/>
     </event>
   </interface>
 </protocol>

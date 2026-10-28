@@ -189,6 +189,11 @@
     "translation": "正在重启",
     "description": "Upgrade overlay title while the device restarts into the upgrade"
   },
+  "o1Bb3Mh6rm": {
+    "source": "An upgrade is in progress",
+    "translation": "正在进行更新",
+    "description": "Settings tray notice, under its title when the restart is declined: an upgrade is running"
+  },
   "p1zd18L0pf": {
     "source": "Not configured",
     "translation": "未配置",
@@ -238,5 +243,10 @@
     "source": "Brightness",
     "translation": "亮度",
     "description": "Settings tray, label under the brightness buttons"
+  },
+  "yBXCaNi47m": {
+    "source": "The restart command failed",
+    "translation": "重启命令执行失败",
+    "description": "Settings tray notice, under its title when the restart is declined: the device's reboot call failed"
   }
 }

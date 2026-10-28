@@ -13,6 +13,7 @@ include = ["protocol/deck-settings-v1.xml"]
 
 [dependencies]
 bitflags.workspace = true
+bmc-intl-message.workspace = true
 wayland-backend.workspace = true
 wayland-client.workspace = true
 wayland-scanner.workspace = true

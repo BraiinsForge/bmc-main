@@ -65,20 +65,18 @@ D-Bus/PipeWire/UPower, and bmc owns the hardware drivers, so the overlay relays 
 The BDK-343 `dismiss` request is **dropped** in the re-home: hide is owned by `deck_screen_edge_v1` (`activate()` →
 `hidden`), so a compositor-driven dismiss is redundant.
 
-### `deck_settings_v1` (version 3)
+### `deck_settings_v1` (version 4)
 
-Version 2 added a sound-volume slider, a night-mode toggle, a device-restart request, and a `capabilities` bitfield
-event (a control whose bit is unset has no backing hardware on the product); see the `.xml` for those members. Version 3
-adds the `preempted` event below. The core (v1) shape and the v3 addition:
+The main members; the `.xml` has the v2 controls (volume, night mode, restart, `capabilities`) and every detail.
 
-| Member                  | Kind    | Args                     | Notes                                                                                                                                                                             |
-| ----------------------- | ------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `set_brightness(value)` | request | `value: uint` (0–100)    | bmc applies it night-mode-aware and reports the effective value back via `brightness`.                                                                                            |
-| `reconfigure_wifi`      | request | —                        | Put the device into WiFi setup mode (open AP + captive portal). One-way; the device leaves setup mode on its own once configured from the phone. Progress via `wifi_ap`.          |
-| `destroy`               | request | —                        | Destructor.                                                                                                                                                                       |
-| `brightness(value)`     | event   | `value: uint` (0–100)    | Effective brightness. Emitted on bind and on every change, including the night-mode value while night mode is active.                                                             |
-| `wifi_ap(ssid)`         | event   | `ssid: string`           | Setup-AP SSID. Non-empty means setup mode is active; empty means inactive. Emitted on bind and on change.                                                                         |
-| `preempted(active)`     | event   | `active: uint` (0/1), v3 | A modal full-screen overlay on a layer below the tray (alarm, startup) mapped over the scene (`1`) or cleared (`0`). The tray retracts on `1`. Edge-driven; not replayed on bind. |
+| Member                            | Kind    | Since | Notes                                                     |
+| --------------------------------- | ------- | ----- | --------------------------------------------------------- |
+| `set_brightness(value)`           | request | 1     | 0–100; bmc applies it night-mode-aware                    |
+| `reconfigure_wifi`                | request | 1     | Enter WiFi setup mode; progress via `wifi_ap`             |
+| `brightness(value)`               | event   | 1     | Effective 0–100; on bind and on change                    |
+| `wifi_ap(ssid)`                   | event   | 1     | Setup-AP SSID, empty when inactive; on bind and on change |
+| `preempted(active)`               | event   | 3     | Modal overlay covers the screen; tray retracts, no replay |
+| `restart_declined_reason(reason)` | event   | 4     | Tray words it; below 4, `restart_declined` in English     |
 
 **Responsibility split.** The overlay sends `set_brightness` / `reconfigure_wifi` (and the v2 controls); the compositor
 forwards them to bmc over the existing action channel and emits `brightness` / `wifi_ap` (and the v2 events) back when

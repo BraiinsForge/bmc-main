@@ -223,6 +223,21 @@ pub struct SettingsCaps {
     pub wifi_setup: bool,
 }
 
+/// Why a restart was declined (the `deck_settings_v1` wire enum).
+pub use ::deck_settings_v1::client::deck_settings_v1::DeclineReason;
+
+/// A declined restart, as the compositor reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestartDeclined {
+    /// The reason, for the overlay to word in its language.
+    Reason(DeclineReason),
+    /// A sentence worded by a compositor from before
+    /// `restart_declined_reason`, shown as it came.
+    Worded(String),
+    /// A reason from a newer compositor that this overlay has no words for.
+    Unknown,
+}
+
 /// Decoded `deck_platform_v1` capability set: what the hardware platform
 /// supports. Plain bools so overlays never touch the raw protocol bitfield.
 #[expect(
@@ -831,7 +846,7 @@ pub trait SystemOverlay {
 
     /// One-shot notification that a restart request was declined. Called
     /// before `tick`. Default: no-op.
-    fn on_restart_declined(&mut self, _reason: &str) {}
+    fn on_restart_declined(&mut self, _reason: RestartDeclined) {}
 
     /// WiFi setup-AP SSID reported by the compositor: `Some(ssid)` while setup
     /// mode is active, `None` when inactive. Called before `tick`. Default:
