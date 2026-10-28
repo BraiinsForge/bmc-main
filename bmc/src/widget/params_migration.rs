@@ -153,20 +153,33 @@ pub(crate) fn migrator_status(info: &WidgetInfo) -> MigratorStatus<'_> {
     })
 }
 
-pub(crate) async fn run_migrator(
-    job: &MigrationJob<'_>,
-) -> Result<BTreeMap<ParamKey, ParamValue>, MigrationFailure> {
-    let viewport = &job.viewport;
-    let input = serde_json::to_vec(&MigratorInput {
-        params_version: job.params_version,
-        widget_version: &job.migrator.installed.manifest.version,
-        params: crate::widget::coordinator::params_to_json_map(job.stored_params),
+pub(crate) fn migrator_input(
+    params_version: Option<&semver::Version>,
+    widget_version: &semver::Version,
+    params: &BTreeMap<ParamKey, ParamValue>,
+    viewport: &MigratorViewport,
+) -> Vec<u8> {
+    serde_json::to_vec(&MigratorInput {
+        params_version,
+        widget_version,
+        params: crate::widget::coordinator::params_to_json_map(params),
         width: viewport.width,
         height: viewport.height,
         viewport_shape: &viewport.viewport_shape,
         display: &viewport.display,
     })
-    .expect("BUG: the migrator input is plain data");
+    .expect("BUG: the migrator input is plain data")
+}
+
+pub(crate) async fn run_migrator(
+    job: &MigrationJob<'_>,
+) -> Result<BTreeMap<ParamKey, ParamValue>, MigrationFailure> {
+    let input = migrator_input(
+        job.params_version,
+        &job.migrator.installed.manifest.version,
+        job.stored_params,
+        &job.viewport,
+    );
 
     let mut child = Command::new(job.migrator.path)
         .current_dir(&job.migrator.installed.widget_dir)
@@ -244,6 +257,15 @@ fn interpret_output(
     if !status.success() {
         return Err(MigrationFailure::Exit(status));
     }
+    migrated_params(&job.migrator.installed.manifest, job.stored_params, output)
+}
+
+/// The params a migrator's stdout leaves `stored` with under `manifest`.
+pub(crate) fn migrated_params(
+    manifest: &Manifest,
+    stored: &BTreeMap<ParamKey, ParamValue>,
+    output: &[u8],
+) -> Result<BTreeMap<ParamKey, ParamValue>, MigrationFailure> {
     if output.len() > MIGRATOR_STDOUT_LIMIT {
         return Err(MigrationFailure::StdoutTooLarge);
     }
@@ -252,11 +274,7 @@ fn interpret_output(
     else {
         return Err(MigrationFailure::NotAnObject);
     };
-    merge_overlay(
-        &job.migrator.installed.manifest,
-        job.stored_params,
-        &overlay,
-    )
+    merge_overlay(manifest, stored, &overlay)
 }
 
 /// Keep at most `limit` bytes from `reader` in `buffer` and drain the rest,

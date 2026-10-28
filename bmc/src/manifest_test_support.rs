@@ -21,7 +21,8 @@
 use std::collections::BTreeMap;
 
 use bmc_platform::Product;
-use bmc_widget_manifest::{ParamKey, ParamValue};
+use bmc_widget_manifest::{Manifest, ParamKey, ParamValue};
+use bmc_widget_protocol::{DisplayInfo, ViewportShape};
 use uuid::Uuid;
 
 use crate::config::widget_uuids::{
@@ -31,6 +32,7 @@ use crate::config::widget_uuids::{
     RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID, TICKER_SINGLE_UID,
     WEATHER_UID,
 };
+use crate::widget::params_migration::{MigratorViewport, migrated_params, migrator_input};
 
 #[derive(Debug)]
 pub struct DefaultWidget {
@@ -119,4 +121,22 @@ pub struct MigrationManifestExpectations {
 #[must_use]
 pub fn migration_manifest_expectations() -> MigrationManifestExpectations {
     crate::config_migration::upgrade_v0::manifest_test_expectations()
+}
+
+/// Runs `migrator` in process as the BMC application runs a params migrator
+/// on unstamped params: it reads the protocol-0 stdin the runner writes,
+/// and its stdout is judged against `manifest` as the runner judges it.
+pub fn migrate_unstamped_params(
+    manifest: &Manifest,
+    stored: &BTreeMap<ParamKey, ParamValue>,
+    migrator: impl FnOnce(&[u8]) -> Vec<u8>,
+) -> Result<BTreeMap<ParamKey, ParamValue>, String> {
+    let viewport = MigratorViewport {
+        width: 317,
+        height: 238,
+        viewport_shape: ViewportShape::Rectangular,
+        display: DisplayInfo::BMC100,
+    };
+    let input = migrator_input(None, &manifest.version, stored, &viewport);
+    migrated_params(manifest, stored, &migrator(&input)).map_err(|failure| failure.to_string())
 }
