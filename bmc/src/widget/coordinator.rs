@@ -283,7 +283,14 @@ pub struct Coordinator {
     /// first or not at all, and never takes it while holding this one.
     secret_store: Arc<RwLock<SecretStoreHandle>>,
     file_tokens: FileTokenCache,
+    /// Write-held through a package reload and the boot gate; a scene edit
+    /// takes it for read so it never interleaves with the params migration
+    /// and the instance swap.
+    scene_edits: RwLock<()>,
 }
+
+/// How long a scene edit waits for a reload or boot gate before it is refused.
+pub(crate) const SCENE_EDIT_WAIT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Copy)]
 enum RetainedWidgetStop {
@@ -671,7 +678,16 @@ impl Coordinator {
             preview_scene_id: Arc::default(),
             secret_store,
             file_tokens: FileTokenCache::new(),
+            scene_edits: RwLock::new(()),
         }
+    }
+
+    /// Wait up to `SCENE_EDIT_WAIT` for a running reload or boot gate
+    /// to release the scenes.
+    pub(crate) async fn begin_scene_edit(
+        &self,
+    ) -> Result<tokio::sync::RwLockReadGuard<'_, ()>, tokio::time::error::Elapsed> {
+        tokio::time::timeout(SCENE_EDIT_WAIT, self.scene_edits.read()).await
     }
 
     /// The token cache `local-file-token` accounts resolve against.
@@ -929,6 +945,7 @@ impl Coordinator {
     }
 
     pub(crate) async fn reload_changed_widgets(&self, config_handle: &Arc<RwLock<ConfigHandle>>) {
+        let _reloading = self.scene_edits.write().await;
         if let Err(error) = self.refresh_widgets().await {
             warn!(%error, "widget registry refresh failed; keeping running widgets");
             return;
@@ -1017,6 +1034,7 @@ impl Coordinator {
             let _ = self.compositor.broadcast_setting(setting);
         }
 
+        let _booting = self.scene_edits.write().await;
         self.migrate_stale_params(config_handle).await;
         self.spawn_all_configured_widgets(config_handle).await;
 

@@ -39,7 +39,7 @@ use connectrpc::{
 };
 use futures::stream::StreamExt;
 use indexmap::IndexMap;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::time;
 use tokio_stream::wrappers::IntervalStream;
 use uuid::Uuid;
@@ -459,6 +459,14 @@ impl SceneManagementService {
         }
     }
 
+    /// Hold a package reload off this edit, or refuse the edit once a gate
+    /// has held the scenes past `SCENE_EDIT_WAIT`.
+    async fn begin_scene_edit(&self) -> Result<RwLockReadGuard<'_, ()>, ConnectError> {
+        self.coordinator.begin_scene_edit().await.map_err(|_| {
+            ConnectError::unavailable("widget packages are being set up or reloaded, try again")
+        })
+    }
+
     /// Refresh the compositor's scene state from current config. With no
     /// preview held this pushes the full cycling list; while a preview is
     /// active it instead pins that single scene so cycling and drag stay off.
@@ -595,6 +603,7 @@ impl SceneManagementService {
         self,
         parsed: ParsedUpdateWidgetShape,
     ) -> ServiceResult<Empty> {
+        let _edit = self.begin_scene_edit().await?;
         let scene_id_key = scene::SceneId::from(parsed.scene_id);
         let widget_id_key = scene::WidgetId::from(parsed.widget_id);
         let completion = {
@@ -1446,6 +1455,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let ParsedAddFullscreenShape { config, widget_uid } =
             parse_add_fullscreen_shape(request.to_owned_message())?;
 
+        let _edit = self.begin_scene_edit().await?;
         let info = self
             .widget_registry
             .get(&widget_uid)
@@ -1521,6 +1531,7 @@ impl GrpcSceneManagementService for SceneManagementService {
     ) -> ServiceResult<StringValue> {
         reject_combined_when_no_slot_grid(&self.capabilities)?;
 
+        let _edit = self.begin_scene_edit().await?;
         let scene = scene::Scene {
             id: scene::SceneId::generate(),
             enabled: true,
@@ -1553,6 +1564,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
 
         let scene_id_key = scene::SceneId::from(id);
+        let _edit = self.begin_scene_edit().await?;
         let (stop, start) = {
             let preview = self.preview_scene_id.lock().await;
             let previewing = *preview == Some(scene_id_key);
@@ -1625,6 +1637,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let id = Uuid::parse_str(request.id)
             .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
 
+        let _edit = self.begin_scene_edit().await?;
         let mut config = self.config_handle.write().await;
         let scene_id = scene::SceneId::from(id);
 
@@ -1658,6 +1671,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let id = Uuid::parse_str(request.value)
             .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
 
+        let _edit = self.begin_scene_edit().await?;
         let preview = self.preview_scene_id.lock().await;
         let mut config = self.config_handle.write().await;
         let (source_idx, mut cloned) = config
@@ -1719,6 +1733,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
         let scene_id_key = scene::SceneId::from(id);
 
+        let _edit = self.begin_scene_edit().await?;
         let preview = self.preview_scene_id.lock().await;
         if preview.as_ref() == Some(&scene_id_key) {
             return Err(ConnectError::failed_precondition(
@@ -1752,6 +1767,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
         let scene_id = scene::SceneId::from(id);
 
+        let _edit = self.begin_scene_edit().await?;
         let scene_was_disabled = {
             let mut preview = self.preview_scene_id.lock().await;
             if preview.is_some() {
@@ -1821,6 +1837,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let widget_id = Uuid::parse_str(request.id)
             .map_err(|_| ConnectError::invalid_argument("invalid widget ID"))?;
 
+        let _edit = self.begin_scene_edit().await?;
         let stop = {
             let mut config = self.config_handle.write().await;
             let scene = config
@@ -1899,6 +1916,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             transition: parse_scene_cycling_transition(cycling.transition)?,
         };
 
+        let _edit = self.begin_scene_edit().await?;
         let mut config = self.config_handle.write().await;
         config.set_scene_cycling(config_to_apply.clone());
         Self::save_config(&mut config).await?;
@@ -1928,6 +1946,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             widget_uid,
         } = parse_add_widget_shape(request.to_owned_message())?;
 
+        let _edit = self.begin_scene_edit().await?;
         let info = self
             .widget_registry
             .get(&widget_uid)
