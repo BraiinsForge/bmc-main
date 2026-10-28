@@ -690,6 +690,11 @@ impl Coordinator {
         tokio::time::timeout(SCENE_EDIT_WAIT, self.scene_edits.read()).await
     }
 
+    #[cfg(test)]
+    pub(crate) async fn hold_scene_edits(&self) -> tokio::sync::RwLockWriteGuard<'_, ()> {
+        self.scene_edits.write().await
+    }
+
     /// The token cache `local-file-token` accounts resolve against.
     #[must_use]
     pub(crate) fn file_tokens(&self) -> &FileTokenCache {

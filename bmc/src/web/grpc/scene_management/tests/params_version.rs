@@ -45,7 +45,7 @@ pub(super) struct Fixture {
     pub(super) service: SceneManagementService,
     pub(super) coordinator: Arc<Coordinator>,
     pub(super) config: Arc<RwLock<ConfigHandle>>,
-    widget_uid: uuid::Uuid,
+    pub(super) widget_uid: uuid::Uuid,
     pub(super) scene_id: scene::SceneId,
 }
 
@@ -123,7 +123,7 @@ pub(super) async fn fixture() -> (tempfile::TempDir, Fixture) {
     )
 }
 
-fn widget_config(widget_uid: uuid::Uuid, label: &str) -> web::WidgetConfig {
+pub(super) fn widget_config(widget_uid: uuid::Uuid, label: &str) -> web::WidgetConfig {
     web::WidgetConfig {
         widget_uid: widget_uid.to_string(),
         params: fields_one("label", string_value(label)).into(),

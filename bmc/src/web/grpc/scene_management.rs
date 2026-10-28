@@ -2055,6 +2055,7 @@ mod tests {
 
     mod params_version;
     mod refused_add;
+    mod reload_gate;
 
     fn wrapped_string(value: &str) -> StringValue {
         StringValue {
