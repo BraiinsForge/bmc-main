@@ -93,6 +93,10 @@ wasmWidgetCrates // {
     path = "bmc-wasm-host";
     packageName = "bmc-wasm-host";
   };
+  ticker-list-migrate-params = defineCrate {
+    path = "migrators/ticker-list";
+    packageName = "ticker-list-migrate-params";
+  };
   wasm-test-runner = defineCrate {
     path = "bmc-wasm-test-runner";
     packageName = "bmc-wasm-test-runner";

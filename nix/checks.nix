@@ -135,7 +135,7 @@ let
     "bmc-wasm-thin/Cargo.toml"
     "bmc-wasm-host/Cargo.toml"
   ];
-  forbiddenSourceRoots = [ "widgets" "widgets-wasm" "widgets-wasm-examples" ];
+  forbiddenSourceRoots = [ "widgets" "widgets-wasm" "widgets-wasm-examples" "migrators" ];
   isUnder = root: path: path == root || lib.hasPrefix "${root}/" path;
   sourceBoundaryViolations = builtins.filter
     (path: builtins.any (root: isUnder root path) forbiddenSourceRoots)

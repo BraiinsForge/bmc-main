@@ -166,8 +166,15 @@ let
 
   wasmLauncher = mkWasmLauncher { inherit thin; };
 
+  # Native programs a widget package ships beside its wrapper,
+  # built for the host profile like the thin.
+  widgetPrograms = {
+    ticker-list = [ crates.ticker-list-migrate-params ];
+  };
+
   # Per-widget packaging. Produces:
   #   $out/lib/bmc-widgets/<name>/bin/<name>          (shell wrapper)
+  #   $out/lib/bmc-widgets/<name>/bin/<program>       (its widgetPrograms, if any)
   #   $out/lib/bmc-widgets/<name>/lib/wasm/<name>.wasm
   #   $out/lib/bmc-widgets/<name>/lib/assets/v1/<kind>/<id>.asset
   #   $out/lib/bmc-widgets/<name>/manifest.json
@@ -185,7 +192,10 @@ let
     , wrapperMode
     }:
     let
-      icon = (builtins.fromJSON (builtins.readFile manifest)).icon or null;
+      manifestJson = builtins.fromJSON (builtins.readFile manifest);
+      icon = manifestJson.icon or null;
+      programs = map (crate: profile.buildCrate crate { }) (widgetPrograms.${name} or [ ]);
+      declaredProgramPaths = map (program: program.path) (lib.attrValues (manifestJson.programs or { }));
       iconSrc = if icon == null then null else mkPublicIcon manifest icon;
       # Read from the template the device checks uploaded wrappers against,
       # so the two cannot drift.
@@ -223,6 +233,19 @@ let
         cp ${iconSrc} "$base/${icon}"
       ''}
       ${installWrapper}
+      ${lib.concatMapStrings (program: ''
+        for binary in ${program}/bin/*; do
+          target="$base/bin/$(basename "$binary")"
+          [ ! -e "$target" ] || { echo "$target is already in the package" >&2; exit 1; }
+          install -m755 "$binary" "$target"
+        done
+      '') programs}
+      ${lib.concatMapStrings (path: ''
+        if [ ! -x "$base/${path}" ]; then
+          echo "the ${name} manifest declares ${path}, which the package does not ship" >&2
+          exit 1
+        fi
+      '') declaredProgramPaths}
     '').overrideAttrs (old: {
       passthru = (old.passthru or { }) // {
         inherit name wrapperMode;
