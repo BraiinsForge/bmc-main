@@ -1,0 +1,13 @@
+[package]
+name = "ticker-list-migrate-params"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+authors = ["Braiins Forge s.r.o."]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
