@@ -2035,6 +2035,7 @@ mod tests {
     use connectrpc::ErrorCode;
 
     mod params_version;
+    mod refused_add;
 
     fn wrapped_string(value: &str) -> StringValue {
         StringValue {

@@ -41,12 +41,12 @@ use bmc_grpc::web;
 
 const WIDGET_VERSION: semver::Version = semver::Version::new(1, 0, 0);
 
-struct Fixture {
-    service: SceneManagementService,
-    coordinator: Arc<Coordinator>,
-    config: Arc<RwLock<ConfigHandle>>,
+pub(super) struct Fixture {
+    pub(super) service: SceneManagementService,
+    pub(super) coordinator: Arc<Coordinator>,
+    pub(super) config: Arc<RwLock<ConfigHandle>>,
     widget_uid: uuid::Uuid,
-    scene_id: scene::SceneId,
+    pub(super) scene_id: scene::SceneId,
 }
 
 /// A real package with a sleeping binary, since an added widget is spawned
@@ -68,7 +68,7 @@ fn write_stamp_package(package: &std::path::Path) -> uuid::Uuid {
 }
 
 /// Each test ends with `shutdown_widget_manager` to reap the package's widget.
-async fn fixture() -> (tempfile::TempDir, Fixture) {
+pub(super) async fn fixture() -> (tempfile::TempDir, Fixture) {
     let temp = tempfile::tempdir().expect("BUG: tempdir");
     let widget_uid = write_stamp_package(&temp.path().join("widget-package"));
 
@@ -140,7 +140,7 @@ async fn stored_widget(fixture: &Fixture, scene_id: scene::SceneId) -> scene::Wi
         .clone()
 }
 
-async fn add_small_widget(fixture: &Fixture, label: &str) -> scene::Widget {
+pub(super) async fn add_small_widget(fixture: &Fixture, label: &str) -> scene::Widget {
     add_widget(
         &fixture.service,
         web::AddWidgetRequest {

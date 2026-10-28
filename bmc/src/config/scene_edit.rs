@@ -54,3 +54,65 @@ impl<'a> SceneEdit<'a, Scene> {
         Some(SceneEdit::new(widget, self.scenes_dirty))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::config::ConfigHandle;
+    use crate::scene::{SceneId, WidgetId};
+
+    async fn handle_with_a_widget() -> (tempfile::TempDir, ConfigHandle, SceneId, WidgetId) {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let (handle, _) = ConfigHandle::init(
+            dir.path().join("config.json"),
+            80,
+            30,
+            80,
+            30,
+            bmc_platform::Product::Bmc100,
+        )
+        .await;
+        let (scene_id, widget_id) = handle
+            .scenes()
+            .iter()
+            .find_map(|(id, scene)| scene.widgets.keys().next().map(|widget| (*id, *widget)))
+            .expect("BUG: the default scenes carry a widget");
+        (dir, handle, scene_id, widget_id)
+    }
+
+    #[tokio::test]
+    async fn a_refused_edit_leaves_the_scenes_clean() {
+        let (_dir, mut handle, scene_id, widget_id) = handle_with_a_widget().await;
+        let mut changes = handle.subscribe_scenes_change();
+
+        let widget = handle
+            .edit_scene(&scene_id)
+            .and_then(|scene| scene.widget(&widget_id))
+            .expect("BUG: the widget was just listed");
+        assert_eq!(widget.get().id, widget_id);
+        handle.save().await.expect("BUG: save");
+
+        assert!(
+            changes.try_recv().is_err(),
+            "an edit that only read must not tell the widgets the scenes changed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_written_edit_reaches_the_next_save() {
+        let (_dir, mut handle, scene_id, widget_id) = handle_with_a_widget().await;
+        let mut changes = handle.subscribe_scenes_change();
+
+        handle
+            .edit_scene(&scene_id)
+            .and_then(|scene| scene.widget(&widget_id))
+            .expect("BUG: the widget was just listed")
+            .into_mut()
+            .params_version = Some(semver::Version::new(9, 0, 0));
+        handle.save().await.expect("BUG: save");
+
+        assert!(
+            changes.try_recv().is_ok(),
+            "a written edit must tell the widgets the scenes changed"
+        );
+    }
+}
