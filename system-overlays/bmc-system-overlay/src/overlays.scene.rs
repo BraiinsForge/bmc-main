@@ -193,6 +193,7 @@ fn device_info_cell(
 ) -> CustomRenderFn {
     Box::new(move |r, interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
+        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
         state_key.with_borrow_mut(|stage| {
             for event in interaction.frame_events() {
                 if let Some(touch) = overlay_touch(*event) {
@@ -204,6 +205,7 @@ fn device_info_cell(
                 (w as u32, h as u32),
                 &mut stage.render,
                 &view,
+                &intl,
                 board.name,
                 board.miner,
                 language().map_or(LanguageSwitch::Hidden, |current| LanguageSwitch::Shown {

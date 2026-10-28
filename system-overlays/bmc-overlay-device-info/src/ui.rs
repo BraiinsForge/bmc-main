@@ -26,11 +26,12 @@ use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
+use bmc_intl::{Intl, bold, format_message, runs};
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
     ArcCap, ArcFill, ArcSegments, BLACK, ButtonSize, ButtonStyle, CrossAlign, Draw, Fill,
-    FontFamily, FontWeight, GRAY_40, GRAY_60, Justify, Node, PropsData, QrStyle, TRANSPARENT,
-    TextAlign, TextStyle, VIOLET_50, WHITE, col, fixed_height, row, text,
+    FontFamily, FontWeight, GRAY_40, GRAY_60, Justify, Node, PropsData, QrStyle, Span, TRANSPARENT,
+    TextAlign, TextStyle, VIOLET_50, WHITE, col, fixed_height, paragraph, row, text,
 };
 use bmc_system_overlay::{AccessPoint, FrameKind, Language, RenderOutcome, TouchEvent, TreeUi};
 
@@ -188,22 +189,6 @@ impl DeviceInfoRenderState {
     }
 }
 
-const EYEBROW: &str = "Initial Setup";
-const SETUP_AP_PENDING_TITLE: &str = "Starting setup Wi-Fi...";
-/// Shared by the setup flow's two connect-progress screens and the operational
-/// one, so the wording cannot drift between the flows.
-const CONNECTING_TITLE: &str = "Connecting to Wi-Fi...";
-/// The same screens where no Wi-Fi join is under way.
-const CONNECTING_CABLE_TITLE: &str = "Connecting to network...";
-const WAITING_FOR_IP: &str = "Waiting for IP address";
-/// What a board with an ethernet port is told while its setup AP is not up.
-const CABLE_HINT: &str = "or connect the Ethernet cable";
-const CONNECT_CABLE_TITLE: &str = "Connect the Ethernet cable";
-const NO_NETWORK_TITLE: &str = "No network connection";
-const CHECK_CABLE: &str = "Check the Ethernet cable";
-const UPGRADE_SUCCESS_TITLE: &str = "Update Finished";
-/// Shared by both setup-failure screens, which differ only in what follows.
-const SETUP_FATAL_TITLE: &str = "Problem Occurred";
 /// Modules of white border around the QR (the legacy white plate).
 const QR_QUIET_ZONE: u8 = 4;
 /// Tap target around the close glyph, and the glyph inside it.
@@ -384,9 +369,14 @@ fn style(
     }
 }
 
-fn eyebrow(tier: Tier) -> Node {
+fn eyebrow(intl: &Intl, tier: Tier) -> Node {
+    let label = format_message!(
+        intl,
+        default_message: "Initial Setup",
+        description: "Device-info eyebrow above every first-boot setup screen",
+    );
     text(
-        EYEBROW,
+        label,
         style(
             tier.eyebrow,
             GRAY_40,
@@ -537,7 +527,18 @@ fn close_affordance(icon_id: Icon) -> Node {
 /// The settings-tray hint in the bottom-right, absolutely positioned so it sits
 /// outside the column layout and shifts nothing. Carried over from the legacy
 /// `connect_info` screen, which said the same thing about a swipe up.
-fn tray_hint(tier: Tier, icon_id: Icon) -> Node {
+fn tray_hint(intl: &Intl, tier: Tier, icon_id: Icon) -> Node {
+    let hint = format_message!(
+        intl,
+        default_message: "To access the controls, IP and Wi-Fi info, <b>swipe down</b>",
+        description: "Device-info connect screen, corner hint; <b> marks the gesture that opens the settings tray, drawn bold, and may go wherever the sentence needs it",
+        values: { b: bold },
+    );
+    let hint = runs(&hint).into_iter().map(|run| Span {
+        weight: run.bold.then_some(FontWeight::BOLD),
+        color: run.bold.then_some(WHITE),
+        ..Span::plain(run.text)
+    });
     let (glyph_width, glyph_height) = icon_id.size;
     let glyph = Node::Canvas {
         props: PropsData {
@@ -551,7 +552,7 @@ fn tray_hint(tier: Tier, icon_id: Icon) -> Node {
             y: 0.0,
             w: glyph_width,
             h: glyph_height,
-            color: TRANSPARENT,
+            color: WHITE,
             icon_id: icon_id.id,
             anti_alias: true,
             fills: Vec::new(),
@@ -569,14 +570,9 @@ fn tray_hint(tier: Tier, icon_id: Icon) -> Node {
             ..PropsData::default()
         },
         [
-            content(
-                tier,
-                "To access the controls, IP and Wi-Fi info",
-                TextAlign::Right,
-            ),
-            text(
-                "swipe down",
-                style(tier.content, GRAY_40, FontWeight::BOLD, TextAlign::Right),
+            paragraph(
+                style(tier.content, GRAY_40, FontWeight::REGULAR, TextAlign::Right).into(),
+                hint,
             ),
             glyph,
         ],
@@ -851,10 +847,15 @@ fn labeled(tier: Tier, label: &str, value: Node) -> Node {
     )
 }
 
-fn ssid_line(tier: Tier, ssid: &str) -> Node {
+fn ssid_line(intl: &Intl, tier: Tier, ssid: &str) -> Node {
+    let label = format_message!(
+        intl,
+        default_message: "Wi-Fi SSID",
+        description: "Device-info label above the name of the Wi-Fi network joined or offered",
+    );
     labeled(
         tier,
-        "Wi-Fi SSID",
+        &label,
         text(
             ssid,
             style(
@@ -867,19 +868,22 @@ fn ssid_line(tier: Tier, ssid: &str) -> Node {
     )
 }
 
-fn ssid_lines(tier: Tier, ssid: Option<&str>) -> Vec<Node> {
-    match ssid {
-        Some(ssid) => vec![ssid_line(tier, ssid)],
-        None => vec![content(
-            tier,
-            "Waiting for Wi-Fi connection",
-            TextAlign::Center,
-        )],
+fn ssid_lines(intl: &Intl, tier: Tier, ssid: Option<&str>) -> Vec<Node> {
+    if let Some(ssid) = ssid {
+        vec![ssid_line(intl, tier, ssid)]
+    } else {
+        let waiting = format_message!(
+            intl,
+            default_message: "Waiting for Wi-Fi connection",
+            description: "Device-info connect progress line while no network is joined yet",
+        );
+        vec![content(tier, &waiting, TextAlign::Center)]
     }
 }
 
 /// The icon + text stack both templates are built from.
 fn template_children(
+    intl: &Intl,
     tier: Tier,
     show_eyebrow: bool,
     icon_node: Node,
@@ -888,7 +892,7 @@ fn template_children(
 ) -> Vec<Node> {
     let mut children = Vec::new();
     if show_eyebrow {
-        children.push(eyebrow(tier));
+        children.push(eyebrow(intl, tier));
     }
     children.push(icon_node);
     children.push(title(tier, title_text, TextAlign::Center));
@@ -898,6 +902,7 @@ fn template_children(
 
 /// The icon + text template shared by the simple screens.
 fn template_tree(
+    intl: &Intl,
     tier: Tier,
     justify: Justify,
     show_eyebrow: bool,
@@ -906,6 +911,7 @@ fn template_tree(
     lines: Vec<Node>,
 ) -> Node {
     template_tree_with_icon_width(
+        intl,
         tier,
         tier.icon_width.other,
         justify,
@@ -917,7 +923,12 @@ fn template_tree(
 }
 
 /// `template_tree` for a screen that sizes its artwork on its own.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "`template_tree`'s arguments and the icon width it would otherwise pick"
+)]
 fn template_tree_with_icon_width(
+    intl: &Intl,
     tier: Tier,
     icon_width: f32,
     justify: Justify,
@@ -932,6 +943,7 @@ fn template_tree_with_icon_width(
             tier,
             justify,
             template_children(
+                intl,
                 tier,
                 show_eyebrow,
                 icon_within(icon_id, icon_width),
@@ -953,11 +965,11 @@ struct QrColumn<'a> {
 /// `template_tree` with a second column to its right, on the far side of a rule:
 /// the same icon + text stack, and a QR under its own headline beside it.
 /// The setup screen with its AP up is the only screen laid out this way,
-/// so it is that screen's icon width the stack draws within.
+/// so the eyebrow is on, the stack packs to the top,
+/// and it is that screen's icon width the stack draws within.
 fn template_tree_with_qr(
+    intl: &Intl,
     tier: Tier,
-    justify: Justify,
-    show_eyebrow: bool,
     icon_id: Icon,
     title_text: &str,
     lines: Vec<Node>,
@@ -972,17 +984,18 @@ fn template_tree_with_qr(
             fixed_width(EDGE_INSET),
             screen_column(
                 tier,
-                justify,
+                Justify::Start,
                 template_children(
+                    intl,
                     tier,
-                    show_eyebrow,
+                    true,
                     icon_within(icon_id, tier.icon_width.ap_up),
                     title_text,
                     lines,
                 ),
             ),
             vertical_separator(tier),
-            qr_column(tier, column),
+            qr_column(intl, tier, column),
             fixed_width(EDGE_INSET),
         ],
     )
@@ -991,7 +1004,12 @@ fn template_tree_with_qr(
 /// The QR column, `QR_COLUMN_WIDTH` wide: a headline, the code,
 /// and the address it encodes.
 /// Centered rather than packed, since its stack leaves no room for a top inset.
-fn qr_column(tier: Tier, column: QrColumn<'_>) -> Node {
+fn qr_column(intl: &Intl, tier: Tier, column: QrColumn<'_>) -> Node {
+    let open_directly = format_message!(
+        intl,
+        default_message: "Or open directly in browser:",
+        description: "Device-info QR column, label above the address the code encodes",
+    );
     let headline = col(
         PropsData {
             cross_align: CrossAlign::Center,
@@ -1015,7 +1033,7 @@ fn qr_column(tier: Tier, column: QrColumn<'_>) -> Node {
                 qr(column.url, tier.qr_column),
                 labeled(
                     tier,
-                    "Or open directly in browser:",
+                    &open_directly,
                     content(tier, column.url, TextAlign::Center),
                 ),
             ],
@@ -1049,22 +1067,36 @@ fn vertical_separator(tier: Tier) -> Node {
 }
 
 fn connected_info_tree(
+    intl: &Intl,
     tier: Tier,
     icon_id: Icon,
     title_text: &str,
     ip: Ipv4Addr,
     switch: Option<Switch<'_>>,
 ) -> Node {
-    connected_info_url_tree(tier, icon_id, title_text, &format!("http://{ip}/"), switch)
+    connected_info_url_tree(
+        intl,
+        tier,
+        icon_id,
+        title_text,
+        &format!("http://{ip}/"),
+        switch,
+    )
 }
 
 fn connected_info_url_tree(
+    intl: &Intl,
     tier: Tier,
     icon_id: Icon,
     title_text: &str,
     url: &str,
     switch: Option<Switch<'_>>,
 ) -> Node {
+    let or_scan = format_message!(
+        intl,
+        default_message: "or scan the QR code",
+        description: "Device-info connect screen, under the address: the QR code beside it opens the same page",
+    );
     let logo = col(
         PropsData {
             margin: tier.icon_margin,
@@ -1080,7 +1112,7 @@ fn connected_info_url_tree(
             logo,
             title(tier, title_text, TextAlign::Left),
             subtitle(tier, url, TextAlign::Left),
-            title(tier, "or scan the QR code", TextAlign::Left),
+            title(tier, &or_scan, TextAlign::Left),
         ]
         .into_iter()
         // Set off by two block gaps, so it reads as a control under the lines, not a fourth one.
@@ -1112,39 +1144,80 @@ fn connected_info_url_tree(
 
 /// Icon, title and detail lines of a connect-progress screen for `link`.
 fn connecting_parts(
+    intl: &Intl,
     tier: Tier,
     icons: DeviceInfoIcons,
     link: &Link,
-) -> (Icon, &'static str, Vec<Node>) {
+) -> (Icon, String, Vec<Node>) {
     match link {
-        Link::Wifi { ssid } => (
-            icons.wifi,
-            CONNECTING_TITLE,
-            ssid_lines(tier, ssid.as_deref()),
-        ),
-        Link::Cable => (icons.ethernet, CONNECTING_CABLE_TITLE, Vec::new()),
+        Link::Wifi { ssid } => {
+            let title_text = format_message!(
+                intl,
+                default_message: "Connecting to Wi-Fi...",
+                description: "Device-info screen title while the device joins a Wi-Fi network",
+            );
+            (
+                icons.wifi,
+                title_text,
+                ssid_lines(intl, tier, ssid.as_deref()),
+            )
+        }
+        Link::Cable => {
+            let title_text = format_message!(
+                intl,
+                default_message: "Connecting to network...",
+                description: "Device-info screen title while the device waits on its Ethernet cable, no Wi-Fi join under way",
+            );
+            (icons.ethernet, title_text, Vec::new())
+        }
     }
 }
 
 /// The setup flow's connect progress: shown while joining the chosen network,
 /// and again while the uplink's address is still pending.
-fn setup_connecting_tree(tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
-    let (icon_id, title_text, lines) = connecting_parts(tier, icons, link);
-    template_tree(tier, Justify::Start, true, icon_id, title_text, lines)
+fn setup_connecting_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
+    let (icon_id, title_text, lines) = connecting_parts(intl, tier, icons, link);
+    template_tree(
+        intl,
+        tier,
+        Justify::Start,
+        true,
+        icon_id,
+        &title_text,
+        lines,
+    )
 }
 
 /// The operational flow's connect progress: the setup screen's parts, centered
 /// and saying what the device is still waiting for.
-fn connecting_tree(tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
-    let (icon_id, title_text, mut lines) = connecting_parts(tier, icons, link);
-    lines.push(content(tier, WAITING_FOR_IP, TextAlign::Center));
-    template_tree(tier, Justify::Center, false, icon_id, title_text, lines)
+fn connecting_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
+    let waiting = format_message!(
+        intl,
+        default_message: "Waiting for IP address",
+        description: "Device-info connect progress line while DHCP has not assigned an address yet",
+    );
+    let (icon_id, title_text, mut lines) = connecting_parts(intl, tier, icons, link);
+    lines.push(content(tier, &waiting, TextAlign::Center));
+    template_tree(
+        intl,
+        tier,
+        Justify::Center,
+        false,
+        icon_id,
+        &title_text,
+        lines,
+    )
 }
 
 /// First-boot / reconfiguration AP screen.
 /// The pending variant shows while the AP is still coming up,
 /// or asks for the cable where there is no AP to wait for.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the formatter, the panel, the artwork, the device, its AP and uplinks, and the switch"
+)]
 fn setup_start_tree(
+    intl: &Intl,
     tier: Tier,
     icons: DeviceInfoIcons,
     device_icon: Icon,
@@ -1153,46 +1226,75 @@ fn setup_start_tree(
     uplinks: Uplinks,
     switch: Option<Switch<'_>>,
 ) -> Node {
-    let cable_hint = || content(tier, CABLE_HINT, TextAlign::Center);
+    let cable_hint = || {
+        let hint = format_message!(
+            intl,
+            default_message: "or connect the Ethernet cable",
+            description: "Device-info setup line under the Wi-Fi instructions, the wired alternative on a board with an Ethernet port",
+        );
+        content(tier, &hint, TextAlign::Center)
+    };
     match ap {
         // Setup over a wired uplink: no AP to join, so no WiFi column -
         // only the wizard address as text and QR code.
-        Some(ap) if ap.ssid.is_empty() => connected_info_url_tree(
-            tier,
-            device_icon,
-            "Open the web browser at",
-            &ap.setup_url,
-            switch,
-        ),
+        Some(ap) if ap.ssid.is_empty() => {
+            let open_at = format_message!(
+                intl,
+                default_message: "Open the web browser at",
+                description: "Device-info wired setup, title above the setup wizard's address",
+            );
+            connected_info_url_tree(intl, tier, device_icon, &open_at, &ap.setup_url, switch)
+        }
         Some(ap) => {
+            let join = format_message!(
+                intl,
+                default_message: "Connect to {device_name} Wi-Fi",
+                description: "Device-info setup title asking to join the device's own network; device_name is the product name",
+                values: { device_name: device_name },
+            );
+            let nothing_happens = format_message!(
+                intl,
+                default_message: "Connected but nothing happens?",
+                description: "Device-info setup, first line of the headline above the QR code",
+            );
+            let scan = format_message!(
+                intl,
+                default_message: "Scan the code!",
+                description: "Device-info setup, second line of the headline above the QR code",
+            );
             let (switch_line, switch_corner) = Switch::placed(switch, tier);
-            let mut lines = vec![ssid_line(tier, &ap.ssid)];
+            let mut lines = vec![ssid_line(intl, tier, &ap.ssid)];
             if uplinks.ethernet {
                 lines.push(cable_hint());
             }
             lines.extend(switch_line);
             let tree = template_tree_with_qr(
+                intl,
                 tier,
-                Justify::Start,
-                true,
                 tier.ap_up_icon.pick(icons),
-                &format!("Connect to {device_name} Wi-Fi"),
+                &join,
                 lines,
                 QrColumn {
-                    headline: ["Connected but nothing happens?", "Scan the code!"],
+                    headline: [&nothing_happens, &scan],
                     url: &ap.setup_url,
                 },
             );
             cornered(tree, switch_corner)
         }
         None if !uplinks.wifi => {
+            let connect_cable = format_message!(
+                intl,
+                default_message: "Connect the Ethernet cable",
+                description: "Device-info setup title on a board without Wi-Fi, before its cable is plugged in",
+            );
             let (switch_line, switch_corner) = Switch::placed(switch, tier);
             let tree = template_tree(
+                intl,
                 tier,
                 Justify::Start,
                 true,
                 device_icon,
-                CONNECT_CABLE_TITLE,
+                &connect_cable,
                 switch_line.into_iter().collect(),
             );
             cornered(tree, switch_corner)
@@ -1200,20 +1302,29 @@ fn setup_start_tree(
         // The authored illustration on every tier, unlike the screen above:
         // this variant holds the panel on its own, so there is nothing per-panel
         // to choose between.
-        None => template_tree_with_icon_width(
-            tier,
-            tier.icon_width.ap_pending,
-            Justify::Start,
-            true,
-            icons.wifi_connect,
-            SETUP_AP_PENDING_TITLE,
-            uplinks.ethernet.then(cable_hint).into_iter().collect(),
-        ),
+        None => {
+            let starting = format_message!(
+                intl,
+                default_message: "Starting setup Wi-Fi...",
+                description: "Device-info setup title while the device's own network is coming up",
+            );
+            template_tree_with_icon_width(
+                intl,
+                tier,
+                tier.icon_width.ap_pending,
+                Justify::Start,
+                true,
+                icons.wifi_connect,
+                &starting,
+                uplinks.ethernet.then(cable_hint).into_iter().collect(),
+            )
+        }
     }
 }
 
 /// The device's address for the wizard, or the connect progress while it has none.
 fn setup_connect_info_tree(
+    intl: &Intl,
     tier: Tier,
     icons: DeviceInfoIcons,
     device_icon: Icon,
@@ -1222,42 +1333,226 @@ fn setup_connect_info_tree(
     switch: Option<Switch<'_>>,
 ) -> Node {
     match ip {
-        Some(ip) => connected_info_tree(
-            tier,
-            device_icon,
-            "Complete the setup\nby accessing",
-            ip,
-            switch,
-        ),
-        None => setup_connecting_tree(tier, icons, link),
+        Some(ip) => {
+            let title_text = format_message!(
+                intl,
+                default_message: "Complete the setup{br}by accessing",
+                description: "Device-info setup title above the device address; {br} is the line break between its two lines",
+                values: { br: "\n" },
+            );
+            connected_info_tree(intl, tier, device_icon, &title_text, ip, switch)
+        }
+        None => setup_connecting_tree(intl, tier, icons, link),
     }
 }
 
 /// Setup failure the overlay cannot clear: waiting out bmc's restart,
 /// or asking the user for one.
 fn setup_fatal_tree(
+    intl: &Intl,
     tier: Tier,
     icons: DeviceInfoIcons,
     device_name: &str,
     restarting: bool,
 ) -> Node {
     let (icon_id, line) = if restarting {
-        (icons.refresh, format!("Restarting {device_name}..."))
+        let line = format_message!(
+            intl,
+            default_message: "Restarting {device_name}...",
+            description: "Device-info setup failure line while the BMC application restarts the device; device_name is the product name",
+            values: { device_name: device_name },
+        );
+        (icons.refresh, line)
     } else {
-        (icons.error, format!("Restart {device_name} to try again"))
+        let line = format_message!(
+            intl,
+            default_message: "Restart {device_name} to try again",
+            description: "Device-info setup failure line asking the user to restart; device_name is the product name",
+            values: { device_name: device_name },
+        );
+        (icons.error, line)
     };
+    let title_text = format_message!(
+        intl,
+        default_message: "Problem Occurred",
+        description: "Device-info screen title when setup failed and the device must restart",
+    );
     template_tree(
+        intl,
         tier,
         Justify::Center,
         false,
         icon_id,
-        SETUP_FATAL_TITLE,
+        &title_text,
         vec![content(tier, &line, TextAlign::Center)],
+    )
+}
+
+fn turning_ap_off_tree(intl: &Intl, tier: Tier, ethernet: Icon) -> Node {
+    let title_text = format_message!(
+        intl,
+        default_message: "Your device is being set up...",
+        description: "Device-info title while a miner leaves its setup network for the chosen one",
+    );
+    template_tree(
+        intl,
+        tier,
+        Justify::Start,
+        true,
+        ethernet,
+        &title_text,
+        Vec::new(),
+    )
+}
+
+fn setup_connected_tree(
+    intl: &Intl,
+    tier: Tier,
+    wifi: Icon,
+    device_name: &str,
+    ssid: Option<&str>,
+) -> Node {
+    let title_text = format_message!(
+        intl,
+        default_message: "Your {device_name} is connected!",
+        description: "Device-info setup title once the chosen Wi-Fi is joined; device_name is the product name",
+        values: { device_name: device_name },
+    );
+    template_tree(
+        intl,
+        tier,
+        Justify::Start,
+        true,
+        wifi,
+        &title_text,
+        ssid_lines(intl, tier, ssid),
+    )
+}
+
+fn setup_completed_tree(intl: &Intl, tier: Tier, success: Icon, device_name: &str) -> Node {
+    let title_text = format_message!(
+        intl,
+        default_message: "{device_name} is ready!",
+        description: "Device-info title once setup is complete; device_name is the product name",
+        values: { device_name: device_name },
+    );
+    let login = format_message!(
+        intl,
+        default_message: "Login to continue",
+        description: "Device-info line under the ready title, pointing at the web UI login",
+    );
+    template_tree(
+        intl,
+        tier,
+        Justify::Start,
+        true,
+        success,
+        &title_text,
+        vec![content(tier, &login, TextAlign::Center)],
+    )
+}
+
+fn setup_error_tree(intl: &Intl, tier: Tier, wifi_error: Icon) -> Node {
+    let title_text = format_message!(
+        intl,
+        default_message: "Could not connect. Please try again.",
+        description: "Device-info setup title when joining the chosen Wi-Fi failed",
+    );
+    template_tree(
+        intl,
+        tier,
+        Justify::Start,
+        true,
+        wifi_error,
+        &title_text,
+        Vec::new(),
+    )
+}
+
+fn upgrade_success_tree(intl: &Intl, tier: Tier, success: Icon) -> Node {
+    let title_text = format_message!(
+        intl,
+        default_message: "Update Finished",
+        description: "Device-info title on the first boot after a firmware upgrade",
+    );
+    template_tree(
+        intl,
+        tier,
+        Justify::Center,
+        false,
+        success,
+        &title_text,
+        Vec::new(),
+    )
+}
+
+/// Operational-boot connect info, with the hint to the tray in its corner.
+fn success_tree(
+    intl: &Intl,
+    tier: Tier,
+    device_icon: Icon,
+    swipe_down: Icon,
+    ip: Ipv4Addr,
+) -> Node {
+    let title_text = format_message!(
+        intl,
+        default_message: "Access the device at",
+        description: "Device-info connect-info title above the device address after boot",
+    );
+    overlaid(
+        connected_info_tree(intl, tier, device_icon, &title_text, ip, None),
+        tray_hint(intl, tier, swipe_down),
+    )
+}
+
+/// The boot connect that got no address: over Wi-Fi, the network it tried;
+/// over the cable, a pointer at the cable.
+fn failed_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
+    let (icon_id, title_text, lines) = match link {
+        Link::Wifi { ssid } => {
+            let title_text = format_message!(
+                intl,
+                default_message: "Problem with connection",
+                description: "Device-info title when the boot connect got no address",
+            );
+            let no_ip = format_message!(
+                intl,
+                default_message: "No IP address assigned",
+                description: "Device-info line under the connection-problem title",
+            );
+            let mut lines = ssid_lines(intl, tier, ssid.as_deref());
+            lines.push(content(tier, &no_ip, TextAlign::Center));
+            (icons.wifi_error, title_text, lines)
+        }
+        Link::Cable => {
+            let title_text = format_message!(
+                intl,
+                default_message: "No network connection",
+                description: "Device-info title when the boot connect over the Ethernet cable got no address",
+            );
+            let check_cable = format_message!(
+                intl,
+                default_message: "Check the Ethernet cable",
+                description: "Device-info line under the no-network title, asking to check the wired connection",
+            );
+            let lines = vec![content(tier, &check_cable, TextAlign::Center)];
+            (icons.ethernet_error, title_text, lines)
+        }
+    };
+    template_tree(
+        intl,
+        tier,
+        Justify::Center,
+        false,
+        icon_id,
+        &title_text,
+        lines,
     )
 }
 
 #[must_use]
 pub fn build_device_info_tree(
+    intl: &Intl,
     view: &DeviceInfoView,
     icons: DeviceInfoIcons,
     tier: Tier,
@@ -1274,6 +1569,7 @@ pub fn build_device_info_tree(
     let switch = switch.filter(|_| offers_language_switch(view));
     let tree = match view {
         DeviceInfoView::SetupStart { ap, uplinks } => setup_start_tree(
+            intl,
             tier,
             icons,
             device_icon,
@@ -1282,80 +1578,27 @@ pub fn build_device_info_tree(
             *uplinks,
             switch,
         ),
-        DeviceInfoView::TurningApOff => template_tree(
-            tier,
-            Justify::Start,
-            true,
-            icons.ethernet,
-            "Your device is being set up...",
-            Vec::new(),
-        ),
-        DeviceInfoView::SetupConnecting { link } => setup_connecting_tree(tier, icons, link),
-        DeviceInfoView::SetupConnected { ssid } => template_tree(
-            tier,
-            Justify::Start,
-            true,
-            icons.wifi,
-            &format!("Your {device_name} is connected!"),
-            ssid_lines(tier, ssid.as_deref()),
-        ),
+        DeviceInfoView::TurningApOff => turning_ap_off_tree(intl, tier, icons.ethernet),
+        DeviceInfoView::SetupConnecting { link } => setup_connecting_tree(intl, tier, icons, link),
+        DeviceInfoView::SetupConnected { ssid } => {
+            setup_connected_tree(intl, tier, icons.wifi, device_name, ssid.as_deref())
+        }
         DeviceInfoView::SetupConnectInfo { ip, link } => {
-            setup_connect_info_tree(tier, icons, device_icon, *ip, link, switch)
+            setup_connect_info_tree(intl, tier, icons, device_icon, *ip, link, switch)
         }
-        DeviceInfoView::SetupCompleted => template_tree(
-            tier,
-            Justify::Start,
-            true,
-            icons.success,
-            &format!("{device_name} is ready!"),
-            vec![content(tier, "Login to continue", TextAlign::Center)],
-        ),
-        DeviceInfoView::SetupError { .. } => template_tree(
-            tier,
-            Justify::Start,
-            true,
-            icons.wifi_error,
-            "Could not connect. Please try again.",
-            Vec::new(),
-        ),
+        DeviceInfoView::SetupCompleted => {
+            setup_completed_tree(intl, tier, icons.success, device_name)
+        }
+        DeviceInfoView::SetupError { .. } => setup_error_tree(intl, tier, icons.wifi_error),
         DeviceInfoView::SetupFatal { restarting, .. } => {
-            setup_fatal_tree(tier, icons, device_name, *restarting)
+            setup_fatal_tree(intl, tier, icons, device_name, *restarting)
         }
-        DeviceInfoView::UpgradeSuccess => template_tree(
-            tier,
-            Justify::Center,
-            false,
-            icons.success,
-            UPGRADE_SUCCESS_TITLE,
-            Vec::new(),
-        ),
-        DeviceInfoView::Connecting { link } => connecting_tree(tier, icons, link),
-        DeviceInfoView::Success { ip } => overlaid(
-            connected_info_tree(tier, device_icon, "Access the device at", *ip, None),
-            tray_hint(tier, icons.swipe_down),
-        ),
-        DeviceInfoView::Failed {
-            link: Link::Wifi { ssid },
-        } => {
-            let mut lines = ssid_lines(tier, ssid.as_deref());
-            lines.push(content(tier, "No IP address assigned", TextAlign::Center));
-            template_tree(
-                tier,
-                Justify::Center,
-                false,
-                icons.wifi_error,
-                "Problem with connection",
-                lines,
-            )
+        DeviceInfoView::UpgradeSuccess => upgrade_success_tree(intl, tier, icons.success),
+        DeviceInfoView::Connecting { link } => connecting_tree(intl, tier, icons, link),
+        DeviceInfoView::Success { ip } => {
+            success_tree(intl, tier, device_icon, icons.swipe_down, *ip)
         }
-        DeviceInfoView::Failed { link: Link::Cable } => template_tree(
-            tier,
-            Justify::Center,
-            false,
-            icons.ethernet_error,
-            NO_NETWORK_TITLE,
-            vec![content(tier, CHECK_CABLE, TextAlign::Center)],
-        ),
+        DeviceInfoView::Failed { link } => failed_tree(intl, tier, icons, link),
         DeviceInfoView::Done => return None,
     };
     Some(if dismisses_on_touch(view) {
@@ -1376,13 +1619,14 @@ pub struct DeviceInfoFrame {
 /// Draw `view`, with the language switch where `language_switch` shows it.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the view, the board it addresses, the language switch and the frame kind"
+    reason = "the view, its wording, the board it addresses, the language switch and the frame kind"
 )]
 pub fn render_device_info(
     r: &mut dyn Renderer,
     size: (u32, u32),
     state: &mut DeviceInfoRenderState,
     view: &DeviceInfoView,
+    intl: &Intl,
     device_name: &str,
     miner: bool,
     language_switch: LanguageSwitch,
@@ -1411,8 +1655,16 @@ pub fn render_device_info(
         }
     };
     let build = || {
-        build_device_info_tree(view, icons, tier_for(size), device_name, miner, switch)
-            .expect("BUG: every view but Done has a tree")
+        build_device_info_tree(
+            intl,
+            view,
+            icons,
+            tier_for(size),
+            device_name,
+            miner,
+            switch,
+        )
+        .expect("BUG: every view but Done has a tree")
     };
     match state.tree.render(frame, size, delta_ms, r, build) {
         Ok(tree_frame) => DeviceInfoFrame {
@@ -1436,6 +1688,7 @@ mod tests {
         AccessPoint, DeviceInfoRenderState, DeviceInfoView, FLAG_RING, FLAG_SIZE, FrameKind,
         LanguageSwitch, Link, SetupApIcon, TIER_COMPACT, TIER_WIDE, Tier, Uplinks,
         build_device_info_tree, dismisses_on_touch, flag_extent, render_device_info, tier_for,
+        tray_hint,
     };
     use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
     use bmc_render::partition::tree_static_key;
@@ -1446,8 +1699,42 @@ mod tests {
     const DEVICE_NAME: &str = "Braiins Deck";
     const DECK_PANEL: (u32, u32) = (1_280, 480);
     use crate::icons::{DeviceInfoIcons, Icon};
-    use bmc_render::ui::{Draw, Node, SvgId};
+    use bmc_intl::Intl;
+    use bmc_render::ui::{Draw, FontWeight, Node, SvgId, WHITE};
     use std::net::Ipv4Addr;
+
+    fn english() -> Intl {
+        bmc_intl::formatter(bmc_intl::Language::default())
+    }
+
+    #[test]
+    fn the_tray_hint_sets_its_gesture_apart_within_one_sentence() {
+        let hint = tray_hint(
+            &english(),
+            TIER_WIDE,
+            Icon {
+                id: None,
+                size: (24.0, 24.0),
+            },
+        );
+        let Node::Row(_, children) = &hint else {
+            panic!("BUG: the hint is a row: {hint:?}");
+        };
+        let Some(Node::Paragraph { spans, .. }) = children.first() else {
+            panic!("BUG: the hint leads with its sentence: {children:?}");
+        };
+        let drawn: Vec<_> = spans
+            .iter()
+            .map(|span| (span.text.as_str(), span.weight, span.color))
+            .collect();
+        assert_eq!(
+            drawn,
+            [
+                ("To access the controls, IP and Wi-Fi info, ", None, None),
+                ("swipe down", Some(FontWeight::BOLD), Some(WHITE)),
+            ]
+        );
+    }
 
     const IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 5);
     const SETUP_URL: &str = "http://10.0.0.21/";
@@ -1675,6 +1962,7 @@ mod tests {
 
     fn tree_for(view: &DeviceInfoView) -> Node {
         build_device_info_tree(
+            &english(),
             view,
             distinct_icons(),
             tier_for(DECK_PANEL),
@@ -1699,6 +1987,7 @@ mod tests {
     fn every_view_but_done_builds_a_tree() {
         for view in all_views() {
             let tree = build_device_info_tree(
+                &english(),
                 &view,
                 DeviceInfoIcons::default(),
                 tier_for(DECK_PANEL),
@@ -1752,7 +2041,11 @@ mod tests {
                     ip: Some(IP),
                     link: wifi(None),
                 },
-                &["Complete the setup", "http://10.0.0.5/", "or scan the QR"],
+                &[
+                    "Complete the setup\nby accessing",
+                    "http://10.0.0.5/",
+                    "or scan the QR",
+                ],
             ),
             (
                 DeviceInfoView::SetupConnectInfo {
@@ -1907,6 +2200,7 @@ mod tests {
 
         // Skip-WiFi switchover on a miner: a neutral progress screen.
         let tree = build_device_info_tree(
+            &english(),
             &DeviceInfoView::TurningApOff,
             distinct_icons(),
             tier_for(DECK_PANEL),
@@ -2052,6 +2346,7 @@ mod tests {
                 ..TIER_WIDE
             };
             let tree = build_device_info_tree(
+                &english(),
                 &DeviceInfoView::SetupStart {
                     ap: Some(setup_ap()),
                     uplinks: Uplinks::WIFI_ONLY,
@@ -2076,6 +2371,7 @@ mod tests {
     fn the_close_glyph_follows_dismissability() {
         for view in all_views() {
             let Some(tree) = build_device_info_tree(
+                &english(),
                 &view,
                 DeviceInfoIcons::default(),
                 tier_for(DECK_PANEL),
@@ -2149,6 +2445,7 @@ mod tests {
             DECK_PANEL,
             state,
             view,
+            &english(),
             DEVICE_NAME,
             false,
             LanguageSwitch::Hidden,
@@ -2230,6 +2527,7 @@ mod tests {
             for tier in [TIER_WIDE, TIER_COMPACT] {
                 for miner in [false, true] {
                     let tree = build_device_info_tree(
+                        &english(),
                         view,
                         distinct_icons(),
                         tier,

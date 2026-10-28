@@ -1,4 +1,19 @@
 {
+  "+SR1j9Py5N": {
+    "source": "Starting setup Wi-Fi...",
+    "translation": "正在启动设置 Wi-Fi…",
+    "description": "Device-info setup title while the device's own network is coming up"
+  },
+  "//NWDATvZK": {
+    "source": "Your {device_name} is connected!",
+    "translation": "您的 {device_name} 已连接！",
+    "description": "Device-info setup title once the chosen Wi-Fi is joined; device_name is the product name"
+  },
+  "/2EDRFyDcn": {
+    "source": "Check the Ethernet cable",
+    "translation": "请检查网线",
+    "description": "Device-info line under the no-network title, asking to check the wired connection"
+  },
   "/UvA/X77Kt": {
     "source": "Building",
     "translation": "正在构建",
@@ -8,6 +23,11 @@
     "source": "Restart the device?",
     "translation": "重启设备？",
     "description": "Settings tray notice title while the restart button is held"
+  },
+  "0/a3gsKAgV": {
+    "source": "Initial Setup",
+    "translation": "初始设置",
+    "description": "Device-info eyebrow above every first-boot setup screen"
   },
   "0bkJP9Nd1C": {
     "source": "Until {time}",
@@ -24,15 +44,60 @@
     "translation": "{label} {percent}%…",
     "description": "Upgrade overlay title during a download; label is the phase title (e.g. Downloading firmware), percent a whole number"
   },
+  "2nTvm7AyE8": {
+    "source": "Update Finished",
+    "translation": "更新完成",
+    "description": "Device-info title on the first boot after a firmware upgrade"
+  },
+  "3KMjhU/aZV": {
+    "source": "Restarting {device_name}...",
+    "translation": "正在重启 {device_name}…",
+    "description": "Device-info setup failure line while the BMC application restarts the device; device_name is the product name"
+  },
+  "5G6S3R/wX9": {
+    "source": "Scan the code!",
+    "translation": "扫描二维码！",
+    "description": "Device-info setup, second line of the headline above the QR code"
+  },
+  "5MRDD18SBl": {
+    "source": "Connect to {device_name} Wi-Fi",
+    "translation": "连接 {device_name} 的 Wi-Fi",
+    "description": "Device-info setup title asking to join the device's own network; device_name is the product name"
+  },
   "5cpSLnDaAQ": {
     "source": "Building packages",
     "translation": "正在构建软件包",
     "description": "Upgrade overlay title while the packages are built"
   },
+  "5kQYXsPgl4": {
+    "source": "Waiting for Wi-Fi connection",
+    "translation": "正在等待 Wi-Fi 连接",
+    "description": "Device-info connect progress line while no network is joined yet"
+  },
+  "60DqZHm87/": {
+    "source": "No network connection",
+    "translation": "无网络连接",
+    "description": "Device-info title when the boot connect over the Ethernet cable got no address"
+  },
+  "97LQdzs6/Y": {
+    "source": "{device_name} is ready!",
+    "translation": "{device_name} 已就绪！",
+    "description": "Device-info title once setup is complete; device_name is the product name"
+  },
   "9Jzi3MNKhb": {
     "source": "Hostname",
     "translation": "主机名",
     "description": "Settings tray, label of the device's host name"
+  },
+  "9Tuj5FXuUB": {
+    "source": "Problem with connection",
+    "translation": "连接出现问题",
+    "description": "Device-info title when the boot connect got no address"
+  },
+  "E/6Fq+RKSo": {
+    "source": "Access the device at",
+    "translation": "访问设备地址：",
+    "description": "Device-info connect-info title above the device address after boot"
   },
   "EBXH9L6MKo": {
     "source": "Restarting the device…",
@@ -49,6 +114,16 @@
     "translation": "正在校验",
     "description": "Upgrade overlay, short title before a percentage on a small display: verifying"
   },
+  "FnqgN2Rm7X": {
+    "source": "To access the controls, IP and Wi-Fi info, <b>swipe down</b>",
+    "translation": "如需查看控制项、IP 和 Wi-Fi 信息，请<b>向下滑动</b>",
+    "description": "Device-info connect screen, corner hint; <b> marks the gesture that opens the settings tray, drawn bold, and may go wherever the sentence needs it"
+  },
+  "GhuimBN087": {
+    "source": "Connected but nothing happens?",
+    "translation": "已连接但没有反应？",
+    "description": "Device-info setup, first line of the headline above the QR code"
+  },
   "HsiwpZhFtX": {
     "source": "Can't restart now",
     "translation": "暂时无法重启",
@@ -64,10 +139,25 @@
     "translation": "离线",
     "description": "Small chip in the screen corner while the device has no network connection; shown in capitals where the script has them"
   },
+  "JdGGKBEmmO": {
+    "source": "Complete the setup{br}by accessing",
+    "translation": "访问以下地址{br}以完成设置",
+    "description": "Device-info setup title above the device address; {br} is the line break between its two lines"
+  },
   "LmOJe5rX2r": {
     "source": "Wi-Fi Connection",
     "translation": "Wi-Fi 连接",
     "description": "Settings tray, header over the connected network"
+  },
+  "LyJkem2Xkh": {
+    "source": "or scan the QR code",
+    "translation": "或扫描二维码",
+    "description": "Device-info connect screen, under the address: the QR code beside it opens the same page"
+  },
+  "M4vLI4nG4+": {
+    "source": "or connect the Ethernet cable",
+    "translation": "或连接网线",
+    "description": "Device-info setup line under the Wi-Fi instructions, the wired alternative on a board with an Ethernet port"
   },
   "OWV4zp14B/": {
     "source": "Activating packages",
@@ -89,6 +179,11 @@
     "translation": "更新失败",
     "description": "Upgrade overlay title once the upgrade has failed"
   },
+  "RKTaOddcJj": {
+    "source": "Connecting to Wi-Fi...",
+    "translation": "正在连接 Wi-Fi…",
+    "description": "Device-info screen title while the device joins a Wi-Fi network"
+  },
   "S6DYT1b/D3": {
     "source": "Alarm",
     "translation": "闹钟",
@@ -99,6 +194,16 @@
     "translation": "设置",
     "description": "Settings tray, short badge in capitals beside the Wi-Fi setup network's name; five characters or fewer"
   },
+  "VstI3V3Hsf": {
+    "source": "Wi-Fi SSID",
+    "translation": "Wi-Fi 名称",
+    "description": "Device-info label above the name of the Wi-Fi network joined or offered"
+  },
+  "WHbVPT51W7": {
+    "source": "Your device is being set up...",
+    "translation": "正在设置您的设备…",
+    "description": "Device-info title while a miner leaves its setup network for the chosen one"
+  },
   "WPLNkBNuHa": {
     "source": "Downloading firmware",
     "translation": "正在下载固件",
@@ -108,6 +213,11 @@
     "source": "Reconfigure Wi-Fi",
     "translation": "重新配置 Wi-Fi",
     "description": "Settings tray, label under the Wi-Fi reconfigure button"
+  },
+  "YBaDTp75gI": {
+    "source": "Restart {device_name} to try again",
+    "translation": "请重启 {device_name} 后重试",
+    "description": "Device-info setup failure line asking the user to restart; device_name is the product name"
   },
   "YCJHkln//6": {
     "source": "Join this network from your phone to reconfigure Wi-Fi.",
@@ -124,6 +234,11 @@
     "translation": "更新期间请保持设备接通电源并联网",
     "description": "Firmware upgrade overlay, below the title: warning not to unplug or disconnect the device"
   },
+  "a6Q04bMOSz": {
+    "source": "Open the web browser at",
+    "translation": "请在浏览器中打开：",
+    "description": "Device-info wired setup, title above the setup wizard's address"
+  },
   "bFKhQ/MiVz": {
     "source": "Downloading packages",
     "translation": "正在下载软件包",
@@ -138,6 +253,11 @@
     "source": "Keep holding, or release to cancel",
     "translation": "请继续按住，松开即可取消",
     "description": "Settings tray notice, under the title while a hold-to-confirm button is held"
+  },
+  "cPNcF89Mog": {
+    "source": "No IP address assigned",
+    "translation": "未分配 IP 地址",
+    "description": "Device-info line under the connection-problem title"
   },
   "d9K8NSW9TS": {
     "source": "Update Finished",
@@ -154,10 +274,25 @@
     "translation": "长按 {seconds, plural, other {{seconds} 秒}}",
     "description": "Settings tray, under a hold-to-confirm button: how long to hold it; seconds is a whole number"
   },
+  "gVSC85AlCJ": {
+    "source": "Could not connect. Please try again.",
+    "translation": "无法连接，请重试。",
+    "description": "Device-info setup title when joining the chosen Wi-Fi failed"
+  },
+  "gYrIsgqAjn": {
+    "source": "Or open directly in browser:",
+    "translation": "或直接在浏览器中打开：",
+    "description": "Device-info QR column, label above the address the code encodes"
+  },
   "hIhRaewzgO": {
     "source": "Reconfigure Wi-Fi?",
     "translation": "重新配置 Wi-Fi？",
     "description": "Settings tray notice title while the Wi-Fi reconfigure button is held"
+  },
+  "hPccsCm8wS": {
+    "source": "Connecting to network...",
+    "translation": "正在连接网络…",
+    "description": "Device-info screen title while the device waits on its Ethernet cable, no Wi-Fi join under way"
   },
   "hbnq1MI1KD": {
     "source": "IP Address",
@@ -189,6 +324,11 @@
     "translation": "正在重启",
     "description": "Upgrade overlay title while the device restarts into the upgrade"
   },
+  "nWIgEogReV": {
+    "source": "Connect the Ethernet cable",
+    "translation": "请连接网线",
+    "description": "Device-info setup title on a board without Wi-Fi, before its cable is plugged in"
+  },
   "o1Bb3Mh6rm": {
     "source": "An upgrade is in progress",
     "translation": "正在进行更新",
@@ -219,6 +359,11 @@
     "translation": "无法启动 Wi-Fi 设置",
     "description": "Settings tray notice title when Wi-Fi setup did not start in time"
   },
+  "scfJRAEtKn": {
+    "source": "Waiting for IP address",
+    "translation": "正在等待 IP 地址",
+    "description": "Device-info connect progress line while DHCP has not assigned an address yet"
+  },
   "t7xuQK4wPs": {
     "source": "Night Mode: On",
     "translation": "夜间模式：开",
@@ -239,10 +384,20 @@
     "translation": "正在写入",
     "description": "Upgrade overlay, short title before a percentage on a small display: applying firmware"
   },
+  "xCLk12kuRj": {
+    "source": "Problem Occurred",
+    "translation": "出现问题",
+    "description": "Device-info screen title when setup failed and the device must restart"
+  },
   "xHiHFfHwhH": {
     "source": "Brightness",
     "translation": "亮度",
     "description": "Settings tray, label under the brightness buttons"
+  },
+  "xyfII58PwR": {
+    "source": "Login to continue",
+    "translation": "登录以继续",
+    "description": "Device-info line under the ready title, pointing at the web UI login"
   },
   "yBXCaNi47m": {
     "source": "The restart command failed",

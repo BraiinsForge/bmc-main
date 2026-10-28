@@ -38,6 +38,7 @@ pub use ui::{
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
+use bmc_intl::Localized;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
     AccessPoint, DeviceState, FrameKind, Language, Layer, LayerConfig, LocalizationRequest,
@@ -386,6 +387,7 @@ pub struct DeviceInfoOverlay {
     language: Option<Language>,
     /// The language a tap asked for, shown as current until the device answers.
     chosen: Option<Language>,
+    localized: Localized,
     /// The switch's request since the framework last drained it; a newer pick replaces it.
     pending_request: Option<LocalizationRequest>,
     /// Where the gesture under way went on its press.
@@ -435,6 +437,7 @@ impl Default for DeviceInfoOverlay {
             offers_languages: false,
             language: None,
             chosen: None,
+            localized: Localized::new(),
             pending_request: None,
             gesture: None,
             env: Box::new(OsEnv),
@@ -817,11 +820,16 @@ impl SystemOverlay for DeviceInfoOverlay {
     ) -> RenderOutcome {
         let view = self.view();
         let switch = self.language_switch();
+        // Not the switch's current chip: the words follow a tap at once,
+        // and still speak the device's language once the switch is gone.
+        self.localized
+            .set(self.chosen.or(self.language).unwrap_or_default());
         let drawn = render_device_info(
             r,
             viewport.size(),
             &mut self.render_state,
             &view,
+            self.localized.intl(),
             &self.device_name,
             self.miner,
             switch,
@@ -1279,6 +1287,29 @@ mod tests {
         let tick2 = overlay.tick(start + SUCCESS_VISIBLE_FOR + POLL);
         assert!(!tick2.visible);
         assert_eq!(overlay.screen, Screen::Done);
+    }
+
+    #[test]
+    fn a_language_change_redraws_once_and_the_same_language_again_does_not() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::Operational, false);
+        let start = t0();
+        assert!(overlay.tick(start).wants_render);
+        assert!(
+            !overlay.tick(start + POLL).wants_render,
+            "nothing changed, so nothing to draw"
+        );
+
+        overlay.on_language(Some(Language::ZH));
+        assert!(
+            overlay.tick(start + POLL).wants_render,
+            "a new language is new content"
+        );
+        overlay.on_language(Some(Language::ZH));
+        assert!(
+            !overlay.tick(start + POLL).wants_render,
+            "the language already shown is not a change"
+        );
     }
 
     #[test]
@@ -2475,6 +2506,21 @@ mod tests {
 
         assert_eq!(overlay.language_switch(), LanguageSwitch::Hidden);
         assert_eq!(chips_laid_out(&mut overlay), Vec::<Language>::new());
+    }
+
+    #[test]
+    fn the_setup_screen_speaks_the_device_language_over_the_framework_formatter() {
+        let mut overlay = setup_start_in_british();
+        overlay.on_language(Some(Language::ZH));
+
+        let mut recorder = recorder_for(PANEL);
+        let _ = overlay.render(&mut recorder, PANEL, FrameKind::Fresh);
+
+        let drawn = recorder.drawn_texts();
+        assert!(
+            drawn.contains(&"初始设置"),
+            "the setup screen must speak the device language, not the formatter's: {drawn:?}"
+        );
     }
 
     /// The wide tier only: the compact tier's one line runs past its column
