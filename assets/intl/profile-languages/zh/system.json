@@ -34,6 +34,11 @@
     "translation": "稍后提醒",
     "description": "Ringing alarm screen, button that silences the alarm and rings it again a few minutes later"
   },
+  "HzB8UpC34D": {
+    "source": "OFFLINE",
+    "translation": "离线",
+    "description": "Small chip in the screen corner while the device has no network connection; shown in capitals where the script has them"
+  },
   "OWV4zp14B/": {
     "source": "Activating packages",
     "translation": "正在启用软件包",

@@ -35,6 +35,7 @@ mod poller;
 
 use std::time::{Duration, Instant};
 
+use bmc_intl::{Intl, Localized, format_message};
 use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
@@ -42,8 +43,8 @@ use bmc_render::ui::{
     VerticalAlign,
 };
 use bmc_system_overlay::{
-    FrameKind, LayerConfig, OverlayViewport, PlatformCaps, RenderOutcome, SnapshotVersion,
-    SystemOverlay, TickOutcome, VersionedSnapshot, register_icon,
+    FrameKind, Language, LayerConfig, OverlayViewport, PlatformCaps, RenderOutcome,
+    SnapshotVersion, SystemOverlay, TickOutcome, VersionedSnapshot, register_icon,
 };
 
 use crate::bos::BosClient;
@@ -53,8 +54,6 @@ use crate::poller::{Poller, StatusVersion};
 /// Surface size in logical pixels. The visible indicator is a content-tight box
 /// drawn at the surface's bottom-right corner; the remainder stays transparent.
 const SIZE: (u32, u32) = (160, 48);
-/// Legacy display text; keep capital case.
-const LABEL: &str = "OFFLINE";
 /// Label font size in logical pixels.
 const FONT_PX: u32 = 16;
 /// Stable Slint status item used one 16px text line inside 8px vertical padding.
@@ -263,6 +262,9 @@ pub struct OfflineOverlay {
     mining: Option<Status>,
     /// Version of the status in `mining` (`None` = none yet).
     status_version: Option<StatusVersion>,
+    localized: Localized,
+    /// The language changed under an unchanged view, whose chip then needs a frame of its own.
+    relabel: bool,
     env: Box<dyn Env>,
 }
 
@@ -283,20 +285,31 @@ impl Default for OfflineOverlay {
             snapshot_version: None,
             mining: None,
             status_version: None,
+            localized: Localized::new(),
+            relabel: false,
             env: Box::new(OsEnv::default()),
         }
     }
 }
 
-fn render_chip(r: &mut dyn Renderer, size: (u32, u32)) {
+fn offline_label(intl: &Intl) -> String {
+    format_message!(
+        intl,
+        default_message: "OFFLINE",
+        description: "Small chip in the screen corner while the device has no network connection; shown in capitals where the script has them",
+    )
+}
+
+fn render_chip(r: &mut dyn Renderer, size: (u32, u32), intl: &Intl) {
     let style = offline_text_style();
+    let label = offline_label(intl);
     #[expect(
         clippy::cast_precision_loss,
         reason = "font dimensions fit comfortably in f32 mantissa"
     )]
-    let card = chip_rect(size, r.measure_text(LABEL, FONT_PX as f32));
+    let card = chip_rect(size, r.measure_text(&label, FONT_PX as f32));
     fill_card(r, card);
-    r.draw_canvas_text(LABEL, card.x + card.w / 2.0, card.y + card.h / 2.0, &style);
+    r.draw_canvas_text(&label, card.x + card.w / 2.0, card.y + card.h / 2.0, &style);
 }
 
 fn register_pickaxe(r: &mut dyn Renderer) -> Option<SvgId> {
@@ -315,10 +328,10 @@ fn render_pickaxe(r: &mut dyn Renderer, size: (u32, u32), tint: Tint) {
     r.draw_svg(x, y, PICKAXE_PX, PICKAXE_PX, tint.color(), icon, true, &[]);
 }
 
-pub fn render_offline(r: &mut dyn Renderer, size: (u32, u32), view: OfflineView) {
+pub fn render_offline(r: &mut dyn Renderer, size: (u32, u32), view: OfflineView, intl: &Intl) {
     match view {
         OfflineView::Hidden => {}
-        OfflineView::Offline => render_chip(r, size),
+        OfflineView::Offline => render_chip(r, size, intl),
         OfflineView::Mining(tint) => render_pickaxe(r, size, tint),
     }
 }
@@ -366,7 +379,8 @@ impl SystemOverlay for OfflineOverlay {
             self.mining = Some(status);
         }
         let view = decide(self.connectivity, self.mining);
-        let wants_render = wants_render(self.view, view);
+        let relabel = std::mem::take(&mut self.relabel) && view.visible();
+        let wants_render = wants_render(self.view, view) || relabel;
         self.view = view;
         TickOutcome {
             visible: view.visible(),
@@ -381,8 +395,12 @@ impl SystemOverlay for OfflineOverlay {
         viewport: OverlayViewport,
         _frame: FrameKind,
     ) -> RenderOutcome {
-        render_offline(r, viewport.size(), self.view);
+        render_offline(r, viewport.size(), self.view, self.localized.intl());
         RenderOutcome::default()
+    }
+
+    fn on_language(&mut self, language: Option<Language>) {
+        self.relabel |= self.localized.set(language.unwrap_or_default());
     }
 }
 
@@ -391,7 +409,9 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
 
+    use bmc_render::renderer::test_support::ShapingRecorder;
     use bmc_system_overlay::Snapshot;
+    use serial_test::serial;
 
     use super::*;
 
@@ -542,7 +562,10 @@ mod tests {
 
     #[test]
     fn constants_keep_offline_indicator_legible_and_translucent() {
-        assert_eq!(LABEL, "OFFLINE");
+        assert_eq!(
+            offline_label(&bmc_intl::formatter(Language::default())),
+            "OFFLINE"
+        );
         assert_eq!(FONT_PX, 16);
 
         assert_eq!(BACKGROUND_RGBA, (0, 0, 0, 0xC0));
@@ -585,6 +608,52 @@ mod tests {
         let (x, y) = pickaxe_origin(pickaxe_card_rect(SIZE));
         assert_close(x, 134.0);
         assert_close(y, 22.0);
+    }
+
+    #[test]
+    #[serial(translations)]
+    fn a_new_language_redraws_the_unchanged_chip() {
+        let start = Instant::now();
+        let mut overlay = overlay_with(Some(offline()), Vec::new());
+        assert!(overlay.tick(start).wants_render, "the chip needs a frame");
+
+        overlay.on_language(Some(Language::default()));
+        assert!(
+            !overlay.tick(start).wants_render,
+            "the language it already speaks"
+        );
+
+        overlay.on_language(Some(Language::ZH));
+        assert!(
+            overlay.tick(start).wants_render,
+            "a new language needs a frame"
+        );
+        assert!(!overlay.tick(start).wants_render, "and only one");
+    }
+
+    #[test]
+    #[serial(translations)]
+    fn the_chip_speaks_the_language_it_was_handed() {
+        let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/intl/profile-languages");
+        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
+        let start = Instant::now();
+        let mut overlay = overlay_with(Some(offline()), Vec::new());
+        let _ = overlay.tick(start);
+        overlay.on_language(Some(Language::ZH));
+
+        let mut recorder = ShapingRecorder::new(160.0, 48.0);
+        let _ = overlay.render(
+            &mut recorder,
+            OverlayViewport::rectangular(160, 48),
+            FrameKind::Fresh,
+        );
+
+        let drawn = recorder.drawn_texts();
+        assert!(
+            drawn.contains(&"离线"),
+            "the chip must speak the language it was handed: {drawn:?}"
+        );
     }
 
     #[test]

@@ -173,7 +173,8 @@ fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
 fn offline_cell(view: OfflineView, flat: bool) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
-        render_offline(r, (w as u32, h as u32), view);
+        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
+        render_offline(r, (w as u32, h as u32), view, &intl);
         // Still: `render_offline` is given no clock to move against.
         false
     })
