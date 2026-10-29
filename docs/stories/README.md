@@ -111,11 +111,11 @@ service-tied credential anywhere but its own service.
 
 Information about all implemented official widgets.
 
-### [Config Migration on Firmware Upgrade](config-migration.md)
+### [Config Migration on Upgrade](config-migration.md)
 
 When upgrading from the slint-monolith firmware to the manifest-driven widget system, the existing config is converted
 automatically. Scenes and widget positions survive; widgets this firmware can't translate are dropped with a warning
-rather than kept as placeholders.
+rather than kept as placeholders. A widget's settings likewise carry over a widget upgrade that changes their shape.
 
 ### [Upgrade Progress](upgrade-progress.md)
 

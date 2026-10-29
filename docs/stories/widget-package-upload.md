@@ -57,6 +57,8 @@ that risk before uploading.
   reinstall.
 - Archives with malformed or missing widget metadata, native (non-WASM) widget binaries, or any content outside that
   layout are rejected.
+- A package that declares helper programs of its own, such as a settings conversion, is refused: the device cannot yet
+  check what such a program does. Widgets from the package feed may still ship them.
 
 ### Keep the device safe on failure
 

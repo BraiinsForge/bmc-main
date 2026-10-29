@@ -1,4 +1,4 @@
-# Config Migration on BMC Application Upgrade
+# Config Migration on Upgrade
 
 The device config carries a schema version. Whenever a BMC Application upgrade ships a newer config schema, the config
 already on disk is migrated up to it automatically — once, on first start of the new version, with no prompt and no
@@ -50,3 +50,25 @@ typed credential instances. Every later schema bump adds one more step to the sa
   step knows. Dropped widgets are not preserved as empty placeholders.
 - Saved accounts survive too. The version `1` → `2` step migrates a Braiins Pool account to the typed-credential shape,
   keeping its name and token; the user never re-enters it.
+
+### Widget settings across a widget upgrade
+
+> As a user, I want a widget's settings to carry over when a widget release changes what the widget can be configured
+> with, so I do not have to set up my scenes again.
+
+- Each configured widget remembers which widget version its settings were saved for.
+- Settings saved for an older version are converted before the widget starts, at boot and after a widget upgrade.
+- When the conversion succeeds, the widget never runs on settings it no longer understands.
+- A widget whose settings changed shape ships its own conversion. The ticker list turns its eight symbol fields into a
+  list of rows, in the same order.
+- A widget without a conversion keeps every setting it still knows and gets defaults for new ones. If a saved setting no
+  longer fits, it starts on its saved settings as they are. Its saved settings change only when it is edited.
+- Downgrading a widget leaves its settings as the newer version wrote them, so upgrading again finds them intact.
+- A running widget whose own package did not change picks up its converted settings without restarting.
+- While an upgrade applies, a scene or widget edit from the web UI waits for it to finish:
+  - after eight seconds the edit is refused as temporarily unavailable;
+  - retrying succeeds once the upgrade has applied.
+- A conversion can fail, run longer than five seconds, or produce settings the widget refuses. Then:
+  - the stored settings stay as they were and the device logs why;
+  - the widget starts on them;
+  - the conversion is tried again at the next boot or upgrade.
