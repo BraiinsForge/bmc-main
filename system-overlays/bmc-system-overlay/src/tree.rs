@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 
+use bmc_render::components::RelTimeWords;
 use bmc_render::interaction::InteractionState;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{Node, NodeContext, ProcessContext, TreeResult, layout_and_render};
@@ -68,6 +69,7 @@ pub struct TreeUi {
     taffy: TaffyTree<NodeContext>,
     frame_counter: u64,
     cached: Option<CachedTree>,
+    rel_time: RelTimeWords,
     #[cfg(any(test, feature = "test-support"))]
     replayed_last_frame: bool,
 }
@@ -83,6 +85,7 @@ impl Default for TreeUi {
             taffy: TaffyTree::new(),
             frame_counter: 0,
             cached: None,
+            rel_time: RelTimeWords::new(),
             #[cfg(any(test, feature = "test-support"))]
             replayed_last_frame: false,
         }
@@ -101,12 +104,14 @@ impl TreeUi {
     /// `build` runs instead when the frame is fresh, nothing is cached,
     /// the size changed, or touch events are pending, as widgets do.
     /// A failed render drops the cache, so the next frame builds again.
+    /// `intl` words the labels the renderer formats itself, such as a relative time.
     pub fn render(
         &mut self,
         frame: FrameKind,
         size: (u32, u32),
         delta_ms: u32,
         renderer: &mut dyn Renderer,
+        intl: &bmc_intl::Intl,
         build: impl FnOnce() -> Node,
     ) -> anyhow::Result<TreeFrame> {
         let replay = frame == FrameKind::AnimationOnly
@@ -123,7 +128,7 @@ impl TreeUi {
         {
             self.replayed_last_frame = false;
         }
-        let frame = self.render_node(&node, size, delta_ms, renderer)?;
+        let frame = self.render_node(&node, size, delta_ms, renderer, intl)?;
         #[cfg(any(test, feature = "test-support"))]
         {
             self.replayed_last_frame = replay;
@@ -150,6 +155,7 @@ impl TreeUi {
         size: (u32, u32),
         delta_ms: u32,
         renderer: &mut dyn Renderer,
+        intl: &bmc_intl::Intl,
     ) -> anyhow::Result<TreeFrame> {
         self.interaction.begin_frame();
         let frame_counter = self.frame_counter;
@@ -170,6 +176,8 @@ impl TreeUi {
             frame_counter,
             delta_ms,
             now_unix_secs,
+            intl,
+            rel_time: &self.rel_time,
             emit: bmc_render::tree::EmitMode::All,
             static_layer: bmc_render::tree::LayerUse::Ignore,
             static_layer_key: STATIC_LAYER_KEY,
@@ -246,6 +254,10 @@ mod tests {
     use bmc_render::tree::Node;
     use bmc_render::ui::Color;
 
+    fn english() -> bmc_intl::Intl {
+        bmc_intl::formatter(bmc_intl::Language::default())
+    }
+
     /// A full-width ProgressBar carrying the brightness touch key.
     fn slider_tree() -> Node {
         Node::ProgressBar {
@@ -281,10 +293,17 @@ mod tests {
         size: (u32, u32),
         builds: &mut usize,
     ) -> super::TreeFrame {
-        ui.render(kind, size, 16, &mut TestRenderer::default(), || {
-            *builds += 1;
-            animated_tree()
-        })
+        ui.render(
+            kind,
+            size,
+            16,
+            &mut TestRenderer::default(),
+            &english(),
+            || {
+                *builds += 1;
+                animated_tree()
+            },
+        )
         .expect("BUG: render must succeed")
     }
 
@@ -294,8 +313,15 @@ mod tests {
         let mut r = TestRenderer::default();
         // Warm-up frame establishes the slider's hit region (regions are
         // prior-frame state); the touch is hit-tested on the next frame.
-        ui.render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
-            .expect("BUG: warm-up render must succeed");
+        ui.render(
+            FrameKind::Fresh,
+            (100, 20),
+            16,
+            &mut r,
+            &english(),
+            slider_tree,
+        )
+        .expect("BUG: warm-up render must succeed");
         // A 100px-wide frame; touch down at x≈75 → fraction ≈ 0.75.
         ui.push_touch(TouchEvent::Down {
             id: 0,
@@ -303,7 +329,14 @@ mod tests {
             y: 10.0,
         });
         let result = ui
-            .render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
+            .render(
+                FrameKind::Fresh,
+                (100, 20),
+                16,
+                &mut r,
+                &english(),
+                slider_tree,
+            )
             .expect("BUG: hit-test render must succeed");
         let hit = result
             .result
@@ -325,7 +358,14 @@ mod tests {
         let mut r = TestRenderer::default();
         // No touch pushed → no drag entry.
         let result = ui
-            .render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
+            .render(
+                FrameKind::Fresh,
+                (100, 20),
+                16,
+                &mut r,
+                &english(),
+                slider_tree,
+            )
             .expect("BUG: render must succeed");
         assert!(!result.result.drags.contains_key("brightness"));
     }
@@ -335,8 +375,15 @@ mod tests {
         let mut ui = TreeUi::default();
         let mut r = TestRenderer::default();
         // Warm-up frame establishes the slider's hit region.
-        ui.render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
-            .expect("BUG: warm-up render must succeed");
+        ui.render(
+            FrameKind::Fresh,
+            (100, 20),
+            16,
+            &mut r,
+            &english(),
+            slider_tree,
+        )
+        .expect("BUG: warm-up render must succeed");
         // Down + Up drained into one frame (no render between) — the host's
         // event-coalescing case. The release leaves no `drags` entry, but the
         // click still hit-tests the finger-up position so the final value is
@@ -348,7 +395,14 @@ mod tests {
         });
         ui.push_touch(TouchEvent::Up { id: 0 });
         let result = ui
-            .render(FrameKind::Fresh, (100, 20), 16, &mut r, slider_tree)
+            .render(
+                FrameKind::Fresh,
+                (100, 20),
+                16,
+                &mut r,
+                &english(),
+                slider_tree,
+            )
             .expect("BUG: hit-test render must succeed");
         assert!(
             !result.result.drags.contains_key("brightness"),
@@ -447,6 +501,7 @@ mod tests {
                 (100, 20),
                 16,
                 &mut TestRenderer::default(),
+                &english(),
                 slider_tree,
             )
             .expect("BUG: render must succeed");

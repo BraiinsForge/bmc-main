@@ -172,6 +172,8 @@ impl Slot {
             frame_counter,
             delta_ms: 16,
             now_unix_secs: 0,
+            intl: &bmc_intl::formatter(bmc_intl::Language::default()),
+            rel_time: &crate::components::RelTimeWords::new(),
             emit: EmitMode::All,
             static_layer,
             static_layer_key: KEY,

@@ -77,8 +77,18 @@ fn build_taffy_node_tags_context_with_the_partition_classification() {
         let mut taffy = TaffyTree::new();
         let mut result = TreeResult::default();
         let mut modals = Vec::new();
-        let id = build_taffy_node(&mut taffy, node, 0, &mut result, &mut modals)
-            .expect("BUG: taffy build failed");
+        let english = bmc_intl::formatter(bmc_intl::Language::default());
+        let rel_time = crate::components::RelTimeWords::new();
+        let id = build_taffy_node(
+            &mut taffy,
+            node,
+            0,
+            &english,
+            &rel_time,
+            &mut result,
+            &mut modals,
+        )
+        .expect("BUG: taffy build failed");
         (taffy, id)
     }
 

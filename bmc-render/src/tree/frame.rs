@@ -86,6 +86,10 @@ pub struct ProcessContext<'a> {
     pub delta_ms: u32,
     /// Injected unix-seconds clock for host-formatted time nodes.
     pub now_unix_secs: i64,
+    /// Words host-formatted labels, such as a relative time, in the device language.
+    pub intl: &'a bmc_intl::Intl,
+    /// The relative times already worded, kept by whoever renders the tree frame after frame.
+    pub rel_time: &'a crate::components::RelTimeWords,
     /// Which half of the static/dynamic partition to emit; see [`EmitMode`].
     /// [`EmitMode::All`] reproduces a full frame.
     pub emit: EmitMode,
@@ -184,16 +188,15 @@ pub fn layout_and_render_with_asset_resolver(
     )
 }
 
-fn layout_and_render_inner(
+/// Build the Taffy tree for `tree_node` and compute its layout at `width` x `height`.
+fn lay_out(
     tree_node: &Node,
     width: f32,
     height: f32,
     renderer: &mut dyn Renderer,
-    resolver: Option<&mut dyn RendererAssetResolver>,
     timings: &mut FrameTimings,
     ctx: &mut ProcessContext<'_>,
-) -> Result<(TreeResult, bool)> {
-    // Phase 2: Build Taffy tree + compute layout
+) -> Result<(taffy::NodeId, TreeResult, Vec<ModalInfo>)> {
     #[cfg(feature = "frame-timings")]
     let t1 = Instant::now();
 
@@ -202,10 +205,13 @@ fn layout_and_render_inner(
 
     // Reuse taffy tree — clear nodes but keep internal allocations
     ctx.taffy.clear();
+    ctx.rel_time.begin_frame();
     let root_id = build_taffy_node(
         ctx.taffy,
         tree_node,
         ctx.now_unix_secs,
+        ctx.intl,
+        ctx.rel_time,
         &mut result,
         &mut modals,
     )?;
@@ -234,6 +240,21 @@ fn layout_and_render_inner(
     {
         timings.layout_us = elapsed_us(t1);
     }
+    #[cfg(not(feature = "frame-timings"))]
+    let _ = timings;
+    Ok((root_id, result, modals))
+}
+
+fn layout_and_render_inner(
+    tree_node: &Node,
+    width: f32,
+    height: f32,
+    renderer: &mut dyn Renderer,
+    resolver: Option<&mut dyn RendererAssetResolver>,
+    timings: &mut FrameTimings,
+    ctx: &mut ProcessContext<'_>,
+) -> Result<(TreeResult, bool)> {
+    let (root_id, mut result, modals) = lay_out(tree_node, width, height, renderer, timings, ctx)?;
 
     // Phase 3: Render
     #[cfg(feature = "frame-timings")]
@@ -254,6 +275,8 @@ fn layout_and_render_inner(
         layer_painted: false,
         has_active: false,
         now_unix_secs: ctx.now_unix_secs,
+        intl: ctx.intl,
+        rel_time: ctx.rel_time,
         outlines,
     };
     let resolver = resolver.map(RefCell::new);

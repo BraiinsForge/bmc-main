@@ -840,11 +840,15 @@ dependencies = [
  "bmc-intl-units",
  "bmc-shared-utils",
  "bmc-ui",
+ "fixed_decimal",
  "formatjs_icu_messageformat",
  "formatjs_icu_messageformat_parser",
  "formatjs_intl",
+ "icu_decimal",
+ "icu_experimental",
  "icu_locale",
  "icu_locale_core",
+ "icu_plurals",
  "icu_provider",
  "icu_provider_adapters",
  "icu_provider_blob",
@@ -867,6 +871,7 @@ name = "bmc-intl-markers"
 version = "0.1.0"
 dependencies = [
  "formatjs_intl",
+ "icu_experimental",
  "icu_locale",
  "icu_provider_blob",
 ]
@@ -1309,6 +1314,7 @@ name = "bmc-render"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-intl",
  "bmc-render-macros",
  "bmc-svg-compiler",
  "bmc-ui",
@@ -1442,6 +1448,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-gpu-render-lock",
+ "bmc-intl",
  "bmc-net-observe",
  "bmc-platform",
  "bmc-render",

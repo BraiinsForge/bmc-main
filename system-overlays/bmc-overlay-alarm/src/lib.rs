@@ -389,7 +389,7 @@ pub fn render_alarm(
         .unwrap_or(u32::MAX);
     state.last_render = now;
 
-    let tree_frame = match state.tree.render(frame, size, delta_ms, r, || {
+    let tree_frame = match state.tree.render(frame, size, delta_ms, r, intl, || {
         build_alarm_ui_tree(view, size, intl)
     }) {
         Ok(tree_frame) => tree_frame,

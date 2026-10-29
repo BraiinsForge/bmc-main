@@ -601,8 +601,12 @@ impl<S: SlotSurface> WidgetSlot<S> {
                 continue;
             }
             match event {
+                // Unlike the other settings, the host words what this changes:
+                // its relative times and banner, which no widget hook re-renders.
                 WidgetEvent::Setting(SettingUpdate::Language(language)) => {
-                    self.runtime.set_language(language.unwrap_or_default());
+                    if self.runtime.set_language(language.unwrap_or_default()) {
+                        self.surface.mark_needs_render();
+                    }
                 }
                 WidgetEvent::Setting(setting) => {
                     apply_setting_update(&mut self.pending_system, &setting);

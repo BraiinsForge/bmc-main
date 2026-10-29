@@ -35,8 +35,9 @@ let
     };
     cargoHash = "sha256-bhi7x2k1qELcc7NE+QfaJXJsfj0ZMF6PunwngN1HgOY=";
     # The defaults without `networking`: a source the pinned cldr-json lacks is an error, never a download.
+    # `unstable` lets it export icu_experimental's markers.
     buildNoDefaultFeatures = true;
-    buildFeatures = [ "use_wasm" "fs_exporter" "blob_exporter" "baked_exporter" "provider" "rayon" ];
+    buildFeatures = [ "use_wasm" "fs_exporter" "blob_exporter" "baked_exporter" "provider" "rayon" "unstable" ];
     doCheck = false;
     meta = {
       description = "Generate data for ICU4X DataProvider";

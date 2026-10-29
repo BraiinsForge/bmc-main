@@ -84,6 +84,11 @@
     "translation": "无网络连接",
     "description": "Device-info title when the boot connect over the Ethernet cable got no address"
   },
+  "62xcXwpGep": {
+    "source": "{primary} {secondary}",
+    "translation": "{primary}{secondary}",
+    "description": "Relative time, the two segments side by side: 7m 30s"
+  },
   "97LQdzs6/Y": {
     "source": "{device_name} is ready!",
     "translation": "{device_name} 已就绪！",
@@ -113,6 +118,11 @@
     "source": "{downloaded} MB of {total} MB",
     "translation": "{downloaded} MB，共 {total} MB",
     "description": "Upgrade overlay, below the progress bar; downloaded and total are amounts in megabytes, e.g. 82 and 151"
+  },
+  "FS/TsScuu+": {
+    "source": "in {hours, plural, one {{hours} hour} other {{hours} hours}} {minutes, plural, one {{minutes} minute} other {{minutes} minutes}}",
+    "translation": "{hours, plural, other {{hours}小时}}{minutes, plural, other {{minutes}分钟}}后",
+    "description": "Relative time label for a moment ahead, hours and minutes spelled out; both are whole numbers"
   },
   "FcloNeoS34": {
     "source": "Verifying",
@@ -148,6 +158,11 @@
     "source": "Complete the setup{br}by accessing",
     "translation": "访问以下地址{br}以完成设置",
     "description": "Device-info setup title above the device address; {br} is the line break between its two lines"
+  },
+  "JkfoKLzFy/": {
+    "source": "{hours, plural, one {{hours} hour} other {{hours} hours}} {minutes, plural, one {{minutes} minute} other {{minutes} minutes}} ago",
+    "translation": "{hours, plural, other {{hours}小时}}{minutes, plural, other {{minutes}分钟}}前",
+    "description": "Relative time label for a moment behind, hours and minutes spelled out; both are whole numbers"
   },
   "LmOJe5rX2r": {
     "source": "Wi-Fi Connection",
@@ -224,6 +239,11 @@
     "translation": "重新配置 Wi-Fi",
     "description": "Settings tray, label under the Wi-Fi reconfigure button"
   },
+  "XoQtZlfRZz": {
+    "source": "in {minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
+    "translation": "{minutes, plural, other {{minutes}分钟}}{seconds, plural, other {{seconds}秒钟}}后",
+    "description": "Relative time label for a moment ahead, minutes and seconds spelled out; both are whole numbers"
+  },
   "YBaDTp75gI": {
     "source": "Restart {device_name} to try again",
     "translation": "请重启 {device_name} 后重试",
@@ -269,6 +289,11 @@
     "translation": "未分配 IP 地址",
     "description": "Device-info line under the connection-problem title"
   },
+  "cQU31w4qIV": {
+    "source": "in {days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}}",
+    "translation": "{days, plural, other {{days}天}}{hours, plural, other {{hours}小时}}后",
+    "description": "Relative time label for a moment ahead, days and hours spelled out; both are whole numbers"
+  },
   "d9K8NSW9TS": {
     "source": "Update Finished",
     "translation": "更新完成",
@@ -284,6 +309,11 @@
     "translation": "长按 {seconds, plural, other {{seconds} 秒}}",
     "description": "Settings tray, under a hold-to-confirm button: how long to hold it; seconds is a whole number"
   },
+  "f+3IQb8cxo": {
+    "source": "in {duration}",
+    "translation": "{duration}后",
+    "description": "Relative time label for a moment ahead; duration is 7m 30s or 7m"
+  },
   "gVSC85AlCJ": {
     "source": "Could not connect. Please try again.",
     "translation": "无法连接，请重试。",
@@ -293,6 +323,11 @@
     "source": "Or open directly in browser:",
     "translation": "或直接在浏览器中打开：",
     "description": "Device-info QR column, label above the address the code encodes"
+  },
+  "gap8mTi9PY": {
+    "source": "{days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}} ago",
+    "translation": "{days, plural, other {{days}天}}{hours, plural, other {{hours}小时}}前",
+    "description": "Relative time label for a moment behind, days and hours spelled out; both are whole numbers"
   },
   "hIhRaewzgO": {
     "source": "Reconfigure Wi-Fi?",
@@ -308,6 +343,11 @@
     "source": "IP Address",
     "translation": "IP 地址",
     "description": "Settings tray, label of the device's IP address"
+  },
+  "jvAv2WBCt0": {
+    "source": "{duration} ago",
+    "translation": "{duration}前",
+    "description": "Relative time label for a moment behind; duration is 7m 30s or 7m"
   },
   "jy7RGjwZhS": {
     "source": "Connection",
@@ -393,6 +433,11 @@
     "source": "Applying",
     "translation": "正在写入",
     "description": "Upgrade overlay, short title before a percentage on a small display: applying firmware"
+  },
+  "wYMNAQyCIN": {
+    "source": "{minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}} ago",
+    "translation": "{minutes, plural, other {{minutes}分钟}}{seconds, plural, other {{seconds}秒钟}}前",
+    "description": "Relative time label for a moment behind, minutes and seconds spelled out; both are whole numbers"
   },
   "xCLk12kuRj": {
     "source": "Problem Occurred",

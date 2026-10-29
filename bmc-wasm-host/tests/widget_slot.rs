@@ -501,6 +501,26 @@ fn system_update_without_hook_does_not_schedule_or_dirty() {
     );
 }
 
+// ── language ───────────────────────────────────────────────────────
+
+#[test]
+fn a_new_language_dirties_the_surface_once_for_the_hosts_own_text() {
+    let mut slot = test_slot(&hookless_widget_wat());
+    let new = || {
+        WidgetEvent::Setting(SettingUpdate::Language(Some(
+            bmc_widget_protocol::Language::EN_US,
+        )))
+    };
+
+    dispatch_events(&mut slot, [new(), new()]);
+
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 1,
+        "the host words relative times itself, so a new language must redraw them \
+         even with no hook; the same language again must not"
+    );
+}
+
 // ── credential updates ─────────────────────────────────────────────
 
 #[test]

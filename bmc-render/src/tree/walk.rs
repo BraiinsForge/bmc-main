@@ -161,6 +161,9 @@ pub(crate) struct AnimationContext<'a> {
     pub(crate) has_active: bool,
     /// Injected clock (unix seconds) for lazily-built subtrees.
     pub(crate) now_unix_secs: i64,
+    /// Words the labels the host formats in lazily-built subtrees.
+    pub(crate) intl: &'a bmc_intl::Intl,
+    pub(crate) rel_time: &'a crate::components::RelTimeWords,
     pub(crate) outlines: Outlines,
 }
 

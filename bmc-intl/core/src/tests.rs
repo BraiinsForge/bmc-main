@@ -286,8 +286,9 @@ fn the_offered_languages_are_both_englishes_then_every_accepted_pack() -> R {
         translations.info(Language::EN_US).native_name,
         "English (US)"
     );
-    assert!(
-        translations.units(Language::ZH).is_some(),
+    assert_ne!(
+        five_minutes(&translations, Language::ZH),
+        "5m",
         "the profile pack's unit patterns"
     );
     for language in translations.languages() {
@@ -672,8 +673,9 @@ fn what_a_pack_brings_beside_its_translations_is_skipped_when_it_does_not_parse(
         ),
         "the profile's compiled flag stays where the later root's does not open"
     );
-    assert!(
-        translations.units(Language::ZH).is_some(),
+    assert_ne!(
+        five_minutes(&translations, Language::ZH),
+        "5m",
         "the profile's units stay where the later root's do not parse"
     );
 }
@@ -729,7 +731,7 @@ fn every_simplified_chinese_spelling_reaches_the_zh_pack() -> R {
             "简体中文",
             "{setting}"
         );
-        assert!(translations.units(language).is_some(), "{setting}");
+        assert_ne!(five_minutes(&translations, language), "5m", "{setting}");
         assert!(translations.web(language).is_some(), "{setting}");
     }
     assert!(
@@ -843,35 +845,62 @@ fn a_pack_that_fails_to_load_speaks_english_once_asked() -> R {
     }
     assert_eq!(translations.loads(cs), 1, "a failed load is not retried");
     assert_eq!(
-        narrow_minute(&translations, cs).as_deref(),
-        Some("{0}m"),
+        five_minutes(&translations, cs),
+        "5m",
         "its units are English's"
     );
     assert!(translations.web(cs).is_none());
     Ok(())
 }
 
-/// `language`'s narrow pattern for some minutes.
-fn narrow_minute(translations: &Translations, language: Language) -> Option<String> {
-    let units = translations.units(language)?;
-    units
-        .get()
-        .narrow
-        .units
-        .get("duration-minute", units::Plural::Other)
-        .map(str::to_owned)
+/// Five minutes as `language`'s screens write a count alone.
+fn five_minutes(translations: &Translations, language: Language) -> String {
+    translations
+        .formatter(language)
+        .time_count(5, TimeUnit::Minute)
 }
 
 #[test]
 fn english_writes_units_from_the_base_data() {
     let (translations, _) = Translations::load(&[]);
     for language in [Language::EN, Language::EN_GB, Language::EN_US] {
-        assert_eq!(
-            narrow_minute(&translations, language).as_deref(),
-            Some("{0}m"),
-            "{language}"
-        );
+        assert_eq!(five_minutes(&translations, language), "5m", "{language}");
     }
+}
+
+#[test]
+fn a_language_without_a_pack_words_time_in_english() -> R {
+    let czech = Translations::load(&[]).0.formatter(Language::parse("cs")?);
+    assert_eq!(
+        czech.relative_time(5, TimeUnit::Hour, TimeWidth::Long, Direction::Past),
+        "5 hours ago",
+        "English, as the copy around it is, not Czech's `před 5 hodinami`"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_pack_words_relative_time_by_its_own_patterns() -> R {
+    let root = Root::new();
+    root.write_bytes("es-MX", "cldr.postcard", &es_mx_blob());
+    let (translations, report) = Translations::load(&[root.path()]);
+    let es_mx = Language::parse("es-MX")?;
+    assert!(
+        translations.languages().contains(&es_mx),
+        "if the fixture was cut by another ICU4X, re-cut it with `just intl::fixture-data`: {report}"
+    );
+    let spanish = translations.formatter(es_mx);
+    assert_eq!(
+        [Direction::Past, Direction::Future].map(|direction| spanish.relative_time(
+            5,
+            TimeUnit::Hour,
+            TimeWidth::Long,
+            direction
+        )),
+        ["hace 5 horas", "dentro de 5 horas"],
+        "Spanish's patterns along es-MX's chain, not root's `-5 h`"
+    );
+    Ok(())
 }
 
 #[test]
@@ -885,10 +914,10 @@ fn englishs_units_borrow_the_binary_and_copy_none_of_it() {
 #[test]
 fn a_pack_writes_units_of_its_own() {
     let (translations, _) = Translations::load(&[profile()]);
-    let chinese = narrow_minute(&translations, Language::ZH);
-    assert!(
-        chinese.is_some() && chinese.as_deref() != Some("{0}m"),
-        "Chinese answers with its pack's, not English's: {chinese:?}"
+    assert_ne!(
+        five_minutes(&translations, Language::ZH),
+        "5m",
+        "Chinese answers with its pack's, not English's"
     );
 }
 
@@ -1171,7 +1200,11 @@ fn a_later_roots_units_stand_over_earlier_ones_and_a_broken_one_stands_over_none
     let profiles = profile_zh(units::FILE);
     let profiles = units::Units::from_bytes(&profiles).expect("BUG: the profile's units");
     let marked = units::Units {
-        range: "{0}~{1}".into(),
+        narrow: units::Width {
+            units: units::Map2d::new([("duration-minute", units::Plural::Other, "{0} later")])
+                .expect("BUG: one pattern fits the map"),
+            ..profiles.narrow
+        },
         ..profiles
     };
     let broken = Root::new();
@@ -1184,12 +1217,9 @@ fn a_later_roots_units_stand_over_earlier_ones_and_a_broken_one_stands_over_none
         skipped(&report).contains("not a language's units"),
         "the broken one is reported: {report}"
     );
-    let units = translations
-        .units(Language::ZH)
-        .expect("BUG: the later root's units load");
     assert_eq!(
-        units.get().range,
-        "{0}~{1}",
+        five_minutes(&translations, Language::ZH),
+        "5 later",
         "the later root's units stand over the profile's, the broken last root takes nothing"
     );
 }

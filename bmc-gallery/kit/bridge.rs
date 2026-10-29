@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 
 use bmc_render::assets::{AssetHost, install_asset_host};
+use bmc_render::components::RelTimeWords;
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::{ActionEvent, InteractionState, TouchEvent};
 use bmc_render::renderer::prelude::*;
@@ -178,6 +179,7 @@ struct FrameState {
     /// the GPU keeps until the entry goes.
     last_seen: u64,
     drags: HashMap<String, TouchHit>,
+    rel_time: RelTimeWords,
     /// This stage's own render target, so several stages in a scene don't
     /// overwrite each other — femtovg's "screen" can only ever name one FBO.
     image: Option<Image>,
@@ -199,6 +201,7 @@ impl Default for FrameState {
             last_frame: None,
             last_seen: 0,
             drags: HashMap::new(),
+            rel_time: RelTimeWords::new(),
             image: None,
             texture: None,
         }
@@ -451,6 +454,7 @@ fn staged_tree(
         input,
         |renderer, state, delta_ms, now_unix_secs| {
             let tree = build();
+            let intl = bmc_intl::shared_formatter(super::language::language().unwrap_or_default());
             let mut ctx = ProcessContext {
                 interaction: &mut state.interaction,
                 modal_states: &mut state.modal_states,
@@ -461,6 +465,8 @@ fn staged_tree(
                 frame_counter: state.frame_counter,
                 delta_ms,
                 now_unix_secs,
+                intl: &intl,
+                rel_time: &state.rel_time,
                 emit: bmc_render::tree::EmitMode::All,
                 static_layer: bmc_render::tree::LayerUse::Ignore,
                 static_layer_key: "gallery",

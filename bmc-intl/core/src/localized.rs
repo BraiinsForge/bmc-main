@@ -25,9 +25,6 @@ use crate::{Intl, Language, Translations};
 /// The device language as last announced and the formatter built for it.
 /// Building an [`Intl`] is not free, so it happens here, once per change, never per render.
 pub struct Localized {
-    language: Language,
-    /// The [`Translations::version`] the formatter was built over.
-    version: u64,
     intl: Intl,
 }
 
@@ -35,12 +32,8 @@ impl Localized {
     /// British English, as every surface starts before the device's language is announced.
     #[must_use]
     pub fn new() -> Self {
-        let language = Language::default();
-        let translations = Translations::shared();
         Self {
-            language,
-            version: translations.version(),
-            intl: translations.formatter(language),
+            intl: Translations::shared().formatter(Language::default()),
         }
     }
 
@@ -48,23 +41,21 @@ impl Localized {
     /// or the translations were reloaded since, and the caller should mark its content dirty.
     pub fn set(&mut self, language: Language) -> bool {
         let translations = Translations::shared();
-        if language == self.language && translations.version() == self.version {
+        if (language, translations.version()) == self.intl.wording() {
             return false;
         }
-        self.language = language;
-        self.version = translations.version();
         self.intl = translations.formatter(language);
         true
     }
 
     /// Rebuild over the translations in effect if they were reloaded; `true` when they were.
     pub fn refresh(&mut self) -> bool {
-        self.set(self.language)
+        self.set(self.language())
     }
 
     #[must_use]
     pub fn language(&self) -> Language {
-        self.language
+        self.intl.language()
     }
 
     #[must_use]
@@ -82,8 +73,7 @@ impl Default for Localized {
 impl std::fmt::Debug for Localized {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Localized")
-            .field("language", &self.language)
-            .field("version", &self.version)
+            .field("wording", &self.intl.wording())
             .finish_non_exhaustive()
     }
 }

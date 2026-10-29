@@ -1261,6 +1261,7 @@ pub(crate) struct HostState {
     /// The process-wide one for the device language the embedder hands in,
     /// so a widget costs a pointer and a frame takes no lock; widgets do not see it.
     pub(crate) host_intl: std::sync::Arc<bmc_intl::Intl>,
+    pub(crate) rel_time: bmc_render::components::RelTimeWords,
 
     /// Third channel of the same shape as `params` and `system`.
     pub credentials: VersionedSnapshotCache<CredentialView>,
@@ -1595,6 +1596,7 @@ impl HostState {
             system: VersionedSnapshotCache::new(SystemSnapshot::default()),
             network_info: NetworkInfo::default(),
             host_intl: bmc_intl::shared_formatter(bmc_intl::Language::default()),
+            rel_time: bmc_render::components::RelTimeWords::new(),
             credentials: VersionedSnapshotCache::new(CredentialView::default()),
             credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             last_timings: FrameTimings::default(),

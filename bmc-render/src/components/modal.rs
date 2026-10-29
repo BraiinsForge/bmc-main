@@ -308,6 +308,8 @@ pub(crate) fn render_modal(
         taffy,
         &body_scroll,
         anim_ctx.now_unix_secs,
+        anim_ctx.intl,
+        anim_ctx.rel_time,
         result,
         &mut dummy_modals,
     ) {
@@ -479,6 +481,8 @@ mod title_truncation_tests {
                 layer_painted: false,
                 has_active: false,
                 now_unix_secs: 0,
+                intl: &bmc_intl::formatter(bmc_intl::Language::default()),
+                rel_time: &crate::components::RelTimeWords::new(),
                 outlines: crate::tree::Outlines::default(),
             },
             &mut TaffyTree::new(),

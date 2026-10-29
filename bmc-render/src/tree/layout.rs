@@ -30,9 +30,10 @@ use crate::components::progress_bar::ProgressBarData;
 use crate::components::skeleton;
 use crate::components::switcher::{SwitcherData, switcher_size};
 use crate::components::tag::{TAG_PAD_VERT, TagData, resolve_icon, tag_content_padding};
-use crate::components::{ButtonSize, ButtonStyle};
+use crate::components::{ButtonSize, ButtonStyle, RelTimeWords};
 use crate::renderer::Renderer;
 use anyhow::Result;
+use bmc_intl::Intl;
 use bmc_ui::ButtonSkin;
 use bmc_ui::{BitmapId, Color, SvgId};
 use bmc_ui::{CrossAlign, Justify, PropsData, TextOverflow, TextStyle};
@@ -116,10 +117,12 @@ pub(crate) fn build_taffy_node(
     taffy: &mut TaffyTree<NodeContext>,
     node: &Node,
     now_unix_secs: i64,
+    intl: &Intl,
+    rel_time: &RelTimeWords,
     result: &mut TreeResult,
     modals: &mut Vec<ModalInfo>,
 ) -> Result<taffy::NodeId> {
-    let id = build_taffy_node_inner(taffy, node, now_unix_secs, result, modals)?;
+    let id = build_taffy_node_inner(taffy, node, now_unix_secs, intl, rel_time, result, modals)?;
     // O(nodes x depth) boolean work, negligible next to the Taffy build it
     // wraps — not worth a bottom-up accumulator threaded through every arm.
     let dynamic = crate::partition::node_is_dynamic(node);
@@ -136,6 +139,8 @@ fn build_taffy_node_inner(
     taffy: &mut TaffyTree<NodeContext>,
     node: &Node,
     now_unix_secs: i64,
+    intl: &Intl,
+    rel_time: &RelTimeWords,
     result: &mut TreeResult,
     modals: &mut Vec<ModalInfo>,
 ) -> Result<taffy::NodeId> {
@@ -145,7 +150,7 @@ fn build_taffy_node_inner(
         | Node::Center(props, children) => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_taffy_node(taffy, c, now_unix_secs, result, modals))
+                .map(|c| build_taffy_node(taffy, c, now_unix_secs, intl, rel_time, result, modals))
                 .collect::<Result<_>>()?;
 
             let is_center = matches!(node, Node::Center(_, _));
@@ -301,7 +306,7 @@ fn build_taffy_node_inner(
             style,
         } => {
             let delta = now_unix_secs - *anchor;
-            let text = crate::components::format_rel(delta, *format, *clamp);
+            let text = rel_time.word(intl, crate::components::rel_parts(delta, *format, *clamp));
             // A pinned label yields no delay, so it never schedules a wake.
             if let Some(delay) = crate::components::next_change_delay_ms(delta, *format, *clamp) {
                 result.next_frame_delay_ms =
@@ -328,7 +333,15 @@ fn build_taffy_node_inner(
             icon,
             content,
         } => {
-            let content_id = build_taffy_node(taffy, content, now_unix_secs, result, modals)?;
+            let content_id = build_taffy_node(
+                taffy,
+                content,
+                now_unix_secs,
+                intl,
+                rel_time,
+                result,
+                modals,
+            )?;
             let icon = resolve_icon(*kind, *icon);
             let (pad_left, pad_right) = tag_content_padding(icon.is_some());
             let style = Style {
@@ -466,7 +479,7 @@ fn build_taffy_node_inner(
         } => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_taffy_node(taffy, c, now_unix_secs, result, modals))
+                .map(|c| build_taffy_node(taffy, c, now_unix_secs, intl, rel_time, result, modals))
                 .collect::<Result<_>>()?;
 
             // Extra right padding so content doesn't sit under the scrollbar
@@ -592,7 +605,7 @@ fn build_taffy_node_inner(
                 (0.0..=1.0).contains(brightness),
                 "BUG: Node::Dimmed only dims, got {brightness}"
             );
-            let id = build_taffy_node(taffy, child, now_unix_secs, result, modals)?;
+            let id = build_taffy_node(taffy, child, now_unix_secs, intl, rel_time, result, modals)?;
             if let Some(ctx) = taffy.get_node_context_mut(id) {
                 ctx.dim = Some(ctx.dim.map_or(*brightness, |inner| inner * brightness));
             } else {

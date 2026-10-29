@@ -13,12 +13,14 @@ license = "GPL-3.0-or-later"
 [package.metadata.nix]
 include = [
     "../assets/fonts/*",
+    "../assets/intl/profile-languages/**",
     "assets/**",
     "../bmc-wasm-runtime/sdk/assets/icons/star.svg",
 ]
 
 [dependencies]
 anyhow.workspace = true
+bmc-intl.workspace = true
 bmc-render-macros = { path = "macros" }
 bmc-ui = { path = "ui" }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol", features = ["id-pool"] }

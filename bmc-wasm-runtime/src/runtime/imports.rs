@@ -41,6 +41,8 @@ use wasmi::{Caller, Linker};
 
 use crate::host_api::HostState;
 
+pub(super) use render::layer_use;
+
 use super::EntryPolicy;
 use super::memory::read_bytes;
 

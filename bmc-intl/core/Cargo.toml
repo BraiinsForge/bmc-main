@@ -16,11 +16,15 @@ bmc-intl-message.workspace = true
 bmc-intl-units.workspace = true
 bmc-shared-utils = { workspace = true, features = ["language"] }
 bmc-ui.workspace = true
+fixed_decimal.workspace = true
 formatjs_icu_messageformat.workspace = true
 formatjs_icu_messageformat_parser.workspace = true
 formatjs_intl.workspace = true
+icu_decimal.workspace = true
+icu_experimental.workspace = true
 icu_locale.workspace = true
 icu_locale_core.workspace = true
+icu_plurals.workspace = true
 icu_provider.workspace = true
 icu_provider_adapters.workspace = true
 icu_provider_blob.workspace = true

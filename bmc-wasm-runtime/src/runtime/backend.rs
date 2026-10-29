@@ -1501,7 +1501,8 @@ impl WasmWidgetRuntime {
         // cannot have moved — but a `RelTime` inside it renders from the clock,
         // and a label that changed width has resized the static content around
         // it. Recapture rather than blit a layer laid out for the old width.
-        let layout_key = bmc_render::partition::host_layout_key(tree_node, now_unix_secs);
+        let layout_key =
+            bmc_render::partition::host_layout_key(tree_node, now_unix_secs, &state.host_intl);
         let stale_layout = state
             .last_static_key
             .is_some_and(|(_, _, captured)| captured != layout_key);
@@ -1523,14 +1524,13 @@ impl WasmWidgetRuntime {
             frame_counter,
             delta_ms,
             now_unix_secs,
+            intl: &state.host_intl,
+            rel_time: &state.rel_time,
             emit: bmc_render::tree::EmitMode::All,
-            static_layer: if !state.static_layer_useful {
-                bmc_render::tree::LayerUse::Ignore
-            } else if stale_assets || stale_layout {
-                bmc_render::tree::LayerUse::Capture
-            } else {
-                bmc_render::tree::LayerUse::Reuse
-            },
+            static_layer: super::imports::layer_use(
+                state.static_layer_useful,
+                !(stale_assets || stale_layout),
+            ),
             damage_rects: &damage,
             static_layer_key: &state.instance_id,
             layout_outlines: state.layout_outlines.is_some(),
@@ -1576,19 +1576,7 @@ impl WasmWidgetRuntime {
                 state.frame_schedule.interaction_pending = had_interaction;
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
                 if stale_assets || stale_layout {
-                    // Re-read rather than reuse the value above: restoring an
-                    // asset during the walk bumps the generation again, and a
-                    // stale key repaints in full until the next guest frame.
-                    let generation = state.renderer_assets.generation();
-                    if let Some((hash, _, _)) = state.last_static_key {
-                        state.last_static_key = Some((hash, generation, layout_key));
-                    }
-                    // The recapture reached the buffer this frame painted,
-                    // and no other. Every remaining buffer still holds the
-                    // old static half, and scissoring the next frame to
-                    // damage would leave it there. The guest path marks the
-                    // same debt when its static half changes.
-                    state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
+                    Self::record_recapture(state, layout_key);
                 }
                 // A missed blit means the walk repainted every draw into a
                 // target the host did not clear, so the pixels no draw covers
@@ -1609,6 +1597,22 @@ impl WasmWidgetRuntime {
                 true
             }
         }
+    }
+
+    /// Key the static layer a cached frame just recaptured, and owe the other buffers its repaint.
+    fn record_recapture(state: &mut HostState, layout_key: u64) {
+        // Re-read rather than reuse the generation the frame started with:
+        // restoring an asset during the walk bumps it again,
+        // and a stale key repaints in full until the next guest frame.
+        let generation = state.renderer_assets.generation();
+        if let Some((hash, _, _)) = state.last_static_key {
+            state.last_static_key = Some((hash, generation, layout_key));
+        }
+        // The recapture reached the buffer this frame painted, and no other.
+        // Every remaining buffer still holds the old static half,
+        // and scissoring the next frame to damage would leave it there.
+        // The guest path marks the same debt when its static half changes.
+        state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
     }
 
     fn render_stopped_cached_tree(state: &mut HostState, delta_ms: u32, target: TargetContents) {
@@ -1796,8 +1800,14 @@ impl WasmWidgetRuntime {
 
     /// Set the device language the host words its own text in, such as the stopped-widget banner.
     /// Fires no hook: widgets do not see the language.
-    pub fn set_language(&mut self, language: Language) {
-        self.store.data_mut().host_intl = bmc_intl::shared_formatter(language);
+    /// Whether the formatter changed, by language or by a pack reloaded for it,
+    /// which leaves the host's text on screen stale.
+    pub fn set_language(&mut self, language: Language) -> bool {
+        let formatter = bmc_intl::shared_formatter(language);
+        let host_intl = &mut self.store.data_mut().host_intl;
+        let changed = !std::sync::Arc::ptr_eq(host_intl, &formatter);
+        *host_intl = formatter;
+        changed
     }
 
     /// Set the Deck's network info for the `host_network_info` getter.

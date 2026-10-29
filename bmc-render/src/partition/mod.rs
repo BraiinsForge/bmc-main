@@ -111,7 +111,8 @@ pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
     hasher.finish() ^ scroll
 }
 
-/// Hash what a dynamic node contributes to *layout*, for the time `now_unix_secs`.
+/// Hash what a dynamic node contributes to *layout*,
+/// for the time `now_unix_secs` and the `language` its labels are worded in.
 ///
 /// [`static_bytes_key`] deliberately skips dynamic nodes, which is right for paint
 /// and wrong for layout: the Taffy pass still measures a dynamic node, so it
@@ -127,13 +128,18 @@ pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
 /// Cheap on purpose — an animation-only replay recomputes this every frame,
 /// where [`static_hash`] runs on guest frames only.
 #[must_use]
-pub fn host_layout_key(node: &Node, now_unix_secs: i64) -> u64 {
+pub fn host_layout_key(node: &Node, now_unix_secs: i64, intl: &bmc_intl::Intl) -> u64 {
     let mut hasher = DefaultHasher::new();
-    hash_layout_contribution(node, now_unix_secs, &mut hasher);
+    hash_layout_contribution(node, now_unix_secs, intl, &mut hasher);
     hasher.finish()
 }
 
-fn hash_layout_contribution<H: Hasher>(node: &Node, now_unix_secs: i64, hasher: &mut H) {
+fn hash_layout_contribution<H: Hasher>(
+    node: &Node,
+    now_unix_secs: i64,
+    intl: &bmc_intl::Intl,
+    hasher: &mut H,
+) {
     match node {
         Node::RelTime {
             anchor,
@@ -141,11 +147,12 @@ fn hash_layout_contribution<H: Hasher>(node: &Node, now_unix_secs: i64, hasher: 
             clamp,
             style,
         } => {
-            // Taffy measures the rendered text, so hash that rather than the
-            // anchor: an unchanged label has moved nothing, whatever the clock
-            // did.
-            let label = crate::components::format_rel(now_unix_secs - *anchor, *format, *clamp);
-            hash_debug(&label, hasher);
+            // Taffy measures the worded label, which the counts and the formatter decide:
+            // hash those, not the anchor nor the words, so a frame formats nothing
+            // and an unchanged label has moved nothing, whatever the clock did.
+            // The translations too: a pack (re)loaded for the same language rewords it.
+            crate::components::rel_parts(now_unix_secs - *anchor, *format, *clamp).hash(hasher);
+            intl.wording().hash(hasher);
             hash_debug(style, hasher);
         }
         Node::ProgressBar {
@@ -163,11 +170,11 @@ fn hash_layout_contribution<H: Hasher>(node: &Node, now_unix_secs: i64, hasher: 
         | Node::Center(_, children)
         | Node::Scroll { children, .. } => {
             for child in children {
-                hash_layout_contribution(child, now_unix_secs, hasher);
+                hash_layout_contribution(child, now_unix_secs, intl, hasher);
             }
         }
-        Node::Tag { content, .. } => hash_layout_contribution(content, now_unix_secs, hasher),
-        Node::Dimmed { child, .. } => hash_layout_contribution(child, now_unix_secs, hasher),
+        Node::Tag { content, .. } => hash_layout_contribution(content, now_unix_secs, intl, hasher),
+        Node::Dimmed { child, .. } => hash_layout_contribution(child, now_unix_secs, intl, hasher),
         Node::Modal { .. }
         | Node::Canvas { .. }
         | Node::Paragraph { .. }

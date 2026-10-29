@@ -463,6 +463,8 @@ fn animation_context<'a>(
     animation_states: &'a mut HashMap<u64, AnimationState>,
     transition_states: &'a mut HashMap<TransitionStateKey, TransitionState>,
 ) -> AnimationContext<'a> {
+    static ENGLISH: std::sync::LazyLock<bmc_intl::Intl> =
+        std::sync::LazyLock::new(|| bmc_intl::formatter(bmc_intl::Language::default()));
     AnimationContext {
         emit: crate::tree::EmitMode::default(),
         animation_states,
@@ -477,6 +479,9 @@ fn animation_context<'a>(
         layer_painted: false,
         has_active: false,
         now_unix_secs: 0,
+        intl: &ENGLISH,
+        // Returned with the context, which leaves nothing in this frame to own it.
+        rel_time: Box::leak(Box::default()),
         outlines: crate::tree::Outlines::default(),
     }
 }

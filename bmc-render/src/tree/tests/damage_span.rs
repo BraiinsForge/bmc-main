@@ -166,6 +166,8 @@ fn a_failed_layer_blit_lays_the_frame_base_before_the_walk() {
         frame_counter: 1,
         delta_ms: 16,
         now_unix_secs: 0,
+        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
+        rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
         // Nothing was captured under this key, so the layer blit fails.
         static_layer: LayerUse::Reuse,
@@ -223,6 +225,8 @@ fn walk_with_layer_and_damage(
         frame_counter: 1,
         delta_ms: 16,
         now_unix_secs: 0,
+        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
+        rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
         static_layer,
         static_layer_key: KEY,

@@ -30,7 +30,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use formatjs_intl::{Intl, IntlContext, MessageCatalog, MessageDescriptorRef};
-use icu_locale::LocaleExpander;
+use icu_experimental::relativetime::{RelativeTimeFormatter, RelativeTimeFormatterOptions};
+use icu_locale::{LanguageIdentifier, LocaleExpander};
 use icu_provider_blob::BlobDataProvider;
 
 fn main() {
@@ -43,6 +44,26 @@ fn main() {
 
     let expander = LocaleExpander::try_new_extended_with_buffer_provider(&provider)
         .expect("BUG: likely subtags, though this is never run");
+
+    // Each relative-time unit and width is a marker of its own.
+    let english: LanguageIdentifier = "en".parse().expect("BUG: `en` is a locale");
+    let options = RelativeTimeFormatterOptions::default();
+    let relative = [
+        RelativeTimeFormatter::try_new_narrow_second_with_buffer_provider,
+        RelativeTimeFormatter::try_new_narrow_minute_with_buffer_provider,
+        RelativeTimeFormatter::try_new_narrow_hour_with_buffer_provider,
+        RelativeTimeFormatter::try_new_narrow_day_with_buffer_provider,
+        RelativeTimeFormatter::try_new_long_second_with_buffer_provider,
+        RelativeTimeFormatter::try_new_long_minute_with_buffer_provider,
+        RelativeTimeFormatter::try_new_long_hour_with_buffer_provider,
+        RelativeTimeFormatter::try_new_long_day_with_buffer_provider,
+    ]
+    .map(|new| {
+        new(&provider, (&english).into(), options)
+            .expect("BUG: relative-time data, though this is never run")
+            .format(2_i64.into())
+            .to_string()
+    });
 
     let context = IntlContext::try_with_provider(provider)
         .expect("BUG: locale fallback data, though this is never run");
@@ -63,5 +84,5 @@ fn main() {
 
     let mut locale = "zh".parse().expect("BUG: `zh` is a locale");
     expander.maximize(&mut locale);
-    println!("{spoken} {locale} {checked:?}");
+    println!("{spoken} {locale} {checked:?} {relative:?}");
 }

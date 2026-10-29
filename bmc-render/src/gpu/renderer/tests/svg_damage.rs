@@ -199,6 +199,8 @@ fn draw(
         layer_painted: false,
         has_active: false,
         now_unix_secs: 0,
+        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
+        rel_time: &crate::components::RelTimeWords::new(),
         outlines: crate::tree::Outlines::default(),
     };
     renderer.begin_frame(W / frame.dpi, H / frame.dpi, dpi);

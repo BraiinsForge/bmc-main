@@ -30,7 +30,9 @@ use formatjs_intl::IntlContext;
 use icu_locale::{LocaleExpander, LocaleFallbacker};
 use icu_locale_core::LanguageIdentifier;
 use icu_locale_core::subtags::Language as LanguageSubtag;
+use icu_provider::buf::BufferProvider;
 use icu_provider::{DataError, DataErrorKind, DataIdentifierBorrowed, DataMarkerInfo, DataRequest};
+use icu_provider_adapters::fallback::LocaleFallbackProvider;
 use icu_provider_adapters::filter::FilterDataProvider;
 use icu_provider_adapters::fork::MultiForkByErrorProvider;
 use icu_provider_adapters::fork::predicates::ForkByErrorPredicate;
@@ -41,6 +43,13 @@ use crate::{Language, units};
 const BASE: &[u8] = bmc_shared_utils::include_lfs!("../../../assets/intl/cldr-base.postcard");
 const BASE_UNITS: &[u8] =
     bmc_shared_utils::include_lfs!("../../../assets/intl/units-base.postcard");
+
+/// The locale fallback of the base blob, decoded once:
+/// no pack answers for it, as a pack's layer answers for its own language alone.
+pub(crate) fn builtin_fallbacker() -> &'static LocaleFallbacker {
+    static FALLBACKER: LazyLock<LocaleFallbacker> = LazyLock::new(|| Data::builtin().fallbacker());
+    &FALLBACKER
+}
 
 /// English's unit patterns, read in place from the base data once, on first use.
 pub(crate) fn builtin_units() -> units::Loaded {
@@ -134,6 +143,12 @@ impl Data {
     pub fn context(&self) -> IntlContext {
         IntlContext::try_with_provider(self.blobs.clone())
             .expect("BUG: the base blob carries the locale-fallback data")
+    }
+
+    /// The blobs along CLDR's fallback chain, as formatjs reads them:
+    /// `zh-SG` takes `zh`'s data, and a language no blob speaks takes root's.
+    pub(crate) fn fallback_provider(&self) -> impl BufferProvider + '_ {
+        LocaleFallbackProvider::new(&*self.blobs, builtin_fallbacker().clone())
     }
 
     pub(crate) fn expander(&self) -> LocaleExpander {

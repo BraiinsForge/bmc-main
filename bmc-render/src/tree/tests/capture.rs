@@ -31,6 +31,8 @@ fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, key
         frame_counter: 1,
         delta_ms: 16,
         now_unix_secs: 0,
+        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
+        rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
         static_layer: LayerUse::Capture,
         static_layer_key: key,

@@ -209,7 +209,10 @@ pub fn render_upgrade(
     state.last_render = now;
     let size = (surface.width, surface.height);
     let build = || ui::build_upgrade_tree(view, surface, icons, intl);
-    match state.tree.render(frame, size, delta_ms, renderer, build) {
+    match state
+        .tree
+        .render(frame, size, delta_ms, renderer, intl, build)
+    {
         Ok(tree_frame) => tree_frame.outcome,
         Err(err) => {
             tracing::error!("upgrade tree render failed: {err}");

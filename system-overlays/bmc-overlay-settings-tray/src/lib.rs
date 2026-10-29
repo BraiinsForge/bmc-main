@@ -1120,16 +1120,17 @@ pub fn render_settings_tray(
         )
     };
 
-    let tree_frame = match state
-        .tree
-        .render(frame, viewport.size(), delta_ms, renderer, build)
-    {
-        Ok(tree_frame) => tree_frame,
-        Err(err) => {
-            tracing::error!("settings-tray tree render failed: {err}");
-            return SettingsTrayRenderOutput::default();
-        }
-    };
+    let tree_frame =
+        match state
+            .tree
+            .render(frame, viewport.size(), delta_ms, renderer, intl, build)
+        {
+            Ok(tree_frame) => tree_frame,
+            Err(err) => {
+                tracing::error!("settings-tray tree render failed: {err}");
+                return SettingsTrayRenderOutput::default();
+            }
+        };
     let result = &tree_frame.result;
 
     // The render processed this frame's queued touch events, so the pressed

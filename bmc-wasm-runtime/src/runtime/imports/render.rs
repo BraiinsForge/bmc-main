@@ -204,13 +204,38 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
 }
 
 /// What this frame does with the cached static layer.
-fn layer_use(layered: bool, static_unchanged: bool) -> bmc_render::tree::LayerUse {
+pub(in crate::runtime) fn layer_use(
+    layered: bool,
+    static_unchanged: bool,
+) -> bmc_render::tree::LayerUse {
     use bmc_render::tree::LayerUse;
     match (layered, static_unchanged) {
         (false, _) => LayerUse::Ignore,
         (true, true) => LayerUse::Reuse,
         (true, false) => LayerUse::Capture,
     }
+}
+
+/// Whether the guest submitted its tree at the size the surface has.
+///
+/// A tree submitted at another size means the guest and the host
+/// disagree about the surface, which invalidates the whole frame
+/// rather than one draw: taffy laid every node out for those dimensions,
+/// so the dynamic half is painted for the wrong surface too,
+/// and the static layer is captured at one size while
+/// the raw blit stretches it over another.
+///
+/// Refuse the frame rather than paint a consistent-looking lie.
+fn submitted_at_surface_size(state: &HostState, width: u32, height: u32) -> bool {
+    let matches = width == state.widget_width && height == state.widget_height;
+    if !matches {
+        tracing::error!(
+            guest = format!("{width}x{height}"),
+            host = format!("{}x{}", state.widget_width, state.widget_height),
+            "tree submitted at a size the surface does not have; frame dropped"
+        );
+    }
+    matches
 }
 
 fn submit_tree(
@@ -227,18 +252,7 @@ fn submit_tree(
     let w = width as f32;
     let h = height as f32;
     super::with_renderer_and_state(&mut caller, |renderer, state| {
-        // A tree submitted at another size means the guest and the host
-        // disagree about the surface, which invalidates the whole frame rather
-        // than one draw: taffy laid every node out for those dimensions, so the
-        // dynamic half is painted for the wrong surface too, and the static
-        // layer is captured at one size while the raw blit stretches it over
-        // another. Refuse the frame rather than paint a consistent-looking lie.
-        if width != state.widget_width || height != state.widget_height {
-            tracing::error!(
-                guest = format!("{width}x{height}"),
-                host = format!("{}x{}", state.widget_width, state.widget_height),
-                "tree submitted at a size the surface does not have; frame dropped"
-            );
+        if !submitted_at_surface_size(state, width, height) {
             return;
         }
         #[cfg(feature = "frame-timings")]
@@ -276,6 +290,8 @@ fn submit_tree(
             frame_counter,
             delta_ms,
             now_unix_secs,
+            intl: &state.host_intl,
+            rel_time: &state.rel_time,
             emit: bmc_render::tree::EmitMode::All,
             static_layer: layer_use(layered, static_unchanged),
             static_layer_key: &state.instance_id,
@@ -371,7 +387,7 @@ fn static_layer_key(
             },
         ),
         state.renderer_assets.generation(),
-        bmc_render::partition::host_layout_key(tree_node, now_unix_secs),
+        bmc_render::partition::host_layout_key(tree_node, now_unix_secs, &state.host_intl),
     );
     // The scroll container advances its offset inside the walk, so a hash taken
     // before it describes the offset the previous frame ended on: reusing the

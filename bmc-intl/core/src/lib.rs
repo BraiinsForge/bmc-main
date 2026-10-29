@@ -53,13 +53,14 @@ mod data;
 mod formatter;
 mod localized;
 pub mod packs;
+mod time;
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
 use bmc_intl_message::BOLD_MARKS;
 pub use bmc_intl_message::Message;
@@ -74,11 +75,12 @@ use formatjs_icu_messageformat_parser::{MessageFormatElement, message_arguments}
 use formatjs_intl::{IntlContext, MessageCatalog, MessageDescriptorRef};
 pub use formatjs_intl::{Messages, format_message};
 pub use formatter::Intl;
-use icu_locale::LocaleFallbacker;
 use icu_locale::fallback::LocaleFallbackConfig;
 use icu_locale_core::LanguageIdentifier;
 pub use localized::Localized;
 pub use packs::{LanguageInfo, LoadReport, TextDirection};
+use time::TimeFormats;
+pub use time::{Direction, TimeUnit, TimeWidth};
 
 const DEFAULT_LOCALE: &str = "en";
 
@@ -252,8 +254,7 @@ pub fn shared_formatter(language: Language) -> Arc<Intl> {
 
 /// `language` and what it falls back to, short of `und`, in the order formatjs negotiates them.
 fn fallback_chain(language: Language) -> Vec<Language> {
-    static FALLBACKER: LazyLock<LocaleFallbacker> = LazyLock::new(|| Data::builtin().fallbacker());
-    let mut step = FALLBACKER
+    let mut step = data::builtin_fallbacker()
         .for_config(LocaleFallbackConfig::default())
         .fallback_for(LanguageIdentifier::from(language).into());
     let mut chain = Vec::new();
@@ -335,23 +336,24 @@ struct PackContents {
     web: Option<Messages>,
     /// By widget uid.
     widgets: BTreeMap<String, Messages>,
-    units: Option<units::Loaded>,
 }
 
-/// What formatters over a catalog share: CLDR data and the parse cache.
+/// What formatters over a catalog share: CLDR data, the parse cache and the time formatters.
 struct Formatting {
     catalog: Arc<MessageCatalog>,
     context: IntlContext,
+    time: Arc<TimeFormats>,
 }
 
 impl Formatting {
-    fn new(mut catalog: MessageCatalog, context: IntlContext) -> Self {
+    fn new(mut catalog: MessageCatalog, context: IntlContext, time: Arc<TimeFormats>) -> Self {
         catalog
             .insert(DEFAULT_LOCALE, HashMap::new())
             .expect("BUG: the default locale is a valid BCP-47 tag");
         Self {
             catalog: Arc::new(catalog),
             context,
+            time,
         }
     }
 }
@@ -394,14 +396,14 @@ fn load_pack(language: Language, layers: &[PathBuf], dirs: &[PathBuf]) -> Loaded
     let contents = packs::read_contents(layers, dirs, &mut report);
     // Over the base data and this pack's blob alone:
     // a pack carries its own language's data, as it must on a device that holds no other pack.
-    let context = Data::with_packs(
+    let data = Arc::new(Data::with_packs(
         contents
             .blob
             .into_iter()
             .map(|blob| (language, blob))
             .collect(),
-    )
-    .context();
+    ));
+    let context = data.context();
 
     let mut catalog = MessageCatalog::new();
     let checked = catalog
@@ -423,10 +425,13 @@ fn load_pack(language: Language, layers: &[PathBuf], dirs: &[PathBuf]) -> Loaded
     Loaded {
         report,
         contents: Some(PackContents {
-            formatting: Formatting::new(catalog, context),
+            formatting: Formatting::new(
+                catalog,
+                context,
+                Arc::new(TimeFormats::new(data, language, contents.units)),
+            ),
             web: contents.web,
             widgets: contents.widgets,
-            units: contents.units,
         }),
     }
 }
@@ -637,29 +642,29 @@ impl Translations {
         read_flag(self.pack_for(language).and_then(|pack| flags.get(&pack)))
     }
 
-    /// `language`'s unit patterns: its pack's, else English's from the base data,
-    /// where [`Self::formatter`] falls back to English too.
-    #[must_use]
-    pub fn units(&self, language: Language) -> Option<units::Loaded> {
-        match self.contents_for(language) {
-            Some(contents) => contents.units.clone(),
-            None => Some(data::builtin_units()),
-        }
-    }
-
     #[must_use]
     pub fn formatter(&self, language: Language) -> Intl {
         let formatting = self.contents_for(language).map_or_else(
             || {
                 self.english.get_or_init(|| {
-                    Formatting::new(MessageCatalog::new(), Data::builtin().context())
+                    Formatting::new(
+                        MessageCatalog::new(),
+                        Data::builtin().context(),
+                        TimeFormats::english(),
+                    )
                 })
             },
             |contents| &contents.formatting,
         );
         // FormatJS's third refusal, a poisoned cache, takes a precompiled catalog; none here is.
-        Intl::over(language, formatting.catalog.clone(), &formatting.context)
-            .expect("BUG: `en` is in every catalog and a Language's tag parses")
+        Intl::over(
+            language,
+            self.version,
+            formatting.catalog.clone(),
+            &formatting.context,
+            formatting.time.clone(),
+        )
+        .expect("BUG: `en` is in every catalog and a Language's tag parses")
     }
 
     /// How many times `language`'s pack has loaded.

@@ -23,6 +23,7 @@ use super::{
     node_is_dynamic, node_self_is_dynamic, static_bytes_key, static_hash,
 };
 use crate::tree::{AnimationDef, Draw, Node, TransitionDef};
+use bmc_intl::{Language, Translations};
 use bmc_ui::{
     AnimProperty, ArcCap, ArcFill, ArcSegments, Color, ColorSpace, Easing, LoopMode, PropsData,
     RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments, TagKind, TextStyle,
@@ -121,8 +122,8 @@ fn a_rel_time_label_change_moves_the_layout_key() {
         content: Box::new(rel_time_at(0)),
     };
 
-    let at_9 = host_layout_key(&tag, 9);
-    let at_10 = host_layout_key(&tag, 10);
+    let at_9 = host_layout_key(&tag, 9, &english());
+    let at_10 = host_layout_key(&tag, 10, &english());
     assert_ne!(
         at_9, at_10,
         "9 s and 10 s render different labels, so the layer laid out for one cannot serve the other"
@@ -140,15 +141,15 @@ fn a_rel_time_holding_its_label_holds_the_layout_key() {
     };
 
     let same = (0..4)
-        .map(|_| host_layout_key(&tag, 90))
+        .map(|_| host_layout_key(&tag, 90, &english()))
         .collect::<Vec<_>>();
     assert!(
         same.windows(2).all(|w| w[0] == w[1]),
         "the same instant must key the same, got {same:?}"
     );
     assert_eq!(
-        host_layout_key(&tag, 90),
-        host_layout_key(&tag, 91),
+        host_layout_key(&tag, 90, &english()),
+        host_layout_key(&tag, 91, &english()),
         "a coarser label spans both seconds, so nothing reflowed"
     );
 }
@@ -160,7 +161,10 @@ fn a_rel_time_sibling_moves_the_layout_key_of_its_row() {
         PropsData::default(),
         vec![canvas(vec![leaf()]), rel_time_at(0), spacer()],
     );
-    assert_ne!(host_layout_key(&row, 9), host_layout_key(&row, 10));
+    assert_ne!(
+        host_layout_key(&row, 9, &english()),
+        host_layout_key(&row, 10, &english())
+    );
 }
 
 /// A progress bar's value moves its fill, never its box,
@@ -168,8 +172,8 @@ fn a_rel_time_sibling_moves_the_layout_key_of_its_row() {
 #[test]
 fn a_progress_value_leaves_the_layout_key_alone() {
     assert_eq!(
-        host_layout_key(&progress_bar(4.0, 0.1), 0),
-        host_layout_key(&progress_bar(4.0, 0.9), 0)
+        host_layout_key(&progress_bar(4.0, 0.1), 0, &english()),
+        host_layout_key(&progress_bar(4.0, 0.9), 0, &english())
     );
 }
 
@@ -178,8 +182,8 @@ fn a_progress_value_leaves_the_layout_key_alone() {
 #[test]
 fn a_progress_track_moves_the_layout_key() {
     assert_ne!(
-        host_layout_key(&progress_bar(4.0, 0.5), 0),
-        host_layout_key(&progress_bar(8.0, 0.5), 0)
+        host_layout_key(&progress_bar(4.0, 0.5), 0, &english()),
+        host_layout_key(&progress_bar(8.0, 0.5), 0, &english())
     );
 }
 
@@ -200,9 +204,33 @@ fn a_rel_time_style_moves_the_layout_key() {
         },
     };
     assert_ne!(
-        host_layout_key(&styled(14), 0),
-        host_layout_key(&styled(28), 0)
+        host_layout_key(&styled(14), 0, &english()),
+        host_layout_key(&styled(28), 0, &english())
     );
+}
+
+#[test]
+fn a_new_language_moves_the_layout_key_of_the_same_label() {
+    assert_ne!(
+        host_layout_key(&rel_time_at(0), 90, &english()),
+        host_layout_key(&rel_time_at(0), 90, &bmc_intl::formatter(Language::ZH)),
+        "the same count words differently, so a layer laid out in one language cannot serve another"
+    );
+}
+
+#[test]
+fn reloaded_translations_move_the_layout_key_of_the_same_label() {
+    let before = Translations::load(&[]).0.formatter(Language::ZH);
+    let after = Translations::load(&[]).0.formatter(Language::ZH);
+    assert_ne!(
+        host_layout_key(&rel_time_at(0), 90, &before),
+        host_layout_key(&rel_time_at(0), 90, &after),
+        "a pack (re)loaded for the language may word the label anew, and wider"
+    );
+}
+
+fn english() -> bmc_intl::Intl {
+    bmc_intl::formatter(Language::default())
 }
 
 /// A tree the clock cannot touch must key identically forever, or every
@@ -213,7 +241,20 @@ fn a_tree_without_host_time_keys_the_same_at_any_instant() {
         PropsData::default(),
         vec![canvas(vec![leaf(), animated(leaf())]), spacer()],
     );
-    assert_eq!(host_layout_key(&tree, 0), host_layout_key(&tree, 10_000));
+    assert_eq!(
+        host_layout_key(&tree, 0, &english()),
+        host_layout_key(&tree, 10_000, &english())
+    );
+}
+
+/// Nor may the language move it: a language change would recapture every widget's layer.
+#[test]
+fn a_tree_without_host_time_keys_the_same_in_any_language() {
+    let tree = Node::Column(PropsData::default(), vec![canvas(vec![leaf()]), spacer()]);
+    assert_eq!(
+        host_layout_key(&tree, 0, &english()),
+        host_layout_key(&tree, 0, &bmc_intl::formatter(Language::ZH))
+    );
 }
 
 fn absolute_paragraph() -> Node {

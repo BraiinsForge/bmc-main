@@ -321,6 +321,7 @@ strsim = "0.11.1"
 # each time a widget wakes (BDK-1011), so the fork stays until femtovg goes.
 femtovg = { git = "https://github.com/BraiinsForge/femtovg.git", rev = "45047b19d18b0b444aca195a3fd13b2fb83bc525" }
 file-rotate = "0.7.6"
+fixed_decimal = { version = "0.7.3", default-features = false }
 flate2 = { version = "1.0.30", default-features = false }
 flume = { version = "0.12.0", default-features = false }
 foldhash = { version = "0.2", default-features = false }
@@ -356,8 +357,12 @@ humantime-serde = "1.1.1"
 hyper = "1.6.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
 iana-time-zone = "0.1.63"
+icu_decimal = { version = "~2.4.0", default-features = false, features = ["serde"] }
+# The release built against ICU4X 2.4: the two minors move together.
+icu_experimental = { version = "~0.7.0", default-features = false, features = ["serde"] }
 icu_locale = { version = "~2.4.0", default-features = false, features = ["serde"] }
 icu_locale_core = { version = "~2.4.0", default-features = false, features = ["alloc"] }
+icu_plurals = { version = "~2.4.0", default-features = false, features = ["serde"] }
 icu_provider = { version = "~2.4.0", default-features = false, features = ["sync"] }
 icu_provider_adapters = { version = "~2.4.0", default-features = false, features = ["serde"] }
 icu_provider_blob = { version = "~2.4.0", default-features = false, features = ["alloc"] }
