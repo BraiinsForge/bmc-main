@@ -547,6 +547,7 @@ mod tests {
     use bmc_system_overlay::Layering;
 
     use super::*;
+    use bmc_system_overlay::layer_check::assert_release_frees_the_layer;
 
     const SIZE: (u32, u32) = (480, 1280);
 
@@ -618,20 +619,15 @@ mod tests {
     fn releasing_frees_the_layer_a_ring_captured() {
         let mut overlay = AlarmOverlay::new(Instant::now());
         overlay.on_alarm_ring("7:30", "AM", "Wake up", true);
-        let mut layers = ShapingRecorder::new(480.0, 1280.0).with_static_layers();
         let viewport = OverlayViewport::rectangular(SIZE.0, SIZE.1);
-        let _ = overlay.render(
-            &mut layers,
-            viewport,
-            &bmc_intl::formatter(bmc_intl::Language::default()),
-            FrameKind::Fresh,
-        );
-        assert_eq!(
-            layers.static_layer_owners(),
-            [overlay.render_state.tree.static_layer_owner().clone()]
-        );
-        overlay.release_renderer_resources(&mut layers);
-        assert!(layers.static_layer_owners().is_empty());
+        assert_release_frees_the_layer(&mut overlay, SIZE, |overlay, layers| {
+            let _ = overlay.render(
+                layers,
+                viewport,
+                &bmc_intl::formatter(bmc_intl::Language::default()),
+                FrameKind::Fresh,
+            );
+        });
     }
 
     #[test]
@@ -697,3 +693,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod static_layer_gl;

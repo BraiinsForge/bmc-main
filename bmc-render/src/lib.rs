@@ -74,15 +74,15 @@ pub use renderer::RendererAssetResolver;
 // Integration tests drive a real renderer too,
 // so they need the headless GL context the unit tests boot —
 // but they link this library without `cfg(test)`.
-#[cfg(all(
-    any(test, feature = "glyph-alloc-gate", feature = "atlas-inspect"),
-    target_os = "linux"
-))]
+#[cfg(all(any(test, feature = "gl-harness"), target_os = "linux"))]
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "no one consumer needs the whole harness")
 )]
 pub mod test_harness;
+
+#[cfg(any(test, feature = "test-support", feature = "gl-harness"))]
+pub mod gl_skip;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_tracing;

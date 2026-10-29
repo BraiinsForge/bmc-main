@@ -124,6 +124,16 @@ impl GlHarness {
         })
     }
 
+    /// [`GlHarness::new`], or `None` when headless GL is missing outside the `ci` profile.
+    ///
+    /// # Panics
+    ///
+    /// Panics when GL is missing where [`crate::gl_skip::REQUIRE_EGL`] demands it.
+    #[must_use]
+    pub fn new_or_skip() -> Option<Self> {
+        crate::gl_skip::or_skip(Self::new())
+    }
+
     /// Build a femtovg `Canvas` over the harness's GL context. The canvas
     /// borrows nothing from `self`; ordering with the harness's drop must
     /// be enforced by the caller (drop the canvas first).

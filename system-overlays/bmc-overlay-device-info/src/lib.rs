@@ -926,6 +926,7 @@ mod tests {
     use bmc_system_overlay::Snapshot;
 
     use super::*;
+    use bmc_system_overlay::layer_check::assert_release_frees_the_layer;
 
     fn t0() -> Instant {
         Instant::now()
@@ -1006,21 +1007,15 @@ mod tests {
     fn releasing_frees_the_layer_a_screen_captured() {
         let mut overlay = DeviceInfoOverlay::default();
         overlay.on_device_state(DeviceState::FactoryDefault, false);
-        let mut layers = bmc_render::renderer::test_support::ShapingRecorder::new(1_280.0, 480.0)
-            .with_static_layers();
         let viewport = OverlayViewport::rectangular(1_280, 480);
-        let _ = overlay.render(
-            &mut layers,
-            viewport,
-            &bmc_intl::formatter(bmc_intl::Language::default()),
-            FrameKind::Fresh,
-        );
-        assert_eq!(
-            layers.static_layer_owners(),
-            [overlay.render_state.tree.static_layer_owner().clone()]
-        );
-        overlay.release_renderer_resources(&mut layers);
-        assert!(layers.static_layer_owners().is_empty());
+        assert_release_frees_the_layer(&mut overlay, (1_280, 480), |overlay, layers| {
+            let _ = overlay.render(
+                layers,
+                viewport,
+                &bmc_intl::formatter(bmc_intl::Language::default()),
+                FrameKind::Fresh,
+            );
+        });
     }
 
     #[test]

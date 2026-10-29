@@ -79,12 +79,14 @@ frame-timings = []
 profiling = ["ii-stopwatch/enabled", "frame-timings"]
 # Exposes `renderer::test_support` to downstream crates' tests.
 test-support = []
+# Exposes the headless GL harness to downstream crates' tests.
+gl-harness = ["dep:glutin"]
 # Reads back femtovg's own glyph atlas, which the cache exists to keep empty,
 # and the page order a frame's glyph batches went out in.
 # Carries the headless GL harness because inspecting either needs a renderer.
-atlas-inspect = ["femtovg/debug_inspector", "dep:glutin"]
+atlas-inspect = ["femtovg/debug_inspector", "gl-harness"]
 # Builds the counting-allocator gate's harness into the library.
-glyph-alloc-gate = ["dep:glutin"]
+glyph-alloc-gate = ["gl-harness"]
 
 [[test]]
 name = "glyph_cache_alloc_gate"

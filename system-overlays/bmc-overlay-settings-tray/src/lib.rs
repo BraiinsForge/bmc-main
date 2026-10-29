@@ -2140,6 +2140,7 @@ mod replay_tests {
     use bmc_render::renderer::test_support::ShapingRecorder;
 
     use super::*;
+    use bmc_system_overlay::layer_check::assert_release_frees_the_layer;
 
     fn holding_restart() -> SettingsTrayView {
         SettingsTrayView {
@@ -2265,15 +2266,10 @@ mod replay_tests {
     #[test]
     fn releasing_frees_the_layer_the_tray_captured() {
         let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
-        let mut layers = ShapingRecorder::new(1_280.0, 480.0).with_static_layers();
         let viewport = OverlayViewport::rectangular(1_280, 480);
-        let _ = overlay.render(&mut layers, viewport, &english(), FrameKind::Fresh);
-        assert_eq!(
-            layers.static_layer_owners(),
-            [overlay.render_state.tree.static_layer_owner().clone()]
-        );
-        overlay.release_renderer_resources(&mut layers);
-        assert!(layers.static_layer_owners().is_empty());
+        assert_release_frees_the_layer(&mut overlay, (1_280, 480), |overlay, layers| {
+            let _ = overlay.render(layers, viewport, &english(), FrameKind::Fresh);
+        });
     }
 
     #[test]
@@ -2749,3 +2745,6 @@ mod slide_tests {
         );
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod static_layer_gl;

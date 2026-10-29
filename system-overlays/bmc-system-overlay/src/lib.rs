@@ -21,9 +21,13 @@
 //! Framework for privileged system overlays rendered as wlr-layer-shell clients.
 
 mod connectivity;
+#[cfg(all(feature = "test-support", target_os = "linux"))]
+pub mod gl_check;
 mod gpu;
 mod hosted;
 mod icon;
+#[cfg(feature = "test-support")]
+pub mod layer_check;
 mod overlay;
 mod standalone;
 mod surface;

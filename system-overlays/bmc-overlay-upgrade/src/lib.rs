@@ -450,6 +450,7 @@ mod tests {
     use bmc_system_overlay::{Language, NextFrame};
 
     use super::*;
+    use bmc_system_overlay::layer_check::assert_release_frees_the_layer;
 
     const DECK: (u32, u32) = (1_280, 480);
     const BMM101: (u32, u32) = (480, 320);
@@ -670,21 +671,18 @@ mod tests {
     fn releasing_frees_the_layer_a_card_captured() {
         let mut overlay = UpgradeOverlay::packages_for_display(DECK);
         overlay.state.receive(verifying_packages(), Instant::now());
-        let (width, height) = PACKAGE_CARD_SURFACE_SIZE_LARGE;
-        #[expect(clippy::cast_precision_loss, reason = "card sizes are small")]
-        let mut layers = ShapingRecorder::new(width as f32, height as f32).with_static_layers();
-        let _ = overlay.state.render(
-            &mut layers,
+        assert_release_frees_the_layer(
+            &mut overlay,
             PACKAGE_CARD_SURFACE_SIZE_LARGE,
-            &bmc_intl::formatter(bmc_intl::Language::default()),
-            FrameKind::Fresh,
+            |overlay, layers| {
+                let _ = overlay.state.render(
+                    layers,
+                    PACKAGE_CARD_SURFACE_SIZE_LARGE,
+                    &bmc_intl::formatter(bmc_intl::Language::default()),
+                    FrameKind::Fresh,
+                );
+            },
         );
-        assert_eq!(
-            layers.static_layer_owners(),
-            [overlay.state.render_state.tree.static_layer_owner().clone()]
-        );
-        overlay.release_renderer_resources(&mut layers);
-        assert!(layers.static_layer_owners().is_empty());
     }
 
     #[test]
@@ -868,3 +866,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod static_layer_gl;

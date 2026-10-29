@@ -104,35 +104,12 @@ pub mod headless_egl {
         });
     }
 
-    /// Set by the Nix `ci` profile, the one that supplies Mesa.
-    /// A failed init there means a broken profile, not a machine
-    /// without a GPU, and a skip would pass — hiding exactly that.
-    const REQUIRE_EGL: &str = "BMC_REQUIRE_HEADLESS_EGL";
-
-    /// Try to build a surfaceless EGL display + GL context at `w × h`.
-    /// Returns `None` and logs a skip-reason when EGL initialization fails
-    /// — the common case is running `cargo test` outside the Nix `ci` profile,
-    /// which is fine for local dev but means these tests are no-ops there.
+    /// Try to build a surfaceless EGL display + GL context at `w × h`,
+    /// skipping the test outside the Nix `ci` profile as [`bmc_render::gl_skip::or_skip`] does.
     ///
-    /// A skip is a *pass*, which is why `.config/nextest.toml` surfaces it
-    /// and [`REQUIRE_EGL`] makes it fatal where Mesa is supplied.
+    /// A skip is a *pass*, which is why `.config/nextest.toml` surfaces it.
     pub fn try_init(w: u32, h: u32) -> Option<HeadlessGl> {
-        match init(w, h) {
-            Ok(state) => Some(state),
-            Err(err) => {
-                assert!(
-                    std::env::var_os(REQUIRE_EGL).is_none(),
-                    "{REQUIRE_EGL} is set, so skipping here would report a green run \
-                     for tests that never executed: {err:#}"
-                );
-                eprintln!(
-                    "skipping integration test: headless EGL init failed — {err:#}\n\
-                     (this test requires the `ci` build profile from nix/profiles.nix, \
-                     which supplies Mesa + llvmpipe + surfaceless EGL)"
-                );
-                None
-            }
-        }
+        bmc_render::gl_skip::or_skip(init(w, h))
     }
 
     fn init(w: u32, h: u32) -> Result<HeadlessGl> {
