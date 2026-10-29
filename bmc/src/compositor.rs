@@ -154,7 +154,7 @@ pub struct SceneLayout {
     /// it against its cycling list to update entries in place instead of
     /// rebuilding. `None` marks the no-scene sentinel — the layout the
     /// tracker falls back to with nothing configured — which
-    /// [`SceneLayout::placeholder`] resolves to [`ScenePlaceholder::Logo`].
+    /// [`SceneLayout::placeholder`] resolves to [`ScenePlaceholder::Empty`].
     pub scene_id: Option<crate::scene::SceneId>,
     /// Per-scene automatic cycling duration override. `None` uses the
     /// global scene-cycling default.
@@ -173,12 +173,13 @@ pub enum ScenePlaceholder {
     /// Combined scene with no widgets configured: there is nothing to load,
     /// so it shows the separator grid with empty cells instead of the logo.
     Grid,
-    /// The no-scene sentinel (`scene_id == None`): the branding logo alone —
-    /// a caption would suggest a load that is not happening.
-    Logo,
+    /// The no-scene sentinel (`scene_id == None`): the product's branding
+    /// without the "Loading scene…" caption,
+    /// which would suggest a load that is not happening.
+    Empty,
     /// A configured scene whose widgets have not painted their first frame:
-    /// the branding logo with the "Loading scene…" caption below it.
-    LogoWithCaption,
+    /// the product's branding with the "Loading scene…" caption.
+    Loading,
 }
 
 impl SceneLayout {
@@ -188,9 +189,9 @@ impl SceneLayout {
         if self.combined && self.widgets.is_empty() {
             ScenePlaceholder::Grid
         } else if self.scene_id.is_some() {
-            ScenePlaceholder::LogoWithCaption
+            ScenePlaceholder::Loading
         } else {
-            ScenePlaceholder::Logo
+            ScenePlaceholder::Empty
         }
     }
 }
@@ -661,8 +662,11 @@ mod tests {
     }
 
     #[test]
-    fn sentinel_layout_shows_logo_alone() {
-        assert_eq!(SceneLayout::default().placeholder(), ScenePlaceholder::Logo);
+    fn sentinel_layout_shows_empty_placeholder() {
+        assert_eq!(
+            SceneLayout::default().placeholder(),
+            ScenePlaceholder::Empty
+        );
     }
 
     #[test]
@@ -676,24 +680,24 @@ mod tests {
     }
 
     #[test]
-    fn unpainted_combined_scene_with_widgets_shows_loading_caption() {
+    fn unpainted_combined_scene_with_widgets_shows_loading_placeholder() {
         let layout = SceneLayout {
             scene_id: Some(crate::scene::SceneId::generate()),
             combined: true,
             widgets: vec![placement()],
             ..SceneLayout::default()
         };
-        assert_eq!(layout.placeholder(), ScenePlaceholder::LogoWithCaption);
+        assert_eq!(layout.placeholder(), ScenePlaceholder::Loading);
     }
 
     #[test]
-    fn unpainted_fullscreen_scene_shows_loading_caption() {
+    fn unpainted_fullscreen_scene_shows_loading_placeholder() {
         let layout = SceneLayout {
             scene_id: Some(crate::scene::SceneId::generate()),
             widgets: vec![placement()],
             ..SceneLayout::default()
         };
-        assert_eq!(layout.placeholder(), ScenePlaceholder::LogoWithCaption);
+        assert_eq!(layout.placeholder(), ScenePlaceholder::Loading);
     }
 
     #[tokio::test]

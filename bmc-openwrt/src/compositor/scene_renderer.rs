@@ -844,7 +844,7 @@ impl SceneRenderer {
                             alpha: rendered.alpha,
                         });
                     }
-                    ScenePlaceholder::Logo => {
+                    ScenePlaceholder::Empty => {
                         if self.logo_png.is_some() {
                             logo_scenes.push(LogoScene {
                                 x_offset: rendered.x_offset,
@@ -853,7 +853,7 @@ impl SceneRenderer {
                             });
                         }
                     }
-                    ScenePlaceholder::LogoWithCaption => {
+                    ScenePlaceholder::Loading => {
                         if self.logo_png.is_some() {
                             logo_scenes.push(LogoScene {
                                 x_offset: rendered.x_offset,
