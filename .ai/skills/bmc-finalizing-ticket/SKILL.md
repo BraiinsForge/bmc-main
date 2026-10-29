@@ -42,10 +42,11 @@ reviewers read is the history that merges.
 
 The commit message is the only place a ticket reference belongs. This is an open-source repo, and `git log` already ties
 every line back to its ticket, so strip `BDK-`/`BOS-` mentions from code comments, `docs/`, and protocol XML copyright
-blocks before offering the branch. Find the ones this branch added with:
+blocks before offering the branch. The one exception is a TODO: the Definition of Done requires it to name the ticket
+that tracks it, as `TODO(BDK-<ticket>): …`, so that reference stays. Find the ones this branch added with:
 
 ```bash
-git diff "$(git merge-base HEAD origin/master)"..HEAD | grep -E '^\+.*(BDK|BOS)-[0-9]'
+git diff "$(git merge-base HEAD origin/master)"..HEAD | grep -E '^\+.*(BDK|BOS)-[0-9]' | grep -v -E 'TODO\((BDK|BOS)-[0-9]+\)'
 ```
 
 Older references elsewhere in the tree are not this branch's to clean up.
@@ -86,7 +87,8 @@ When you do open the MR (with `glab`, run unsandboxed):
 
 - Never offer a branch for review with the scratch devlog still committed.
 - Never skip `just validate` (the formatter step is load-bearing) before calling a ticket done.
-- Never leave a ticket reference in code, docs or a protocol XML copyright block; the commit message is its only home.
+- Never leave a ticket reference in code, docs or a protocol XML copyright block; the commit message is its only home. A
+  TODO's own ticket is the exception and stays.
 - Never finalize a Story ticket without the `docs/stories/` entry — route through `finalizing-story-ticket`.
 - Never treat push / MR creation as an automatic finalization step; it is a separate, explicit action.
 - Never open an MR with no assignee — the assignee is always the opener.
