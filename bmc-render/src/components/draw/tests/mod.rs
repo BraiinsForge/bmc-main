@@ -24,7 +24,7 @@ use std::rc::Rc;
 
 use super::transition::{interpolate_draw_values, normalize_angle_deg, shortest_angle_delta_deg};
 use super::*;
-use crate::renderer::RendererAssetResolver;
+use crate::renderer::{FrameBackground, FrameClear, RendererAssetResolver};
 use crate::{PrevDrawValues, TransitionStateKey};
 use bmc_ui::*;
 use bmc_ui::{AutoFit, Span};
@@ -124,6 +124,18 @@ impl RenderFrame for RecordingRenderer {
     fn set_brightness(&mut self, _brightness: f32) {}
 
     fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+    fn begin_frame_with_clear(
+        &mut self,
+        _width: u32,
+        _height: u32,
+        _dpi_scale: f32,
+        _background: FrameBackground,
+        _clear: FrameClear,
+    ) {
+    }
+
+    fn clear_frame(&mut self) {}
 
     fn flush(&mut self) {}
 

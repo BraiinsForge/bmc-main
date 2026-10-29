@@ -22,10 +22,11 @@
 
 #![expect(clippy::cast_precision_loss)]
 
-use super::FemtoVgRenderer;
 use super::geometry::scissor_box;
+use super::{FemtoVgRenderer, background_color};
 use crate::gpu::text::to_femtovg_color;
 use crate::interaction::Rect;
+use crate::renderer::FrameBackground;
 use crate::renderer::prelude::*;
 use bmc_ui::colors::Color;
 use femtovg::Paint;
@@ -62,7 +63,8 @@ impl FemtoVgRenderer {
     /// Begin a frame targeting a femtovg Image (offscreen render target).
     ///
     /// Like [`crate::renderer::RenderFrame::begin_frame`] but renders to the given Image instead of
-    /// the screen FBO. femtovg manages its own FBO with stencil for the Image.
+    /// the screen FBO, over [`FrameBackground::TransparentBlack`] rather than opaque black.
+    /// femtovg manages its own FBO with stencil for the Image.
     ///
     /// The image must be `width·dpi_scale × height·dpi_scale` texels.
     pub fn begin_frame_to_image(
@@ -88,8 +90,8 @@ impl FemtoVgRenderer {
         self.canvas.set_render_target(RenderTarget::Screen);
         self.canvas.set_render_target(RenderTarget::Image(image_id));
         self.frame_target = RenderTarget::Image(image_id);
-        self.canvas
-            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
+        self.background = FrameBackground::TransparentBlack;
+        self.clear_frame();
         self.scale_to_logical(dpi_scale);
         self.paragraph_cache.begin_frame();
         self.brightness = 1.0;
@@ -503,9 +505,13 @@ impl FemtoVgRenderer {
     ///
     /// Flushes first: femtovg has the frame's clear queued and raw GL would
     /// otherwise land underneath it. Returns `false` if the program or the
-    /// layer's texture is unavailable, so a failure degrades to femtovg's own
-    /// blit rather than to a blank frame.
+    /// layer's texture is unavailable, so the caller falls back to femtovg's blit
+    /// for an opaque layer, and to a full paint for a transparent one.
     fn blit_static_layer_raw(&mut self, image: femtovg::ImageId) -> bool {
+        #[cfg(test)]
+        if self.refuse_raw_blit {
+            return false;
+        }
         let Ok(texture) = self.canvas.get_native_texture(image) else {
             return false;
         };
@@ -724,6 +730,8 @@ pub(super) struct StaticLayer {
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) dpi_scale: f32,
+    /// What the capture cleared to, and so how the layer may be composited.
+    pub(super) background: FrameBackground,
     /// `false` from the start of a capture until it completes.
     /// Blitting an uncaptured layer would paint a transparent rectangle over the frame,
     /// and blitting a half-captured one only part of its static half.
@@ -941,6 +949,7 @@ impl RenderOffscreen for FemtoVgRenderer {
     // -- Static-layer cache --
 
     fn begin_static_layer(&mut self, key: &str, width: u32, height: u32) -> bool {
+        let background = self.background;
         if self.render_to_texture != RenderTargetProbe::Working {
             return false;
         }
@@ -982,6 +991,7 @@ impl RenderOffscreen for FemtoVgRenderer {
                     width,
                     height,
                     dpi_scale,
+                    background,
                     captured: false,
                 },
             );
@@ -989,6 +999,7 @@ impl RenderOffscreen for FemtoVgRenderer {
         let Some(layer) = self.static_layers.get_mut(key) else {
             return false;
         };
+        layer.background = background;
         layer.captured = false;
         let image = layer.image;
         // Deliberately not `begin_frame_to_image`: that opens a new frame on
@@ -1071,16 +1082,15 @@ impl RenderOffscreen for FemtoVgRenderer {
         );
         self.frame_target = RenderTarget::Image(image);
 
-        // Opaque, because the frame itself starts opaque black: rasterising
-        // static content against transparency and compositing it later blends
-        // those edges twice, which shows as antialiasing drift on thin geometry
-        // and text. Opaque makes the blit a copy rather than a blend.
+        // The frame's own background, so the layer holds exactly the pixels
+        // a full pass would leave. Against anything else, compositing it
+        // blends antialiased edges twice, which shows as drift on thin geometry and text.
         self.canvas.clear_rect(
             0,
             0,
             u32::from(size.width.get()),
             u32::from(size.height.get()),
-            femtovg::Color::rgbf(0.0, 0.0, 0.0),
+            background_color(background),
         );
         true
     }
@@ -1104,16 +1114,26 @@ impl RenderOffscreen for FemtoVgRenderer {
         }
     }
 
+    fn static_layer_stale(&self, key: &str) -> bool {
+        self.static_layers
+            .get(key)
+            .is_some_and(|layer| layer.background != self.background)
+    }
+
     fn blit_static_layer(&mut self, key: &str) -> bool {
         let Some(layer) = self.static_layers.get(key) else {
             return false;
         };
-        if !layer.captured {
+        if !layer.captured || layer.background != self.background {
             return false;
         }
         let (image, w, h) = (layer.image, layer.width as f32, layer.height as f32);
+        let background = layer.background;
         if self.blit_static_layer_raw(image) {
             return true;
+        }
+        if background == FrameBackground::TransparentBlack {
+            return false;
         }
 
         // No canvas transform: the fast path below ignores it, and the Y-flip
@@ -1138,10 +1158,14 @@ impl RenderOffscreen for FemtoVgRenderer {
         let Some(layer) = self.static_layers.get(key) else {
             return false;
         };
-        if !layer.captured {
+        if !layer.captured || layer.background != self.background {
             return false;
         }
         let image = layer.image;
+        #[cfg(test)]
+        if self.refuse_raw_blit {
+            return false;
+        }
         let Ok(texture) = self.canvas.get_native_texture(image) else {
             return false;
         };

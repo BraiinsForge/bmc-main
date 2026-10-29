@@ -365,6 +365,11 @@ fn a_capture_that_loses_its_layer_paints_as_a_plain_frame() {
         "a lost layer must report the miss, got {:?}",
         result.static_layer
     );
+    assert_eq!(
+        renderer.clears,
+        [renderer.drawn() - plain.drawn()],
+        "the full paint must start from the frame's background, after the capture and before its own draws"
+    );
     assert!(
         renderer.meshes.ends_with(&plain.meshes),
         "the full paint must walk as a plain frame does: {:?} after the capture, {:?} plain",

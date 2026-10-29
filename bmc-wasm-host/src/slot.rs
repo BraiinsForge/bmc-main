@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use bmc_render::FrameTimings;
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::FrameClear;
+use bmc_render::renderer::{FrameBackground, FrameClear};
 use bmc_render::renderer::{RenderAssets, Renderer};
 use bmc_wasm_runtime::{
     DiskCache, LedEffect, LedRequest, LedScope, NetworkInfo, NextAlarm as RuntimeNextAlarm,
@@ -1665,9 +1665,9 @@ fn bind_export_target_for_frame(
     let clear = if preserve {
         FrameClear::Keep
     } else {
-        FrameClear::OpaqueBlack
+        FrameClear::Clear
     };
-    renderer.begin_frame_with_clear(width, height, 1.0, clear);
+    renderer.begin_frame_with_clear(width, height, 1.0, FrameBackground::OpaqueBlack, clear);
     Ok(())
 }
 

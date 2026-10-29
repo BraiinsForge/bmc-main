@@ -58,6 +58,10 @@ mod multiline_text;
 mod text_overflow_pixel;
 
 #[cfg(target_os = "linux")]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "frame numbers and the dimensions of a 96×64 target"
+)]
 mod static_layer_pixels;
 
 mod scissor;

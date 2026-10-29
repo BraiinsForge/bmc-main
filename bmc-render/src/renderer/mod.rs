@@ -121,19 +121,29 @@ pub enum AssetSuspendResult<Id> {
     Unknown,
 }
 
-/// Base clear policy for a render frame.
+/// Whether a frame starts by clearing its target to its [`FrameBackground`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameClear {
-    /// Opaque black frame base, used by normal widget surfaces.
-    OpaqueBlack,
-    /// Transparent black frame base, used by composited overlays.
-    TransparentBlack,
+    /// Start from the background alone.
+    Clear,
     /// Leave the target's existing pixels alone.
     ///
     /// For a damage-tracked frame: everything outside the repainted regions is
     /// still correct from an earlier frame, and clearing would destroy exactly
     /// the pixels the damage tracking exists to preserve.
     Keep,
+}
+
+/// The surface a frame paints on, whether the frame clears its target or keeps it.
+///
+/// The renderer holds it for the whole frame:
+/// a static layer is captured against it, and a miss clears back to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameBackground {
+    /// Widget surfaces.
+    OpaqueBlack,
+    /// Composited overlays, whose transparent pixels show what lies beneath.
+    TransparentBlack,
 }
 
 /// Rendering backend trait.
@@ -184,22 +194,32 @@ pub trait RenderFrame {
 
     // -- Frame lifecycle --
 
-    /// Begin a frame with DPI scaling.
+    /// Begin a frame with DPI scaling, cleared to [`FrameBackground::OpaqueBlack`].
     ///
     /// `dpi_scale` > 1.0 renders at higher internal resolution for sharper text.
     /// The coordinate system stays at `width × height` logical pixels.
     fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32);
 
-    /// Begin a frame with an explicit clear policy.
+    /// Begin a frame on `background`, clearing the target to it or keeping what it holds.
+    ///
+    /// No default, as [`Self::clear_frame`] has none:
+    /// a renderer that dropped the background could not know what to clear to.
     fn begin_frame_with_clear(
         &mut self,
         width: u32,
         height: u32,
         dpi_scale: f32,
-        _clear: FrameClear,
-    ) {
-        self.begin_frame(width, height, dpi_scale);
-    }
+        background: FrameBackground,
+        clear: FrameClear,
+    );
+
+    /// Replace every pixel of the current target with the frame's background.
+    ///
+    /// A replacement, not a fill: painting transparent black over a target
+    /// changes nothing, so a fill cannot reset an overlay's frame.
+    /// No default: an implementor that ignored it would leave the previous
+    /// frame showing wherever the repaint draws nothing.
+    fn clear_frame(&mut self);
 
     fn flush(&mut self);
 
@@ -636,12 +656,12 @@ pub trait RenderOffscreen {
     // drawing every frame in full.
 
     /// Begin capturing draws into `key`'s cached static layer, `width` x
-    /// `height` logical pixels at the renderer's current device-pixel ratio.
-    /// Returns `false` if no layer is available, in which case the caller must
-    /// fall back to a full frame.
+    /// `height` logical pixels at the renderer's current device-pixel ratio,
+    /// over the frame's background.
+    /// Returns `false` if no layer is available, and the caller must then fall back to a full frame.
     ///
     /// The layer stops counting as captured until [`Self::end_static_layer`]
-    /// succeeds, so a capture abandoned halfway is never blitted.
+    /// completes, so a capture abandoned halfway is never blitted.
     ///
     /// `key` identifies the owning widget instance. One renderer is shared by
     /// every widget slot and system overlay, so a layer keyed by geometry alone
@@ -655,8 +675,20 @@ pub trait RenderOffscreen {
     /// Stop capturing `key`'s layer and restore the previous render target.
     fn end_static_layer(&mut self, _key: &str) {}
 
+    /// Whether `key` holds a layer captured over a background other than the frame's.
+    /// Such a layer is recaptured rather than blitted:
+    /// the surface changed, not the layer's usefulness.
+    fn static_layer_stale(&self, _key: &str) -> bool {
+        false
+    }
+
     /// Composite `key`'s cached layer into the current target. Returns `false`
     /// when no valid layer exists — the caller must then render a full frame.
+    ///
+    /// A layer captured over [`FrameBackground::TransparentBlack`] is only ever copied:
+    /// blending it would let whatever the target held show through its transparent pixels.
+    /// When the copy is unavailable, or the layer is [stale](Self::static_layer_stale),
+    /// this returns `false`.
     fn blit_static_layer(&mut self, _key: &str) -> bool {
         false
     }

@@ -43,8 +43,8 @@ use std::time::{Duration, Instant};
 use bmc_overlay_settings_tray::ui::{Action, Hold, Phase, Status};
 use bmc_overlay_settings_tray::{SettingsTrayRenderState, SettingsTrayView, render_settings_tray};
 use bmc_render::gpu::mesh::MeshDrawArgs;
-use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::prelude::*;
+use bmc_render::renderer::{FrameBackground, FrameClear};
 use bmc_render::ui::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color, Fill, MeshId,
     Span, SvgId, TextOverflow, TextStyle,
@@ -127,9 +127,12 @@ impl RenderFrame for ProbeRenderer {
         _width: u32,
         _height: u32,
         _dpi_scale: f32,
+        _background: FrameBackground,
         _clear: FrameClear,
     ) {
     }
+
+    fn clear_frame(&mut self) {}
 
     fn flush(&mut self) {}
 

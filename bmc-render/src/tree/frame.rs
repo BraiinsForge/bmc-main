@@ -43,7 +43,6 @@ use crate::{
     AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
 };
 use anyhow::Result;
-use bmc_ui::Color;
 use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(feature = "frame-timings")]
@@ -64,7 +63,8 @@ pub enum LayerUse {
     /// over it. For a frame whose static content has changed, or the first one.
     Capture,
     /// Blit the stored layer instead of rasterising the static half again.
-    /// Falls back to a full pass if the blit fails.
+    /// Recaptures a layer captured over another background,
+    /// and falls back to a full pass if the blit fails.
     Reuse,
 }
 
@@ -432,43 +432,49 @@ fn render_tree(
         renderer.flush_and_fence_us();
     }
 
+    let static_layer = match static_layer {
+        LayerUse::Reuse if renderer.static_layer_stale(static_layer_key) => LayerUse::Capture,
+        LayerUse::Ignore | LayerUse::Capture | LayerUse::Reuse => static_layer,
+    };
     match (anim_ctx.emit, static_layer) {
         (EmitMode::All, LayerUse::Capture) => {
-            if renderer.begin_static_layer(static_layer_key, width as u32, height as u32) {
-                anim_ctx.emit = EmitMode::StaticOnly;
-                render_taffy_node(
-                    taffy,
-                    root_id,
-                    0.0,
-                    0.0,
-                    renderer,
-                    interaction,
-                    scroll_states,
-                    result,
-                    anim_ctx,
-                    0,
-                );
-                renderer.end_static_layer(static_layer_key);
-                #[cfg(feature = "frame-timings")]
-                if pass_timing {
-                    timings.gpu_capture_us = renderer.flush_and_fence_us();
-                }
-                let blitted = renderer.blit_static_layer(static_layer_key);
-                #[cfg(feature = "frame-timings")]
-                if pass_timing {
-                    timings.gpu_blit_us = renderer.flush_and_fence_us();
-                }
-                restart_walk(anim_ctx);
-                if blitted {
-                    result.static_layer = StaticLayer::Captured {
-                        empty: !anim_ctx.layer_painted,
-                    };
-                    anim_ctx.emit = EmitMode::DynamicOnly;
+            let on_screen =
+                if renderer.begin_static_layer(static_layer_key, width as u32, height as u32) {
+                    anim_ctx.emit = EmitMode::StaticOnly;
+                    render_taffy_node(
+                        taffy,
+                        root_id,
+                        0.0,
+                        0.0,
+                        renderer,
+                        interaction,
+                        scroll_states,
+                        result,
+                        anim_ctx,
+                        0,
+                    );
+                    renderer.end_static_layer(static_layer_key);
+                    #[cfg(feature = "frame-timings")]
+                    if pass_timing {
+                        timings.gpu_capture_us = renderer.flush_and_fence_us();
+                    }
+                    let blitted = renderer.blit_static_layer(static_layer_key);
+                    #[cfg(feature = "frame-timings")]
+                    if pass_timing {
+                        timings.gpu_blit_us = renderer.flush_and_fence_us();
+                    }
+                    restart_walk(anim_ctx);
+                    blitted
                 } else {
-                    paint_in_full(renderer, width, height, result, anim_ctx);
-                }
+                    false
+                };
+            if on_screen {
+                result.static_layer = StaticLayer::Captured {
+                    empty: !anim_ctx.layer_painted,
+                };
+                anim_ctx.emit = EmitMode::DynamicOnly;
             } else {
-                paint_in_full(renderer, width, height, result, anim_ctx);
+                paint_in_full(renderer, result, anim_ctx);
             }
         }
         // Nothing static changed since the layer was captured,
@@ -489,7 +495,7 @@ fn render_tree(
                 }
                 anim_ctx.emit = EmitMode::DynamicOnly;
             } else {
-                paint_in_full(renderer, width, height, result, anim_ctx);
+                paint_in_full(renderer, result, anim_ctx);
             }
         }
         (EmitMode::All, LayerUse::Ignore) | (EmitMode::StaticOnly | EmitMode::DynamicOnly, _) => {}
@@ -529,19 +535,16 @@ fn restart_walk(anim_ctx: &mut AnimationContext<'_>) {
     anim_ctx.mesh_slot_counter = 0;
 }
 
-/// Give up on the layer for this frame and paint the whole tree.
+/// Give up on the layer for this frame and paint the whole tree over the frame's background.
 fn paint_in_full(
     renderer: &mut RenderTarget<'_, '_, '_>,
-    width: f32,
-    height: f32,
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
     // The walk repaints every draw but only where a draw paints,
     // so on a target the caller left uncleared,
     // whatever the dynamic half painted last frame would stay where it was.
-    // Opaque black, to match what `begin_static_layer` captures against.
-    renderer.fill_rect(0.0, 0.0, width, height, Color::from_rgb(0, 0, 0));
+    renderer.clear_frame();
     result.static_layer = StaticLayer::Missed;
     anim_ctx.emit = EmitMode::All;
 }

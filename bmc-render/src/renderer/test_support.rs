@@ -47,7 +47,7 @@ use crate::gpu::renderer::{Fonts, build_font_system, sans_line_style};
 use crate::gpu::text::ParagraphLayoutCache;
 use crate::renderer::prelude::*;
 use crate::renderer::reservations::TagReservations;
-use crate::renderer::{AssetSuspendResult, AssetTagState};
+use crate::renderer::{AssetSuspendResult, AssetTagState, FrameBackground, FrameClear};
 
 /// One recorded [`RenderText::draw_text`] call.
 #[derive(Clone, Debug, PartialEq)]
@@ -191,6 +191,18 @@ impl RenderFrame for ShapingRecorder {
     fn set_brightness(&mut self, _brightness: f32) {}
 
     fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+    fn begin_frame_with_clear(
+        &mut self,
+        _width: u32,
+        _height: u32,
+        _dpi_scale: f32,
+        _background: FrameBackground,
+        _clear: FrameClear,
+    ) {
+    }
+
+    fn clear_frame(&mut self) {}
 
     fn flush(&mut self) {}
 

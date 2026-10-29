@@ -185,23 +185,14 @@ fn a_failed_layer_blit_lays_the_frame_base_before_the_walk() {
     )
     .expect("BUG: layout_and_render must succeed for the moving dot");
 
-    let first = renderer
-        .draws
-        .first()
-        .expect("BUG: the fallback walk must paint something");
     assert!(
-        first.x <= 0.0 && first.y <= 0.0 && first.w >= 100.0 && first.h >= 100.0,
-        "the first draw must cover the surface, got {:?}",
-        renderer.draws
+        !renderer.draws.is_empty(),
+        "BUG: the fallback walk must paint something"
     );
-    let (_, base, _) = renderer
-        .fills
-        .first()
-        .expect("BUG: the base is a fill_rect, so it must be recorded");
     assert_eq!(
-        *base,
-        Color::from_rgb(0, 0, 0),
-        "a base that is not opaque lets last frame's pixels show through",
+        renderer.clears,
+        [0],
+        "the base must be laid before the walk's first draw, or last frame's pixels show through",
     );
     assert!(
         matches!(result.static_layer, super::StaticLayer::Missed),

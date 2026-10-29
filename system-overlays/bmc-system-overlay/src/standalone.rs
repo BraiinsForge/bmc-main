@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 
 use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::prelude::*;
+use bmc_render::renderer::{FrameBackground, FrameClear};
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
@@ -491,7 +491,13 @@ fn render_frame(
     // begin_frame binds the staging FBO and sets the viewport, returning its id.
     // The renderer was constructed against that id, so the returned value is unused.
     let _staging = scratch.begin_frame(egl, size.0, size.1);
-    renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
+    renderer.begin_frame_with_clear(
+        size.0,
+        size.1,
+        1.0,
+        FrameBackground::TransparentBlack,
+        FrameClear::Clear,
+    );
     let outcome = overlay.render(renderer, client.viewport(size), frame);
     renderer.flush();
     scratch.blit_to(egl, target.current_fbo(), size.0, size.1);

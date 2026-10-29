@@ -22,11 +22,11 @@
 
 use super::AssetSuspendResult;
 use super::AssetTagState;
-use super::FrameClear;
 use super::GlyphCacheCounters;
 use super::RendererAssetResolver;
 use super::SvgContent;
 use super::TextLayoutCounters;
+use super::{FrameBackground, FrameClear};
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::Rect;
 use crate::renderer::prelude::*;
@@ -114,10 +114,15 @@ impl RenderFrame for RenderTarget<'_, '_, '_> {
         width: u32,
         height: u32,
         dpi_scale: f32,
+        background: FrameBackground,
         clear: FrameClear,
     ) {
         self.renderer
-            .begin_frame_with_clear(width, height, dpi_scale, clear);
+            .begin_frame_with_clear(width, height, dpi_scale, background, clear);
+    }
+
+    fn clear_frame(&mut self) {
+        self.renderer.clear_frame();
     }
 
     fn flush(&mut self) {
@@ -552,6 +557,10 @@ impl RenderOffscreen for RenderTarget<'_, '_, '_> {
 
     fn end_static_layer(&mut self, key: &str) {
         self.renderer.end_static_layer(key);
+    }
+
+    fn static_layer_stale(&self, key: &str) -> bool {
+        self.renderer.static_layer_stale(key)
     }
 
     fn blit_static_layer(&mut self, key: &str) -> bool {

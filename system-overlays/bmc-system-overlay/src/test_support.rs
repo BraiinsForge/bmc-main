@@ -22,6 +22,7 @@
 
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::prelude::*;
+use bmc_render::renderer::{FrameBackground, FrameClear};
 use bmc_render::ui::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color, Fill, MeshId,
     Span, SvgId, TextStyle,
@@ -53,6 +54,18 @@ impl RenderFrame for TestRenderer {
     fn set_brightness(&mut self, _brightness: f32) {}
 
     fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+    fn begin_frame_with_clear(
+        &mut self,
+        _width: u32,
+        _height: u32,
+        _dpi_scale: f32,
+        _background: FrameBackground,
+        _clear: FrameClear,
+    ) {
+    }
+
+    fn clear_frame(&mut self) {}
 
     fn flush(&mut self) {}
 

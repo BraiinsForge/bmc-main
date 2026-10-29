@@ -41,8 +41,8 @@ use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
 use super::text::{FontTable, ParagraphLayoutCache, build_font_table, to_femtovg_color};
 use crate::components::draw::is_full_turn;
-use crate::renderer::FrameClear;
 use crate::renderer::prelude::*;
+use crate::renderer::{FrameBackground, FrameClear};
 
 mod assets;
 mod fonts;
@@ -110,6 +110,8 @@ pub struct FemtoVgRenderer {
     /// and restoring `Screen` blindly would strand the rest of an image-backed frame
     /// on the window.
     frame_target: RenderTarget,
+    /// The surface the frame in progress paints on; see [`FrameBackground`].
+    background: FrameBackground,
     shadow_fbo_pool: Option<ShadowFboPool>,
     #[cfg(feature = "profiling")]
     glyph_report_every: ii_stopwatch::Every,
@@ -141,6 +143,9 @@ pub struct FemtoVgRenderer {
     /// Minimal textured-quad program used to composite the static layer
     /// without going through femtovg. See [`FemtoVgRenderer::raw_blit`].
     raw_blit: Option<RawBlit>,
+    /// Fails every raw layer copy, as a driver that cannot build the program does.
+    #[cfg(test)]
+    refuse_raw_blit: bool,
 }
 
 impl std::fmt::Debug for FemtoVgRenderer {
@@ -424,6 +429,9 @@ impl FemtoVgRenderer {
             solid_texture: None,
             brightness: 1.0,
             raw_blit: None,
+            background: FrameBackground::OpaqueBlack,
+            #[cfg(test)]
+            refuse_raw_blit: false,
         };
         renderer.render_to_texture = renderer.probe_render_to_texture();
         renderer.adopt_screen_stencil();
@@ -588,7 +596,13 @@ impl RenderFrame for FemtoVgRenderer {
     // -- Frame lifecycle --
 
     fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32) {
-        self.begin_frame_with_clear(width, height, dpi_scale, FrameClear::OpaqueBlack);
+        self.begin_frame_with_clear(
+            width,
+            height,
+            dpi_scale,
+            FrameBackground::OpaqueBlack,
+            FrameClear::Clear,
+        );
     }
 
     #[expect(clippy::cast_precision_loss)]
@@ -597,12 +611,14 @@ impl RenderFrame for FemtoVgRenderer {
         width: u32,
         height: u32,
         dpi_scale: f32,
+        background: FrameBackground,
         clear: FrameClear,
     ) {
         debug_assert_fringe_within_a_pixel(dpi_scale);
         self.width = width as f32;
         self.height = height as f32;
         self.dpi_scale = dpi_scale;
+        self.background = background;
         // FemtoVG's `set_render_target(Screen)` skips the SetRenderTarget command
         // when the Canvas already thinks it's targeting Screen (the default).
         // This means flush() never calls glBindFramebuffer. We must bind the
@@ -613,7 +629,7 @@ impl RenderFrame for FemtoVgRenderer {
         self.canvas.set_render_target(RenderTarget::Screen);
         self.frame_target = RenderTarget::Screen;
         // Physical pixels: femtovg sizes its viewport in them, and takes `dpi`
-        // only as a tessellation hint. `clear_rect` is untransformed too.
+        // only as a tessellation hint.
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let (pw, ph) = (
             (width as f32 * dpi_scale) as u32,
@@ -621,14 +637,7 @@ impl RenderFrame for FemtoVgRenderer {
         );
         self.canvas.set_size(pw, ph, dpi_scale);
         match clear {
-            FrameClear::OpaqueBlack => {
-                self.canvas
-                    .clear_rect(0, 0, pw, ph, femtovg::Color::rgbf(0.0, 0.0, 0.0));
-            }
-            FrameClear::TransparentBlack => {
-                self.canvas
-                    .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
-            }
+            FrameClear::Clear => self.clear_frame(),
             // Keeping the target's pixels is the point of a damage-tracked
             // frame; clearing would wipe the regions it deliberately reuses.
             FrameClear::Keep => {}
@@ -636,6 +645,13 @@ impl RenderFrame for FemtoVgRenderer {
         self.scale_to_logical(dpi_scale);
         self.paragraph_cache.begin_frame();
         self.brightness = 1.0;
+    }
+
+    fn clear_frame(&mut self) {
+        // `clear_rect` is untransformed, so it takes the target's physical size.
+        let (pw, ph) = (self.canvas.width(), self.canvas.height());
+        self.canvas
+            .clear_rect(0, 0, pw, ph, background_color(self.background));
     }
 
     fn flush(&mut self) {
@@ -890,6 +906,13 @@ impl RenderShapes for FemtoVgRenderer {
             (min_x + w / 2.0, min_y + h / 2.0, radius),
         );
         self.canvas.fill_path(&path, &paint);
+    }
+}
+
+fn background_color(background: FrameBackground) -> femtovg::Color {
+    match background {
+        FrameBackground::OpaqueBlack => femtovg::Color::rgbf(0.0, 0.0, 0.0),
+        FrameBackground::TransparentBlack => femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0),
     }
 }
 

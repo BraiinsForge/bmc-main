@@ -26,6 +26,7 @@ use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::InteractionState;
 use crate::interaction::Rect;
 use crate::renderer::prelude::*;
+use crate::renderer::{FrameBackground, FrameClear};
 // Vocabulary modules rather than the root, whose component
 // builders clash with taffy's prelude, `span` for one.
 use bmc_ui::{animation::*, arc::*, colors::*, fill::*, ids::*, relative_time::*, text::*};
@@ -50,12 +51,20 @@ struct KeyRecordingRenderer {
     captured: Vec<String>,
     /// Makes `end_static_layer` lose the layer, as an eviction mid-capture does.
     lose_captures: bool,
+    /// How many draws preceded each `clear_frame`.
+    clears: Vec<usize>,
     paragraphs: Vec<String>,
     /// Each `fill_rect`, with the brightness it painted at.
     fills: Vec<(crate::interaction::Rect, Color, f32)>,
     /// `None` means undimmed: the derived `Default` would start at black.
     brightness: Option<f32>,
     meshes: Vec<(MeshId, u8)>,
+}
+
+impl KeyRecordingRenderer {
+    fn drawn(&self) -> usize {
+        self.draws.len() + self.meshes.len()
+    }
 }
 
 impl RenderFrame for KeyRecordingRenderer {
@@ -80,6 +89,20 @@ impl RenderFrame for KeyRecordingRenderer {
     }
 
     fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+    fn begin_frame_with_clear(
+        &mut self,
+        _width: u32,
+        _height: u32,
+        _dpi_scale: f32,
+        _background: FrameBackground,
+        _clear: FrameClear,
+    ) {
+    }
+
+    fn clear_frame(&mut self) {
+        self.clears.push(self.drawn());
+    }
 
     fn flush(&mut self) {}
 

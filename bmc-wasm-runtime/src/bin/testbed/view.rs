@@ -30,8 +30,8 @@
 //! holds the same fields whether the core is here or on a worker.
 
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::prelude::*;
+use bmc_render::renderer::{FrameBackground, FrameClear};
 use bmc_wasm_runtime::platform_catalog::DisplayShape;
 use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, TargetContents, WasmWidgetRuntime};
 
@@ -899,10 +899,15 @@ impl ViewCore {
         );
         let clear = match contents {
             TargetContents::Preserved => FrameClear::Keep,
-            TargetContents::Cleared => FrameClear::OpaqueBlack,
+            TargetContents::Cleared => FrameClear::Clear,
         };
-        self.renderer
-            .begin_frame_with_clear(self.width, self.height, 1.0, clear);
+        self.renderer.begin_frame_with_clear(
+            self.width,
+            self.height,
+            1.0,
+            FrameBackground::OpaqueBlack,
+            clear,
+        );
         let outcome = self
             .runtime
             .as_mut()
