@@ -31,9 +31,12 @@ multiple compatible widgets placed on the shared grid.
 > As a user, I want clear feedback when a scene has no content to show yet, so a brief loading moment does not look like
 > a broken device.
 
-- Any scene — fullscreen or combined — whose widgets have not drawn their first frame yet shows the DECK logo with a
+- Any scene — fullscreen or combined — whose widgets have not drawn their first frame yet shows the product logo with a
   "Loading scene…" caption beneath it.
-- When no scene is configured at all, the device shows the logo alone.
+- When no scene is configured at all, the Braiins Deck shows its logo alone, and the BMM101 shows its logo with the
+  "Braiins BMM 101 / Powered by Braiins OS" lines beneath it.
+- On the BMM101 the logo and its lines sit where the boot screen draws them, so nothing moves when the device finishes
+  booting into an empty or loading scene.
 - The loading placeholder moves with the scene during swipes, transitions, and previews, just like real content.
 - An empty combined scene is not "loading": it shows its separator grid instead (see
   [Combined Scene](combined-scene.md)).
@@ -120,8 +123,9 @@ swipes and automatic rotation.
   manifests.
 - If every configured scene is disabled or unsupported, the device cannot build a normal scene-cycling list from user
   configuration.
-- The branding logo appears only on the Braiins Deck; other products show a plain dark background while a scene has no
-  rendered content.
+- The branding logo appears only on the Braiins Deck and the BMM101; the BMM100 and BFM100 show a plain dark background
+  while a scene has no rendered content.
+- The "Loading scene…" caption and the BMM101 product lines are in English only.
 - The transition effect applies to automatic cycling; a manual swipe always slides, following the finger.
 
 ## Out of scope
