@@ -640,6 +640,9 @@ pub trait RenderOffscreen {
     /// Returns `false` if no layer is available, in which case the caller must
     /// fall back to a full frame.
     ///
+    /// The layer stops counting as captured until [`Self::end_static_layer`]
+    /// succeeds, so a capture abandoned halfway is never blitted.
+    ///
     /// `key` identifies the owning widget instance. One renderer is shared by
     /// every widget slot and system overlay, so a layer keyed by geometry alone
     /// would let two equally-sized slots capture over each other and blit each

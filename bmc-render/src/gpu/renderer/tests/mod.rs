@@ -57,6 +57,9 @@ mod multiline_text;
 )]
 mod text_overflow_pixel;
 
+#[cfg(target_os = "linux")]
+mod static_layer_pixels;
+
 mod scissor;
 
 mod gradient_geometry;

@@ -432,83 +432,67 @@ fn render_tree(
         renderer.flush_and_fence_us();
     }
 
-    let split = anim_ctx.emit == EmitMode::All
-        && static_layer == LayerUse::Capture
-        && renderer.begin_static_layer(static_layer_key, width as u32, height as u32);
-    if anim_ctx.emit == EmitMode::All && static_layer == LayerUse::Capture && !split {
-        result.static_layer = StaticLayer::Missed;
-    }
-
-    // Nothing static changed since the layer was captured, so paint it rather
-    // than rasterising the same content again.
-    if !split && anim_ctx.emit == EmitMode::All && static_layer == LayerUse::Reuse {
-        // Repaint only the damaged regions when the caller supplied them; the
-        // rest of the target still holds a correct earlier frame.
-        let blitted = if damage_rects.is_empty() {
-            renderer.blit_static_layer(static_layer_key)
-        } else {
-            renderer.blit_static_layer_rects(static_layer_key, damage_rects)
-        };
-        if blitted {
-            result.static_layer = StaticLayer::Blitted;
-            #[cfg(feature = "frame-timings")]
-            if pass_timing {
-                timings.gpu_blit_us = renderer.flush_and_fence_us();
+    match (anim_ctx.emit, static_layer) {
+        (EmitMode::All, LayerUse::Capture) => {
+            if renderer.begin_static_layer(static_layer_key, width as u32, height as u32) {
+                anim_ctx.emit = EmitMode::StaticOnly;
+                render_taffy_node(
+                    taffy,
+                    root_id,
+                    0.0,
+                    0.0,
+                    renderer,
+                    interaction,
+                    scroll_states,
+                    result,
+                    anim_ctx,
+                    0,
+                );
+                renderer.end_static_layer(static_layer_key);
+                #[cfg(feature = "frame-timings")]
+                if pass_timing {
+                    timings.gpu_capture_us = renderer.flush_and_fence_us();
+                }
+                let blitted = renderer.blit_static_layer(static_layer_key);
+                #[cfg(feature = "frame-timings")]
+                if pass_timing {
+                    timings.gpu_blit_us = renderer.flush_and_fence_us();
+                }
+                restart_walk(anim_ctx);
+                if blitted {
+                    result.static_layer = StaticLayer::Captured {
+                        empty: !anim_ctx.layer_painted,
+                    };
+                    anim_ctx.emit = EmitMode::DynamicOnly;
+                } else {
+                    paint_in_full(renderer, width, height, result, anim_ctx);
+                }
+            } else {
+                paint_in_full(renderer, width, height, result, anim_ctx);
             }
-            anim_ctx.emit = EmitMode::DynamicOnly;
-        } else {
-            // The walk below repaints every draw but only where a draw paints,
-            // so on a target the caller left uncleared, whatever the dynamic
-            // half painted last frame stays where it was. Lay down the frame
-            // base first, opaque black to match what `begin_static_layer`
-            // captured against. Only reachable with a captured layer, so the
-            // transparent-based overlays never take it.
-            renderer.fill_rect(0.0, 0.0, width, height, Color::from_rgb(0, 0, 0));
-            result.static_layer = StaticLayer::Missed;
         }
-    }
-
-    if split {
-        anim_ctx.emit = EmitMode::StaticOnly;
-        render_taffy_node(
-            taffy,
-            root_id,
-            0.0,
-            0.0,
-            renderer,
-            interaction,
-            scroll_states,
-            result,
-            anim_ctx,
-            0,
-        );
-        renderer.end_static_layer(static_layer_key);
-        result.static_layer = StaticLayer::Captured {
-            empty: !anim_ctx.layer_painted,
-        };
-        #[cfg(feature = "frame-timings")]
-        if pass_timing {
-            timings.gpu_capture_us = renderer.flush_and_fence_us();
+        // Nothing static changed since the layer was captured,
+        // so paint it rather than rasterising the same content again.
+        (EmitMode::All, LayerUse::Reuse) => {
+            // Repaint only the damaged regions when the caller supplied them;
+            // the rest of the target still holds a correct earlier frame.
+            let blitted = if damage_rects.is_empty() {
+                renderer.blit_static_layer(static_layer_key)
+            } else {
+                renderer.blit_static_layer_rects(static_layer_key, damage_rects)
+            };
+            if blitted {
+                result.static_layer = StaticLayer::Blitted;
+                #[cfg(feature = "frame-timings")]
+                if pass_timing {
+                    timings.gpu_blit_us = renderer.flush_and_fence_us();
+                }
+                anim_ctx.emit = EmitMode::DynamicOnly;
+            } else {
+                paint_in_full(renderer, width, height, result, anim_ctx);
+            }
         }
-        renderer.blit_static_layer(static_layer_key);
-        #[cfg(feature = "frame-timings")]
-        if pass_timing {
-            timings.gpu_blit_us = renderer.flush_and_fence_us();
-        }
-
-        // Restart the counters so this pass matches a cached frame's exactly —
-        // it is the same walk, and animation state keys on `draw_counter`.
-        anim_ctx.emit = EmitMode::DynamicOnly;
-        anim_ctx.draw_counter = 0;
-        anim_ctx.canvas_index = 0;
-        // Bands are positional too: starting from what the last pass painted
-        // would band the whole tree `Above` and repaint what the layer has
-        // just supplied.
-        anim_ctx.dynamic_half.clear();
-        // The mesh atlas caches per slot and skips re-rendering when a slot
-        // already holds the same mesh, so a draw landing on a different slot
-        // depending on frame type would re-render on every alternation.
-        anim_ctx.mesh_slot_counter = 0;
+        (EmitMode::All, LayerUse::Ignore) | (EmitMode::StaticOnly | EmitMode::DynamicOnly, _) => {}
     }
     render_taffy_node(
         taffy,
@@ -527,6 +511,39 @@ fn render_tree(
     if pass_timing {
         timings.gpu_dynamic_us = renderer.flush_and_fence_us();
     }
+}
+
+/// Restart the positional counters, so the pass after a capture walks the tree
+/// as a frame without one does.
+fn restart_walk(anim_ctx: &mut AnimationContext<'_>) {
+    // Animation state keys on `draw_counter`.
+    anim_ctx.draw_counter = 0;
+    anim_ctx.canvas_index = 0;
+    // Bands are positional too: starting from what the last pass painted
+    // would band the whole tree `Above` and repaint what the layer has
+    // just supplied.
+    anim_ctx.dynamic_half.clear();
+    // The mesh atlas caches per slot and skips re-rendering when a slot
+    // already holds the same mesh, so a draw landing on a different slot
+    // depending on frame type would re-render on every alternation.
+    anim_ctx.mesh_slot_counter = 0;
+}
+
+/// Give up on the layer for this frame and paint the whole tree.
+fn paint_in_full(
+    renderer: &mut RenderTarget<'_, '_, '_>,
+    width: f32,
+    height: f32,
+    result: &mut TreeResult,
+    anim_ctx: &mut AnimationContext<'_>,
+) {
+    // The walk repaints every draw but only where a draw paints,
+    // so on a target the caller left uncleared,
+    // whatever the dynamic half painted last frame would stay where it was.
+    // Opaque black, to match what `begin_static_layer` captures against.
+    renderer.fill_rect(0.0, 0.0, width, height, Color::from_rgb(0, 0, 0));
+    result.static_layer = StaticLayer::Missed;
+    anim_ctx.emit = EmitMode::All;
 }
 
 /// The root's laid-out content extent, or zero when layout produced none.

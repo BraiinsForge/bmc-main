@@ -151,11 +151,8 @@ fn a_skeleton_paints_once_on_a_capture_frame() {
     );
 }
 
-/// A capture frame walks the static half first,
-/// so unless the dynamic pass restarts slot numbering,
-/// its meshes land on other atlas slots than on a reuse frame and re-render.
-#[test]
-fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
+/// A static mesh followed by an animating one, in one canvas.
+fn static_and_dynamic_mesh() -> Node {
     let mesh = |wire: u16| super::Draw::Mesh {
         x: 0.0,
         y: 0.0,
@@ -164,12 +161,20 @@ fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
         mesh_id: MeshId::from_wire(wire),
         args: crate::gpu::mesh::ZERO_MESH_ARGS,
     };
-    let dynamic_mesh = MeshId::from_wire(2).expect("BUG: fixture mesh ID must be non-zero");
-    let tree = Node::Canvas {
+    Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws: vec![mesh(1), animating(mesh(2))],
-    };
+    }
+}
+
+/// A capture frame walks the static half first,
+/// so unless the dynamic pass restarts slot numbering,
+/// its meshes land on other atlas slots than on a reuse frame and re-render.
+#[test]
+fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
+    let dynamic_mesh = MeshId::from_wire(2).expect("BUG: fixture mesh ID must be non-zero");
+    let tree = static_and_dynamic_mesh();
     let mut state = SlotState::default();
     let mut renderer = KeyRecordingRenderer::default();
     let dynamic_slot = |renderer: &KeyRecordingRenderer| {
@@ -328,4 +333,42 @@ fn a_nested_scroll_clips_what_it_holds_to_both_viewports() {
         .map(|o| o.clip.map(bounds))
         .collect::<Vec<_>>();
     assert_eq!(held, [Some((0.0, 60.0, 100.0, 40.0))]);
+}
+
+/// A capture that loses its layer has already walked the static half,
+/// so the full paint after it has to start the walk over:
+/// carrying on the slot numbering puts every mesh on another atlas slot than a plain frame does.
+#[test]
+fn a_capture_that_loses_its_layer_paints_as_a_plain_frame() {
+    let tree = static_and_dynamic_mesh();
+    let mut plain = KeyRecordingRenderer::default();
+    render_with(
+        &mut SlotState::default(),
+        &mut plain,
+        &tree,
+        LayerUse::Ignore,
+    );
+    let mut renderer = KeyRecordingRenderer {
+        lose_captures: true,
+        ..KeyRecordingRenderer::default()
+    };
+
+    let result = render_with(
+        &mut SlotState::default(),
+        &mut renderer,
+        &tree,
+        LayerUse::Capture,
+    );
+
+    assert!(
+        matches!(result.static_layer, super::StaticLayer::Missed),
+        "a lost layer must report the miss, got {:?}",
+        result.static_layer
+    );
+    assert!(
+        renderer.meshes.ends_with(&plain.meshes),
+        "the full paint must walk as a plain frame does: {:?} after the capture, {:?} plain",
+        renderer.meshes,
+        plain.meshes
+    );
 }

@@ -724,8 +724,9 @@ pub(super) struct StaticLayer {
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) dpi_scale: f32,
-    /// `false` between allocation and the first completed capture. Blitting an
-    /// uncaptured layer would paint a transparent rectangle over the frame.
+    /// `false` from the start of a capture until it completes.
+    /// Blitting an uncaptured layer would paint a transparent rectangle over the frame,
+    /// and blitting a half-captured one only part of its static half.
     pub(super) captured: bool,
 }
 
@@ -985,9 +986,10 @@ impl RenderOffscreen for FemtoVgRenderer {
                 },
             );
         }
-        let Some(layer) = self.static_layers.get(key) else {
+        let Some(layer) = self.static_layers.get_mut(key) else {
             return false;
         };
+        layer.captured = false;
         let image = layer.image;
         // Deliberately not `begin_frame_to_image`: that opens a new frame on
         // the paragraph cache, and a capture is a second pass over the frame

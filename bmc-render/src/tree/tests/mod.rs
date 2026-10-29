@@ -48,6 +48,8 @@ struct KeyRecordingRenderer {
     draws: Vec<crate::interaction::Rect>,
     calls: Vec<(&'static str, String)>,
     captured: Vec<String>,
+    /// Makes `end_static_layer` lose the layer, as an eviction mid-capture does.
+    lose_captures: bool,
     paragraphs: Vec<String>,
     /// Each `fill_rect`, with the brightness it painted at.
     fills: Vec<(crate::interaction::Rect, Color, f32)>,
@@ -353,12 +355,15 @@ impl RenderAssets for KeyRecordingRenderer {
 impl RenderOffscreen for KeyRecordingRenderer {
     fn begin_static_layer(&mut self, key: &str, _width: u32, _height: u32) -> bool {
         self.calls.push(("begin", key.to_owned()));
+        self.captured.retain(|k| k != key);
         true
     }
 
     fn end_static_layer(&mut self, key: &str) {
         self.calls.push(("end", key.to_owned()));
-        self.captured.push(key.to_owned());
+        if !self.lose_captures {
+            self.captured.push(key.to_owned());
+        }
     }
 
     fn blit_static_layer(&mut self, key: &str) -> bool {
@@ -413,7 +418,7 @@ fn render_with(
     renderer: &mut KeyRecordingRenderer,
     tree: &Node,
     static_layer: LayerUse,
-) {
+) -> super::TreeResult {
     let mut ctx = ProcessContext {
         interaction: &mut state.interaction,
         modal_states: &mut state.modal_states,
@@ -433,7 +438,8 @@ fn render_with(
     };
     let mut timings = FrameTimings::default();
     layout_and_render(tree, 200.0, 200.0, renderer, &mut timings, &mut ctx)
-        .expect("BUG: layout_and_render must succeed for the modal tree");
+        .expect("BUG: layout_and_render must succeed for the modal tree")
+        .0
 }
 
 /// The cached-frame pass: dynamic draws only, scissored to `damage`.
