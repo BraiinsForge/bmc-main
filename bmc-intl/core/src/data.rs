@@ -36,9 +36,19 @@ use icu_provider_adapters::fork::MultiForkByErrorProvider;
 use icu_provider_adapters::fork::predicates::ForkByErrorPredicate;
 use icu_provider_blob::BlobDataProvider;
 
-use crate::Language;
+use crate::{Language, units};
 
 const BASE: &[u8] = bmc_shared_utils::include_lfs!("../../../assets/intl/cldr-base.postcard");
+const BASE_UNITS: &[u8] =
+    bmc_shared_utils::include_lfs!("../../../assets/intl/units-base.postcard");
+
+/// English's unit patterns, read in place from the base data once, on first use.
+pub(crate) fn builtin_units() -> units::Loaded {
+    static UNITS: LazyLock<units::Loaded> = LazyLock::new(|| {
+        units::load_static(BASE_UNITS).expect("BUG: `just intl::cldr-data` writes valid units")
+    });
+    UNITS.clone()
+}
 
 /// A blob behind the requests it may answer.
 type Layer = FilterDataProvider<

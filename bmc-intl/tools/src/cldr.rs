@@ -43,27 +43,26 @@ use crate::console;
 const MISC_PATTERNS: &str = "miscPatterns-numberSystem-latn";
 const CURRENCY_FORMATS: &str = "currencyFormats-numberSystem-latn";
 
-/// Write the pack's `units.postcard`, for the language its directory is named after.
+/// Write `language`'s unit patterns to `out`.
 ///
 /// # Errors
-/// No pinned cldr-json, a pack not named by a language it has, or CLDR not shaped as expected.
-pub fn cut(pack: &Path) -> Result<ExitCode, String> {
+/// No pinned cldr-json, a language it has not, or CLDR not shaped as expected.
+pub fn cut(language: &str, out: &Path) -> Result<ExitCode, String> {
     let root = pinned()?;
-    let path = pack.join(FILE);
     let release = read_json(&root.join("cldr-core/package.json"))?;
     let release = text_at(&release, &["version"])?;
-    let units = units_of(&root, &pack_language(pack)?)?;
-    std::fs::write(&path, units).map_err(|error| console::at(&path, error))?;
+    let units = units_of(&root, language)?;
+    std::fs::write(out, units).map_err(|error| console::at(out, error))?;
     console::ok(&format!(
         "{}: CLDR {}",
-        console::path(&path),
+        console::path(out),
         console::lit(release)
     ));
     Ok(ExitCode::SUCCESS)
 }
 
-/// Print the pack's `units.postcard` as JSON,
-/// `pack` a language with a profile pack in `repo`, else a pack's directory.
+/// Print unit patterns as JSON,
+/// `pack` a language with a profile pack in `repo`, else a pack's directory or a units file.
 ///
 /// # Errors
 /// A file that cannot be read or is not units.
@@ -77,7 +76,11 @@ pub fn show(pack: &Path, repo: &Path) -> Result<ExitCode, String> {
         })
         .filter(|dir| dir.is_dir());
     let pack = profile.unwrap_or_else(|| pack.to_path_buf());
-    let path = pack.join(FILE);
+    let path = if pack.is_file() {
+        pack
+    } else {
+        pack.join(FILE)
+    };
     let bytes = std::fs::read(&path).map_err(|error| console::at(&path, error))?;
     let units = Units::from_bytes(&bytes).map_err(|error| console::at(&path, error))?;
     console::line(
@@ -91,17 +94,6 @@ fn pinned() -> Result<PathBuf, String> {
     std::env::var_os("CLDR_JSON")
         .map(PathBuf::from)
         .ok_or_else(|| console::outside_dev_shell("CLDR_JSON is unset"))
-}
-
-/// The language a pack's directory is named after, as `bmc_intl` files it.
-fn pack_language(pack: &Path) -> Result<String, String> {
-    let resolved = pack
-        .canonicalize()
-        .map_err(|error| console::at(pack, error))?;
-    resolved
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .ok_or_else(|| format!("{} names no pack", console::path(pack)))
 }
 
 /// The cldr-json `main/` directory holding `language`, or `None` if CLDR has none:

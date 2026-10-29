@@ -18,8 +18,10 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-# Fails when a committed file cut from the pinned CLDR differs from what the tooling writes now:
-# the base blob every binary embeds, each profile pack's blob and unit patterns, and the tests' `es-MX` blob.
+# Fails when a committed file cut from the pinned CLDR differs
+# from what the tooling writes now: the base blob and English's
+# unit patterns every binary embeds, each profile pack's blob
+# and unit patterns, and the tests' `es-MX` blob.
 { lib, runCommand, delta, intl-cldr-blob, intl-tools, cldr-json }:
 
 runCommand "intl-cldr-data"
@@ -28,6 +30,7 @@ runCommand "intl-cldr-data"
     root = ../..;
     fileset = lib.fileset.unions [
       ../../assets/intl/cldr-base.postcard
+      ../../assets/intl/units-base.postcard
       ../../assets/intl/profile-languages
       ../../bmc-intl/core/fixtures/es-MX/cldr.postcard
     ];
@@ -57,11 +60,11 @@ runCommand "intl-cldr-data"
     # which a terminal later printing that log answers with junk input.
     units_diff() {
       mkdir -p "$TMPDIR/diff"
-      if ! intl show-units "$(dirname "$1")" >"$TMPDIR/diff/committed.json" 2>"$TMPDIR/diff/refused.log"; then
+      if ! intl show-units "$1" >"$TMPDIR/diff/committed.json" 2>"$TMPDIR/diff/refused.log"; then
         cat "$TMPDIR/diff/refused.log"
         return
       fi
-      intl show-units "$(dirname "$2")" >"$TMPDIR/diff/fresh.json"
+      intl show-units "$2" >"$TMPDIR/diff/fresh.json"
       (cd "$TMPDIR/diff" && delta --no-gitconfig --detect-dark-light=never --paging=never \
         --width=variable --line-numbers committed.json fresh.json) || true
     }
@@ -72,6 +75,9 @@ runCommand "intl-cldr-data"
 
     quiet intl-cldr-blob en "$TMPDIR/base.postcard"
     compare assets/intl/cldr-base.postcard "$TMPDIR/base.postcard" cldr-data
+
+    quiet intl cldr-units en "$TMPDIR/units-base.postcard"
+    compare assets/intl/units-base.postcard "$TMPDIR/units-base.postcard" cldr-data units_diff
 
     quiet intl-cldr-blob es-MX "$TMPDIR/es-MX.postcard"
     compare bmc-intl/core/fixtures/es-MX/cldr.postcard "$TMPDIR/es-MX.postcard" fixture-data
@@ -84,7 +90,7 @@ runCommand "intl-cldr-data"
       mkdir -p "$fresh"
 
       quiet intl-cldr-blob "$key" "$fresh/cldr.postcard"
-      quiet intl cldr-units "$fresh"
+      quiet intl cldr-units "$key" "$fresh/units.postcard"
 
       compare "$dir/cldr.postcard" "$fresh/cldr.postcard" "pack-data $dir"
       compare "$dir/units.postcard" "$fresh/units.postcard" "pack-data $dir" units_diff

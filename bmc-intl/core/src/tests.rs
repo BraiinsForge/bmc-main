@@ -842,8 +842,54 @@ fn a_pack_that_fails_to_load_speaks_english_once_asked() -> R {
         assert_eq!(probe, "Probe");
     }
     assert_eq!(translations.loads(cs), 1, "a failed load is not retried");
-    assert!(translations.units(cs).is_none() && translations.web(cs).is_none());
+    assert_eq!(
+        narrow_minute(&translations, cs).as_deref(),
+        Some("{0}m"),
+        "its units are English's"
+    );
+    assert!(translations.web(cs).is_none());
     Ok(())
+}
+
+/// `language`'s narrow pattern for some minutes.
+fn narrow_minute(translations: &Translations, language: Language) -> Option<String> {
+    let units = translations.units(language)?;
+    units
+        .get()
+        .narrow
+        .units
+        .get("duration-minute", units::Plural::Other)
+        .map(str::to_owned)
+}
+
+#[test]
+fn english_writes_units_from_the_base_data() {
+    let (translations, _) = Translations::load(&[]);
+    for language in [Language::EN, Language::EN_GB, Language::EN_US] {
+        assert_eq!(
+            narrow_minute(&translations, language).as_deref(),
+            Some("{0}m"),
+            "{language}"
+        );
+    }
+}
+
+#[test]
+fn englishs_units_borrow_the_binary_and_copy_none_of_it() {
+    assert!(
+        data::builtin_units().backing_cart().is_none(),
+        "the base data's units must be read in place, not copied onto the heap"
+    );
+}
+
+#[test]
+fn a_pack_writes_units_of_its_own() {
+    let (translations, _) = Translations::load(&[profile()]);
+    let chinese = narrow_minute(&translations, Language::ZH);
+    assert!(
+        chinese.is_some() && chinese.as_deref() != Some("{0}m"),
+        "Chinese answers with its pack's, not English's: {chinese:?}"
+    );
 }
 
 #[test]

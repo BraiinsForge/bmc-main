@@ -6,6 +6,7 @@ import '../../common.justfile'
 
 ROOT := source_directory() / "../.."
 BASE_BLOB := ROOT / "assets/intl/cldr-base.postcard"
+BASE_UNITS := ROOT / "assets/intl/units-base.postcard"
 PROFILE_PACKS := ROOT / "assets/intl/profile-languages"
 ES_MX_FIXTURE := ROOT / "bmc-intl/core/fixtures/es-MX/cldr.postcard"
 
@@ -36,9 +37,10 @@ verify *SURFACES:
 untranslated *ARGS:
     {{ INTL }} untranslated "$@"
 
-# Write the ICU4X blob every binary embeds: English and root, with the data `bmc-intl` can request.
+# Write the CLDR data every binary embeds: the ICU4X blob of English and root, and English's unit patterns.
 cldr-data:
     nix run {{ quote(ROOT) }}#intl-cldr-blob -- en {{ quote(BASE_BLOB) }}
+    {{ INTL }} cldr-units en {{ quote(BASE_UNITS) }}
 
 # Write the `es-MX` blob `bmc-intl`'s tests read a three-step chain through.
 fixture-data:
@@ -49,10 +51,10 @@ fixture-data:
 [positional-arguments]
 pack-data DIR:
     nix run {{ quote(ROOT) }}#intl-cldr-blob -- "$(basename "$(realpath "$1")")" "$1/cldr.postcard"
-    {{ INTL }} cldr-units "$1"
+    {{ INTL }} cldr-units "$(basename "$(realpath "$1")")" "$1/units.postcard"
     if [ -f "$1/flag.svg" ]; then {{ CARGO }} bmc-languages -- compile-flag "$1/flag.svg" "$1/flag.bin"; fi
 
-# Print a pack's unit patterns as JSON; PACK is a language with a profile pack, such as `zh`, else a directory.
+# Print unit patterns as JSON; PACK is a language with a profile pack, such as `zh`, else a directory or a file.
 [no-cd]
 [positional-arguments]
 show-units PACK:

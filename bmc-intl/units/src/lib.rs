@@ -231,13 +231,22 @@ impl<'data> Units<'data> {
     }
 }
 
-/// Units read in place from the bytes they keep.
-pub type Loaded = Yoke<Units<'static>, Arc<[u8]>>;
+/// Units read in place: from a pack's bytes they keep,
+/// or from bytes the binary carries, keeping none.
+pub type Loaded = Yoke<Units<'static>, Option<Arc<[u8]>>>;
 
 /// # Errors
 /// As [`Units::from_bytes`].
 pub fn load(bytes: Arc<[u8]>) -> Result<Loaded, Refused> {
-    Yoke::try_attach_to_cart(bytes, |bytes| Units::from_bytes(bytes))
+    Yoke::try_attach_to_cart(bytes, |bytes| Units::from_bytes(bytes)).map(Yoke::wrap_cart_in_option)
+}
+
+/// Units read in place from bytes the binary carries, copying none of them.
+///
+/// # Errors
+/// As [`Units::from_bytes`].
+pub fn load_static(bytes: &'static [u8]) -> Result<Loaded, Refused> {
+    Units::from_bytes(bytes).map(Yoke::new_owned)
 }
 
 #[cfg(test)]

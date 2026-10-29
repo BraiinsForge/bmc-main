@@ -23,7 +23,7 @@
 //!  - intl verify
 //!  - intl untranslated
 //!
-//! and a language pack's unit data, cut from the pinned cldr-json:
+//! and a language's unit data, cut from the pinned cldr-json:
 //!  - intl cldr-units
 //!  - intl show-units
 //!
@@ -66,7 +66,7 @@ const HELP: Styles = clap_cargo::style::CLAP_STYLING.error(AnsiColor::Red.on_def
 #[command(
     name = "intl",
     about = "Translator files of every surface: extract, verify, and list what waits for a translator; \
-             the unit patterns of a language pack; and the upstream releases the pipeline pins",
+             the unit patterns of a language; and the upstream releases the pipeline pins",
     styles = HELP
 )]
 struct Cli {
@@ -114,15 +114,17 @@ enum Command {
         #[arg(long)]
         since: Option<String>,
     },
-    /// Write a language pack's `units.postcard` from the pinned cldr-json,
-    /// for the language its directory is named after.
+    /// Write `language`'s unit patterns from the pinned cldr-json:
+    /// a pack's `units.postcard`, or English's in the base data every binary embeds.
     CldrUnits {
-        /// The pack's directory, such as `assets/intl/profile-languages/zh`.
-        pack: PathBuf,
+        /// The language, as its pack's directory names it, such as `zh`.
+        language: String,
+        /// The file to write, such as `assets/intl/profile-languages/zh/units.postcard`.
+        out: PathBuf,
     },
-    /// Print a language pack's `units.postcard` as JSON, to review what it holds.
+    /// Print unit patterns as JSON, to review what they hold.
     ShowUnits {
-        /// A language with a profile pack, such as `zh`, else a pack's directory, such as `./zh`.
+        /// A language with a profile pack, such as `zh`, else a pack's directory or a units file.
         pack: PathBuf,
     },
     /// Move ICU4X to another minor: the workspace's requirements and every locked ICU4X crate,
@@ -157,7 +159,7 @@ fn main() -> ExitCode {
             surfaces: Surfaces { surfaces },
             since,
         } => untranslated::run(surfaces, since.as_deref(), &repo),
-        Command::CldrUnits { pack } => cldr::cut(pack),
+        Command::CldrUnits { language, out } => cldr::cut(language, out),
         Command::ShowUnits { pack } => cldr::show(pack, &repo),
         Command::BumpIcu4x { minor } => bump::icu4x(minor, &repo),
         Command::BumpFormatjs { version } => bump::formatjs(version, &repo),

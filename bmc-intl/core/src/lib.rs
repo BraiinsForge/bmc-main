@@ -637,9 +637,14 @@ impl Translations {
         read_flag(self.pack_for(language).and_then(|pack| flags.get(&pack)))
     }
 
+    /// `language`'s unit patterns: its pack's, else English's from the base data,
+    /// where [`Self::formatter`] falls back to English too.
     #[must_use]
     pub fn units(&self, language: Language) -> Option<units::Loaded> {
-        self.contents_for(language)?.units.clone()
+        match self.contents_for(language) {
+            Some(contents) => contents.units.clone(),
+            None => Some(data::builtin_units()),
+        }
     }
 
     #[must_use]
