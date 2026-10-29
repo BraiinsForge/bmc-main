@@ -272,60 +272,46 @@ impl WidgetDiscovery for PathDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bmc_widget_manifest::CredentialSlot;
     use std::fs as std_fs;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
-    fn create_valid_widget(base_dir: &Path, name: &str, uid: &str) -> PathBuf {
-        let widget_dir = base_dir.join(name);
+    use crate::test_support::manifest::{param_key, widget_manifest, write_manifest};
+
+    /// Package `name` at 1.0.0 in a 317×238 slot.
+    fn named_manifest(name: &str, uid: &str) -> Manifest {
+        let uid = uid.parse().expect("BUG: a valid test uid");
+        let mut manifest = widget_manifest(uid, semver::Version::new(1, 0, 0), 317, 238);
+        manifest.name = name.to_owned();
+        manifest
+    }
+
+    /// Writes `manifest` into a dir named after it, leaving the binary out.
+    fn create_package(base_dir: &Path, manifest: &Manifest) -> PathBuf {
+        let widget_dir = base_dir.join(&manifest.name);
         std_fs::create_dir_all(&widget_dir).expect("BUG: failed to create widget dir");
-
-        let manifest = format!(
-            r#"{{
-                "uid": "{uid}",
-                "version": "1.0.0",
-                "name": "{name}",
-                "description": "Test widget",
-                "binary": "widget",
-                "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
-            }}"#
-        );
-
-        std_fs::write(widget_dir.join("manifest.json"), manifest)
-            .expect("BUG: failed to write manifest");
-
-        let binary_path = widget_dir.join("widget");
-        std_fs::write(&binary_path, "#!/bin/sh\necho test").expect("BUG: failed to write binary");
-        std_fs::set_permissions(&binary_path, std_fs::Permissions::from_mode(0o755))
-            .expect("BUG: failed to set permissions");
-
+        write_manifest(&widget_dir, manifest);
         widget_dir
     }
 
-    fn create_widget_with_icon(base_dir: &Path, name: &str, uid: &str, icon: &str) -> PathBuf {
-        let widget_dir = base_dir.join(name);
-        std_fs::create_dir_all(&widget_dir).expect("BUG: failed to create widget dir");
-
-        let manifest = format!(
-            r#"{{
-                "uid": "{uid}",
-                "version": "1.0.0",
-                "name": "{name}",
-                "description": "Test widget",
-                "binary": "widget",
-                "icon": "{icon}",
-                "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
-            }}"#
-        );
-        std_fs::write(widget_dir.join("manifest.json"), manifest)
-            .expect("BUG: failed to write manifest");
-
+    fn create_widget(base_dir: &Path, manifest: &Manifest) -> PathBuf {
+        let widget_dir = create_package(base_dir, manifest);
         let binary_path = widget_dir.join("widget");
         std_fs::write(&binary_path, "#!/bin/sh\necho test").expect("BUG: failed to write binary");
         std_fs::set_permissions(&binary_path, std_fs::Permissions::from_mode(0o755))
             .expect("BUG: failed to set permissions");
-
         widget_dir
+    }
+
+    fn create_valid_widget(base_dir: &Path, name: &str, uid: &str) -> PathBuf {
+        create_widget(base_dir, &named_manifest(name, uid))
+    }
+
+    fn create_widget_with_icon(base_dir: &Path, name: &str, uid: &str, icon: &str) -> PathBuf {
+        let mut manifest = named_manifest(name, uid);
+        manifest.icon = Some(PathBuf::from(icon));
+        create_widget(base_dir, &manifest)
     }
 
     #[tokio::test]
@@ -628,23 +614,18 @@ mod tests {
             "550e8400-e29b-41d4-a716-446655440001",
         );
 
-        let bad_dir = temp_dir.path().join("bad-slot-widget");
-        std_fs::create_dir_all(&bad_dir).expect("BUG: failed to create dir");
-        std_fs::write(
-            bad_dir.join("manifest.json"),
-            r#"{
-                "uid": "550e8400-e29b-41d4-a716-446655440002",
-                "version": "1.0.0",
-                "name": "bad-slot-widget",
-                "description": "Declares a credential type that does not exist",
-                "binary": "widget",
-                "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
-                "credentials": {
-                    "pool": {"type": "braiins_pool", "label": "Pool account"}
-                }
-            }"#,
-        )
-        .expect("BUG: failed to write manifest");
+        let mut bad_slot =
+            named_manifest("bad-slot-widget", "550e8400-e29b-41d4-a716-446655440002");
+        bad_slot.credentials.insert(
+            param_key("pool"),
+            CredentialSlot {
+                type_id: "braiins_pool".to_owned(),
+                label: "Pool account".to_owned(),
+                description: None,
+                required: true,
+            },
+        );
+        create_widget(temp_dir.path(), &bad_slot);
 
         let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
         let widgets = discovery.discover().await;
@@ -661,21 +642,10 @@ mod tests {
     async fn skip_missing_binary() {
         let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
 
-        // Create widget without binary
-        let widget_dir = temp_dir.path().join("no-binary-widget");
-        std_fs::create_dir_all(&widget_dir).expect("BUG: failed to create dir");
-        std_fs::write(
-            widget_dir.join("manifest.json"),
-            r#"{
-                "uid": "550e8400-e29b-41d4-a716-446655440001",
-                "version": "1.0.0",
-                "name": "no-binary-widget",
-                "description": "Test",
-                "binary": "widget",
-                "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}]
-            }"#,
-        )
-        .expect("BUG: failed to write manifest");
+        create_package(
+            temp_dir.path(),
+            &named_manifest("no-binary-widget", "550e8400-e29b-41d4-a716-446655440001"),
+        );
 
         let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
         let widgets = discovery.discover().await;
@@ -687,20 +657,10 @@ mod tests {
     async fn skip_non_executable_binary() {
         let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
 
-        let widget_dir = temp_dir.path().join("non-exec-widget");
-        std_fs::create_dir_all(&widget_dir).expect("BUG: failed to create dir");
-        std_fs::write(
-            widget_dir.join("manifest.json"),
-            r#"{
-                "uid": "550e8400-e29b-41d4-a716-446655440001",
-                "version": "1.0.0",
-                "name": "non-exec-widget",
-                "description": "Test",
-                "binary": "widget",
-                "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}]
-            }"#,
-        )
-        .expect("BUG: failed to write manifest");
+        let widget_dir = create_package(
+            temp_dir.path(),
+            &named_manifest("non-exec-widget", "550e8400-e29b-41d4-a716-446655440001"),
+        );
 
         // Create binary without execute permission
         let binary_path = widget_dir.join("widget");

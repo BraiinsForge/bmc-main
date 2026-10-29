@@ -20,7 +20,7 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-//! Test doubles shared by the unit tests: a [`BmcManager`] that panics on every method,
+//! Test doubles and helpers shared by the unit tests: a [`BmcManager`] that panics on every method,
 //! except a network stack the test hands it, so code under test cannot consult it by accident.
 
 use std::path::Path;
@@ -33,6 +33,8 @@ use tokio::sync::watch;
 use crate::bootloader_config::BootloaderConfig;
 use crate::manager::{BmcManager, UpgradeError, UpgradeMarker};
 use crate::session;
+
+pub(crate) mod manifest;
 
 const UNREACHABLE: &str = "BUG: the test stub must not be consulted by the code under test";
 
