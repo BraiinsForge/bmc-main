@@ -1909,6 +1909,7 @@ fn params_to_json_map(
 mod tests {
     use super::*;
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
+    use crate::test_support::manifest::{widget_manifest, write_manifest};
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
     use std::time::Duration;
@@ -1967,6 +1968,14 @@ mod tests {
         }
     }
 
+    const WIDGET_UID: uuid::Uuid = uuid::Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0000);
+
+    /// The `coordinator_with_widget` package at `version`, without params.
+    fn package_manifest(version: &str) -> Manifest {
+        let version = version.parse().expect("BUG: a semver test version");
+        widget_manifest(WIDGET_UID, version, 1280, 480)
+    }
+
     async fn coordinator_with_widget(
         binary: Option<&str>,
     ) -> (
@@ -1978,13 +1987,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("BUG: test tempdir");
         let widget_dir = temp.path().join("widget-package");
         std::fs::create_dir(&widget_dir).expect("BUG: create widget directory");
-        let uid =
-            uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("BUG: widget uid");
-        std::fs::write(
-            widget_dir.join("manifest.json"),
-            r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"1.0.0","name":"coordinator-test","description":"coordinator test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}]}"#,
-        )
-        .expect("BUG: write manifest");
+        write_manifest(&widget_dir, &package_manifest("1.0.0"));
         if let Some(body) = binary {
             crate::test_support::write_executable(&widget_dir.join("widget"), body);
         }
@@ -2002,7 +2005,7 @@ mod tests {
             bmc100_capabilities(),
             secret_store,
         );
-        let scene = Scene::fullscreen(uid, BTreeMap::new());
+        let scene = Scene::fullscreen(WIDGET_UID, BTreeMap::new());
         (temp, coordinator, compositor, scene)
     }
 
@@ -2480,11 +2483,10 @@ mod tests {
         });
 
         wait_for_widget_calls(&compositor, 2).await;
-        std::fs::write(
-            temp.path().join("widget-package/manifest.json"),
-            r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"2.0.0","name":"coordinator-test","description":"coordinator test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}]}"#,
-        )
-        .expect("BUG: replace manifest build");
+        write_manifest(
+            &temp.path().join("widget-package"),
+            &package_manifest("2.0.0"),
+        );
         coordinator
             .refresh_widgets()
             .await
@@ -2530,11 +2532,10 @@ mod tests {
             tokio::task::yield_now().await;
         }
 
-        std::fs::write(
-            temp.path().join("widget-package/manifest.json"),
-            r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"2.0.0","name":"coordinator-test","description":"coordinator test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}]}"#,
-        )
-        .expect("BUG: replace manifest build");
+        write_manifest(
+            &temp.path().join("widget-package"),
+            &package_manifest("2.0.0"),
+        );
         crate::test_support::write_executable(
             &temp.path().join("widget-package/widget"),
             "#!/bin/sh\nexec sleep 30\n",
@@ -2885,11 +2886,10 @@ mod tests {
             .await;
         coordinator.stop_all_widgets(&config).await;
 
-        std::fs::write(
-            temp.path().join("widget-package/manifest.json"),
-            r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"2.0.0","name":"coordinator-test","description":"coordinator test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}]}"#,
-        )
-        .expect("BUG: replace widget manifest");
+        write_manifest(
+            &temp.path().join("widget-package"),
+            &package_manifest("2.0.0"),
+        );
         coordinator.reload_changed_widgets(&config).await;
 
         assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Paused);
@@ -3050,11 +3050,10 @@ mod tests {
         coordinator
             .spawn_configured_scene_widgets(&config, scene.id)
             .await;
-        std::fs::write(
-            temp.path().join("widget-package/manifest.json"),
-            r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"2.0.0","name":"coordinator-test","description":"coordinator test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}]}"#,
-        )
-        .expect("BUG: replace widget manifest");
+        write_manifest(
+            &temp.path().join("widget-package"),
+            &package_manifest("2.0.0"),
+        );
 
         coordinator.reload_changed_widgets(&config).await;
 
