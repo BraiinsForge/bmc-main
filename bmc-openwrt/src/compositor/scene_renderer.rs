@@ -288,6 +288,23 @@ fn draw_separator_grids(
     }
 }
 
+/// Scale each pixel's colour by its alpha, rounding to nearest.
+/// PNG stores straight alpha, while smithay blends as premultiplied (`ONE, ONE_MINUS_SRC_ALPHA`),
+/// so a straight edge pixel would draw at full colour and lose its anti-aliasing.
+#[expect(
+    clippy::integer_division,
+    reason = "the +127 bias rounds c*a/255 to nearest"
+)]
+fn premultiply_alpha(rgba: &mut [u8]) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        let alpha = u16::from(pixel[3]);
+        for channel in &mut pixel[..3] {
+            let scaled = (u16::from(*channel) * alpha + 127) / 255;
+            *channel = u8::try_from(scaled).expect("BUG: c * a / 255 fits u8 for c, a <= 255");
+        }
+    }
+}
+
 /// Decode an embedded PNG and upload it as a texture. Returns `None` (with a
 /// warning) on failure so the compositor still starts — these overlays are
 /// cosmetic. `label` names the asset in log messages.
@@ -296,13 +313,14 @@ fn load_texture_from_png(
     png: &[u8],
     label: &str,
 ) -> Option<GlesTexture> {
-    let rgba = match image::load_from_memory(png) {
+    let mut rgba = match image::load_from_memory(png) {
         Ok(image) => image.to_rgba8(),
         Err(e) => {
             tracing::warn!("Failed to decode {label}: {e:?}");
             return None;
         }
     };
+    premultiply_alpha(&mut rgba);
     let (width, height) = rgba.dimensions();
     let (Ok(w), Ok(h)) = (i32::try_from(width), i32::try_from(height)) else {
         tracing::warn!("{label} dimensions {width}x{height} do not fit i32");
@@ -1343,12 +1361,31 @@ fn collect_scene_widgets(
 
 #[cfg(test)]
 mod tests {
-    use super::{texture_damage_rect, uncovered_output_regions};
+    use super::{premultiply_alpha, texture_damage_rect, uncovered_output_regions};
     use crate::compositor::scene_renderer::{
         place_widget, scanout_transform, touch_to_logical, widget_transform, with_row_flip,
     };
     use bmc_platform::{DisplayTransform, TouchTransform};
     use smithay::utils::{Physical, Rectangle, Transform};
+
+    #[test]
+    fn premultiply_scales_colour_by_alpha() {
+        let mut pixels = [
+            255, 255, 255, 64, // white edge at 25 % coverage
+            107, 80, 255, 255, // opaque
+            200, 100, 50, 0, // transparent with a leftover colour
+            1, 1, 1, 128, // just over half: rounds up to 1, truncation gives 0
+            1, 1, 1, 127, // just under half: rounds down to 0
+        ];
+        premultiply_alpha(&mut pixels);
+        assert_eq!(
+            pixels,
+            [
+                64, 64, 64, 64, 107, 80, 255, 255, 0, 0, 0, 0, 1, 1, 1, 128, 0, 0, 0, 127
+            ],
+            "colour scales with coverage to the nearest value, opaque stays, transparent goes black",
+        );
+    }
 
     #[test]
     fn scanout_transform_maps_each_profile_degree() {
