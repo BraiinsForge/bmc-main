@@ -21,7 +21,7 @@
 //! The static-half key the decoder derives from encoded trees,
 //! and the one a tree built on the host gets.
 
-use bmc_render::partition::tree_static_key;
+use bmc_render::partition::{StaticBytesKey, tree_static_key};
 use bmc_render::tree::deserialize_tree_keyed;
 use bmc_ui::{
     AnimProperty, Color, Draw, Easing, LoopMode, Node, ProgressMode, PropsData, RelTimeClamp,
@@ -29,7 +29,7 @@ use bmc_ui::{
     relative_time_live, spacer, text,
 };
 
-fn key(node: &Node) -> u64 {
+fn key(node: &Node) -> StaticBytesKey {
     deserialize_tree_keyed(&encode(node))
         .expect("BUG: the host decodes every tree the codec encodes")
         .1
@@ -256,7 +256,7 @@ fn mixed(title: &str, progress: f32, anchor: i64, spin_x: f32) -> Node {
     )
 }
 
-fn host_key(node: &Node) -> u64 {
+fn host_key(node: &Node) -> StaticBytesKey {
     tree_static_key(node).expect("BUG: the host decodes every tree the codec encodes")
 }
 
@@ -284,11 +284,11 @@ fn a_host_built_tree_moves_its_key_on_a_static_edit() {
 
 #[test]
 fn a_host_built_tree_the_decoder_refuses_has_no_key() {
-    assert_eq!(tree_static_key(&spacer(-1.0)), None);
+    assert!(tree_static_key(&spacer(-1.0)).is_err());
 }
 
 #[test]
 fn a_host_built_tree_past_the_wire_format_has_no_key() {
     let past_a_length_prefix = "x".repeat(usize::from(u16::MAX) + 1);
-    assert_eq!(tree_static_key(&label(&past_a_length_prefix)), None);
+    assert!(tree_static_key(&label(&past_a_length_prefix)).is_err());
 }

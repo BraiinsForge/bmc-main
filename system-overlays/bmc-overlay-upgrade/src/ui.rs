@@ -1208,7 +1208,7 @@ mod tests {
         )
     }
 
-    fn static_key(tree: &Node) -> u64 {
+    fn static_key(tree: &Node) -> bmc_render::partition::StaticBytesKey {
         tree_static_key(tree).expect("BUG: the upgrade tree decodes")
     }
 
@@ -1250,7 +1250,7 @@ mod tests {
                 };
                 assert!(
                     tree_static_key(&build_upgrade_tree(view, surface, test_icons(), &english()))
-                        .is_some(),
+                        .is_ok(),
                     "{view:?} on {tier:?} {size:?}"
                 );
             }

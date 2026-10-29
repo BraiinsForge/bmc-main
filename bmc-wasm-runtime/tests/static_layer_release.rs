@@ -127,7 +127,7 @@ fn render_frame(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRenderer)
 
 fn layer_blits(runtime: &WasmWidgetRuntime, renderer: &mut FemtoVgRenderer) -> bool {
     renderer.begin_frame(320, 240, 1.0);
-    let blitted = renderer.blit_static_layer(&runtime.asset_namespace());
+    let blitted = renderer.blit_static_layer(&runtime.static_layer_owner_for_test());
     renderer.flush();
     blitted
 }

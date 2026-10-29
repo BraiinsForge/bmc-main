@@ -20,7 +20,7 @@
 
 use super::*;
 
-fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, key: &str) {
+fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, owner: &LayerOwner) {
     let mut ctx = ProcessContext {
         interaction: &mut state.interaction,
         modal_states: &mut state.modal_states,
@@ -34,8 +34,7 @@ fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, key
         intl: &bmc_intl::formatter(bmc_intl::Language::default()),
         rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
-        static_layer: LayerUse::Capture,
-        static_layer_key: key,
+        static_layer: LayerUse::Capture(owner),
         layout_outlines: false,
         stroke_outlines: false,
         damage_rects: &[],
@@ -187,11 +186,21 @@ fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
             .map(|(_, slot)| *slot)
     };
 
-    render_with(&mut state, &mut renderer, &tree, LayerUse::Capture);
+    render_with(
+        &mut state,
+        &mut renderer,
+        &tree,
+        LayerUse::Capture(&super::TEST_OWNER),
+    );
     let on_capture = dynamic_slot(&renderer);
     renderer.meshes.clear();
     renderer.calls.clear();
-    render_with(&mut state, &mut renderer, &tree, LayerUse::Reuse);
+    render_with(
+        &mut state,
+        &mut renderer,
+        &tree,
+        LayerUse::Reuse(&super::TEST_OWNER),
+    );
     let on_reuse = dynamic_slot(&renderer);
 
     assert!(
@@ -218,7 +227,8 @@ fn each_slot_captures_under_its_own_key() {
     for (slot, key) in [(0, "widget-a"), (1, "widget-b"), (0, "widget-a")] {
         renderer.calls.clear();
         let state = if slot == 0 { &mut a } else { &mut b };
-        capture_frame(state, &mut renderer, key);
+        let owner = LayerOwner::Widget(key.to_owned());
+        capture_frame(state, &mut renderer, &owner);
 
         assert!(
             !renderer.calls.is_empty(),
@@ -226,8 +236,9 @@ fn each_slot_captures_under_its_own_key() {
         );
         for (op, seen) in &renderer.calls {
             assert_eq!(
-                seen, key,
-                "'{op}' addressed layer '{seen}' while rendering slot '{key}'"
+                seen.as_ref(),
+                Some(&owner),
+                "'{op}' addressed layer {seen:?} while rendering slot '{key}'"
             );
         }
     }
@@ -359,7 +370,7 @@ fn a_capture_that_loses_its_layer_paints_as_a_plain_frame() {
         &mut SlotState::default(),
         &mut renderer,
         &tree,
-        LayerUse::Capture,
+        LayerUse::Capture(&super::TEST_OWNER),
     );
 
     assert!(

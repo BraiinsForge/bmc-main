@@ -1295,7 +1295,7 @@ mod tests {
         }
     }
 
-    fn static_key(tree: &Node) -> u64 {
+    fn static_key(tree: &Node) -> bmc_render::partition::StaticBytesKey {
         tree_static_key(tree).expect("BUG: the tray tree decodes")
     }
 
@@ -1384,7 +1384,7 @@ mod tests {
                         status.as_ref(),
                     );
                     assert!(
-                        tree_static_key(&tree).is_some(),
+                        tree_static_key(&tree).is_ok(),
                         "{panel:?} {view:?} {status:?}"
                     );
                 }

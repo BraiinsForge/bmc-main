@@ -28,7 +28,7 @@ use super::{FemtoVgRenderer, RenderTargetProbe};
 use crate::FrameTimings;
 use crate::interaction::{InteractionState, Rect};
 use crate::renderer::prelude::*;
-use crate::renderer::{FrameBackground, FrameClear};
+use crate::renderer::{FrameBackground, FrameClear, LayerOwner};
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use crate::tree::{
     AnimationDef, Draw, EmitMode, LayerUse, Node, ProcessContext, StaticLayer, TreeResult,
@@ -40,7 +40,9 @@ use taffy::prelude::TaffyTree;
 const W: u32 = 96;
 const H: u32 = 64;
 const FRAMES: u64 = 30;
-const KEY: &str = "overlay:static";
+/// The owner of the layer these frames capture.
+static KEY: std::sync::LazyLock<LayerOwner> =
+    std::sync::LazyLock::new(|| LayerOwner::Widget("overlay:static".to_owned()));
 
 /// Static text and a translucent circle under a fading circle,
 /// with a static rectangle painted over the fade,
@@ -159,7 +161,7 @@ impl Slot {
         renderer: &mut FemtoVgRenderer,
         tree: &Node,
         frame_counter: u64,
-        static_layer: LayerUse,
+        static_layer: LayerUse<'_>,
         damage_rects: &[Rect],
     ) -> TreeResult {
         let mut ctx = ProcessContext {
@@ -176,7 +178,6 @@ impl Slot {
             rel_time: &crate::components::RelTimeWords::new(),
             emit: EmitMode::All,
             static_layer,
-            static_layer_key: KEY,
             layout_outlines: false,
             stroke_outlines: false,
             damage_rects,
@@ -243,16 +244,16 @@ fn run(background: FrameBackground, pipeline: Pipeline, target: Target) -> Frame
                 | Pipeline::SurfaceChanged
                     if frame == 1 =>
                 {
-                    LayerUse::Capture
+                    LayerUse::Capture(&KEY)
                 }
                 Pipeline::Cached | Pipeline::RawCopyFails | Pipeline::SurfaceChanged => {
-                    LayerUse::Reuse
+                    LayerUse::Reuse(&KEY)
                 }
                 Pipeline::LayerLost => {
-                    renderer.invalidate_static_layer(KEY);
-                    LayerUse::Reuse
+                    renderer.invalidate_static_layer(&KEY);
+                    LayerUse::Reuse(&KEY)
                 }
-                Pipeline::RefusedCapture => LayerUse::Capture,
+                Pipeline::RefusedCapture => LayerUse::Capture(&KEY),
             };
             let damage: &[Rect] = match target {
                 Target::Damaged if frame > 1 => {
@@ -524,14 +525,14 @@ fn a_capture_that_loses_its_layer_reports_it() {
         FrameClear::Clear,
     );
     assert!(
-        renderer.begin_static_layer(KEY, W, H),
+        renderer.begin_static_layer(&KEY, W, H),
         "BUG: the layer must be allocatable on the test driver"
     );
-    renderer.evict_prefix("overlay:");
-    renderer.end_static_layer(KEY);
+    renderer.evict_prefix("overlay:static");
+    renderer.end_static_layer(&KEY);
 
     assert!(
-        !renderer.blit_static_layer(KEY),
+        !renderer.blit_static_layer(&KEY),
         "nothing may be blitted from a capture that lost its layer"
     );
 }
@@ -547,17 +548,17 @@ fn a_recapture_in_progress_cannot_be_blitted() {
 
     renderer.begin_frame_with_clear(W, H, 1.0, FrameBackground::OpaqueBlack, FrameClear::Clear);
     assert!(
-        renderer.begin_static_layer(KEY, W, H),
+        renderer.begin_static_layer(&KEY, W, H),
         "BUG: the layer must be allocatable on the test driver"
     );
-    renderer.end_static_layer(KEY);
+    renderer.end_static_layer(&KEY);
     assert!(
-        renderer.begin_static_layer(KEY, W, H),
+        renderer.begin_static_layer(&KEY, W, H),
         "BUG: the layer must be recapturable"
     );
 
     assert!(
-        !renderer.blit_static_layer(KEY),
+        !renderer.blit_static_layer(&KEY),
         "a half-recaptured layer must not be blitted"
     );
 }

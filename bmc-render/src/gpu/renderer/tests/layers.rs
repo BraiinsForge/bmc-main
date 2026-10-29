@@ -20,6 +20,7 @@
 
 use super::{FemtoVgRenderer, PhysicalSize, PoolSlot, RenderTargetProbe, gl_name};
 use crate::renderer::prelude::*;
+use crate::renderer::{LayerOwner, OverlayId};
 use crate::test_harness::{
     GlHarness, create_colour_only_fbo, create_packed_stencil_fbo, create_readback_fbo,
     read_pixels_top_down,
@@ -41,12 +42,12 @@ fn a_failed_render_target_probe_refuses_static_layers() {
     renderer.render_to_texture = RenderTargetProbe::FramebufferIncomplete(0);
 
     assert!(
-        !renderer.begin_static_layer("widget:static", 64, 64),
+        !renderer.begin_static_layer(&widget("widget:static"), 64, 64),
         "an unusable offscreen target must not open a static layer"
     );
-    renderer.end_static_layer("widget:static");
+    renderer.end_static_layer(&widget("widget:static"));
     assert!(
-        !renderer.blit_static_layer("widget:static"),
+        !renderer.blit_static_layer(&widget("widget:static")),
         "nothing was captured, so nothing may be blitted"
     );
 }
@@ -535,7 +536,7 @@ fn a_layer_on_the_shared_stencil_still_fills_a_concave_path() {
 
     renderer.begin_frame(SIZE, SIZE, 1.0);
     assert!(
-        renderer.blit_static_layer("widget:concave"),
+        renderer.blit_static_layer(&widget("widget:concave")),
         "BUG: the captured layer must be blittable"
     );
     renderer.flush();
@@ -569,13 +570,13 @@ fn capture_layer_drawing(
 ) -> Option<glow::Renderbuffer> {
     renderer.begin_frame(frame, frame, 1.0);
     assert!(
-        renderer.begin_static_layer(key, layer, layer),
+        renderer.begin_static_layer(&widget(key), layer, layer),
         "BUG: the layer must be allocatable on the test driver"
     );
     // SAFETY: the capture in progress leaves its own framebuffer bound.
     let stencil = unsafe { renderer.attached_stencil() };
     draw(renderer);
-    renderer.end_static_layer(key);
+    renderer.end_static_layer(&widget(key));
     renderer.flush();
     stencil
 }
@@ -663,7 +664,7 @@ fn an_incomplete_layer_framebuffer_is_refused_at_that_size() {
     renderer.begin_frame(64, 64, 1.0);
 
     assert!(
-        !renderer.begin_static_layer(KEY, oversized, 1),
+        !renderer.begin_static_layer(&widget(KEY), oversized, 1),
         "an incomplete layer framebuffer must not open a capture"
     );
     assert_eq!(
@@ -672,22 +673,50 @@ fn an_incomplete_layer_framebuffer_is_refused_at_that_size() {
         "the frame's framebuffer must be bound again"
     );
     assert_eq!(
-        renderer.incomplete_static_layers.get(KEY),
+        renderer.incomplete_static_layers.get(&widget(KEY)),
         Some(&physical(oversized, 1)),
         "the failure must be remembered at its size, or every frame retries it"
     );
     assert!(
-        !renderer.begin_static_layer(KEY, oversized, 1),
+        !renderer.begin_static_layer(&widget(KEY), oversized, 1),
         "the same size must stay refused rather than retried"
     );
     assert!(
-        !renderer.static_layers.contains_key(KEY),
+        !renderer.static_layers.contains_key(&widget(KEY)),
         "a refused layer must not keep an image"
     );
     assert!(
-        !renderer.blit_static_layer(KEY),
+        !renderer.blit_static_layer(&widget(KEY)),
         "nothing was captured, so nothing may be blitted"
     );
+}
+
+/// A widget's teardown frees its own layer and no other:
+/// not one whose namespace merely starts the same, and never an overlay's.
+#[test]
+fn a_teardown_frees_exactly_its_own_layer() {
+    let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+    let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+    let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+        .expect("BUG: renderer init failed");
+    let overlay = LayerOwner::Overlay(OverlayId::next());
+    renderer.begin_frame(64, 64, 1.0);
+    for owner in [widget("w1"), widget("w10"), overlay.clone()] {
+        assert!(
+            renderer.begin_static_layer(&owner, 64, 64),
+            "BUG: the layer must be allocatable on the test driver"
+        );
+        renderer.end_static_layer(&owner);
+    }
+
+    renderer.evict_prefix("w1");
+
+    assert!(!renderer.static_layers.contains_key(&widget("w1")));
+    assert!(
+        renderer.static_layers.contains_key(&widget("w10")),
+        "a namespace that only starts like the departing one keeps its layer"
+    );
+    assert!(renderer.static_layers.contains_key(&overlay));
 }
 
 /// The failure is one layer's at one size, not the driver's,
@@ -702,20 +731,20 @@ fn an_incomplete_layer_framebuffer_spares_other_layers_and_resizes() {
     let oversized = oversized_layer_width(&harness.gl);
     renderer.begin_frame(64, 64, 1.0);
     assert!(
-        !renderer.begin_static_layer(KEY, oversized, 1),
+        !renderer.begin_static_layer(&widget(KEY), oversized, 1),
         "a layer past the texture limit must fail to open"
     );
 
     assert!(
-        renderer.begin_static_layer("widget:other", 64, 64),
+        renderer.begin_static_layer(&widget("widget:other"), 64, 64),
         "another widget's layer must still open"
     );
-    renderer.end_static_layer("widget:other");
+    renderer.end_static_layer(&widget("widget:other"));
     assert!(
-        renderer.begin_static_layer(KEY, 64, 64),
+        renderer.begin_static_layer(&widget(KEY), 64, 64),
         "a resized layer must be retried"
     );
-    renderer.end_static_layer(KEY);
+    renderer.end_static_layer(&widget(KEY));
 }
 
 /// Refusing a layer at the size it failed at
@@ -730,21 +759,21 @@ fn refusing_a_layer_at_its_failed_size_frees_its_other_capture() {
     let oversized = oversized_layer_width(&harness.gl);
     renderer.begin_frame(64, 64, 1.0);
     assert!(
-        !renderer.begin_static_layer(KEY, oversized, 1),
+        !renderer.begin_static_layer(&widget(KEY), oversized, 1),
         "a layer past the texture limit must fail to open"
     );
     assert!(
-        renderer.begin_static_layer(KEY, 64, 64),
+        renderer.begin_static_layer(&widget(KEY), 64, 64),
         "a resized layer must be retried"
     );
-    renderer.end_static_layer(KEY);
+    renderer.end_static_layer(&widget(KEY));
 
     assert!(
-        !renderer.begin_static_layer(KEY, oversized, 1),
+        !renderer.begin_static_layer(&widget(KEY), oversized, 1),
         "the failed size must stay refused"
     );
     assert!(
-        !renderer.static_layers.contains_key(KEY),
+        !renderer.static_layers.contains_key(&widget(KEY)),
         "the capture at the other size must be freed"
     );
 }
@@ -766,7 +795,7 @@ fn a_later_incomplete_retarget_leaves_the_pooled_stencil_alone() {
 
     renderer.begin_frame(SIZE, SIZE, 1.0);
     assert!(
-        !renderer.begin_static_layer(KEY, SIZE, SIZE),
+        !renderer.begin_static_layer(&widget(KEY), SIZE, SIZE),
         "an incomplete layer framebuffer must not open a capture"
     );
     assert!(
@@ -835,4 +864,8 @@ fn the_render_target_probe_reports_working_on_a_conformant_driver() {
         .expect("BUG: renderer init failed");
 
     assert_eq!(renderer.render_to_texture(), RenderTargetProbe::Working);
+}
+
+fn widget(name: &str) -> LayerOwner {
+    LayerOwner::Widget(name.to_owned())
 }

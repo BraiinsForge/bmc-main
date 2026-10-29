@@ -35,6 +35,11 @@ wayland-protocols-wlr = { workspace = true, features = ["client"] }
 [features]
 # Exposes test-only `TreeUi` introspection to downstream crates' tests.
 test-support = []
+# Forwards `bmc-render/frame-timings`, so a tree frame's profile carries what keying its static half cost.
+frame-timings = ["bmc-render/frame-timings"]
+
+[dev-dependencies]
+bmc-render = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

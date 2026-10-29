@@ -33,7 +33,9 @@ use bmc_render::ui::{
     FontFamily, FontWeight, GRAY_40, GRAY_60, Justify, Node, PropsData, QrStyle, Span, TRANSPARENT,
     TextAlign, TextStyle, VIOLET_50, WHITE, col, fixed_height, paragraph, row, text,
 };
-use bmc_system_overlay::{AccessPoint, FrameKind, Language, RenderOutcome, TouchEvent, TreeUi};
+use bmc_system_overlay::{
+    AccessPoint, FrameKind, Language, Layering, RenderOutcome, TouchEvent, TreeUi,
+};
 
 use crate::icons::{DeviceInfoIcons, Icon, LanguageChoice};
 
@@ -1614,7 +1616,7 @@ pub struct DeviceInfoFrame {
 /// Draw `view`, with the language switch where `language_switch` shows it.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the view, its wording, the board it addresses, the language switch and the frame kind"
+    reason = "the view, its wording, the board it addresses, the language switch, the frame kind and its layering"
 )]
 pub fn render_device_info(
     r: &mut dyn Renderer,
@@ -1626,6 +1628,7 @@ pub fn render_device_info(
     miner: bool,
     language_switch: LanguageSwitch,
     frame: FrameKind,
+    layering: Layering,
 ) -> DeviceInfoFrame {
     let icons = state.ensure_icons(r);
     let now = Instant::now();
@@ -1661,7 +1664,10 @@ pub fn render_device_info(
         )
         .expect("BUG: every view but Done has a tree")
     };
-    match state.tree.render(frame, size, delta_ms, r, intl, build) {
+    match state
+        .tree
+        .render(frame, layering, size, delta_ms, r, intl, build)
+    {
         Ok(tree_frame) => DeviceInfoFrame {
             outcome: tree_frame.outcome,
             picked: tree_frame
@@ -1681,7 +1687,7 @@ pub fn render_device_info(
 mod tests {
     use super::{
         AccessPoint, DeviceInfoRenderState, DeviceInfoView, FLAG_RING, FLAG_SIZE, FrameKind,
-        LanguageSwitch, Link, SetupApIcon, TIER_COMPACT, TIER_WIDE, Tier, Uplinks,
+        LanguageSwitch, Layering, Link, SetupApIcon, TIER_COMPACT, TIER_WIDE, Tier, Uplinks,
         build_device_info_tree, dismisses_on_touch, flag_extent, render_device_info, tier_for,
         tray_hint,
     };
@@ -2445,6 +2451,7 @@ mod tests {
             false,
             LanguageSwitch::Hidden,
             frame,
+            Layering::Unlayered,
         );
     }
 
@@ -2484,7 +2491,7 @@ mod tests {
         );
     }
 
-    fn static_key(tree: &Node) -> u64 {
+    fn static_key(tree: &Node) -> bmc_render::partition::StaticBytesKey {
         tree_static_key(tree).expect("BUG: every device info screen decodes")
     }
 
@@ -2531,7 +2538,7 @@ mod tests {
                         None,
                     )
                     .expect("BUG: every view but Done builds a tree");
-                    assert!(tree_static_key(&tree).is_some(), "{view:?} miner={miner}");
+                    assert!(tree_static_key(&tree).is_ok(), "{view:?} miner={miner}");
                 }
             }
         }

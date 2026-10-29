@@ -115,7 +115,7 @@ fn a_shadowed_static_draw_stays_inside_the_layer() {
 
     renderer.begin_frame(W, H, 1.0);
     assert!(
-        renderer.begin_static_layer("shadow-test", W, H),
+        renderer.begin_static_layer(&shadow_owner(), W, H),
         "BUG: the layer must be allocatable on the test driver"
     );
     renderer.drop_shadow(
@@ -132,7 +132,7 @@ fn a_shadowed_static_draw_stays_inside_the_layer() {
         },
     );
     renderer.fill_rect(8.0, 8.0, 32.0, 32.0, Color::from_rgb(0, 255, 0));
-    renderer.end_static_layer("shadow-test");
+    renderer.end_static_layer(&shadow_owner());
     renderer.flush();
 
     let screen = read_pixels_top_down(&harness.gl, fbo, W, H);
@@ -356,4 +356,8 @@ fn span_style_survives_hard_break() {
         leaked, 0,
         "BUG: second line leaked the first span's red color ({leaked} px)",
     );
+}
+
+fn shadow_owner() -> crate::renderer::LayerOwner {
+    crate::renderer::LayerOwner::Widget("shadow-test".to_owned())
 }

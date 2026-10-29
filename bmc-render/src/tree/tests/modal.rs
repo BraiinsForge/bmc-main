@@ -137,10 +137,20 @@ fn an_open_modal_emits_its_static_body_on_a_layer_reusing_frame() {
     let tree = modal_tree_with_body_text("are you sure?");
 
     // First frame captures the layer, so the second can reuse it.
-    render_with(&mut state, &mut renderer, &tree, LayerUse::Capture);
+    render_with(
+        &mut state,
+        &mut renderer,
+        &tree,
+        LayerUse::Capture(&super::TEST_OWNER),
+    );
     renderer.paragraphs.clear();
     renderer.calls.clear();
-    render_with(&mut state, &mut renderer, &tree, LayerUse::Reuse);
+    render_with(
+        &mut state,
+        &mut renderer,
+        &tree,
+        LayerUse::Reuse(&super::TEST_OWNER),
+    );
 
     assert!(
         renderer.calls.iter().any(|(call, _)| *call == "blit"),

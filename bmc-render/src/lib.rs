@@ -84,8 +84,8 @@ pub use renderer::RendererAssetResolver;
 )]
 pub mod test_harness;
 
-#[cfg(test)]
-mod test_tracing;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_tracing;
 
 /// The shared UI vocabulary: tree, codec, design-system types.
 pub mod ui {

@@ -383,13 +383,13 @@ impl RenderAssets for FemtoVgRenderer {
         {
             self.sphere_bitmap_id = None;
         }
-        // Static layers share the namespace, so a departing slot reclaims its
-        // layer along with its icons, bitmaps and meshes. Deliberately not
+        // A departing slot reclaims the layer its namespace owns
+        // along with its icons, bitmaps and meshes. Deliberately not
         // counted: the total reports what the guest's own eviction removed, and
         // a layer is renderer scratch the guest never registered.
         let canvas = &mut self.canvas;
-        self.static_layers.retain(|key, layer| {
-            if key.starts_with(prefix) {
+        self.static_layers.retain(|owner, layer| {
+            if owner.is_widget(prefix) {
                 canvas.delete_image(layer.image);
                 false
             } else {
@@ -397,7 +397,7 @@ impl RenderAssets for FemtoVgRenderer {
             }
         });
         self.incomplete_static_layers
-            .retain(|key, _| !key.starts_with(prefix));
+            .retain(|owner, _| !owner.is_widget(prefix));
         n
     }
 
@@ -409,10 +409,7 @@ impl RenderAssets for FemtoVgRenderer {
                 .is_some_and(|mesh| mesh.has_resident_prefix(prefix))
             // Reclaiming a layer deletes a femtovg image, so the eviction needs
             // the GPU lock.
-            || self
-                .static_layers
-                .keys()
-                .any(|key| key.starts_with(prefix))
+            || self.static_layers.keys().any(|owner| owner.is_widget(prefix))
     }
 
     fn bitmap_resident_bytes(&self) -> u64 {

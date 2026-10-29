@@ -29,9 +29,9 @@ use bmc_intl::Intl;
 use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, DownloadProgress, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
-    RenderOutcome, SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot,
-    UpgradeState,
+    Anchor, DownloadProgress, FrameKind, InputRegion, Layer, LayerConfig, Layering,
+    OverlayViewport, RenderOutcome, SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase,
+    UpgradeSnapshot, UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -192,6 +192,10 @@ impl UpgradeRenderState {
 }
 
 /// Render an injected snapshot view with retained layout and registered icons.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the view, its wording and the frame's clock, kind and layering"
+)]
 pub fn render_upgrade(
     renderer: &mut dyn Renderer,
     surface: Surface,
@@ -200,6 +204,7 @@ pub fn render_upgrade(
     intl: &Intl,
     now: Instant,
     frame: FrameKind,
+    layering: Layering,
 ) -> RenderOutcome {
     let icons = *state
         .icons
@@ -211,7 +216,7 @@ pub fn render_upgrade(
     let build = || ui::build_upgrade_tree(view, surface, icons, intl);
     match state
         .tree
-        .render(frame, size, delta_ms, renderer, intl, build)
+        .render(frame, layering, size, delta_ms, renderer, intl, build)
     {
         Ok(tree_frame) => tree_frame.outcome,
         Err(err) => {
@@ -321,6 +326,7 @@ impl OverlayState {
             intl,
             Instant::now(),
             frame,
+            Layering::Unlayered,
         )
     }
 }

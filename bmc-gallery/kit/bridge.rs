@@ -469,7 +469,6 @@ fn staged_tree(
                 rel_time: &state.rel_time,
                 emit: bmc_render::tree::EmitMode::All,
                 static_layer: bmc_render::tree::LayerUse::Ignore,
-                static_layer_key: "gallery",
                 layout_outlines: false,
                 stroke_outlines: false,
                 damage_rects: &[],

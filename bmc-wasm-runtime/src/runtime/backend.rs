@@ -33,13 +33,15 @@ use bmc_wasm_protocol::{ON_TIMER_EXPORT, SDK_INIT_EXPORT, SDK_VERSION, version_u
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
+use bmc_render::partition::static_layer::{AssetGeneration, LayerCommit};
 use bmc_render::renderer::{AssetSuspendResult, AssetTagState, Renderer};
 use bmc_render::tree;
-use bmc_render::tree::{StaticLayer, TouchHit};
+use bmc_render::tree::TouchHit;
 use bmc_render::{FrameTimings, RendererAssetResolver, layout_and_render_with_asset_resolver};
 
 use crate::host_api::{
-    FixtureEvent, FrameRepaint, GuestTree, HermeticRun, HostState, Lifecycle, namespaced_tag,
+    CachedTree, FixtureEvent, FrameRepaint, GuestTree, HermeticRun, HostState, Lifecycle,
+    namespaced_tag,
 };
 use crate::network::NetworkInfo;
 use crate::renderer_assets::{
@@ -1115,7 +1117,7 @@ impl WasmWidgetRuntime {
         state.package_assets = package_assets;
         state.image_decode_lock_path = image_decode_lock_path;
         if let Some(token) = instance_token {
-            state.instance_id = token;
+            state.set_instance_id(token);
         }
         state.fetch_interceptor = fetch_interceptor;
         state.url_rewrites = url_rewrites;
@@ -1154,7 +1156,7 @@ impl WasmWidgetRuntime {
                 udp_event_txs: HashMap::new(),
             });
         }
-        let instance_id = state.instance_id.clone();
+        let instance_id = state.instance_id.as_str().to_owned();
 
         // State is staged; instantiate (running `start`, if any) and resolve exports.
         let instance = linker.instantiate_and_start(&mut store, &module.module)?;
@@ -1482,7 +1484,13 @@ impl WasmWidgetRuntime {
         delta_ms: u32,
         target: TargetContents,
     ) -> bool {
-        let Some((ref tree_node, width, height)) = state.cached_tree else {
+        let Some(CachedTree {
+            node: ref tree_node,
+            width,
+            height,
+            static_bytes,
+        }) = state.cached_tree
+        else {
             return true;
         };
         let frame_counter = state.frame_counter;
@@ -1490,22 +1498,12 @@ impl WasmWidgetRuntime {
         let now_unix_secs = state.system_time.timestamp();
         let mut timings = FrameTimings::default();
 
-        // An asset mutation since the capture means a static draw's pixels may
-        // have changed while the tree did not, so the static half is emitted
-        // again — which is also the draw a suspended asset is restored on.
-        let stale_assets = state
-            .last_static_key
-            .is_some_and(|(_, generation, _)| generation != state.renderer_assets.generation());
-
-        // The tree is the object the capture was taken from, so its static hash
-        // cannot have moved — but a `RelTime` inside it renders from the clock,
-        // and a label that changed width has resized the static content around
-        // it. Recapture rather than blit a layer laid out for the old width.
-        let layout_key =
-            bmc_render::partition::host_layout_key(tree_node, now_unix_secs, &state.host_intl);
-        let stale_layout = state
-            .last_static_key
-            .is_some_and(|(_, _, captured)| captured != layout_key);
+        // The key moves with an asset restored since the capture, whose pixels a static draw
+        // may show though the tree is unchanged, and with a `RelTime` label that changed width
+        // and resized the static content around it.
+        // The recapture is also the draw a suspended asset is restored on.
+        let frame = state.layer_frame(tree_node, static_bytes, false, now_unix_secs);
+        let plan = state.static_layer.plan(renderer, frame);
 
         // Scissoring to the moving regions leaves the rest of the target as
         // the last frame left it, so a caller that cleared gets no damage and
@@ -1527,17 +1525,13 @@ impl WasmWidgetRuntime {
             intl: &state.host_intl,
             rel_time: &state.rel_time,
             emit: bmc_render::tree::EmitMode::All,
-            static_layer: super::imports::layer_use(
-                state.static_layer_useful,
-                !(stale_assets || stale_layout),
-            ),
+            static_layer: state.static_layer.layer_use(plan),
             damage_rects: &damage,
-            static_layer_key: &state.instance_id,
             layout_outlines: state.layout_outlines.is_some(),
             stroke_outlines: bmc_render::tree::debug_layout_enabled(),
         };
         let mut resolver = RendererAssetRestorer::new(
-            &state.instance_id,
+            state.instance_id.as_str(),
             state.asset_cache.as_ref(),
             state.package_assets.as_ref(),
             &mut state.renderer_assets,
@@ -1556,18 +1550,24 @@ impl WasmWidgetRuntime {
             Ok(observation) => state.last_asset_restoration = observation,
             Err(error) => {
                 state.renderer_asset_failure = Some(error);
+                state.static_layer.forget();
                 return false;
             }
         }
+        #[cfg(test)]
+        let render_result = if std::mem::take(&mut state.fail_next_walk) {
+            Err(anyhow::anyhow!("injected walk failure"))
+        } else {
+            render_result
+        };
         match render_result {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
                 // One more buffer has been painted in full, if any was owed.
                 state.painted_in_full();
                 state.keep_walk(&result.dynamic_rects, result.layout_outlines);
-                let missed = matches!(result.static_layer, StaticLayer::Missed);
-                let empty = matches!(result.static_layer, StaticLayer::Captured { empty: true });
-                state.last_repaint = FrameRepaint::of_walk(&result.static_layer, damage);
+                let layer = result.static_layer;
+                state.last_repaint = FrameRepaint::of_walk(result.static_layer, damage);
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
                 // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
@@ -1575,44 +1575,32 @@ impl WasmWidgetRuntime {
                 state.frame_schedule.has_active_animations = has_active;
                 state.frame_schedule.interaction_pending = had_interaction;
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
-                if stale_assets || stale_layout {
-                    Self::record_recapture(state, layout_key);
-                }
-                // A missed blit means the walk repainted every draw into a
-                // target the host did not clear, so the pixels no draw covers
-                // still hold the previous frame's dynamic half. Owe every
-                // buffer a full repaint and stop reusing the layer.
-                if missed {
-                    state.last_static_key = None;
-                    state.static_layer_useful = false;
-                    state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS;
-                }
-                if empty {
-                    state.release_empty_layer(renderer);
+                let walked_assets = AssetGeneration::Ledger(state.renderer_assets.generation());
+                let committed = state
+                    .static_layer
+                    .commit(renderer, plan, layer, walked_assets);
+                match committed {
+                    // The recapture reached the buffer this frame painted,
+                    // and no other. Every remaining buffer still holds the
+                    // old static half, and scissoring the next frame to
+                    // damage would leave it there. The guest path marks the
+                    // same debt when its static half changes.
+                    LayerCommit::Rewritten => {
+                        state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
+                    }
+                    // A miss paints the tree in full over a cleared target,
+                    // and the static half it planned to reuse is unchanged,
+                    // so it pays off this buffer as a blit does.
+                    LayerCommit::Reused | LayerCommit::Missed | LayerCommit::Unlayered => {}
                 }
                 true
             }
             Err(e) => {
                 tracing::error!("cached tree render failed: {e}");
+                state.static_layer.forget();
                 true
             }
         }
-    }
-
-    /// Key the static layer a cached frame just recaptured, and owe the other buffers its repaint.
-    fn record_recapture(state: &mut HostState, layout_key: u64) {
-        // Re-read rather than reuse the generation the frame started with:
-        // restoring an asset during the walk bumps it again,
-        // and a stale key repaints in full until the next guest frame.
-        let generation = state.renderer_assets.generation();
-        if let Some((hash, _, _)) = state.last_static_key {
-            state.last_static_key = Some((hash, generation, layout_key));
-        }
-        // The recapture reached the buffer this frame painted, and no other.
-        // Every remaining buffer still holds the old static half,
-        // and scissoring the next frame to damage would leave it there.
-        // The guest path marks the same debt when its static half changes.
-        state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
     }
 
     fn render_stopped_cached_tree(state: &mut HostState, delta_ms: u32, target: TargetContents) {
@@ -1899,10 +1887,9 @@ impl WasmWidgetRuntime {
     /// Pure cache: the tree it was rasterised from is still in hand, so waking
     /// re-captures it.
     ///
-    /// Clearing the hash alongside is what makes that happen: left set, the
-    /// first guest frame back hashes the same tree and asks to blit a layer
-    /// that no longer exists. That degrades to a full pass rather than
-    /// corrupting, so the widget renders correctly and never caches again.
+    /// The cache forgets the key along with the layer: kept, the first guest
+    /// frame back would key the same tree and ask to blit a layer that no
+    /// longer exists, and the miss would stop caching until the tree changed.
     pub fn release_static_layer(&mut self, renderer: NonNull<dyn Renderer>) {
         self.with_renderer(renderer, |rt| {
             let state = rt.store.data_mut();
@@ -1913,8 +1900,7 @@ impl WasmWidgetRuntime {
             // the same thread, and single-threaded wasmi dispatch keeps the
             // borrow unique for its duration.
             let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
-            renderer.invalidate_static_layer(&state.instance_id);
-            state.last_static_key = None;
+            state.static_layer.release(renderer);
         });
     }
 
@@ -2007,7 +1993,7 @@ impl WasmWidgetRuntime {
                     let result = suspend_svg_profiled(
                         renderer,
                         &tag,
-                        &self.store.data().instance_id,
+                        self.store.data().instance_id.as_str(),
                         &raw_tag,
                         &mut observation,
                     );
@@ -2198,7 +2184,7 @@ impl WasmWidgetRuntime {
         let state = self.store.data();
         !self.fuel_dead
             && state.will_replay_cached_tree()
-            && state.static_layer_useful
+            && state.static_layer.is_on()
             && !state.frame_damage(width, height).is_empty()
     }
 
@@ -2280,7 +2266,7 @@ impl WasmWidgetRuntime {
     /// dropping the renderer itself.
     #[must_use]
     pub fn asset_namespace(&self) -> String {
-        self.store.data().instance_id.clone()
+        self.store.data().instance_namespace().to_owned()
     }
 
     /// Whether the widget needs another frame rendered.
@@ -2406,6 +2392,13 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn renderer_asset_failure_for_test(&self) -> Option<&str> {
         self.store.data().renderer_asset_failure.as_deref()
+    }
+
+    /// Whose static layer this widget's is in the renderer.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn static_layer_owner_for_test(&self) -> bmc_render::renderer::LayerOwner {
+        self.store.data().static_layer.owner().clone()
     }
 
     #[doc(hidden)]
@@ -2986,7 +2979,12 @@ mod tests {
         let mut runtime = minimal_runtime();
         let state = runtime.store.data_mut();
         state.frame_schedule.has_active_animations = true;
-        state.cached_tree = Some((bmc_render::tree::Node::Spacer { flex: 1.0 }, 40.0, 40.0));
+        state.cached_tree = Some(crate::host_api::CachedTree {
+            node: bmc_render::tree::Node::Spacer { flex: 1.0 },
+            width: 40.0,
+            height: 40.0,
+            static_bytes: bmc_render::partition::StaticBytesKey(0),
+        });
         state.recent_dynamic_rects = [
             vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
             vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
@@ -3076,6 +3074,131 @@ mod tests {
         assert!(runtime.last_dynamic_rects().is_none());
     }
 
+    #[test]
+    fn a_replay_after_a_failed_walk_captures_its_layer_again() {
+        let mut runtime = minimal_runtime();
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 100.0)
+            .with_static_layers();
+        let panel = || {
+            bmc_render::tree::Node::Column(
+                bmc_ui::PropsData {
+                    background: bmc_ui::Color::from_rgb(1, 2, 3),
+                    ..bmc_ui::PropsData::default()
+                },
+                Vec::new(),
+            )
+        };
+        let bytes = bmc_render::partition::StaticBytesKey(0);
+        runtime.store.data_mut().cached_tree = Some(crate::host_api::CachedTree {
+            node: panel(),
+            width: 100.0,
+            height: 100.0,
+            static_bytes: bytes,
+        });
+        for fail in [false, true] {
+            runtime.store.data_mut().fail_next_walk = fail;
+            assert!(runtime.replay_cached_tree_for_test(
+                renderer_ptr(&mut renderer),
+                16,
+                crate::TargetContents::Cleared
+            ));
+            assert!(
+                !renderer.static_layer_owners().is_empty(),
+                "the first replay captures the layer"
+            );
+        }
+        let state = runtime.store.data_mut();
+        let frame = state.layer_frame(&panel(), bytes, false, state.system_time.timestamp());
+        assert!(matches!(
+            state.static_layer.plan(&mut renderer, frame),
+            bmc_render::partition::static_layer::LayerPlan::Capture(_)
+        ));
+    }
+
+    /// A replay whose blit missed paints the tree in full over a cleared target
+    /// and keeps its static half, so the other buffers owe it nothing new.
+    #[test]
+    fn a_replay_missing_its_layer_owes_no_other_buffer() {
+        use bmc_render::renderer::prelude::*;
+        let mut runtime = minimal_runtime();
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 100.0)
+            .with_static_layers();
+        let panel = bmc_render::tree::Node::Column(
+            bmc_ui::PropsData {
+                background: bmc_ui::Color::from_rgb(1, 2, 3),
+                ..bmc_ui::PropsData::default()
+            },
+            Vec::new(),
+        );
+        runtime.store.data_mut().cached_tree = Some(crate::host_api::CachedTree {
+            node: panel,
+            width: 100.0,
+            height: 100.0,
+            static_bytes: bmc_render::partition::StaticBytesKey(0),
+        });
+        assert!(runtime.replay_cached_tree_for_test(
+            renderer_ptr(&mut renderer),
+            16,
+            crate::TargetContents::Cleared
+        ));
+        runtime.store.data_mut().stale_export_buffers = 0;
+
+        renderer.invalidate_static_layer(&runtime.static_layer_owner_for_test());
+        assert!(runtime.replay_cached_tree_for_test(
+            renderer_ptr(&mut renderer),
+            16,
+            crate::TargetContents::Cleared
+        ));
+        assert_eq!(runtime.store.data().stale_export_buffers, 0);
+    }
+
+    /// A replay planned to reuse its layer, whose walk captured it again
+    /// because the frame cleared to another background, owes the other buffers.
+    #[test]
+    fn a_replay_recapturing_a_stale_layer_owes_the_other_buffers() {
+        use bmc_render::renderer::prelude::*;
+        let mut runtime = minimal_runtime();
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 100.0)
+            .with_static_layers();
+        let panel = bmc_render::tree::Node::Column(
+            bmc_ui::PropsData {
+                background: bmc_ui::Color::from_rgb(1, 2, 3),
+                ..bmc_ui::PropsData::default()
+            },
+            Vec::new(),
+        );
+        runtime.store.data_mut().cached_tree = Some(crate::host_api::CachedTree {
+            node: panel,
+            width: 100.0,
+            height: 100.0,
+            static_bytes: bmc_render::partition::StaticBytesKey(0),
+        });
+        assert!(runtime.replay_cached_tree_for_test(
+            renderer_ptr(&mut renderer),
+            16,
+            crate::TargetContents::Cleared
+        ));
+        runtime.store.data_mut().stale_export_buffers = 0;
+
+        renderer.begin_frame_with_clear(
+            100,
+            100,
+            1.0,
+            bmc_render::renderer::FrameBackground::TransparentBlack,
+            bmc_render::renderer::FrameClear::Clear,
+        );
+        assert!(runtime.replay_cached_tree_for_test(
+            renderer_ptr(&mut renderer),
+            16,
+            crate::TargetContents::Cleared
+        ));
+        assert_eq!(
+            runtime.store.data().stale_export_buffers,
+            crate::host_api::EXPORT_BUFFERS - 1,
+            "the other buffers still show the layer captured over the old background"
+        );
+    }
+
     /// A replay that blits its layer back under the damage reports those regions.
     #[test]
     fn a_replay_blitting_under_damage_reports_the_regions_it_blitted() {
@@ -3090,10 +3213,13 @@ mod tests {
             Vec::new(),
         );
         let state = runtime.store.data_mut();
-        state.cached_tree = Some((panel, 100.0, 100.0));
-        state.static_layer_useful = true;
-        // A layout key no tree has, so the first replay captures the layer.
-        state.last_static_key = Some((0, state.renderer_assets.generation(), u64::MAX));
+        // Keyed, with nothing captured yet, so the first replay captures the layer.
+        state.cached_tree = Some(crate::host_api::CachedTree {
+            node: panel,
+            width: 100.0,
+            height: 100.0,
+            static_bytes: bmc_render::partition::StaticBytesKey(0),
+        });
         assert!(runtime.replay_cached_tree_for_test(
             renderer_ptr(&mut renderer),
             16,
@@ -3148,10 +3274,13 @@ mod tests {
             Vec::new(),
         );
         let state = runtime.store.data_mut();
-        state.cached_tree = Some((panel, 100.0, 100.0));
-        state.static_layer_useful = true;
-        // A layout key no tree has, so the first replay captures the layer.
-        state.last_static_key = Some((0, state.renderer_assets.generation(), u64::MAX));
+        // Keyed, with nothing captured yet, so the first replay captures the layer.
+        state.cached_tree = Some(crate::host_api::CachedTree {
+            node: panel,
+            width: 100.0,
+            height: 100.0,
+            static_bytes: bmc_render::partition::StaticBytesKey(0),
+        });
 
         let mut seen = Vec::new();
         for (frame, collect) in outlines.into_iter().enumerate() {

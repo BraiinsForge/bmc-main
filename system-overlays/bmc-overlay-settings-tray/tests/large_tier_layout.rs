@@ -50,7 +50,7 @@ use bmc_render::ui::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color, Fill, MeshId,
     Span, SvgId, TextOverflow, TextStyle,
 };
-use bmc_system_overlay::{DisplayShape, FrameKind, OverlayViewport, SettingsCaps};
+use bmc_system_overlay::{DisplayShape, FrameKind, Layering, OverlayViewport, SettingsCaps};
 
 const DECK: OverlayViewport = OverlayViewport {
     width: 1_280,
@@ -489,6 +489,7 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
         &english(),
         now,
         FrameKind::Fresh,
+        Layering::Unlayered,
     );
 
     assert!(
@@ -547,6 +548,7 @@ fn bmm101_controls_fit_between_the_close_target_and_the_bottom_edge() {
             &english(),
             now,
             FrameKind::Fresh,
+            Layering::Unlayered,
         );
 
         let buttons: Vec<_> = renderer
@@ -604,6 +606,7 @@ fn large_tier_hold_circle_is_centered_on_its_button() {
         &english(),
         now,
         FrameKind::Fresh,
+        Layering::Unlayered,
     );
 
     let &(hold_x, hold_y, _) = renderer
@@ -638,6 +641,7 @@ fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
         &english(),
         now,
         FrameKind::Fresh,
+        Layering::Unlayered,
     );
 
     for label in ["Hostname", "IP Address", "Connection"] {
@@ -670,6 +674,7 @@ fn the_layout_follows_the_size_the_tray_renders_at() {
             &english(),
             now,
             FrameKind::Fresh,
+            Layering::Unlayered,
         );
         renderer
             .paragraphs

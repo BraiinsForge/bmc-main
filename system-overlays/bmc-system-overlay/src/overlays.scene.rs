@@ -46,7 +46,7 @@ use bmc_platform::{HardwareProfile, Product};
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::Color;
 use bmc_system_overlay::{
-    AccessPoint, DeclineReason, DisplayShape, DownloadProgress, FrameKind, Language,
+    AccessPoint, DeclineReason, DisplayShape, DownloadProgress, FrameKind, Language, Layering,
     OverlayViewport, SettingsCaps, TouchEvent, UpgradeKind, UpgradePhase,
 };
 
@@ -212,6 +212,7 @@ fn device_info_cell(
                     current: Some(current),
                 }),
                 FrameKind::Fresh,
+                Layering::Unlayered,
             );
             stage.picked = drawn.picked;
         });
@@ -322,6 +323,7 @@ fn alarm_cell(
                 &view,
                 &intl,
                 FrameKind::Fresh,
+                Layering::Unlayered,
             );
         });
         // The rings run off a clock of their own, so this never comes to rest.
@@ -380,6 +382,7 @@ fn upgrade_cell(
                 &intl,
                 Instant::now(),
                 FrameKind::Fresh,
+                Layering::Unlayered,
             );
         });
         // Handed a clock of its own, so it can animate — the running phases never settle.
@@ -472,6 +475,7 @@ fn settings_tray_cell(
                 &intl,
                 Instant::now(),
                 FrameKind::Fresh,
+                Layering::Unlayered,
             );
         });
         // Reveal and press feedback are timed off the clock it is handed, and it

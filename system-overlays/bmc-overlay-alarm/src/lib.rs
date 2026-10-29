@@ -36,7 +36,7 @@ use bmc_render::ui::{
     TRANSPARENT, TextAlign, TextStyle, VerticalAlign, WHITE, col, fixed_height, row, text,
 };
 use bmc_system_overlay::{
-    AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
+    AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, Layering, OverlayViewport,
     RenderOutcome, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
 };
 
@@ -382,15 +382,18 @@ pub fn render_alarm(
     view: &AlarmView,
     intl: &Intl,
     frame: FrameKind,
+    layering: Layering,
 ) -> RenderAlarmOutput {
     let now = Instant::now();
     let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
         .unwrap_or(u32::MAX);
     state.last_render = now;
 
-    let tree_frame = match state.tree.render(frame, size, delta_ms, r, intl, || {
-        build_alarm_ui_tree(view, size, intl)
-    }) {
+    let tree_frame = match state
+        .tree
+        .render(frame, layering, size, delta_ms, r, intl, || {
+            build_alarm_ui_tree(view, size, intl)
+        }) {
         Ok(tree_frame) => tree_frame,
         Err(err) => {
             tracing::error!("alarm tree render failed: {err}");
@@ -507,6 +510,7 @@ impl SystemOverlay for AlarmOverlay {
             &view,
             intl,
             frame,
+            Layering::Unlayered,
         );
 
         if output.stop {
@@ -545,7 +549,15 @@ mod tests {
     fn render(state: &mut AlarmRenderState, frame: FrameKind) {
         let mut recorder = ShapingRecorder::new(480.0, 1280.0);
         let english = bmc_intl::formatter(Language::default());
-        let _ = render_alarm(&mut recorder, SIZE, state, &view(), &english, frame);
+        let _ = render_alarm(
+            &mut recorder,
+            SIZE,
+            state,
+            &view(),
+            &english,
+            frame,
+            Layering::Unlayered,
+        );
     }
 
     #[test]
@@ -597,7 +609,7 @@ mod tests {
         assert!(!overlay.render_state.tree.replayed_last_frame());
     }
 
-    fn static_key(tree: &Node) -> u64 {
+    fn static_key(tree: &Node) -> bmc_render::partition::StaticBytesKey {
         tree_static_key(tree).expect("BUG: the alarm tree decodes")
     }
 
@@ -642,7 +654,7 @@ mod tests {
         for size in [SIZE, (1_280, 480), (480, 480), (480, 320), (320, 240)] {
             for view in &views {
                 assert!(
-                    tree_static_key(&build_alarm_ui_tree(view, size, &english)).is_some(),
+                    tree_static_key(&build_alarm_ui_tree(view, size, &english)).is_ok(),
                     "{view:?} at {size:?}"
                 );
             }

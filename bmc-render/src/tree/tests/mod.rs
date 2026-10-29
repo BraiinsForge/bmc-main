@@ -25,6 +25,7 @@ use crate::components::{ButtonSize, ButtonStyle};
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::InteractionState;
 use crate::interaction::Rect;
+use crate::renderer::LayerOwner;
 use crate::renderer::prelude::*;
 use crate::renderer::{FrameBackground, FrameClear};
 // Vocabulary modules rather than the root, whose component
@@ -42,13 +43,17 @@ mod intrinsic_size;
 mod modal;
 mod text_overflow_layout;
 
+/// The owner of every static layer these tests capture.
+pub(super) static TEST_OWNER: std::sync::LazyLock<LayerOwner> =
+    std::sync::LazyLock::new(|| LayerOwner::Widget("test".to_owned()));
+
 /// Records which key each static-layer call carried: one renderer serves
 /// every slot, so the key is all that keeps two slots' layers apart.
 #[derive(Default)]
 struct KeyRecordingRenderer {
     draws: Vec<crate::interaction::Rect>,
-    calls: Vec<(&'static str, String)>,
-    captured: Vec<String>,
+    calls: Vec<(&'static str, Option<LayerOwner>)>,
+    captured: Vec<LayerOwner>,
     /// Makes `end_static_layer` lose the layer, as an eviction mid-capture does.
     lose_captures: bool,
     /// How many draws preceded each `clear_frame`.
@@ -171,7 +176,7 @@ impl RenderShapes for KeyRecordingRenderer {
         _border_width: f32,
         _color: Color,
     ) {
-        self.calls.push(("stroke", String::new()));
+        self.calls.push(("stroke", None));
     }
 
     fn draw_line(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _width: f32, _color: Color) {}
@@ -376,26 +381,26 @@ impl RenderAssets for KeyRecordingRenderer {
 }
 
 impl RenderOffscreen for KeyRecordingRenderer {
-    fn begin_static_layer(&mut self, key: &str, _width: u32, _height: u32) -> bool {
-        self.calls.push(("begin", key.to_owned()));
+    fn begin_static_layer(&mut self, key: &LayerOwner, _width: u32, _height: u32) -> bool {
+        self.calls.push(("begin", Some(key.clone())));
         self.captured.retain(|k| k != key);
         true
     }
 
-    fn end_static_layer(&mut self, key: &str) {
-        self.calls.push(("end", key.to_owned()));
+    fn end_static_layer(&mut self, key: &LayerOwner) {
+        self.calls.push(("end", Some(key.clone())));
         if !self.lose_captures {
-            self.captured.push(key.to_owned());
+            self.captured.push(key.clone());
         }
     }
 
-    fn blit_static_layer(&mut self, key: &str) -> bool {
-        self.calls.push(("blit", key.to_owned()));
+    fn blit_static_layer(&mut self, key: &LayerOwner) -> bool {
+        self.calls.push(("blit", Some(key.clone())));
         self.captured.iter().any(|k| k == key)
     }
 
-    fn invalidate_static_layer(&mut self, key: &str) {
-        self.calls.push(("invalidate", key.to_owned()));
+    fn invalidate_static_layer(&mut self, key: &LayerOwner) {
+        self.calls.push(("invalidate", Some(key.clone())));
         self.captured.retain(|k| k != key);
     }
 
@@ -440,7 +445,7 @@ fn render_with(
     state: &mut SlotState,
     renderer: &mut KeyRecordingRenderer,
     tree: &Node,
-    static_layer: LayerUse,
+    static_layer: LayerUse<'_>,
 ) -> super::TreeResult {
     let mut ctx = ProcessContext {
         interaction: &mut state.interaction,
@@ -456,7 +461,6 @@ fn render_with(
         rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
         static_layer,
-        static_layer_key: "modal-test",
         layout_outlines: false,
         stroke_outlines: false,
         damage_rects: &[],
@@ -487,8 +491,7 @@ fn render_dynamic_pass(
         intl: &bmc_intl::formatter(bmc_intl::Language::default()),
         rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::DynamicOnly,
-        static_layer: LayerUse::Reuse,
-        static_layer_key: "damage-test",
+        static_layer: LayerUse::Reuse(&TEST_OWNER),
         layout_outlines: false,
         stroke_outlines: false,
         damage_rects: damage,
@@ -520,7 +523,6 @@ fn render_pass(
         rel_time: &crate::components::RelTimeWords::new(),
         emit,
         static_layer: LayerUse::Ignore,
-        static_layer_key: "band-test",
         layout_outlines: false,
         stroke_outlines: false,
         damage_rects: &[],
@@ -549,7 +551,6 @@ fn render_once(
         rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
         static_layer: LayerUse::Ignore,
-        static_layer_key: "modal-test",
         layout_outlines: false,
         stroke_outlines: false,
         damage_rects: &[],
@@ -599,8 +600,7 @@ fn capture_collecting(
         intl: &bmc_intl::formatter(bmc_intl::Language::default()),
         rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
-        static_layer: LayerUse::Capture,
-        static_layer_key: "scroll-test",
+        static_layer: LayerUse::Capture(&TEST_OWNER),
         layout_outlines,
         stroke_outlines,
         damage_rects: &[],

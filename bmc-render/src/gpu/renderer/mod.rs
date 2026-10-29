@@ -41,6 +41,7 @@ use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
 use super::text::{FontTable, ParagraphLayoutCache, build_font_table, to_femtovg_color};
 use crate::components::draw::is_full_turn;
+use crate::renderer::LayerOwner;
 use crate::renderer::prelude::*;
 use crate::renderer::{FrameBackground, FrameClear};
 
@@ -117,7 +118,7 @@ pub struct FemtoVgRenderer {
     glyph_report_every: ii_stopwatch::Every,
     /// Cached static layers, keyed by owning widget instance. One renderer
     /// serves every slot, so these cannot be a single slot-agnostic layer.
-    static_layers: HashMap<String, StaticLayer>,
+    static_layers: HashMap<LayerOwner, StaticLayer>,
     /// Stencil renderbuffers shared by the static layers of one physical size,
     /// standing in for the one femtovg allocates per render-target image.
     ///
@@ -128,7 +129,7 @@ pub struct FemtoVgRenderer {
     /// Layers whose framebuffer came back incomplete, and the size it failed at.
     /// `begin_static_layer` refuses a layer at that size but not at any other.
     /// Kept apart from `static_layers`, since the refusal drops the layer's entry there.
-    incomplete_static_layers: HashMap<String, PhysicalSize>,
+    incomplete_static_layers: HashMap<LayerOwner, PhysicalSize>,
     /// Probed in [`FemtoVgRenderer::new`].
     /// Anything but [`RenderTargetProbe::Working`] makes `begin_static_layer` refuse,
     /// so a driver that cannot render into an RGBA8 texture keeps drawing

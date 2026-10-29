@@ -42,6 +42,10 @@ use serde_json::Value;
 use taffy::prelude::*;
 
 use bmc_render::interaction::InteractionState;
+use bmc_render::partition::StaticBytesKey;
+use bmc_render::partition::static_layer::{
+    AssetGeneration, FrameTree, LayerKey, MissPolicy, StaticLayerCache,
+};
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
 use bmc_render::{
@@ -569,6 +573,25 @@ pub(crate) enum Lifecycle {
     Test,
 }
 
+/// The namespace a widget's host-side assets live under.
+///
+/// Read-only outside [`HostState`], which renames the static layer's owner with it.
+#[derive(Debug)]
+pub(crate) struct InstanceId(String);
+
+impl InstanceId {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for InstanceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Fallback id when no compositor token is supplied (testbed/capture harness).
 fn synthetic_instance_id() -> String {
     static NEXT: AtomicU32 = AtomicU32::new(1);
@@ -960,12 +983,22 @@ pub(crate) enum GuestTree {
     Committed,
 }
 
+/// A deserialized guest tree kept for replay, with the size it was laid out at.
+pub(crate) struct CachedTree {
+    pub node: bmc_render::tree::Node,
+    pub width: f32,
+    pub height: f32,
+    /// The static key of the tree's wire bytes, which a replay keys its layer by.
+    pub static_bytes: StaticBytesKey,
+}
+
 /// Host-side state accessible to WASM via host functions.
 #[cfg_attr(
-    feature = "testing",
+    all(test, feature = "testing"),
     expect(
         clippy::struct_excessive_bools,
-        reason = "the `testing` feature adds `unload_ran`, taking the count past the threshold"
+        reason = "the testing feature's unload flag and the test-only walk failure hook \
+                  make four flags"
     )
 )]
 pub(crate) struct HostState {
@@ -1029,28 +1062,8 @@ pub(crate) struct HostState {
     /// Shared, so a report taken every tick only counts a reference.
     pub layout_outlines: Option<Arc<[bmc_render::tree::LayoutOutline]>>,
 
-    /// Whether the last submitted tree had a static half worth caching,
-    /// per [`has_static_content`](bmc_render::partition::has_static_content).
-    pub static_layer_useful: bool,
-
-    /// What the cached static layer was captured from: the tree's
-    /// static-half hash, the renderer asset ledger's generation, and the
-    /// layout key of the dynamic nodes that size static content.
-    /// A frame matching all three can blit the layer rather than
-    /// re-rasterising it.
-    ///
-    /// The generation is part of the key because a static draw's *pixels* can
-    /// come from an asset rather than from the tree, and the layout key because
-    /// a `RelTime` label's width moves the static siblings around it — see
-    /// `partition::host_layout_key`.
-    pub last_static_key: Option<(u64, u64, u64)>,
-
-    /// The key of the last guest tree whose capture came out empty.
-    ///
-    /// `has_static_content` sees the tree, not where it lands,
-    /// so it keeps asking for a layer the walk then leaves empty;
-    /// a tree keyed like this one goes without instead.
-    pub empty_static_key: Option<(u64, u64, u64)>,
+    /// The widget's static layer in the renderer, under its instance id.
+    pub static_layer: StaticLayerCache,
 
     /// How many upcoming frames must repaint in full because the export buffer
     /// they will paint does not hold what the frame before it showed.
@@ -1063,8 +1076,8 @@ pub(crate) struct HostState {
     /// target, so every buffer is newly allocated and holds nothing.
     pub stale_export_buffers: usize,
 
-    /// Cached deserialized tree for animation-only frames (tree, width, height).
-    pub cached_tree: Option<(bmc_render::tree::Node, f32, f32)>,
+    /// The last committed tree, which animation-only frames replay.
+    pub cached_tree: Option<CachedTree>,
 
     /// Whether the running guest render has committed a tree.
     ///
@@ -1313,7 +1326,7 @@ pub(crate) struct HostState {
 
     /// Namespaces every host-side asset tag — the compositor-minted instance
     /// token, or a synthetic `dev-N` for the testbed/capture harness.
-    pub instance_id: String,
+    pub(crate) instance_id: InstanceId,
 
     /// Per-instance asset cache, curried to this widget's bucket.
     pub asset_cache: Option<crate::disk_cache::DiskCache>,
@@ -1324,6 +1337,10 @@ pub(crate) struct HostState {
     pub(crate) renderer_assets: crate::renderer_assets::RendererAssetLedger,
 
     pub(crate) renderer_asset_failure: Option<String>,
+
+    /// Fails the next replay's walk, as no real tree makes taffy fail.
+    #[cfg(test)]
+    pub(crate) fail_next_walk: bool,
 
     pub(crate) last_asset_restoration: Option<crate::runtime::RendererAssetRestorationObservation>,
 
@@ -1508,13 +1525,17 @@ impl HostState {
         fetch_agent: FetchAgent,
     ) -> Self {
         let (image_decode_tx, image_decode_rx) = mpsc::channel();
+        let instance_id = synthetic_instance_id();
         Self {
+            static_layer: widget_static_layer(&instance_id),
             renderer_ptr: None,
             renderer_gpu_access: None,
             renderer_gpu_access_failure: None,
             renderer_asset_gate: RendererAssetGate::Active,
             renderer_assets: crate::renderer_assets::RendererAssetLedger::default(),
             renderer_asset_failure: None,
+            #[cfg(test)]
+            fail_next_walk: false,
             last_asset_restoration: None,
             interaction: InteractionState::new(),
             frame_schedule: FrameScheduleState::new(),
@@ -1530,9 +1551,6 @@ impl HostState {
             damage_memo: RefCell::new(None),
             last_repaint: FrameRepaint::NoTree,
             layout_outlines: None,
-            static_layer_useful: true,
-            last_static_key: None,
-            empty_static_key: None,
             stale_export_buffers: 0,
             cached_tree: None,
             guest_tree: GuestTree::Pending,
@@ -1614,7 +1632,7 @@ impl HostState {
             led_request_sender: None,
             led_request_alloc: crate::led_request::LedRequestIdAllocator::new(),
             audio: AudioRegistry::new(),
-            instance_id: synthetic_instance_id(),
+            instance_id: InstanceId(instance_id),
             asset_cache: None,
             package_assets: None,
             #[cfg(feature = "audio")]
@@ -1669,14 +1687,14 @@ impl HostState {
     /// same slot names without collision.
     #[must_use]
     pub fn namespaced_tag(&self, tag: &str) -> String {
-        namespaced_tag(&self.instance_id, tag)
+        namespaced_tag(self.instance_id.as_str(), tag)
     }
 
     /// The bare namespace root (`instance_id`) every asset tag lives under.
     /// `evict_prefix(instance_namespace())` sweeps the whole bucket.
     #[must_use]
     pub fn instance_namespace(&self) -> &str {
-        &self.instance_id
+        self.instance_id.as_str()
     }
 
     /// Evict every host-side audio asset belonging to this widget instance.
@@ -1685,7 +1703,7 @@ impl HostState {
     /// renderer-side assets are reclaimed when the caller drops their
     /// caller-owned `FemtoVgRenderer`.
     pub fn evict_widget(&mut self) -> usize {
-        let prefix = self.instance_id.clone();
+        let prefix = self.instance_id.as_str().to_owned();
         self.evict_audio_prefix(&prefix)
     }
 
@@ -1802,13 +1820,55 @@ impl HostState {
         self.stale_export_buffers = self.stale_export_buffers.saturating_sub(1);
     }
 
-    /// Free a layer the static pass left empty, which would only cost a blit,
-    /// and stop asking for one until the next guest frame decides again.
-    pub(crate) fn release_empty_layer(&mut self, renderer: &mut dyn Renderer) {
-        renderer.invalidate_static_layer(&self.instance_id);
-        self.last_static_key = None;
-        self.static_layer_useful = false;
+    /// What the static layer cache needs to know about `tree_node`, a tree of this widget
+    /// whose wire bytes key as `static_bytes`.
+    ///
+    /// Keyed before rendering: a static half matching the previous frame's leaves the layer valid,
+    /// so the frame blits instead of re-rasterising content that did not change.
+    pub(crate) fn layer_frame(
+        &self,
+        tree_node: &bmc_render::tree::Node,
+        static_bytes: StaticBytesKey,
+        fresh: bool,
+        now_unix_secs: i64,
+    ) -> FrameTree {
+        let host = bmc_render::partition::HostPaintState {
+            pressed_key: self.interaction.pressed_key(),
+            scroll_offsets: &self.scroll_states,
+        };
+        let key = LayerKey::new(
+            tree_node,
+            static_bytes,
+            &host,
+            (self.widget_width, self.widget_height),
+            AssetGeneration::Ledger(self.renderer_assets.generation()),
+            now_unix_secs,
+            &self.host_intl,
+        );
+        let dragging = self.interaction.get_global_scroll_delta() != 0.0;
+        FrameTree::new(tree_node, Some(key), dragging, fresh)
     }
+
+    /// Name the widget `instance_id`, which also owns its static layer.
+    pub(crate) fn set_instance_id(&mut self, instance_id: String) {
+        assert!(
+            !self.static_layer.may_hold_layer(),
+            "BUG: renaming a widget after a capture orphans its layer in the renderer"
+        );
+        self.static_layer = widget_static_layer(&instance_id);
+        self.instance_id = InstanceId(instance_id);
+    }
+}
+
+/// A widget's static layer cache, owned by its asset namespace.
+///
+/// A widget's tree is rebuilt only when its state changes,
+/// so after a miss it captures again at the next one.
+fn widget_static_layer(instance_id: &str) -> StaticLayerCache {
+    StaticLayerCache::new(
+        bmc_render::renderer::LayerOwner::Widget(instance_id.to_owned()),
+        MissPolicy::NextTree,
+    )
 }
 
 /// How a frame repainted its target.
@@ -1828,7 +1888,7 @@ impl FrameRepaint {
     /// How a walk handed `damage` repainted, from what it did with its static layer:
     /// only a blit under the damage leaves the rest of the target alone.
     /// Relies on `render_tree` blitting under the damage whenever there is any.
-    pub(crate) fn of_walk(static_layer: &bmc_render::tree::StaticLayer, damage: Vec<Rect>) -> Self {
+    pub(crate) fn of_walk(static_layer: bmc_render::tree::StaticLayer, damage: Vec<Rect>) -> Self {
         use bmc_render::tree::StaticLayer;
         match static_layer {
             StaticLayer::Blitted if !damage.is_empty() => Self::Damage { blitted: damage },
@@ -1913,12 +1973,12 @@ mod tests {
     fn only_a_partial_blit_reports_a_damage_repaint() {
         use bmc_render::tree::StaticLayer;
         let region = Rect::new(1.0, 2.0, 3.0, 4.0);
-        let partial = super::FrameRepaint::of_walk(&StaticLayer::Blitted, vec![region]);
+        let partial = super::FrameRepaint::of_walk(StaticLayer::Blitted, vec![region]);
         assert!(
             matches!(&partial, super::FrameRepaint::Damage { blitted } if blitted.len() == 1),
             "got {partial:?}"
         );
-        let whole_blit = super::FrameRepaint::of_walk(&StaticLayer::Blitted, Vec::new());
+        let whole_blit = super::FrameRepaint::of_walk(StaticLayer::Blitted, Vec::new());
         assert!(
             matches!(whole_blit, super::FrameRepaint::Full),
             "got {whole_blit:?}"
@@ -1928,7 +1988,7 @@ mod tests {
             StaticLayer::Missed,
             StaticLayer::Unused,
         ] {
-            let repaint = super::FrameRepaint::of_walk(&whole, vec![region]);
+            let repaint = super::FrameRepaint::of_walk(whole, vec![region]);
             assert!(
                 matches!(repaint, super::FrameRepaint::Full),
                 "got {repaint:?}"
@@ -2193,6 +2253,64 @@ mod tests {
         assert_eq!(delivered.context, FetchCompletionContext::Normal);
     }
 
+    /// A fresh widget state whose cache has handed `layers` a capture of a static tree.
+    fn planned_capture() -> (
+        HostState,
+        bmc_render::renderer::test_support::ShapingRecorder,
+        bmc_render::partition::static_layer::LayerPlan,
+    ) {
+        use bmc_render::partition::static_layer::{AssetGeneration, FrameTree, LayerKey};
+        use bmc_render::partition::{LayoutKey, StaticHash};
+
+        let mut state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+            FetchAgent::default(),
+        );
+        let mut layers = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 20.0)
+            .with_static_layers();
+        let tree = FrameTree {
+            key: Some(LayerKey {
+                size: (100, 20),
+                static_hash: StaticHash(1),
+                layout: LayoutKey(0),
+                assets: AssetGeneration::Unchanging,
+            }),
+            has_static_content: true,
+            scrolling: false,
+            fresh: true,
+        };
+        let plan = state.static_layer.plan(&mut layers, tree);
+        (state, layers, plan)
+    }
+
+    #[test]
+    #[should_panic(expected = "orphans its layer")]
+    fn renaming_a_widget_after_a_capture_is_a_bug() {
+        use bmc_render::partition::static_layer::AssetGeneration;
+        use bmc_render::renderer::prelude::*;
+        use bmc_render::tree::StaticLayer;
+
+        let (mut state, mut layers, plan) = planned_capture();
+        assert!(layers.begin_static_layer(state.static_layer.owner(), 100, 20));
+        state.static_layer.commit(
+            &mut layers,
+            plan,
+            StaticLayer::Captured { empty: false },
+            AssetGeneration::Unchanging,
+        );
+        state.set_instance_id("renamed".to_owned());
+    }
+
+    #[test]
+    #[should_panic(expected = "orphans its layer")]
+    fn renaming_a_widget_after_a_failed_walk_is_a_bug() {
+        let (mut state, _layers, _) = planned_capture();
+        // The walk began the capture and failed before its commit.
+        state.static_layer.forget();
+        state.set_instance_id("renamed".to_owned());
+    }
+
     #[test]
     fn renderer_asset_gate_tracks_committed_renderability() {
         let mut state = HostState::new(
@@ -2346,7 +2464,12 @@ mod tests {
     fn state_that_would_replay() -> HostState {
         let mut state = state_with_damage();
         state.frame_schedule.has_active_animations = true;
-        state.cached_tree = Some((bmc_render::tree::Node::Spacer { flex: 1.0 }, 40.0, 40.0));
+        state.cached_tree = Some(crate::host_api::CachedTree {
+            node: bmc_render::tree::Node::Spacer { flex: 1.0 },
+            width: 40.0,
+            height: 40.0,
+            static_bytes: bmc_render::partition::StaticBytesKey(0),
+        });
         state
     }
 

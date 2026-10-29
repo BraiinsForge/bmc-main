@@ -32,11 +32,12 @@ use bmc_ui::Color;
 use wasmi::{Caller, Linker};
 
 use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
+use bmc_render::partition::static_layer::{AssetGeneration, LayerCommit, LayerPlan};
 use bmc_render::renderer::Renderer;
 use bmc_render::tree;
 use bmc_render::{FrameTimings, layout_and_render_with_asset_resolver};
 
-use crate::host_api::HostState;
+use crate::host_api::{CachedTree, HostState};
 
 use super::super::backend::{RendererAssetRestorer, write_touch_hit};
 use super::super::memory::{read_bytes, read_string};
@@ -203,19 +204,6 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
-/// What this frame does with the cached static layer.
-pub(in crate::runtime) fn layer_use(
-    layered: bool,
-    static_unchanged: bool,
-) -> bmc_render::tree::LayerUse {
-    use bmc_render::tree::LayerUse;
-    match (layered, static_unchanged) {
-        (false, _) => LayerUse::Ignore,
-        (true, true) => LayerUse::Reuse,
-        (true, false) => LayerUse::Capture,
-    }
-}
-
 /// Whether the guest submitted its tree at the size the surface has.
 ///
 /// A tree submitted at another size means the guest and the host
@@ -268,9 +256,8 @@ fn submit_tree(
         let deserialize_us =
             u32::try_from(deserialize_started.elapsed().as_micros()).unwrap_or(u32::MAX);
         let now_unix_secs = state.system_time.timestamp();
-        let (static_key, static_unchanged) =
-            static_layer_key(state, &tree_node, static_bytes, now_unix_secs);
-        let layered = decide_static_layer(renderer, state, &tree_node, static_key);
+        let frame = state.layer_frame(&tree_node, static_bytes, true, now_unix_secs);
+        let plan = state.static_layer.plan(renderer, frame);
         state.last_asset_restoration = None;
         let delta_ms = state.delta_ms;
         let frame_counter = state.frame_counter;
@@ -293,14 +280,13 @@ fn submit_tree(
             intl: &state.host_intl,
             rel_time: &state.rel_time,
             emit: bmc_render::tree::EmitMode::All,
-            static_layer: layer_use(layered, static_unchanged),
-            static_layer_key: &state.instance_id,
+            static_layer: state.static_layer.layer_use(plan),
             layout_outlines: state.layout_outlines.is_some(),
             stroke_outlines: bmc_render::tree::debug_layout_enabled(),
             damage_rects: &[],
         };
         let mut resolver = RendererAssetRestorer::new(
-            &state.instance_id,
+            state.instance_id.as_str(),
             state.asset_cache.as_ref(),
             state.package_assets.as_ref(),
             &mut state.renderer_assets,
@@ -319,6 +305,7 @@ fn submit_tree(
             Ok(observation) => state.last_asset_restoration = observation,
             Err(error) => {
                 state.renderer_asset_failure = Some(error);
+                state.static_layer.forget();
                 return;
             }
         }
@@ -330,8 +317,8 @@ fn submit_tree(
                     tree_node,
                     w,
                     h,
-                    static_key,
-                    static_unchanged,
+                    static_bytes,
+                    plan,
                     timings,
                     has_active,
                 },
@@ -339,63 +326,10 @@ fn submit_tree(
             ),
             Err(error) => {
                 tracing::error!("tree processing failed: {error}");
+                state.static_layer.forget();
             }
         }
     })
-}
-
-/// Whether `tree_node` gets a static layer: it must have static content,
-/// per [`has_static_content`](bmc_render::partition::has_static_content),
-/// and must not key like the last tree whose capture came out empty.
-///
-/// A tree without one frees any earlier capture along with its key,
-/// or a later static tree hashing like it would reuse a layer that is gone.
-fn decide_static_layer(
-    renderer: &mut dyn Renderer,
-    state: &mut HostState,
-    tree_node: &bmc_render::tree::Node,
-    static_key: (u64, u64, u64),
-) -> bool {
-    let layered = bmc_render::partition::has_static_content(tree_node)
-        && state.empty_static_key != Some(static_key);
-    if !layered {
-        renderer.invalidate_static_layer(&state.instance_id);
-        state.last_static_key = None;
-    }
-    state.static_layer_useful = layered;
-    layered
-}
-
-/// The key this frame's static half hashes to, and whether the cached layer
-/// still matches it.
-///
-/// Hashed before rendering: a static half matching the previous guest frame's
-/// leaves the cached layer valid, so this frame blits instead of re-rasterising
-/// content that did not change.
-fn static_layer_key(
-    state: &HostState,
-    tree_node: &bmc_render::tree::Node,
-    static_bytes: u64,
-    now_unix_secs: i64,
-) -> ((u64, u64, u64), bool) {
-    let key = (
-        bmc_render::partition::static_hash(
-            static_bytes,
-            &bmc_render::partition::HostPaintState {
-                pressed_key: state.interaction.pressed_key(),
-                scroll_offsets: &state.scroll_states,
-            },
-        ),
-        state.renderer_assets.generation(),
-        bmc_render::partition::host_layout_key(tree_node, now_unix_secs, &state.host_intl),
-    );
-    // The scroll container advances its offset inside the walk, so a hash taken
-    // before it describes the offset the previous frame ended on: reusing the
-    // layer would blit the static half one delta behind the dynamic one, for as
-    // long as the finger rests.
-    let scrolling = state.interaction.get_global_scroll_delta() != 0.0;
-    let unchanged = state.last_static_key == Some(key) && !scrolling;
-    (key, unchanged)
 }
 
 /// What a completed guest frame contributes to [`HostState`] beyond its draws.
@@ -403,8 +337,8 @@ struct SubmittedFrame {
     tree_node: bmc_render::tree::Node,
     w: f32,
     h: f32,
-    static_key: (u64, u64, u64),
-    static_unchanged: bool,
+    static_bytes: bmc_render::partition::StaticBytesKey,
+    plan: LayerPlan,
     timings: bmc_render::FrameTimings,
     has_active: bool,
 }
@@ -423,32 +357,26 @@ fn commit_submitted_frame(
     state.frame_schedule.has_active_animations = frame.has_active;
     state.frame_schedule.interaction_pending = had_interaction;
     state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
-    state.cached_tree = Some((frame.tree_node, frame.w, frame.h));
+    state.cached_tree = Some(CachedTree {
+        node: frame.tree_node,
+        width: frame.w,
+        height: frame.h,
+        static_bytes: frame.static_bytes,
+    });
     state.guest_tree = crate::host_api::GuestTree::Committed;
-    if matches!(
-        result.static_layer,
-        bmc_render::tree::StaticLayer::Captured { empty: true }
-    ) {
-        state.release_empty_layer(renderer);
-        state.empty_static_key = Some(frame.static_key);
-    }
-    // A key without a captured layer would have the next frame blit an image
-    // that does not exist, and the host preserve a target on its strength.
-    // An ignored frame captured none either, though its wire-byte key never
-    // matches a layered tree's, so declining to record it is only defensive.
-    if matches!(result.static_layer, bmc_render::tree::StaticLayer::Missed) {
-        state.last_static_key = None;
-        state.static_layer_useful = false;
-    } else if state.static_layer_useful {
-        state.last_static_key = Some(frame.static_key);
-    }
-    // This frame painted the buffer it holds in full. A changed static half
-    // still owes every other buffer, each of which keeps showing the old one
-    // until it repaints in full too.
-    if frame.static_unchanged {
-        state.painted_in_full();
-    } else {
-        state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
+    let walked_assets = AssetGeneration::Ledger(state.renderer_assets.generation());
+    let committed =
+        state
+            .static_layer
+            .commit(renderer, frame.plan, result.static_layer, walked_assets);
+    // This frame painted the buffer it holds in full. One that reused its layer, blitted or
+    // missed, kept its static half. Any other may have changed it, and every other buffer
+    // keeps showing the old one until it repaints in full too.
+    match committed {
+        LayerCommit::Reused | LayerCommit::Missed => state.painted_in_full(),
+        LayerCommit::Rewritten | LayerCommit::Unlayered => {
+            state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
+        }
     }
     state.keep_walk(&result.dynamic_rects, result.layout_outlines);
     state.last_repaint = crate::host_api::FrameRepaint::Full;
@@ -496,13 +424,15 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostState, SubmittedFrame, commit_submitted_frame, decide_static_layer};
+    use super::{HostState, SubmittedFrame, commit_submitted_frame};
+    use bmc_render::partition::StaticBytesKey;
+    use bmc_render::partition::static_layer::{AssetGeneration, LayerPlan};
     use bmc_render::renderer::test_support::ShapingRecorder;
-    use bmc_render::tree::{Node, TreeResult};
+    use bmc_render::tree::{Node, StaticLayer, TreeResult};
     use bmc_ui::{Color, PropsData};
 
-    const EMPTY_KEY: (u64, u64, u64) = (1, 2, 3);
-    const OTHER_KEY: (u64, u64, u64) = (4, 5, 6);
+    const EMPTY_BYTES: StaticBytesKey = StaticBytesKey(1);
+    const OTHER_BYTES: StaticBytesKey = StaticBytesKey(4);
 
     fn state() -> HostState {
         HostState::new(
@@ -524,7 +454,37 @@ mod tests {
         )
     }
 
-    fn commit_empty_capture(renderer: &mut ShapingRecorder, state: &mut HostState) {
+    /// Plan a guest frame of `tree`, whose wire bytes key as `bytes`.
+    fn plan(
+        renderer: &mut ShapingRecorder,
+        state: &mut HostState,
+        tree: &Node,
+        bytes: StaticBytesKey,
+    ) -> LayerPlan {
+        let frame = state.layer_frame(tree, bytes, true, 0);
+        state.static_layer.plan(renderer, frame)
+    }
+
+    /// Commit a guest frame of `panel()` keyed as `bytes`, whose walk did `layer`.
+    fn commit(
+        renderer: &mut ShapingRecorder,
+        state: &mut HostState,
+        bytes: StaticBytesKey,
+        layer: StaticLayer,
+    ) {
+        let plan = plan(renderer, state, &panel(), bytes);
+        commit_plan(renderer, state, bytes, plan, layer);
+    }
+
+    /// Commit a guest frame of `panel()` keyed as `bytes` and planned as `plan`,
+    /// whose walk did `layer`.
+    fn commit_plan(
+        renderer: &mut ShapingRecorder,
+        state: &mut HostState,
+        bytes: StaticBytesKey,
+        plan: LayerPlan,
+        layer: StaticLayer,
+    ) {
         commit_submitted_frame(
             renderer,
             state,
@@ -532,16 +492,44 @@ mod tests {
                 tree_node: panel(),
                 w: 100.0,
                 h: 100.0,
-                static_key: EMPTY_KEY,
-                static_unchanged: false,
+                static_bytes: bytes,
+                plan,
                 timings: bmc_render::FrameTimings::default(),
                 has_active: true,
             },
             TreeResult {
-                static_layer: bmc_render::tree::StaticLayer::Captured { empty: true },
+                static_layer: layer,
                 ..TreeResult::default()
             },
         );
+    }
+
+    fn commit_empty_capture(renderer: &mut ShapingRecorder, state: &mut HostState) {
+        commit(
+            renderer,
+            state,
+            EMPTY_BYTES,
+            StaticLayer::Captured { empty: true },
+        );
+    }
+
+    #[test]
+    fn a_capture_whose_walk_restored_an_asset_is_reused_next() {
+        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
+        let captured = plan(&mut renderer, &mut state, &panel(), OTHER_BYTES);
+        // Stands in for an asset the walk restored, which moves the generation.
+        state.renderer_assets.clear();
+        commit_plan(
+            &mut renderer,
+            &mut state,
+            OTHER_BYTES,
+            captured,
+            StaticLayer::Captured { empty: false },
+        );
+        assert!(matches!(
+            plan(&mut renderer, &mut state, &panel(), OTHER_BYTES),
+            LayerPlan::Reuse(_)
+        ));
     }
 
     #[test]
@@ -556,35 +544,106 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_capture_stops_reusing_the_layer() {
+    fn a_reused_layer_owes_no_buffer_a_repaint() {
         let (mut renderer, mut state) = (ShapingRecorder::default(), state());
-        commit_empty_capture(&mut renderer, &mut state);
-        assert_eq!(
-            state.last_static_key, None,
-            "a freed layer must not be blitted"
-        );
-        assert!(!state.static_layer_useful);
-    }
-
-    #[test]
-    fn a_tree_keyed_like_an_empty_capture_goes_without_a_layer() {
-        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
-        commit_empty_capture(&mut renderer, &mut state);
-        assert!(
-            !decide_static_layer(&mut renderer, &mut state, &panel(), EMPTY_KEY),
-            "the same tree would only capture an empty layer again"
-        );
-    }
-
-    #[test]
-    fn a_tree_keyed_otherwise_gets_a_layer_after_an_empty_capture() {
-        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
-        commit_empty_capture(&mut renderer, &mut state);
-        assert!(decide_static_layer(
+        commit(
             &mut renderer,
             &mut state,
-            &panel(),
-            OTHER_KEY
-        ));
+            OTHER_BYTES,
+            StaticLayer::Captured { empty: false },
+        );
+        assert_eq!(
+            state.stale_export_buffers,
+            crate::host_api::EXPORT_BUFFERS - 1
+        );
+        commit(&mut renderer, &mut state, OTHER_BYTES, StaticLayer::Blitted);
+        assert_eq!(
+            state.stale_export_buffers,
+            crate::host_api::EXPORT_BUFFERS - 2
+        );
+    }
+
+    #[test]
+    fn a_missed_reuse_owes_no_buffer_a_repaint() {
+        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
+        commit(
+            &mut renderer,
+            &mut state,
+            OTHER_BYTES,
+            StaticLayer::Captured { empty: false },
+        );
+        commit(&mut renderer, &mut state, OTHER_BYTES, StaticLayer::Missed);
+        assert_eq!(
+            state.stale_export_buffers,
+            crate::host_api::EXPORT_BUFFERS - 2,
+            "a miss repaints its buffer in full and keeps the static half"
+        );
+    }
+
+    #[test]
+    fn a_reuse_the_walk_captured_owes_the_other_buffers() {
+        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
+        commit(
+            &mut renderer,
+            &mut state,
+            OTHER_BYTES,
+            StaticLayer::Captured { empty: false },
+        );
+        state.stale_export_buffers = 0;
+        let reuse = plan(&mut renderer, &mut state, &panel(), OTHER_BYTES);
+        assert!(matches!(reuse, LayerPlan::Reuse(_)));
+        // As when the layer was stale against the frame's background, so the walk captured it.
+        commit_plan(
+            &mut renderer,
+            &mut state,
+            OTHER_BYTES,
+            reuse,
+            StaticLayer::Captured { empty: false },
+        );
+        assert_eq!(
+            state.stale_export_buffers,
+            crate::host_api::EXPORT_BUFFERS - 1,
+            "the other buffers still show the static half the walk replaced"
+        );
+    }
+
+    /// Whether a tree keyed like the last frame keeps its layer while a finger drags.
+    fn keeps_its_layer_under_a_drag(tree: &Node) -> bool {
+        use bmc_render::interaction::TouchEvent;
+        let (mut renderer, mut state) = (ShapingRecorder::default(), state());
+        state
+            .interaction
+            .push_event(TouchEvent::Down { x: 10.0, y: 10.0 });
+        state.interaction.begin_frame();
+        state
+            .interaction
+            .push_event(TouchEvent::Move { x: 10.0, y: 14.0 });
+        state.interaction.begin_frame();
+        assert!(
+            state.interaction.get_global_scroll_delta() != 0.0,
+            "the move must register as a drag"
+        );
+        let captured = plan(&mut renderer, &mut state, tree, OTHER_BYTES);
+        state.static_layer.commit(
+            &mut renderer,
+            captured,
+            StaticLayer::Captured { empty: false },
+            AssetGeneration::Ledger(state.renderer_assets.generation()),
+        );
+        matches!(
+            plan(&mut renderer, &mut state, tree, OTHER_BYTES),
+            LayerPlan::Reuse(_)
+        )
+    }
+
+    #[test]
+    fn a_drag_without_a_scroll_container_keeps_the_layer() {
+        assert!(keeps_its_layer_under_a_drag(&panel()));
+    }
+
+    #[test]
+    fn a_drag_over_a_scroll_container_captures_again() {
+        let list = bmc_ui::scroll("list", PropsData::default(), [panel()]);
+        assert!(!keeps_its_layer_under_a_drag(&list));
     }
 }

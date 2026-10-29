@@ -85,7 +85,6 @@ fn render(tree: &Node) -> Vec<DrawnParagraph> {
         rel_time: &crate::components::RelTimeWords::new(),
         emit: EmitMode::All,
         static_layer: LayerUse::Ignore,
-        static_layer_key: "text-overflow-test",
         layout_outlines: false,
         stroke_outlines: false,
         damage_rects: &[],

@@ -265,7 +265,7 @@ pub struct LayoutOutline {
 }
 
 /// What a frame did with its static layer.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StaticLayer {
     /// The frame neither captured nor reused a layer.
     #[default]

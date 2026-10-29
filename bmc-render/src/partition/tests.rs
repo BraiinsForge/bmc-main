@@ -19,8 +19,9 @@
 // the grant above.
 
 use super::{
-    HashMap, HostPaintState, Range, ScrollState, has_static_content, host_layout_key,
-    node_is_dynamic, node_self_is_dynamic, static_bytes_key, static_hash,
+    HashMap, HostPaintState, Range, ScrollState, StaticBytesKey, StaticHash, has_scroll_container,
+    has_static_content, host_layout_key, node_is_dynamic, node_self_is_dynamic, static_bytes_key,
+    static_hash,
 };
 use crate::tree::{AnimationDef, Draw, Node, TransitionDef};
 use bmc_intl::{Language, Translations};
@@ -343,9 +344,9 @@ fn static_bytes_moved_across_a_dynamic_range_move_the_key() {
     );
 }
 
-const STATIC_BYTES: u64 = 0x5eed;
+const STATIC_BYTES: StaticBytesKey = StaticBytesKey(0x5eed);
 
-fn hash_idle() -> u64 {
+fn hash_idle() -> StaticHash {
     static_hash(
         STATIC_BYTES,
         &HostPaintState {
@@ -360,7 +361,7 @@ fn a_changed_static_half_invalidates_the_layer() {
     assert_ne!(
         hash_idle(),
         static_hash(
-            STATIC_BYTES + 1,
+            StaticBytesKey(STATIC_BYTES.0 + 1),
             &HostPaintState {
                 pressed_key: None,
                 scroll_offsets: &HashMap::new(),
@@ -494,4 +495,53 @@ fn static_content_surfaces_through_nesting() {
         vec![Node::Row(PropsData::default(), vec![leafy])],
     );
     assert!(has_static_content(&nested));
+}
+
+#[test]
+fn a_scroll_container_nested_in_a_dimmed_row_is_found() {
+    let nested = bmc_ui::dimmed(
+        0.5,
+        bmc_ui::row(
+            PropsData::default(),
+            [
+                spacer(),
+                bmc_ui::scroll("list", PropsData::default(), [spacer()]),
+            ],
+        ),
+    );
+    assert!(has_scroll_container(&nested));
+}
+
+#[test]
+fn a_tree_without_a_scroll_container_has_none() {
+    let flat = bmc_ui::col(PropsData::default(), [spacer(), progress_bar(6.0, 0.5)]);
+    assert!(!has_scroll_container(&flat));
+}
+
+#[test]
+fn a_modal_counts_as_a_scroll_container() {
+    let closed = bmc_ui::modal("details", false, "Details", vec![spacer()], None);
+    assert!(has_scroll_container(&bmc_ui::col(
+        PropsData::default(),
+        [closed]
+    )));
+}
+
+#[test]
+fn a_scroll_container_centred_is_found() {
+    let centred = bmc_ui::center(
+        PropsData::default(),
+        [bmc_ui::scroll("list", PropsData::default(), [spacer()])],
+    );
+    assert!(has_scroll_container(&centred));
+}
+
+#[test]
+fn a_scroll_container_in_a_tag_is_found() {
+    let tagged = Node::Tag {
+        kind: TagKind::Info,
+        icon: TagIcon::Hidden,
+        content: Box::new(bmc_ui::scroll("list", PropsData::default(), [spacer()])),
+    };
+    assert!(has_scroll_container(&tagged));
 }

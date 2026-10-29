@@ -170,7 +170,6 @@ fn a_clipped_row_keeps_its_descenders() {
             rel_time: &crate::components::RelTimeWords::new(),
             emit: EmitMode::All,
             static_layer: LayerUse::Ignore,
-            static_layer_key: "text-overflow-pixels",
             layout_outlines: false,
             stroke_outlines: false,
             damage_rects: &[],

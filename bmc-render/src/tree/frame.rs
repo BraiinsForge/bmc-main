@@ -38,7 +38,7 @@ use crate::components::modal::{ModalInfo, render_modal};
 use crate::interaction::InteractionState;
 use crate::interaction::Rect;
 use crate::renderer::prelude::*;
-use crate::renderer::{RenderTarget, RendererAssetResolver};
+use crate::renderer::{LayerOwner, RenderTarget, RendererAssetResolver};
 use crate::{
     AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
 };
@@ -53,19 +53,22 @@ use taffy::prelude::*;
 ///
 /// Capturing and reusing are alternatives, not flags: a frame either rebuilds
 /// the layer or paints the stored one. Only meaningful under [`EmitMode::All`].
+///
+/// Capturing and reusing name the owner whose layer they use:
+/// one renderer serves every widget slot and system overlay.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum LayerUse {
-    /// Leave the layer alone and emit the whole tree. The fallback for a
-    /// caller with no layer of its own — overlays, the gallery.
+pub enum LayerUse<'a> {
+    /// Leave the layer alone and emit the whole tree: for a caller with no layer,
+    /// as the gallery, or a frame that must not use one, as a prewarm.
     #[default]
     Ignore,
     /// Re-render the static half into the layer, then emit the dynamic half
     /// over it. For a frame whose static content has changed, or the first one.
-    Capture,
+    Capture(&'a LayerOwner),
     /// Blit the stored layer instead of rasterising the static half again.
     /// Recaptures a layer captured over another background,
     /// and falls back to a full pass if the blit fails.
-    Reuse,
+    Reuse(&'a LayerOwner),
 }
 
 /// Per-frame mutable state passed through the render pipeline.
@@ -102,12 +105,7 @@ pub struct ProcessContext<'a> {
     /// discover it, and layout is identical on a cached frame.
     pub damage_rects: &'a [Rect],
     /// What this frame does with the cached static layer; see [`LayerUse`].
-    pub static_layer: LayerUse,
-    /// Identifies whose static layer to capture and blit. One renderer serves
-    /// every widget slot, so callers must pass distinct keys or they overwrite
-    /// each other's layer. Use the caller's asset namespace, so slot teardown
-    /// reclaims the layer with its other assets.
-    pub static_layer_key: &'a str,
+    pub static_layer: LayerUse<'a>,
     /// Report the laid-out boxes in [`TreeResult::layout_outlines`],
     /// for a host to outline over the frame.
     pub layout_outlines: bool,
@@ -291,7 +289,6 @@ fn layout_and_render_inner(
         ctx.interaction,
         ctx.scroll_states,
         ctx.static_layer,
-        ctx.static_layer_key,
         ctx.damage_rects,
         &mut result,
         timings,
@@ -435,8 +432,7 @@ fn render_tree(
     taffy: &TaffyTree<NodeContext>,
     interaction: &mut InteractionState,
     scroll_states: &mut HashMap<String, ScrollState>,
-    static_layer: LayerUse,
-    static_layer_key: &str,
+    static_layer: LayerUse<'_>,
     damage_rects: &[Rect],
     result: &mut TreeResult,
     timings: &mut FrameTimings,
@@ -456,41 +452,40 @@ fn render_tree(
     }
 
     let static_layer = match static_layer {
-        LayerUse::Reuse if renderer.static_layer_stale(static_layer_key) => LayerUse::Capture,
-        LayerUse::Ignore | LayerUse::Capture | LayerUse::Reuse => static_layer,
+        LayerUse::Reuse(owner) if renderer.static_layer_stale(owner) => LayerUse::Capture(owner),
+        LayerUse::Ignore | LayerUse::Capture(_) | LayerUse::Reuse(_) => static_layer,
     };
     match (anim_ctx.emit, static_layer) {
-        (EmitMode::All, LayerUse::Capture) => {
-            let on_screen =
-                if renderer.begin_static_layer(static_layer_key, width as u32, height as u32) {
-                    anim_ctx.emit = EmitMode::StaticOnly;
-                    render_taffy_node(
-                        taffy,
-                        root_id,
-                        0.0,
-                        0.0,
-                        renderer,
-                        interaction,
-                        scroll_states,
-                        result,
-                        anim_ctx,
-                        0,
-                    );
-                    renderer.end_static_layer(static_layer_key);
-                    #[cfg(feature = "frame-timings")]
-                    if pass_timing {
-                        timings.gpu_capture_us = renderer.flush_and_fence_us();
-                    }
-                    let blitted = renderer.blit_static_layer(static_layer_key);
-                    #[cfg(feature = "frame-timings")]
-                    if pass_timing {
-                        timings.gpu_blit_us = renderer.flush_and_fence_us();
-                    }
-                    restart_walk(anim_ctx);
-                    blitted
-                } else {
-                    false
-                };
+        (EmitMode::All, LayerUse::Capture(owner)) => {
+            let on_screen = if renderer.begin_static_layer(owner, width as u32, height as u32) {
+                anim_ctx.emit = EmitMode::StaticOnly;
+                render_taffy_node(
+                    taffy,
+                    root_id,
+                    0.0,
+                    0.0,
+                    renderer,
+                    interaction,
+                    scroll_states,
+                    result,
+                    anim_ctx,
+                    0,
+                );
+                renderer.end_static_layer(owner);
+                #[cfg(feature = "frame-timings")]
+                if pass_timing {
+                    timings.gpu_capture_us = renderer.flush_and_fence_us();
+                }
+                let blitted = renderer.blit_static_layer(owner);
+                #[cfg(feature = "frame-timings")]
+                if pass_timing {
+                    timings.gpu_blit_us = renderer.flush_and_fence_us();
+                }
+                restart_walk(anim_ctx);
+                blitted
+            } else {
+                false
+            };
             if on_screen {
                 result.static_layer = StaticLayer::Captured {
                     empty: !anim_ctx.layer_painted,
@@ -502,13 +497,13 @@ fn render_tree(
         }
         // Nothing static changed since the layer was captured,
         // so paint it rather than rasterising the same content again.
-        (EmitMode::All, LayerUse::Reuse) => {
+        (EmitMode::All, LayerUse::Reuse(owner)) => {
             // Repaint only the damaged regions when the caller supplied them;
             // the rest of the target still holds a correct earlier frame.
             let blitted = if damage_rects.is_empty() {
-                renderer.blit_static_layer(static_layer_key)
+                renderer.blit_static_layer(owner)
             } else {
-                renderer.blit_static_layer_rects(static_layer_key, damage_rects)
+                renderer.blit_static_layer_rects(owner, damage_rects)
             };
             if blitted {
                 result.static_layer = StaticLayer::Blitted;

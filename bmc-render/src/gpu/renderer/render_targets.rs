@@ -27,6 +27,7 @@ use super::{FemtoVgRenderer, background_color};
 use crate::gpu::text::to_femtovg_color;
 use crate::interaction::Rect;
 use crate::renderer::FrameBackground;
+use crate::renderer::LayerOwner;
 use crate::renderer::prelude::*;
 use bmc_ui::colors::Color;
 use femtovg::Paint;
@@ -948,7 +949,7 @@ impl RenderOffscreen for FemtoVgRenderer {
 
     // -- Static-layer cache --
 
-    fn begin_static_layer(&mut self, key: &str, width: u32, height: u32) -> bool {
+    fn begin_static_layer(&mut self, key: &LayerOwner, width: u32, height: u32) -> bool {
         let background = self.background;
         if self.render_to_texture != RenderTargetProbe::Working {
             return false;
@@ -1026,7 +1027,7 @@ impl RenderOffscreen for FemtoVgRenderer {
         // so finding that bound is as much a failed retarget as finding the screen's.
         if bound.is_none_or(|fbo| Some(fbo) == self.screen_fbo) {
             tracing::error!(
-                key,
+                ?key,
                 "static layer retarget failed; falling back to a full pass"
             );
             self.canvas.set_render_target(RenderTarget::Screen);
@@ -1041,7 +1042,7 @@ impl RenderOffscreen for FemtoVgRenderer {
         let status = unsafe { self.gl.check_framebuffer_status(glow::FRAMEBUFFER) };
         if status != glow::FRAMEBUFFER_COMPLETE {
             tracing::error!(
-                key,
+                ?key,
                 status,
                 width,
                 height,
@@ -1095,7 +1096,7 @@ impl RenderOffscreen for FemtoVgRenderer {
         true
     }
 
-    fn end_static_layer(&mut self, key: &str) {
+    fn end_static_layer(&mut self, key: &LayerOwner) {
         // The capture is still only queued, and femtovg binds a target when it
         // *executes* a command rather than at flush start. Draining here, while
         // the layer's framebuffer is still bound, is what puts the static half
@@ -1114,13 +1115,13 @@ impl RenderOffscreen for FemtoVgRenderer {
         }
     }
 
-    fn static_layer_stale(&self, key: &str) -> bool {
+    fn static_layer_stale(&self, key: &LayerOwner) -> bool {
         self.static_layers
             .get(key)
             .is_some_and(|layer| layer.background != self.background)
     }
 
-    fn blit_static_layer(&mut self, key: &str) -> bool {
+    fn blit_static_layer(&mut self, key: &LayerOwner) -> bool {
         let Some(layer) = self.static_layers.get(key) else {
             return false;
         };
@@ -1151,7 +1152,7 @@ impl RenderOffscreen for FemtoVgRenderer {
         clippy::cast_possible_truncation,
         reason = "damage rectangles are small positive values within the surface"
     )]
-    fn blit_static_layer_rects(&mut self, key: &str, rects: &[Rect]) -> bool {
+    fn blit_static_layer_rects(&mut self, key: &LayerOwner, rects: &[Rect]) -> bool {
         if rects.is_empty() {
             return false;
         }
@@ -1223,7 +1224,7 @@ impl RenderOffscreen for FemtoVgRenderer {
         true
     }
 
-    fn invalidate_static_layer(&mut self, key: &str) {
+    fn invalidate_static_layer(&mut self, key: &LayerOwner) {
         if let Some(layer) = self.static_layers.remove(key) {
             self.canvas.delete_image(layer.image);
         }

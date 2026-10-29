@@ -46,7 +46,7 @@ pub use overlay::{
 };
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;
-pub use tree::{TreeFrame, TreeUi};
+pub use tree::{Layering, TreeFrame, TreeUi};
 
 // Re-export the layer-shell client enums so overlays can build a LayerConfig
 // without importing the protocol crate directly.

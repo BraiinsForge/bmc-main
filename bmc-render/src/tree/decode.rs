@@ -30,7 +30,7 @@ pub fn deserialize_tree(data: &[u8]) -> Result<Node> {
 
 /// Deserialize a tree from bytes,
 /// along with the [`crate::partition::static_bytes_key`] of its static half.
-pub fn deserialize_tree_keyed(data: &[u8]) -> Result<(Node, u64)> {
+pub fn deserialize_tree_keyed(data: &[u8]) -> Result<(Node, crate::partition::StaticBytesKey)> {
     let decoded = decode_logged(data)?;
     let key =
         crate::partition::static_bytes_key(&data[..decoded.consumed], &decoded.dynamic_ranges);

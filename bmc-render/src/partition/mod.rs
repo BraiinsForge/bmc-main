@@ -39,6 +39,20 @@ use bmc_ui::{BitmapId, PropsData};
 use crate::ScrollState;
 use crate::tree::Node;
 
+/// The key of a tree's static half as its wire bytes carry it, before any host state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StaticBytesKey(pub u64);
+
+/// A [`StaticBytesKey`] mixed with the host state the static half paints under,
+/// as [`static_hash`] makes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StaticHash(pub u64);
+
+/// What a tree's dynamic nodes contribute to the layout of its static half,
+/// as [`host_layout_key`] makes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LayoutKey(pub u64);
+
 /// Key the static half of a tree from the wire bytes it was decoded from.
 ///
 /// `dynamic_ranges` are the bytes outside the layer, sorted and disjoint.
@@ -50,7 +64,7 @@ use crate::tree::Node;
 /// Segments are length-prefixed,
 /// so static bytes moved across a dynamic range move the key.
 #[must_use]
-pub fn static_bytes_key(data: &[u8], dynamic_ranges: &[Range<usize>]) -> u64 {
+pub fn static_bytes_key(data: &[u8], dynamic_ranges: &[Range<usize>]) -> StaticBytesKey {
     let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
     let mut start = 0;
     for range in dynamic_ranges {
@@ -58,7 +72,7 @@ pub fn static_bytes_key(data: &[u8], dynamic_ranges: &[Range<usize>]) -> u64 {
         start = range.end;
     }
     hash_segment(&data[start..], &mut hasher);
-    hasher.finish()
+    StaticBytesKey(hasher.finish())
 }
 
 /// Key the static half of a tree built on the host, as a guest's is keyed from its wire bytes.
@@ -67,20 +81,12 @@ pub fn static_bytes_key(data: &[u8], dynamic_ranges: &[Range<usize>]) -> u64 {
 /// so host-built and guest trees split static from dynamic in one place.
 /// The wire format rounds `line_height` to hundredths, so a finer change keeps the key.
 ///
-/// `None`, logged, for a tree the wire format cannot carry or the decoder refuses,
+/// Fails for a tree the wire format cannot carry or the decoder refuses,
 /// such as one with a negative extent.
-#[must_use]
-pub fn tree_static_key(node: &Node) -> Option<u64> {
-    let keyed = bmc_ui::try_encode(node)
-        .map_err(anyhow::Error::from)
-        .and_then(|bytes| crate::tree::deserialize_tree_keyed(&bytes));
-    match keyed {
-        Ok((_, key)) => Some(key),
-        Err(err) => {
-            tracing::warn!("host-built tree has no static key: {err:#}");
-            None
-        }
-    }
+pub fn tree_static_key(node: &Node) -> anyhow::Result<StaticBytesKey> {
+    let bytes = bmc_ui::try_encode(node)?;
+    let (_, key) = crate::tree::deserialize_tree_keyed(&bytes)?;
+    Ok(key)
 }
 
 fn hash_segment<H: Hasher>(segment: &[u8], hasher: &mut H) {
@@ -96,7 +102,7 @@ fn hash_segment<H: Hasher>(segment: &[u8], hasher: &mut H) {
 /// a dynamic node still sizes its static siblings through the Taffy pass,
 /// and [`host_layout_key`] is the half that sees that.
 #[must_use]
-pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
+pub fn static_hash(static_bytes: StaticBytesKey, host: &HostPaintState<'_>) -> StaticHash {
     let mut hasher = DefaultHasher::new();
     static_bytes.hash(&mut hasher);
     hash_debug(&host.pressed_key, &mut hasher);
@@ -108,7 +114,7 @@ pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
         hash_debug(state, &mut entry);
         acc ^ entry.finish()
     });
-    hasher.finish() ^ scroll
+    StaticHash(hasher.finish() ^ scroll)
 }
 
 /// Hash what a dynamic node contributes to *layout*,
@@ -126,12 +132,12 @@ pub fn static_hash(static_bytes: u64, host: &HostPaintState<'_>) -> u64 {
 /// but not its value. A `Modal` lays out as `Display::None`.
 ///
 /// Cheap on purpose — an animation-only replay recomputes this every frame,
-/// where [`static_hash`] runs on guest frames only.
+/// along with [`static_hash`].
 #[must_use]
-pub fn host_layout_key(node: &Node, now_unix_secs: i64, intl: &bmc_intl::Intl) -> u64 {
+pub fn host_layout_key(node: &Node, now_unix_secs: i64, intl: &bmc_intl::Intl) -> LayoutKey {
     let mut hasher = DefaultHasher::new();
     hash_layout_contribution(node, now_unix_secs, intl, &mut hasher);
-    hasher.finish()
+    LayoutKey(hasher.finish())
 }
 
 fn hash_layout_contribution<H: Hasher>(
@@ -267,6 +273,29 @@ pub fn has_static_content(node: &Node) -> bool {
     }
 }
 
+/// Whether `node` holds a scroll container, the one node a drag moves during the walk.
+/// A modal counts, since it scrolls its body in one.
+#[must_use]
+pub fn has_scroll_container(node: &Node) -> bool {
+    match node {
+        Node::Scroll { .. } | Node::Modal { .. } => true,
+        Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+            children.iter().any(has_scroll_container)
+        }
+        Node::Tag { content, .. } => has_scroll_container(content),
+        Node::Dimmed { child, .. } => has_scroll_container(child),
+        Node::Canvas { .. }
+        | Node::RelTime { .. }
+        | Node::ProgressBar { .. }
+        | Node::Spacer { .. }
+        | Node::Paragraph { .. }
+        | Node::Button { .. }
+        | Node::Switcher { .. }
+        | Node::Skeleton(_)
+        | Node::Notification { .. } => false,
+    }
+}
+
 /// Feeds `Debug` output into a hasher without allocating a `String` per value.
 struct HashWriter<'a, H: Hasher>(&'a mut H);
 
@@ -282,6 +311,7 @@ fn hash_debug<H: Hasher>(value: &dyn fmt::Debug, hasher: &mut H) {
     let _ = write!(HashWriter(hasher), "{value:?}");
 }
 
+pub mod static_layer;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 #[cfg(test)]

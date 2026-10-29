@@ -41,10 +41,10 @@ use std::time::{Duration, Instant};
 use bmc_intl::{Intl, Localized};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DeviceState, FrameKind, Language, Layer, LayerConfig, LocalizationRequest,
-    NextFrame, OverlayViewport, PlatformCaps, RenderOutcome, SetupStep, SnapshotVersion,
-    SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot, UpgradeState,
-    VersionedSnapshot,
+    AccessPoint, DeviceState, FrameKind, Language, Layer, LayerConfig, Layering,
+    LocalizationRequest, NextFrame, OverlayViewport, PlatformCaps, RenderOutcome, SetupStep,
+    SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot,
+    UpgradeState, VersionedSnapshot,
 };
 
 /// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed,
@@ -835,6 +835,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             self.miner,
             switch,
             frame,
+            Layering::Unlayered,
         );
         // The language already shown asks for nothing: re-asking would only round-trip a no-op.
         // Any other is marked current at once, since the answer takes a save and a broadcast.

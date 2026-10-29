@@ -20,27 +20,25 @@
 
 //! Test-only tracing subscribers, for asserting that a diagnostic fired.
 
-/// Counts WARN records without a `tracing-subscriber` dev dependency.
-#[derive(Clone, Default)]
-pub(crate) struct WarnCounter(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+use std::cell::Cell;
+use std::sync::OnceLock;
 
-impl WarnCounter {
-    pub(crate) fn count(&self) -> usize {
-        self.0.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    pub(crate) fn reset(&self) {
-        self.0.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
+thread_local! {
+    /// The WARN records this thread has emitted since the subscriber was installed.
+    static WARNS: Cell<usize> = const { Cell::new(0) };
 }
 
-impl tracing::Subscriber for WarnCounter {
+/// Counts WARN records into the emitting thread's tally,
+/// without a `tracing-subscriber` dev dependency.
+struct ThreadWarnTally;
+
+impl tracing::Subscriber for ThreadWarnTally {
     fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
         *metadata.level() == tracing::Level::WARN
     }
 
     fn event(&self, _: &tracing::Event<'_>) {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        WARNS.with(|warns| warns.set(warns.get() + 1));
     }
 
     fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
@@ -53,15 +51,47 @@ impl tracing::Subscriber for WarnCounter {
     fn exit(&self, _: &tracing::span::Id) {}
 }
 
-/// Run `scenario` with a [`WarnCounter`] installed,
-/// returning its result and how many WARN records it emitted.
-pub(crate) fn counting_warns<T>(scenario: impl FnOnce(&WarnCounter) -> T) -> (T, usize) {
-    let warns = WarnCounter::default();
-    let result = tracing::subscriber::with_default(warns.clone(), || {
-        // tracing caches a callsite's interest process-wide on first reach,
-        // so a sibling test reaching it without a subscriber would mute it.
-        tracing::callsite::rebuild_interest_cache();
-        scenario(&warns)
+/// The calling thread's WARN records since the counter was made or last reset.
+#[derive(Debug)]
+pub struct WarnCounter {
+    baseline: Cell<usize>,
+}
+
+impl WarnCounter {
+    fn new() -> Self {
+        Self {
+            baseline: Cell::new(WARNS.with(Cell::get)),
+        }
+    }
+
+    #[must_use]
+    pub fn count(&self) -> usize {
+        WARNS.with(Cell::get) - self.baseline.get()
+    }
+
+    pub fn reset(&self) {
+        self.baseline.set(WARNS.with(Cell::get));
+    }
+}
+
+/// Run `scenario`, returning its result and how many WARN records it emitted on this thread.
+///
+/// The counting subscriber is global and installed once.
+/// tracing caches a callsite's interest process-wide on its first hit,
+/// so a test running beside this one with no subscriber
+/// would otherwise cache `never` for a warning this one counts.
+///
+/// # Panics
+///
+/// Panics when another global subscriber was installed first:
+/// a test binary that counts warnings must install no global subscriber of its own.
+pub fn counting_warns<T>(scenario: impl FnOnce(&WarnCounter) -> T) -> (T, usize) {
+    static INSTALLED: OnceLock<()> = OnceLock::new();
+    INSTALLED.get_or_init(|| {
+        tracing::subscriber::set_global_default(ThreadWarnTally)
+            .expect("BUG: counting_warns installs the only global subscriber");
     });
+    let warns = WarnCounter::new();
+    let result = scenario(&warns);
     (result, warns.count())
 }

@@ -655,58 +655,85 @@ pub trait RenderOffscreen {
     // feature inert, so a renderer that cannot render to a texture keeps
     // drawing every frame in full.
 
-    /// Begin capturing draws into `key`'s cached static layer, `width` x
+    /// Begin capturing draws into `owner`'s cached static layer, `width` x
     /// `height` logical pixels at the renderer's current device-pixel ratio,
     /// over the frame's background.
     /// Returns `false` if no layer is available, and the caller must then fall back to a full frame.
     ///
     /// The layer stops counting as captured until [`Self::end_static_layer`]
     /// completes, so a capture abandoned halfway is never blitted.
-    ///
-    /// `key` identifies the owning widget instance. One renderer is shared by
-    /// every widget slot and system overlay, so a layer keyed by geometry alone
-    /// would let two equally-sized slots capture over each other and blit each
-    /// other's content. Pass the caller's asset namespace, so
-    /// [`RenderAssets::evict_prefix`] reclaims the layer on slot teardown.
-    fn begin_static_layer(&mut self, _key: &str, _width: u32, _height: u32) -> bool {
+    fn begin_static_layer(&mut self, _owner: &LayerOwner, _width: u32, _height: u32) -> bool {
         false
     }
 
-    /// Stop capturing `key`'s layer and restore the previous render target.
-    fn end_static_layer(&mut self, _key: &str) {}
+    /// Stop capturing `owner`'s layer and restore the previous render target.
+    fn end_static_layer(&mut self, _owner: &LayerOwner) {}
 
-    /// Whether `key` holds a layer captured over a background other than the frame's.
+    /// Whether `owner` holds a layer captured over a background other than the frame's.
     /// Such a layer is recaptured rather than blitted:
     /// the surface changed, not the layer's usefulness.
-    fn static_layer_stale(&self, _key: &str) -> bool {
+    fn static_layer_stale(&self, _owner: &LayerOwner) -> bool {
         false
     }
 
-    /// Composite `key`'s cached layer into the current target. Returns `false`
+    /// Composite `owner`'s cached layer into the current target. Returns `false`
     /// when no valid layer exists — the caller must then render a full frame.
     ///
     /// A layer captured over [`FrameBackground::TransparentBlack`] is only ever copied:
     /// blending it would let whatever the target held show through its transparent pixels.
     /// When the copy is unavailable, or the layer is [stale](Self::static_layer_stale),
     /// this returns `false`.
-    fn blit_static_layer(&mut self, _key: &str) -> bool {
+    fn blit_static_layer(&mut self, _owner: &LayerOwner) -> bool {
         false
     }
 
-    /// Composite only `rects` of `key`'s cached layer, in logical pixels.
+    /// Composite only `rects` of `owner`'s cached layer, in logical pixels.
     ///
     /// The rest of the target keeps whatever it already held, which is only
     /// sound when the caller knows those pixels are still current. Returns
     /// `false` if the layer is unusable, as [`RenderOffscreen::blit_static_layer`]
     /// does.
-    fn blit_static_layer_rects(&mut self, key: &str, _rects: &[Rect]) -> bool {
-        self.blit_static_layer(key)
+    fn blit_static_layer_rects(&mut self, owner: &LayerOwner, _rects: &[Rect]) -> bool {
+        self.blit_static_layer(owner)
     }
 
-    /// Drop `key`'s cached layer and free its storage.
+    /// Drop `owner`'s cached layer and free its storage.
     /// Must be called whenever the caller stops using the layer
     /// without capturing over it, so a stale layer never outlives its tree.
-    fn invalidate_static_layer(&mut self, _key: &str) {}
+    fn invalidate_static_layer(&mut self, _owner: &LayerOwner) {}
+}
+
+/// Who a static layer belongs to, in a renderer every widget slot and system overlay shares.
+///
+/// Each owner has one layer, so two equally-sized trees never capture over each other.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LayerOwner {
+    /// A widget instance, by its asset namespace,
+    /// so [`RenderAssets::evict_prefix`] of exactly that namespace reclaims the layer on teardown.
+    Widget(String),
+    /// A system overlay's tree.
+    Overlay(OverlayId),
+}
+
+impl LayerOwner {
+    /// Whether this is the layer of the widget whose asset namespace is `namespace`.
+    #[must_use]
+    pub fn is_widget(&self, namespace: &str) -> bool {
+        matches!(self, Self::Widget(owner) if owner == namespace)
+    }
+}
+
+/// A system overlay tree, among the layers one process's renderers hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OverlayId(u64);
+
+impl OverlayId {
+    /// An id no other overlay tree in this process has.
+    #[must_use]
+    pub fn next() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
 }
 
 /// Restores suspended renderer assets at the point where a draw first needs them.

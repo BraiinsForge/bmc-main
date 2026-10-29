@@ -38,9 +38,9 @@ use std::time::{Duration, Instant};
 use bmc_intl::{Intl, format_lazy};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, FrameKind, InputRegion, Layer, LayerConfig, NextFrame, OverlayViewport, RenderOutcome,
-    RestartDeclined, ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome,
-    TouchEvent, TreeUi, VersionedSnapshot,
+    Anchor, FrameKind, InputRegion, Layer, LayerConfig, Layering, NextFrame, OverlayViewport,
+    RenderOutcome, RestartDeclined, ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay,
+    TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
 };
 
 use crate::dismiss::Pt;
@@ -969,6 +969,7 @@ impl SystemOverlay for SettingsTrayOverlay {
             intl,
             now,
             FrameKind::Fresh,
+            Layering::Unlayered,
         );
     }
 
@@ -989,6 +990,7 @@ impl SystemOverlay for SettingsTrayOverlay {
             intl,
             now,
             frame,
+            Layering::Unlayered,
         );
         self.apply_render_output(output, now);
         if self.repaint_queued {
@@ -1064,6 +1066,10 @@ const PRESSABLE: [&str; 7] = [
     ui::WIFI_RECONFIG_KEY,
 ];
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the view, its wording and the frame's clock, kind and layering"
+)]
 pub fn render_settings_tray(
     renderer: &mut dyn Renderer,
     viewport: OverlayViewport,
@@ -1072,6 +1078,7 @@ pub fn render_settings_tray(
     intl: &Intl,
     now: Instant,
     frame: FrameKind,
+    layering: Layering,
 ) -> SettingsTrayRenderOutput {
     let icons = *state
         .icons
@@ -1118,17 +1125,21 @@ pub fn render_settings_tray(
         )
     };
 
-    let tree_frame =
-        match state
-            .tree
-            .render(frame, viewport.size(), delta_ms, renderer, intl, build)
-        {
-            Ok(tree_frame) => tree_frame,
-            Err(err) => {
-                tracing::error!("settings-tray tree render failed: {err}");
-                return SettingsTrayRenderOutput::default();
-            }
-        };
+    let tree_frame = match state.tree.render(
+        frame,
+        layering,
+        viewport.size(),
+        delta_ms,
+        renderer,
+        intl,
+        build,
+    ) {
+        Ok(tree_frame) => tree_frame,
+        Err(err) => {
+            tracing::error!("settings-tray tree render failed: {err}");
+            return SettingsTrayRenderOutput::default();
+        }
+    };
     let result = &tree_frame.result;
 
     // The render processed this frame's queued touch events, so the pressed
@@ -2151,6 +2162,7 @@ mod replay_tests {
             &english,
             Instant::now(),
             kind,
+            Layering::Unlayered,
         )
         .outcome
     }
@@ -2284,6 +2296,7 @@ mod slider_release_tests {
             &english,
             now,
             FrameKind::Fresh,
+            Layering::Unlayered,
         );
         (output, recorder)
     }

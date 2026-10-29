@@ -170,8 +170,7 @@ fn a_failed_layer_blit_lays_the_frame_base_before_the_walk() {
         rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
         // Nothing was captured under this key, so the layer blit fails.
-        static_layer: LayerUse::Reuse,
-        static_layer_key: "failed-blit-test",
+        static_layer: LayerUse::Reuse(&super::TEST_OWNER),
         layout_outlines: false,
         stroke_outlines: false,
         damage_rects: &damage,
@@ -205,14 +204,13 @@ fn a_failed_layer_blit_lays_the_frame_base_before_the_walk() {
 
 /// Walk the moving dot handed `damage`, with its layer captured beforehand when `captured`.
 fn walk_with_layer_and_damage(
-    static_layer: LayerUse,
+    static_layer: LayerUse<'_>,
     captured: bool,
     damage: &[crate::interaction::Rect],
 ) -> super::TreeResult {
-    const KEY: &str = "damage-only-test";
     let mut renderer = KeyRecordingRenderer::default();
     if captured {
-        renderer.captured.push(KEY.to_owned());
+        renderer.captured.push(super::TEST_OWNER.clone());
     }
     let mut state = SlotState::default();
     let mut ctx = ProcessContext {
@@ -229,7 +227,6 @@ fn walk_with_layer_and_damage(
         rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::All,
         static_layer,
-        static_layer_key: KEY,
         layout_outlines: false,
         stroke_outlines: false,
         damage_rects: damage,
@@ -247,7 +244,7 @@ fn walk_with_layer_and_damage(
     result
 }
 
-fn walk_with_layer(static_layer: LayerUse, captured: bool) -> super::TreeResult {
+fn walk_with_layer(static_layer: LayerUse<'_>, captured: bool) -> super::TreeResult {
     walk_with_layer_and_damage(
         static_layer,
         captured,
@@ -258,8 +255,8 @@ fn walk_with_layer(static_layer: LayerUse, captured: bool) -> super::TreeResult 
 #[test]
 fn a_reused_layer_reports_a_blit_with_or_without_damage() {
     for layer in [
-        walk_with_layer_and_damage(LayerUse::Reuse, true, &[]).static_layer,
-        walk_with_layer(LayerUse::Reuse, true).static_layer,
+        walk_with_layer_and_damage(LayerUse::Reuse(&super::TEST_OWNER), true, &[]).static_layer,
+        walk_with_layer(LayerUse::Reuse(&super::TEST_OWNER), true).static_layer,
     ] {
         assert!(
             matches!(layer, super::StaticLayer::Blitted),
@@ -274,14 +271,14 @@ fn a_reused_layer_reports_a_blit_with_or_without_damage() {
 fn a_recaptured_or_missed_layer_reports_no_blit_despite_the_damage() {
     assert!(
         matches!(
-            walk_with_layer(LayerUse::Capture, false).static_layer,
+            walk_with_layer(LayerUse::Capture(&super::TEST_OWNER), false).static_layer,
             super::StaticLayer::Captured { .. }
         ),
         "capturing paints the whole frame"
     );
     assert!(
         matches!(
-            walk_with_layer(LayerUse::Reuse, false).static_layer,
+            walk_with_layer(LayerUse::Reuse(&super::TEST_OWNER), false).static_layer,
             super::StaticLayer::Missed
         ),
         "a failed blit lays the base over the whole frame"

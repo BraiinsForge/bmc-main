@@ -45,6 +45,7 @@ use crate::gpu::bitmap::{BITMAP_ID_EXCLUSIVE_CAP, reserve_sampled};
 use crate::gpu::mesh::{MESH_ID_EXCLUSIVE_CAP, MeshDrawArgs};
 use crate::gpu::renderer::{Fonts, build_font_system, sans_line_style};
 use crate::gpu::text::ParagraphLayoutCache;
+use crate::renderer::LayerOwner;
 use crate::renderer::prelude::*;
 use crate::renderer::reservations::TagReservations;
 use crate::renderer::{AssetSuspendResult, AssetTagState, FrameBackground, FrameClear};
@@ -105,9 +106,11 @@ pub struct ShapingRecorder {
     meshes: TagReservations<MeshId, ()>,
     width: f32,
     height: f32,
-    /// Keys of the static layers captured so far, once [`Self::with_static_layers`]
-    /// lets the recorder capture any.
-    static_layers: Option<Vec<String>>,
+    /// The static layers captured so far and the background each was captured over,
+    /// once [`Self::with_static_layers`] lets the recorder capture any.
+    static_layers: Option<Vec<(LayerOwner, FrameBackground)>>,
+    /// What the last frame cleared to, which a layer captured over another is stale against.
+    background: FrameBackground,
 }
 
 impl ShapingRecorder {
@@ -135,7 +138,18 @@ impl ShapingRecorder {
             width,
             height,
             static_layers: None,
+            background: FrameBackground::OpaqueBlack,
         }
+    }
+
+    /// Owners of the static layers the recorder holds.
+    #[must_use]
+    pub fn static_layer_owners(&self) -> Vec<LayerOwner> {
+        self.static_layers
+            .iter()
+            .flatten()
+            .map(|(owner, _)| owner.clone())
+            .collect()
     }
 
     /// The single recorded line of text, for tests that expect exactly one.
@@ -208,9 +222,10 @@ impl RenderFrame for ShapingRecorder {
         _width: u32,
         _height: u32,
         _dpi_scale: f32,
-        _background: FrameBackground,
+        background: FrameBackground,
         _clear: FrameClear,
     ) {
+        self.background = background;
     }
 
     fn clear_frame(&mut self) {}
@@ -552,25 +567,33 @@ impl RenderOffscreen for ShapingRecorder {
         inner(self);
     }
 
-    fn begin_static_layer(&mut self, key: &str, _width: u32, _height: u32) -> bool {
+    fn begin_static_layer(&mut self, key: &LayerOwner, _width: u32, _height: u32) -> bool {
+        let background = self.background;
         let Some(layers) = &mut self.static_layers else {
             return false;
         };
-        if !layers.iter().any(|captured| captured == key) {
-            layers.push(key.to_owned());
-        }
+        layers.retain(|(captured, _)| captured != key);
+        layers.push((key.to_owned(), background));
         true
     }
 
-    fn blit_static_layer(&mut self, key: &str) -> bool {
+    fn static_layer_stale(&self, key: &LayerOwner) -> bool {
         self.static_layers
-            .as_ref()
-            .is_some_and(|layers| layers.iter().any(|captured| captured == key))
+            .iter()
+            .flatten()
+            .any(|(captured, background)| captured == key && *background != self.background)
     }
 
-    fn invalidate_static_layer(&mut self, key: &str) {
+    fn blit_static_layer(&mut self, key: &LayerOwner) -> bool {
+        self.static_layers
+            .iter()
+            .flatten()
+            .any(|(captured, _)| captured == key)
+    }
+
+    fn invalidate_static_layer(&mut self, key: &LayerOwner) {
         if let Some(layers) = &mut self.static_layers {
-            layers.retain(|captured| captured != key);
+            layers.retain(|(captured, _)| captured != key);
         }
     }
 }

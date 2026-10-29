@@ -29,6 +29,7 @@ use super::TextLayoutCounters;
 use super::{FrameBackground, FrameClear};
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::interaction::Rect;
+use crate::renderer::LayerOwner;
 use crate::renderer::prelude::*;
 use bmc_ui::colors::Color;
 use bmc_ui::{
@@ -551,27 +552,27 @@ impl RenderOffscreen for RenderTarget<'_, '_, '_> {
     // Forwarded, not defaulted: the inert defaults would have a wrapped renderer
     // report "no layer available", indistinguishable from one that genuinely
     // cannot render to a texture.
-    fn begin_static_layer(&mut self, key: &str, width: u32, height: u32) -> bool {
+    fn begin_static_layer(&mut self, key: &LayerOwner, width: u32, height: u32) -> bool {
         self.renderer.begin_static_layer(key, width, height)
     }
 
-    fn end_static_layer(&mut self, key: &str) {
+    fn end_static_layer(&mut self, key: &LayerOwner) {
         self.renderer.end_static_layer(key);
     }
 
-    fn static_layer_stale(&self, key: &str) -> bool {
+    fn static_layer_stale(&self, key: &LayerOwner) -> bool {
         self.renderer.static_layer_stale(key)
     }
 
-    fn blit_static_layer(&mut self, key: &str) -> bool {
+    fn blit_static_layer(&mut self, key: &LayerOwner) -> bool {
         self.renderer.blit_static_layer(key)
     }
 
-    fn blit_static_layer_rects(&mut self, key: &str, rects: &[Rect]) -> bool {
+    fn blit_static_layer_rects(&mut self, key: &LayerOwner, rects: &[Rect]) -> bool {
         self.renderer.blit_static_layer_rects(key, rects)
     }
 
-    fn invalidate_static_layer(&mut self, key: &str) {
+    fn invalidate_static_layer(&mut self, key: &LayerOwner) {
         self.renderer.invalidate_static_layer(key);
     }
 }
