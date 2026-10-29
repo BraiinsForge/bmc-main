@@ -28,6 +28,7 @@ use std::path::Path;
 use axum_extra::extract::cookie::Cookie;
 use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_time::time::Timezone;
+use indoc::indoc;
 use tokio::sync::watch;
 
 use crate::bootloader_config::BootloaderConfig;
@@ -165,6 +166,12 @@ impl BmcManager for StubManager {
         self.network.as_ref().expect(UNREACHABLE)
     }
 }
+
+/// A widget binary that stays up for longer than any test runs.
+pub(crate) const SLEEPING_WIDGET: &str = indoc! {"
+    #!/bin/sh
+    exec sleep 30
+"};
 
 /// Write an executable script through a child process, so this process never
 /// holds a write descriptor to it: a test thread forking meanwhile inherits

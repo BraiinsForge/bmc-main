@@ -5041,7 +5041,7 @@ mod tests {
         .expect("BUG: write widget manifest");
         crate::test_support::write_executable(
             &package.join("widget"),
-            "#!/bin/sh\nexec sleep 30\n",
+            crate::test_support::SLEEPING_WIDGET,
         );
 
         let manager =

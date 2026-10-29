@@ -1909,6 +1909,7 @@ fn params_to_json_map(
 mod tests {
     use super::*;
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
+    use crate::test_support::SLEEPING_WIDGET;
     use crate::test_support::manifest::{widget_manifest, write_manifest};
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
@@ -2070,7 +2071,7 @@ mod tests {
     #[tokio::test]
     async fn configured_start_waits_for_active_receipts_before_process_spawn() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let marker = temp.path().join("started");
         let body = format!("#!/bin/sh\ntouch {}\nexec sleep 30\n", marker.display());
         std::fs::write(temp.path().join("widget-package/widget"), body)
@@ -2107,7 +2108,7 @@ mod tests {
     #[tokio::test]
     async fn cutoff_invalidates_a_start_waiting_for_activation() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let widget_id = scene
             .widgets
             .values()
@@ -2153,7 +2154,7 @@ mod tests {
     #[tokio::test]
     async fn disabled_configured_widget_is_registered_inactive_without_process() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         scene.enabled = false;
         let widget_key = WidgetInstanceKey::new(
             scene
@@ -2184,7 +2185,7 @@ mod tests {
     #[tokio::test]
     async fn reload_refreshes_disabled_inactive_registration() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         scene.enabled = false;
         let widget_id = scene
             .widgets
@@ -2235,7 +2236,7 @@ mod tests {
     #[tokio::test]
     async fn preview_start_survives_handoff_to_enabled_while_receipts_are_pending() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         scene.enabled = false;
         let scene_id = scene.id;
         let config = config_with_scene(&temp, scene).await;
@@ -2275,7 +2276,7 @@ mod tests {
     #[tokio::test]
     async fn configured_start_revalidates_after_receipts_without_holding_config_lock() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         compositor.hold_widget_receipts();
@@ -2309,7 +2310,7 @@ mod tests {
     #[tokio::test]
     async fn registration_enqueue_keeps_the_account_snapshot_ordered() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let secret_store = Arc::clone(&coordinator.secret_store);
         compositor.observe_next_registration(move || {
@@ -2330,7 +2331,7 @@ mod tests {
     #[tokio::test]
     async fn deletion_invalidates_a_start_waiting_for_registration_receipts() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let widget_id = scene.widgets.values().next().expect("BUG: test widget").id;
         let key = WidgetInstanceKey::new(widget_id.as_uuid());
@@ -2390,7 +2391,7 @@ mod tests {
     #[tokio::test]
     async fn second_occupied_mismatch_stops_after_the_bounded_retry() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let widget = scene.widgets.values().next().expect("BUG: test widget");
         let occupied = WidgetLaunch::new(
@@ -2424,7 +2425,7 @@ mod tests {
     #[tokio::test]
     async fn wedged_deactivation_receipt_does_not_delay_child_reap() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
             .spawn_configured_scene_widgets(&config, scene.id)
@@ -2468,7 +2469,7 @@ mod tests {
     #[tokio::test]
     async fn registry_build_swap_while_registration_is_pending_reprepares_before_start() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         compositor.hold_widget_receipts();
@@ -2538,7 +2539,7 @@ mod tests {
         );
         crate::test_support::write_executable(
             &temp.path().join("widget-package/widget"),
-            "#!/bin/sh\nexec sleep 30\n",
+            SLEEPING_WIDGET,
         );
 
         coordinator.reload_changed_widgets(&config).await;
@@ -2630,7 +2631,7 @@ mod tests {
     #[tokio::test]
     async fn parameter_update_during_registration_still_starts_with_current_params() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         compositor.hold_widget_receipts();
@@ -2685,7 +2686,7 @@ mod tests {
     #[tokio::test]
     async fn parameter_update_before_registration_is_retained_by_start() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let widget = scene.widgets.values_mut().next().expect("BUG: test widget");
         widget.params.insert(
             ParamKey::try_new("current".to_owned()).expect("BUG: valid key"),
@@ -2731,7 +2732,7 @@ mod tests {
     #[tokio::test]
     async fn preview_teardown_orders_calls_without_holding_config_lock() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let ready = temp.path().join("preview-ready");
         std::fs::write(
             temp.path().join("widget-package/widget"),
@@ -2825,7 +2826,7 @@ mod tests {
     #[tokio::test]
     async fn upgrade_pause_rejects_pending_start_and_deactivates_configured_record() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         compositor.hold_widget_receipts();
@@ -2878,7 +2879,7 @@ mod tests {
     #[tokio::test]
     async fn upgrade_pause_blocks_reload_until_authorized_resume() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         coordinator
@@ -2962,7 +2963,7 @@ mod tests {
     #[tokio::test]
     async fn upgrade_resume_restores_disabled_active_preview() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         scene.enabled = false;
         let config = config_with_scene(&temp, scene.clone()).await;
         let preview_scene = coordinator.preview_scene_state();
@@ -2987,7 +2988,7 @@ mod tests {
     #[tokio::test]
     async fn preview_teardown_during_upgrade_resume_prevents_start() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         scene.enabled = false;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
@@ -3042,7 +3043,7 @@ mod tests {
     #[tokio::test]
     async fn package_reload_replaces_disabled_active_preview() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         scene.enabled = false;
         let config = config_with_scene(&temp, scene.clone()).await;
         let preview_scene = coordinator.preview_scene_state();
@@ -3143,7 +3144,7 @@ mod tests {
     #[tokio::test]
     async fn replacement_refreshes_registration_while_paused() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let widget = scene
             .widgets
             .values()
@@ -3183,7 +3184,7 @@ mod tests {
     #[tokio::test]
     async fn widget_added_while_paused_is_registered_without_activation() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
             .spawn_configured_scene_widgets(&config, scene.id)
@@ -3291,7 +3292,7 @@ mod tests {
     #[tokio::test]
     async fn resume_skips_widget_whose_manifest_rejects_its_viewport() {
         let (temp, coordinator, compositor, fullscreen) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let widget_type_id = fullscreen
             .widgets
             .values()
@@ -3340,7 +3341,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn upgrade_pause_reaps_all_children_when_deactivation_receipts_time_out() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let second = scene.widgets[0].clone_with_new_id();
         scene.widgets.insert(second.id, second);
         let config = config_with_scene(&temp, scene.clone()).await;
@@ -3392,7 +3393,7 @@ mod tests {
     #[tokio::test]
     async fn terminal_shutdown_absorbs_upgrade_resume() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         coordinator
@@ -3424,7 +3425,7 @@ mod tests {
     #[tokio::test]
     async fn a_packages_refresh_waits_for_an_upgrade_restart_in_flight() {
         let (temp, coordinator, _compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene).await;
         let lifecycle = Arc::new(UpgradeWidgetLifecycle::new(
             Arc::new(coordinator),
@@ -3453,7 +3454,7 @@ mod tests {
     #[tokio::test]
     async fn terminal_deactivation_follows_a_resume_waiting_for_receipts() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         coordinator
@@ -3506,7 +3507,7 @@ mod tests {
     #[tokio::test]
     async fn terminal_shutdown_waits_for_deactivation_and_child_reap() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let ready = temp.path().join("ready");
         std::fs::write(
             temp.path().join("widget-package/widget"),
@@ -3561,7 +3562,7 @@ mod tests {
     #[tokio::test]
     async fn unsupported_configured_scene_never_registers_or_starts() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         for widget in scene.widgets.values_mut() {
             widget.viewport_shape = ViewportShape::Round;
         }
@@ -3651,11 +3652,8 @@ mod tests {
                 ..
             }]
         ));
-        std::fs::write(
-            temp.path().join("widget-package/widget"),
-            "#!/bin/sh\nexec sleep 30\n",
-        )
-        .expect("BUG: replace widget executable");
+        std::fs::write(temp.path().join("widget-package/widget"), SLEEPING_WIDGET)
+            .expect("BUG: replace widget executable");
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         while !matches!(
             coordinator
@@ -3737,7 +3735,7 @@ mod tests {
     #[tokio::test]
     async fn occupied_mismatch_retries_with_the_current_launch() {
         let (temp, coordinator, _compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
             .spawn_configured_scene_widgets(&config, scene.id)
@@ -3767,7 +3765,7 @@ mod tests {
     #[tokio::test]
     async fn missing_type_sends_nothing_and_unrelated_reload_recovers_it() {
         let (temp, coordinator, compositor, mut scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let restored_uid = uuid::Uuid::new_v4();
         scene
             .widgets
@@ -3814,7 +3812,7 @@ mod tests {
     #[tokio::test]
     async fn stopping_snapshot_is_not_started_by_reload() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let ready = temp.path().join("ready");
         std::fs::write(
             temp.path().join("widget-package/widget"),
@@ -3867,7 +3865,7 @@ mod tests {
     #[tokio::test]
     async fn replacement_waits_without_holding_configuration_lock() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let ready = temp.path().join("replacement-ready");
         std::fs::write(
             temp.path().join("widget-package/widget"),
