@@ -33,9 +33,7 @@ use bmc_render::ui::{
     FontFamily, FontWeight, GRAY_40, GRAY_60, Justify, Node, PropsData, QrStyle, Span, TRANSPARENT,
     TextAlign, TextStyle, VIOLET_50, WHITE, col, fixed_height, paragraph, row, text,
 };
-use bmc_system_overlay::{
-    AccessPoint, FrameKind, Language, Layering, RenderOutcome, TouchEvent, TreeUi,
-};
+use bmc_system_overlay::{AccessPoint, Language, OverlayFrame, RenderOutcome, TouchEvent, TreeUi};
 
 use crate::icons::{DeviceInfoIcons, Icon, LanguageChoice};
 
@@ -1616,7 +1614,7 @@ pub struct DeviceInfoFrame {
 /// Draw `view`, with the language switch where `language_switch` shows it.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the view, its wording, the board it addresses, the language switch, the frame kind and its layering"
+    reason = "the view, its wording, the board it addresses, the language switch and the frame"
 )]
 pub fn render_device_info(
     r: &mut dyn Renderer,
@@ -1627,11 +1625,14 @@ pub fn render_device_info(
     device_name: &str,
     miner: bool,
     language_switch: LanguageSwitch,
-    frame: FrameKind,
-    layering: Layering,
+    frame: OverlayFrame,
 ) -> DeviceInfoFrame {
+    let OverlayFrame {
+        kind,
+        layering,
+        now,
+    } = frame;
     let icons = state.ensure_icons(r);
-    let now = Instant::now();
     let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
         .unwrap_or(u32::MAX);
     state.last_render = now;
@@ -1666,7 +1667,7 @@ pub fn render_device_info(
     };
     match state
         .tree
-        .render(frame, layering, size, delta_ms, r, intl, build)
+        .render(kind, layering, size, delta_ms, r, intl, build)
     {
         Ok(tree_frame) => DeviceInfoFrame {
             outcome: tree_frame.outcome,
@@ -1686,14 +1687,14 @@ pub fn render_device_info(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccessPoint, DeviceInfoRenderState, DeviceInfoView, FLAG_RING, FLAG_SIZE, FrameKind,
-        LanguageSwitch, Layering, Link, SetupApIcon, TIER_COMPACT, TIER_WIDE, Tier, Uplinks,
-        build_device_info_tree, dismisses_on_touch, flag_extent, render_device_info, tier_for,
-        tray_hint,
+        AccessPoint, DeviceInfoRenderState, DeviceInfoView, FLAG_RING, FLAG_SIZE, LanguageSwitch,
+        Link, SetupApIcon, TIER_COMPACT, TIER_WIDE, Tier, Uplinks, build_device_info_tree,
+        dismisses_on_touch, flag_extent, render_device_info, tier_for, tray_hint,
     };
     use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
     use bmc_render::partition::tree_static_key;
     use bmc_render::renderer::test_support::ShapingRecorder;
+    use bmc_system_overlay::{FrameKind, Layering, OverlayFrame};
     use std::time::Instant;
 
     /// The name and panel the screens were authored against.
@@ -2450,8 +2451,11 @@ mod tests {
             DEVICE_NAME,
             false,
             LanguageSwitch::Hidden,
-            frame,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: frame,
+                layering: Layering::Unlayered,
+                now: Instant::now(),
+            },
         );
     }
 

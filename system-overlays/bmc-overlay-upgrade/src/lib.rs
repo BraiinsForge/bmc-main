@@ -29,9 +29,9 @@ use bmc_intl::Intl;
 use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, DownloadProgress, FrameKind, InputRegion, Layer, LayerConfig, Layering,
-    OverlayViewport, RenderOutcome, SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase,
-    UpgradeSnapshot, UpgradeState,
+    Anchor, DownloadProgress, FrameKind, InputRegion, Layer, LayerConfig, OverlayFrame,
+    OverlayViewport, RenderOutcome, SURFACE_LAYERING, SystemOverlay, TickOutcome, TreeUi,
+    UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -192,20 +192,19 @@ impl UpgradeRenderState {
 }
 
 /// Render an injected snapshot view with retained layout and registered icons.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the view, its wording and the frame's clock, kind and layering"
-)]
 pub fn render_upgrade(
     renderer: &mut dyn Renderer,
     surface: Surface,
     state: &mut UpgradeRenderState,
     view: &UpgradeView,
     intl: &Intl,
-    now: Instant,
-    frame: FrameKind,
-    layering: Layering,
+    frame: OverlayFrame,
 ) -> RenderOutcome {
+    let OverlayFrame {
+        kind,
+        layering,
+        now,
+    } = frame;
     let icons = *state
         .icons
         .get_or_insert_with(|| icons::register_icons(renderer));
@@ -216,7 +215,7 @@ pub fn render_upgrade(
     let build = || ui::build_upgrade_tree(view, surface, icons, intl);
     match state
         .tree
-        .render(frame, layering, size, delta_ms, renderer, intl, build)
+        .render(kind, layering, size, delta_ms, renderer, intl, build)
     {
         Ok(tree_frame) => tree_frame.outcome,
         Err(err) => {
@@ -324,9 +323,11 @@ impl OverlayState {
             &mut self.render_state,
             &view,
             intl,
-            Instant::now(),
-            frame,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: frame,
+                layering: SURFACE_LAYERING,
+                now: Instant::now(),
+            },
         )
     }
 }
@@ -433,6 +434,10 @@ impl SystemOverlay for UpgradeOverlay {
 
     fn on_hidden(&mut self) {
         self.state.render_state.tree.clear();
+    }
+
+    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
+        self.state.render_state.tree.release(renderer);
     }
 }
 
@@ -659,6 +664,27 @@ mod tests {
         let outcome = render_frame(&mut state, FrameKind::AnimationOnly);
         assert!(state.render_state.tree.replayed_last_frame());
         assert_eq!(outcome.next, NextFrame::Replay, "the bar keeps moving");
+    }
+
+    #[test]
+    fn releasing_frees_the_layer_a_card_captured() {
+        let mut overlay = UpgradeOverlay::packages_for_display(DECK);
+        overlay.state.receive(verifying_packages(), Instant::now());
+        let (width, height) = PACKAGE_CARD_SURFACE_SIZE_LARGE;
+        #[expect(clippy::cast_precision_loss, reason = "card sizes are small")]
+        let mut layers = ShapingRecorder::new(width as f32, height as f32).with_static_layers();
+        let _ = overlay.state.render(
+            &mut layers,
+            PACKAGE_CARD_SURFACE_SIZE_LARGE,
+            &bmc_intl::formatter(bmc_intl::Language::default()),
+            FrameKind::Fresh,
+        );
+        assert_eq!(
+            layers.static_layer_owners(),
+            [overlay.state.render_state.tree.static_layer_owner().clone()]
+        );
+        overlay.release_renderer_resources(&mut layers);
+        assert!(layers.static_layer_owners().is_empty());
     }
 
     #[test]

@@ -41,10 +41,10 @@ use std::time::{Duration, Instant};
 use bmc_intl::{Intl, Localized};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    AccessPoint, DeviceState, FrameKind, Language, Layer, LayerConfig, Layering,
-    LocalizationRequest, NextFrame, OverlayViewport, PlatformCaps, RenderOutcome, SetupStep,
-    SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot,
-    UpgradeState, VersionedSnapshot,
+    AccessPoint, DeviceState, FrameKind, Language, Layer, LayerConfig, LocalizationRequest,
+    NextFrame, OverlayFrame, OverlayViewport, PlatformCaps, RenderOutcome, SURFACE_LAYERING,
+    SetupStep, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind,
+    UpgradeSnapshot, UpgradeState, VersionedSnapshot,
 };
 
 /// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed,
@@ -834,8 +834,11 @@ impl SystemOverlay for DeviceInfoOverlay {
             &self.device_name,
             self.miner,
             switch,
-            frame,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: frame,
+                layering: SURFACE_LAYERING,
+                now: Instant::now(),
+            },
         );
         // The language already shown asks for nothing: re-asking would only round-trip a no-op.
         // Any other is marked current at once, since the answer takes a save and a broadcast.
@@ -859,6 +862,10 @@ impl SystemOverlay for DeviceInfoOverlay {
 
     fn on_hidden(&mut self) {
         self.render_state.tree.clear();
+    }
+
+    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
+        self.render_state.tree.release(renderer);
     }
 
     fn on_language(&mut self, language: Option<Language>) {
@@ -993,6 +1000,27 @@ mod tests {
             kind,
             state: UpgradeState::Succeeded { remaining },
         }
+    }
+
+    #[test]
+    fn releasing_frees_the_layer_a_screen_captured() {
+        let mut overlay = DeviceInfoOverlay::default();
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        let mut layers = bmc_render::renderer::test_support::ShapingRecorder::new(1_280.0, 480.0)
+            .with_static_layers();
+        let viewport = OverlayViewport::rectangular(1_280, 480);
+        let _ = overlay.render(
+            &mut layers,
+            viewport,
+            &bmc_intl::formatter(bmc_intl::Language::default()),
+            FrameKind::Fresh,
+        );
+        assert_eq!(
+            layers.static_layer_owners(),
+            [overlay.render_state.tree.static_layer_owner().clone()]
+        );
+        overlay.release_renderer_resources(&mut layers);
+        assert!(layers.static_layer_owners().is_empty());
     }
 
     #[test]

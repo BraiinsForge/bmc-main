@@ -21,8 +21,8 @@
 use std::ptr::NonNull;
 use std::time::Instant;
 
-use bmc_render::renderer::{FrameBackground, FrameClear, Renderer};
-use bmc_system_overlay::{HostedOverlay, SystemOverlay};
+use bmc_render::renderer::Renderer;
+use bmc_system_overlay::{HostedOverlay, SystemOverlay, begin_surface_frame};
 use bmc_widget::egl::EglContext;
 
 use crate::host::SharedHost;
@@ -159,13 +159,7 @@ pub fn prewarm_hosted_overlay(
             // dyn Renderer` to this renderer is live.
             let renderer = unsafe { ptr.as_ptr().as_mut() }
                 .expect("BUG: NonNull renderer is non-null by construction");
-            renderer.begin_frame_with_clear(
-                w,
-                h,
-                1.0,
-                FrameBackground::TransparentBlack,
-                FrameClear::Clear,
-            );
+            begin_surface_frame(renderer, (w, h));
             overlay.prewarm(renderer, viewport);
             renderer.flush();
             Ok(())
@@ -173,6 +167,24 @@ pub fn prewarm_hosted_overlay(
         || {},
     )?;
     Ok(())
+}
+
+/// Free what a hidden overlay left in the shared renderer, under the GPU lock.
+pub fn release_hidden_overlay(
+    overlay: &mut HostedOverlay,
+    ptr: NonNull<dyn Renderer>,
+    shared: &mut SharedHost,
+) -> anyhow::Result<()> {
+    if !overlay.owes_renderer_release() {
+        return Ok(());
+    }
+    shared.with_gpu_render_lock("host_overlay_release", |_shared| {
+        // SAFETY: as in `render_hosted_overlay`, the renderer outlives this call
+        // and the single-threaded host holds no other mutable reference to it.
+        let renderer = unsafe { &mut *ptr.as_ptr() };
+        overlay.release_renderer_resources(renderer);
+        Ok(())
+    })
 }
 
 /// Move a clean mapped slide frame through layer-shell placement;
@@ -227,13 +239,7 @@ pub fn render_hosted_overlay(
             // does not hold another mutable renderer reference during this pass.
             let renderer = unsafe { ptr.as_ptr().as_mut() }
                 .expect("BUG: NonNull renderer is non-null by construction");
-            renderer.begin_frame_with_clear(
-                size.0,
-                size.1,
-                1.0,
-                FrameBackground::TransparentBlack,
-                FrameClear::Clear,
-            );
+            begin_surface_frame(renderer, size);
             let outcome = overlay.render(renderer, viewport, frame);
             renderer.flush();
             let _ = overlay.overlay_mut().take_content_dirty();

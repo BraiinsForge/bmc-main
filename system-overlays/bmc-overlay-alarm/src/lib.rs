@@ -36,8 +36,9 @@ use bmc_render::ui::{
     TRANSPARENT, TextAlign, TextStyle, VerticalAlign, WHITE, col, fixed_height, row, text,
 };
 use bmc_system_overlay::{
-    AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, Layering, OverlayViewport,
-    RenderOutcome, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
+    AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayFrame,
+    OverlayViewport, RenderOutcome, SURFACE_LAYERING, SystemOverlay, TickOutcome, TouchEvent,
+    TreeUi,
 };
 
 /// Touch key for the stop-alarm button; shared by its `Canvas` hit region and
@@ -381,17 +382,20 @@ pub fn render_alarm(
     state: &mut AlarmRenderState,
     view: &AlarmView,
     intl: &Intl,
-    frame: FrameKind,
-    layering: Layering,
+    frame: OverlayFrame,
 ) -> RenderAlarmOutput {
-    let now = Instant::now();
+    let OverlayFrame {
+        kind,
+        layering,
+        now,
+    } = frame;
     let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
         .unwrap_or(u32::MAX);
     state.last_render = now;
 
     let tree_frame = match state
         .tree
-        .render(frame, layering, size, delta_ms, r, intl, || {
+        .render(kind, layering, size, delta_ms, r, intl, || {
             build_alarm_ui_tree(view, size, intl)
         }) {
         Ok(tree_frame) => tree_frame,
@@ -509,8 +513,11 @@ impl SystemOverlay for AlarmOverlay {
             &mut self.render_state,
             &view,
             intl,
-            frame,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: frame,
+                layering: SURFACE_LAYERING,
+                now: Instant::now(),
+            },
         );
 
         if output.stop {
@@ -524,6 +531,10 @@ impl SystemOverlay for AlarmOverlay {
     fn on_hidden(&mut self) {
         self.render_state.tree.clear();
     }
+
+    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
+        self.render_state.tree.release(renderer);
+    }
 }
 
 #[cfg(test)]
@@ -532,6 +543,8 @@ mod tests {
     use bmc_render::partition::tree_static_key;
     use bmc_render::renderer::test_support::ShapingRecorder;
     use bmc_system_overlay::Language;
+
+    use bmc_system_overlay::Layering;
 
     use super::*;
 
@@ -555,8 +568,11 @@ mod tests {
             state,
             &view(),
             &english,
-            frame,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: frame,
+                layering: Layering::Unlayered,
+                now: Instant::now(),
+            },
         );
     }
 
@@ -596,6 +612,26 @@ mod tests {
         render(&mut state, FrameKind::Fresh);
         render(&mut state, FrameKind::AnimationOnly);
         assert!(state.tree.replayed_last_frame());
+    }
+
+    #[test]
+    fn releasing_frees_the_layer_a_ring_captured() {
+        let mut overlay = AlarmOverlay::new(Instant::now());
+        overlay.on_alarm_ring("7:30", "AM", "Wake up", true);
+        let mut layers = ShapingRecorder::new(480.0, 1280.0).with_static_layers();
+        let viewport = OverlayViewport::rectangular(SIZE.0, SIZE.1);
+        let _ = overlay.render(
+            &mut layers,
+            viewport,
+            &bmc_intl::formatter(bmc_intl::Language::default()),
+            FrameKind::Fresh,
+        );
+        assert_eq!(
+            layers.static_layer_owners(),
+            [overlay.render_state.tree.static_layer_owner().clone()]
+        );
+        overlay.release_renderer_resources(&mut layers);
+        assert!(layers.static_layer_owners().is_empty());
     }
 
     #[test]

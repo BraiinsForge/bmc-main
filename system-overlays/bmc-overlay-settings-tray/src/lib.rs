@@ -38,9 +38,9 @@ use std::time::{Duration, Instant};
 use bmc_intl::{Intl, format_lazy};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, FrameKind, InputRegion, Layer, LayerConfig, Layering, NextFrame, OverlayViewport,
-    RenderOutcome, RestartDeclined, ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay,
-    TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
+    Anchor, FrameKind, InputRegion, Layer, LayerConfig, Layering, NextFrame, OverlayFrame,
+    OverlayViewport, RenderOutcome, RestartDeclined, SURFACE_LAYERING, ScreenEdge, SettingsRequest,
+    SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
 };
 
 use crate::dismiss::Pt;
@@ -967,9 +967,13 @@ impl SystemOverlay for SettingsTrayOverlay {
             &mut self.render_state,
             &view,
             intl,
-            now,
-            FrameKind::Fresh,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: FrameKind::Fresh,
+                // Off the layer: the tray stays hidden after prewarm,
+                // and no hide follows to free a layer this pass would capture.
+                layering: Layering::Unlayered,
+                now,
+            },
         );
     }
 
@@ -988,9 +992,11 @@ impl SystemOverlay for SettingsTrayOverlay {
             &mut self.render_state,
             &view,
             intl,
-            now,
-            frame,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: frame,
+                layering: SURFACE_LAYERING,
+                now,
+            },
         );
         self.apply_render_output(output, now);
         if self.repaint_queued {
@@ -1005,6 +1011,10 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn on_hidden(&mut self) {
         self.render_state.tree.clear();
+    }
+
+    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
+        self.render_state.tree.release(renderer);
     }
 
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
@@ -1066,20 +1076,19 @@ const PRESSABLE: [&str; 7] = [
     ui::WIFI_RECONFIG_KEY,
 ];
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the view, its wording and the frame's clock, kind and layering"
-)]
 pub fn render_settings_tray(
     renderer: &mut dyn Renderer,
     viewport: OverlayViewport,
     state: &mut SettingsTrayRenderState,
     view: &SettingsTrayView,
     intl: &Intl,
-    now: Instant,
-    frame: FrameKind,
-    layering: Layering,
+    frame: OverlayFrame,
 ) -> SettingsTrayRenderOutput {
+    let OverlayFrame {
+        kind,
+        layering,
+        now,
+    } = frame;
     let icons = *state
         .icons
         .get_or_insert_with(|| icons::register_icons(renderer));
@@ -1126,7 +1135,7 @@ pub fn render_settings_tray(
     };
 
     let tree_frame = match state.tree.render(
-        frame,
+        kind,
         layering,
         viewport.size(),
         delta_ms,
@@ -2160,9 +2169,11 @@ mod replay_tests {
             state,
             view,
             &english,
-            Instant::now(),
-            kind,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind,
+                layering: Layering::Unlayered,
+                now: Instant::now(),
+            },
         )
         .outcome
     }
@@ -2252,6 +2263,35 @@ mod replay_tests {
     }
 
     #[test]
+    fn releasing_frees_the_layer_the_tray_captured() {
+        let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
+        let mut layers = ShapingRecorder::new(1_280.0, 480.0).with_static_layers();
+        let viewport = OverlayViewport::rectangular(1_280, 480);
+        let _ = overlay.render(&mut layers, viewport, &english(), FrameKind::Fresh);
+        assert_eq!(
+            layers.static_layer_owners(),
+            [overlay.render_state.tree.static_layer_owner().clone()]
+        );
+        overlay.release_renderer_resources(&mut layers);
+        assert!(layers.static_layer_owners().is_empty());
+    }
+
+    #[test]
+    fn the_prewarm_leaves_no_layer_behind() {
+        let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
+        let mut layers = ShapingRecorder::new(1_280.0, 480.0).with_static_layers();
+        overlay.prewarm(
+            &mut layers,
+            OverlayViewport::rectangular(1_280, 480),
+            &english(),
+        );
+        assert!(
+            layers.static_layer_owners().is_empty(),
+            "the tray stays hidden after the prewarm, and no hide follows to free a layer"
+        );
+    }
+
+    #[test]
     fn hiding_drops_the_tray_tree() {
         let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
         let _ = frame(
@@ -2294,9 +2334,11 @@ mod slider_release_tests {
             state,
             view,
             &english,
-            now,
-            FrameKind::Fresh,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: FrameKind::Fresh,
+                layering: Layering::Unlayered,
+                now,
+            },
         );
         (output, recorder)
     }

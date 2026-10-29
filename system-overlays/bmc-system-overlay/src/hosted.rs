@@ -399,11 +399,26 @@ impl HostedOverlay {
         self.frames.fail();
     }
 
+    /// Whether a hide left resources in the host's renderer for
+    /// [`Self::release_renderer_resources`] to free.
+    #[must_use]
+    pub fn owes_renderer_release(&self) -> bool {
+        self.frames.release_owed()
+    }
+
+    /// Free what the overlay keeps in the host's `renderer` between frames.
+    /// Call it with the GL context current.
+    pub fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
+        self.overlay.release_renderer_resources(renderer);
+        self.frames.settle_release();
+    }
+
     /// Release GL/EGL/GBM resources before this overlay is dropped. Must be
     /// called for failed overlays, closed overlays, and at host shutdown —
     /// OverlayRenderTarget/DoubleBufferState do not free on Drop.
-    pub fn shutdown(&mut self, egl: &EglContext) {
+    pub fn shutdown(&mut self, egl: &EglContext, renderer: &mut dyn Renderer) {
         self.frames.hide(&mut *self.overlay);
+        self.release_renderer_resources(renderer);
         self.target.destroy(egl);
     }
 

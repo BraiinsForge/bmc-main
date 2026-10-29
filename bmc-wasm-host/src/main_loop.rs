@@ -872,6 +872,10 @@ fn run_loop(
                 tracing::error!("ovl-dsp {}", overlay_dispatch_error_kind(&e));
                 overlay.mark_failed();
             }
+            if let Err(e) = crate::overlays::release_hidden_overlay(overlay, renderer_ptr, shared) {
+                tracing::error!("overlay release error, dropping overlay: {e}");
+                overlay.mark_failed();
+            }
         }
 
         for overlay in overlays.iter_mut() {
@@ -884,6 +888,12 @@ fn run_loop(
                     })
                 }) {
                     tracing::error!("overlay hide error, dropping overlay: {e}");
+                    overlay.mark_failed();
+                }
+                if let Err(e) =
+                    crate::overlays::release_hidden_overlay(overlay, renderer_ptr, shared)
+                {
+                    tracing::error!("overlay release error, dropping overlay: {e}");
                     overlay.mark_failed();
                 }
                 continue;
@@ -977,7 +987,10 @@ fn run_loop(
         while idx < overlays.len() {
             if !overlays[idx].running() || overlays[idx].is_failed() {
                 if let Err(error) = shared.with_gpu_render_lock("host_overlay_shutdown", |shared| {
-                    overlays[idx].shutdown(&shared.egl);
+                    // SAFETY: the renderer outlives the loop, and the single-threaded host
+                    // holds no other mutable reference to it during this pass.
+                    let renderer = unsafe { &mut *renderer_ptr.as_ptr() };
+                    overlays[idx].shutdown(&shared.egl, renderer);
                     Ok(())
                 }) {
                     tracing::error!(?error, "failed to release hosted overlay GPU resources");
@@ -1044,7 +1057,7 @@ pub fn run_with_slots(
     );
     for overlay in &mut overlays {
         if let Err(error) = shared.with_gpu_render_lock("host_overlay_shutdown", |shared| {
-            overlay.shutdown(&shared.egl);
+            overlay.shutdown(&shared.egl, renderer);
             Ok(())
         }) {
             tracing::error!(?error, "failed to release hosted overlay GPU resources");

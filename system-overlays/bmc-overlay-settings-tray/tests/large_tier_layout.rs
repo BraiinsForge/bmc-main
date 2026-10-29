@@ -50,7 +50,9 @@ use bmc_render::ui::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color, Fill, MeshId,
     Span, SvgId, TextOverflow, TextStyle,
 };
-use bmc_system_overlay::{DisplayShape, FrameKind, Layering, OverlayViewport, SettingsCaps};
+use bmc_system_overlay::{
+    DisplayShape, FrameKind, Layering, OverlayFrame, OverlayViewport, SettingsCaps,
+};
 
 const DECK: OverlayViewport = OverlayViewport {
     width: 1_280,
@@ -487,9 +489,11 @@ fn assert_controls_in_the_bottom_half(hostname: &str, ssid: &str) {
         &mut state,
         &view,
         &english(),
-        now,
-        FrameKind::Fresh,
-        Layering::Unlayered,
+        OverlayFrame {
+            kind: FrameKind::Fresh,
+            layering: Layering::Unlayered,
+            now,
+        },
     );
 
     assert!(
@@ -546,9 +550,11 @@ fn bmm101_controls_fit_between_the_close_target_and_the_bottom_edge() {
             &mut state,
             &view,
             &english(),
-            now,
-            FrameKind::Fresh,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: FrameKind::Fresh,
+                layering: Layering::Unlayered,
+                now,
+            },
         );
 
         let buttons: Vec<_> = renderer
@@ -604,9 +610,11 @@ fn large_tier_hold_circle_is_centered_on_its_button() {
         &mut state,
         &view,
         &english(),
-        now,
-        FrameKind::Fresh,
-        Layering::Unlayered,
+        OverlayFrame {
+            kind: FrameKind::Fresh,
+            layering: Layering::Unlayered,
+            now,
+        },
     );
 
     let &(hold_x, hold_y, _) = renderer
@@ -639,9 +647,11 @@ fn bmm101_cuts_a_long_value_and_keeps_every_label_whole() {
         &mut state,
         &view,
         &english(),
-        now,
-        FrameKind::Fresh,
-        Layering::Unlayered,
+        OverlayFrame {
+            kind: FrameKind::Fresh,
+            layering: Layering::Unlayered,
+            now,
+        },
     );
 
     for label in ["Hostname", "IP Address", "Connection"] {
@@ -672,9 +682,11 @@ fn the_layout_follows_the_size_the_tray_renders_at() {
             &mut state,
             &view,
             &english(),
-            now,
-            FrameKind::Fresh,
-            Layering::Unlayered,
+            OverlayFrame {
+                kind: FrameKind::Fresh,
+                layering: Layering::Unlayered,
+                now,
+            },
         );
         renderer
             .paragraphs

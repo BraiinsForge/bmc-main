@@ -23,10 +23,25 @@ use std::time::{Duration, Instant};
 use bmc_intl::{Intl, Localized};
 use bmc_platform::DisplayShape;
 use bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS;
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::{FrameBackground, FrameClear, Renderer};
 use bmc_shared_utils::language::Language;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
+
+/// Begin a frame on an overlay's surface the way every host does before
+/// [`SystemOverlay::render`]: cleared in full, which [`SURFACE_LAYERING`] relies on.
+pub fn begin_surface_frame(renderer: &mut dyn Renderer, (width, height): (u32, u32)) {
+    renderer.begin_frame_with_clear(
+        width,
+        height,
+        1.0,
+        FrameBackground::TransparentBlack,
+        FrameClear::Clear,
+    );
+}
+
+/// How an overlay's tree draws on a surface begun with [`begin_surface_frame`].
+pub const SURFACE_LAYERING: crate::Layering = crate::Layering::Layered;
 
 /// Minimum wall-clock gap between two submitted frames. Both the standalone
 /// loop and the hosted driver enforce this floor identically.
@@ -575,6 +590,8 @@ impl OverlayFrameSchedule {
 pub(crate) struct OverlayFrames {
     fresh_requested: bool,
     schedule: OverlayFrameSchedule,
+    /// A hide left the overlay's resources in the renderer, to free before it draws again.
+    release_owed: bool,
 }
 
 impl OverlayFrames {
@@ -582,6 +599,7 @@ impl OverlayFrames {
         Self {
             fresh_requested: false,
             schedule: OverlayFrameSchedule::new(animation_frame_delay_ms),
+            release_owed: false,
         }
     }
 
@@ -643,6 +661,28 @@ impl OverlayFrames {
     pub fn hide(&mut self, overlay: &mut dyn SystemOverlay) {
         self.fail();
         overlay.on_hidden();
+        self.release_owed = true;
+    }
+
+    /// [`Self::hide`] for a host that holds the renderer now, so it settles the release at once.
+    pub fn hide_and_release(
+        &mut self,
+        overlay: &mut dyn SystemOverlay,
+        renderer: &mut dyn Renderer,
+    ) {
+        self.hide(overlay);
+        self.settle_release();
+        overlay.release_renderer_resources(renderer);
+    }
+
+    /// Whether a hide left resources in the renderer that no release has freed yet.
+    pub fn release_owed(&self) -> bool {
+        self.release_owed
+    }
+
+    /// Settle the release a hide owes, if it owes one.
+    pub fn settle_release(&mut self) {
+        self.release_owed = false;
     }
 
     /// The overlay failed: nothing of it renders again.
@@ -735,6 +775,11 @@ pub trait SystemOverlay {
 
     /// The surface was unmapped. Drop what only redraws it, such as a cached tree.
     fn on_hidden(&mut self) {}
+
+    /// Free what the overlay keeps in `renderer` between frames, such as a static layer,
+    /// so none of it outlives the surface or the renderer.
+    /// Needs the renderer's GL context current.
+    fn release_renderer_resources(&mut self, _renderer: &mut dyn Renderer) {}
 
     /// Pay one-time renderer setup costs at host startup instead of on the
     /// first reveal. The host calls this once, before the event loop, with the
@@ -1692,10 +1737,11 @@ mod tests {
         assert_eq!(schedule.deadline(), Some(t0 + ms(100)));
     }
 
-    /// Counts the `on_hidden` calls a driver makes.
+    /// Counts the hides and renderer releases a driver makes.
     #[derive(Default)]
     struct HideCounter {
         hidden: usize,
+        released: usize,
     }
 
     impl SystemOverlay for HideCounter {
@@ -1719,6 +1765,10 @@ mod tests {
 
         fn on_hidden(&mut self) {
             self.hidden += 1;
+        }
+
+        fn release_renderer_resources(&mut self, _renderer: &mut dyn Renderer) {
+            self.released += 1;
         }
     }
 
@@ -1794,6 +1844,40 @@ mod tests {
         assert_eq!(overlay.hidden, 1, "the overlay drops its cached tree");
         assert!(!frames.wanted(true, t0 + ms(33)));
         assert_eq!(frames.wake(true, None, t0).next_wake, None);
+    }
+
+    #[test]
+    fn a_hide_owes_one_release() {
+        let mut frames = replaying(Instant::now());
+        assert!(!frames.release_owed(), "a shown overlay owes nothing");
+        frames.hide(&mut HideCounter::default());
+        assert!(frames.release_owed());
+        frames.settle_release();
+        assert!(!frames.release_owed(), "the release settles the debt");
+        frames.settle_release();
+        assert!(!frames.release_owed(), "settling again owes nothing");
+    }
+
+    #[test]
+    fn hiding_with_the_renderer_at_hand_releases_at_once() {
+        let mut frames = replaying(Instant::now());
+        let mut overlay = HideCounter::default();
+        frames.hide_and_release(
+            &mut overlay,
+            &mut bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 20.0),
+        );
+        assert_eq!((overlay.hidden, overlay.released), (1, 1));
+        assert!(
+            !frames.release_owed(),
+            "nothing is left for a later release"
+        );
+    }
+
+    #[test]
+    fn a_failure_owes_no_release() {
+        let mut frames = replaying(Instant::now());
+        frames.fail();
+        assert!(!frames.release_owed());
     }
 
     #[test]

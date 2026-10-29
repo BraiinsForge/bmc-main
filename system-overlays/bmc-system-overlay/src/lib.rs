@@ -40,13 +40,13 @@ pub use icon::register_icon;
 pub use overlay::{
     AccessPoint, AlarmEvent, AlarmRequest, DeclineReason, DeviceState, DownloadProgress, FrameKind,
     InputRegion, LayerConfig, LocalizationRequest, NextFrame, OverlayViewport, PlatformCaps,
-    RenderOutcome, RestartDeclined, ScreenEdge, SettingsCaps, SettingsRequest, SetupStep,
-    SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase, UpgradeSnapshot,
-    UpgradeState, UpgradeUpdate,
+    RenderOutcome, RestartDeclined, SURFACE_LAYERING, ScreenEdge, SettingsCaps, SettingsRequest,
+    SetupStep, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase, UpgradeSnapshot,
+    UpgradeState, UpgradeUpdate, begin_surface_frame,
 };
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;
-pub use tree::{Layering, TreeFrame, TreeUi};
+pub use tree::{Layering, OverlayFrame, TreeFrame, TreeUi};
 
 // Re-export the layer-shell client enums so overlays can build a LayerConfig
 // without importing the protocol crate directly.

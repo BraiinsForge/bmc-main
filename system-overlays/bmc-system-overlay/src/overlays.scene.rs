@@ -47,7 +47,7 @@ use bmc_render::renderer::Renderer;
 use bmc_render::ui::Color;
 use bmc_system_overlay::{
     AccessPoint, DeclineReason, DisplayShape, DownloadProgress, FrameKind, Language, Layering,
-    OverlayViewport, SettingsCaps, TouchEvent, UpgradeKind, UpgradePhase,
+    OverlayFrame, OverlayViewport, SettingsCaps, TouchEvent, UpgradeKind, UpgradePhase,
 };
 
 scene_meta! { title: "Overlays" }
@@ -211,8 +211,11 @@ fn device_info_cell(
                 language().map_or(LanguageSwitch::Hidden, |current| LanguageSwitch::Shown {
                     current: Some(current),
                 }),
-                FrameKind::Fresh,
-                Layering::Unlayered,
+                OverlayFrame {
+                    kind: FrameKind::Fresh,
+                    layering: Layering::Unlayered,
+                    now: Instant::now(),
+                },
             );
             stage.picked = drawn.picked;
         });
@@ -322,8 +325,11 @@ fn alarm_cell(
                 state,
                 &view,
                 &intl,
-                FrameKind::Fresh,
-                Layering::Unlayered,
+                OverlayFrame {
+                    kind: FrameKind::Fresh,
+                    layering: Layering::Unlayered,
+                    now: Instant::now(),
+                },
             );
         });
         // The rings run off a clock of their own, so this never comes to rest.
@@ -380,9 +386,11 @@ fn upgrade_cell(
                 state,
                 &view,
                 &intl,
-                Instant::now(),
-                FrameKind::Fresh,
-                Layering::Unlayered,
+                OverlayFrame {
+                    kind: FrameKind::Fresh,
+                    layering: Layering::Unlayered,
+                    now: Instant::now(),
+                },
             );
         });
         // Handed a clock of its own, so it can animate — the running phases never settle.
@@ -473,9 +481,11 @@ fn settings_tray_cell(
                 state,
                 &view,
                 &intl,
-                Instant::now(),
-                FrameKind::Fresh,
-                Layering::Unlayered,
+                OverlayFrame {
+                    kind: FrameKind::Fresh,
+                    layering: Layering::Unlayered,
+                    now: Instant::now(),
+                },
             );
         });
         // Reveal and press feedback are timed off the clock it is handed, and it

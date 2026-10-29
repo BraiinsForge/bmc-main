@@ -26,7 +26,6 @@ use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_intl::{Intl, Localized};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::prelude::*;
-use bmc_render::renderer::{FrameBackground, FrameClear};
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
@@ -130,6 +129,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             frames.drop_request();
             if hide_standalone_if_mapped(
                 &egl,
+                &mut renderer,
                 &mut target,
                 &mut client,
                 &mut *overlay,
@@ -185,7 +185,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             after,
         ))?;
     }
-    frames.hide(&mut *overlay);
+    frames.hide_and_release(&mut *overlay, &mut renderer);
     destroy_standalone_rendering(&egl, scratch, renderer, target);
     Ok(())
 }
@@ -359,15 +359,29 @@ fn resize_standalone_if_needed(
     }
     let transition = resize_transition(*mapped);
     if transition.unmap_before_resize {
-        hide_standalone_if_mapped(egl, target, client, overlay, frames, mapped, last_render)?;
+        hide_standalone_if_mapped(
+            egl,
+            renderer,
+            target,
+            client,
+            overlay,
+            frames,
+            mapped,
+            last_render,
+        )?;
     }
-    resize_standalone_rendering(egl, scratch, renderer, target, client, new_size)?;
+    resize_standalone_rendering(egl, scratch, renderer, target, client, overlay, new_size)?;
     *size = new_size;
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "hide owns the renderer, the surface and the loop latches it resets"
+)]
 fn hide_standalone_if_mapped(
     egl: &EglContext,
+    renderer: &mut FemtoVgRenderer,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
     overlay: &mut dyn SystemOverlay,
@@ -383,16 +397,21 @@ fn hide_standalone_if_mapped(
     target.free_for_hide(egl, client)?;
     *mapped = false;
     *last_render = None;
-    frames.hide(overlay);
+    frames.hide_and_release(overlay, renderer);
     Ok(true)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a resize replaces the whole standalone GPU stack"
+)]
 fn prepare_standalone_for_render(
     egl: &EglContext,
     scratch: &mut SharedRenderScratch,
     renderer: &mut FemtoVgRenderer,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
+    overlay: &mut dyn SystemOverlay,
     config_size: (u32, u32),
     size: &mut (u32, u32),
 ) -> anyhow::Result<()> {
@@ -401,7 +420,7 @@ fn prepare_standalone_for_render(
     }
     let new_size = resolved_configured_size(config_size, client.size());
     if new_size != *size {
-        resize_standalone_rendering(egl, scratch, renderer, target, client, new_size)?;
+        resize_standalone_rendering(egl, scratch, renderer, target, client, overlay, new_size)?;
         *size = new_size;
     }
     Ok(())
@@ -433,7 +452,16 @@ fn render_standalone_if_ready(
         return Ok(());
     }
 
-    prepare_standalone_for_render(egl, scratch, renderer, target, client, config_size, size)?;
+    prepare_standalone_for_render(
+        egl,
+        scratch,
+        renderer,
+        target,
+        client,
+        overlay,
+        config_size,
+        size,
+    )?;
     let frame = frames.frame_kind(*mapped);
     let outcome = render_frame(
         egl, scratch, gpu_lock, target, renderer, overlay, intl, client, *size, frame,
@@ -450,10 +478,13 @@ fn resize_standalone_rendering(
     renderer: &mut FemtoVgRenderer,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
+    overlay: &mut dyn SystemOverlay,
     size: (u32, u32),
 ) -> anyhow::Result<()> {
     let new_scratch = SharedRenderScratch::new(egl, size.0, size.1)?;
     let new_renderer = create_standalone_renderer(&new_scratch, size)?;
+    // The new renderer holds none of the old one's layers, so the overlay must not expect them.
+    overlay.release_renderer_resources(renderer);
     let old_scratch = std::mem::replace(scratch, new_scratch);
     *renderer = new_renderer;
     old_scratch.destroy(egl);
@@ -501,13 +532,7 @@ fn render_frame(
     // begin_frame binds the staging FBO and sets the viewport, returning its id.
     // The renderer was constructed against that id, so the returned value is unused.
     let _staging = scratch.begin_frame(egl, size.0, size.1);
-    renderer.begin_frame_with_clear(
-        size.0,
-        size.1,
-        1.0,
-        FrameBackground::TransparentBlack,
-        FrameClear::Clear,
-    );
+    crate::begin_surface_frame(renderer, size);
     let outcome = overlay.render(renderer, client.viewport(size), intl, frame);
     renderer.flush();
     scratch.blit_to(egl, target.current_fbo(), size.0, size.1);

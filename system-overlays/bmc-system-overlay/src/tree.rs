@@ -29,6 +29,7 @@
 //! so a frame where only dynamic content moves blits it back.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use bmc_render::components::RelTimeWords;
 use bmc_render::interaction::InteractionState;
@@ -54,6 +55,15 @@ pub enum Layering {
     /// For a frame that holds the caller's own drawing, as the gallery's backdrop,
     /// which a layer blit would replace, or one that must leave no layer behind, as a prewarm.
     Unlayered,
+}
+
+/// One frame an overlay draws: why it renders, whether it may use the layer, and when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverlayFrame {
+    pub kind: FrameKind,
+    pub layering: Layering,
+    /// The instant the frame's animations advance to.
+    pub now: Instant,
 }
 
 /// The last successfully rendered tree, the size it was laid out at, and its static key.
