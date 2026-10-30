@@ -1747,6 +1747,7 @@ impl WasmWidgetRuntime {
         secrets: bmc_widget_protocol::CredentialSecrets,
     ) -> bool {
         let data = self.store.data_mut();
+        data.close_websockets_on_account_change(&secrets);
         data.credentials.replace(view);
         data.credential_secrets = secrets;
         self.fire_update_hook(
@@ -2549,6 +2550,7 @@ impl WasmWidgetRuntime {
                 msg_tx,
                 event_rx,
                 destination: crate::host_api::WsDestination::Stub,
+                spent_slots: std::collections::BTreeSet::new(),
                 host_close: None,
             },
         );

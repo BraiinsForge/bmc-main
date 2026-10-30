@@ -907,12 +907,12 @@ mod tests {
 
     #[test]
     fn a_host_close_is_written_by_its_reason_s_name() {
-        let line = r#"{"at_ms":0,"type":"ws_host_closed","ws_id":1,"reason":"credential"}"#;
+        let line = r#"{"at_ms":0,"type":"ws_host_closed","ws_id":1,"reason":"account_changed"}"#;
         let event: TimelineEvent = serde_json::from_str(line).expect("BUG: a named reason parses");
         assert!(matches!(
             event.event,
             UnifiedEvent::WsHostClosed {
-                reason: bmc_wasm_protocol::WsHostClose::Credential,
+                reason: bmc_wasm_protocol::WsHostClose::AccountChanged,
                 ..
             }
         ));

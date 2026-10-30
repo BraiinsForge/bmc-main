@@ -29,7 +29,7 @@
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "audio")]
 use std::cell::OnceCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 use std::ptr::NonNull;
@@ -649,6 +649,8 @@ pub struct ActiveWebSocket {
     /// Channel to receive inbound events from the background read loop.
     pub event_rx: mpsc::Receiver<WsEvent>,
     pub destination: WsDestination,
+    /// Credential slots the connect or any message spent.
+    pub spent_slots: BTreeSet<String>,
     /// Set when the host closed the socket on the widget's behalf, or refused to open it.
     /// The widget receives this in place of whatever the thread reports.
     pub host_close: Option<WsHostClose>,
@@ -668,6 +670,9 @@ pub enum WsDestination {
 
 /// Close code the peer gets for a message refused because of the credential it spends.
 pub const WS_CLOSE_POLICY_VIOLATION: u16 = 1008;
+
+/// Close code the peer gets for a socket whose spent credential's account changed.
+pub const WS_CLOSE_SERVICE_RESTART: u16 = 1012;
 
 /// Outbound message or control signal for a WebSocket background thread.
 pub enum WsOutbound {
@@ -1498,6 +1503,38 @@ impl HostState {
             .is_some()
     }
 
+    /// Close every WebSocket that spent a slot whose account `incoming` changes.
+    ///
+    /// A service such as Home Assistant keeps a socket authenticated
+    /// after the one message that spent the token,
+    /// so a rotated or removed account would stay in use until the next reconnect.
+    pub(crate) fn close_websockets_on_account_change(
+        &mut self,
+        incoming: &bmc_widget_protocol::CredentialSecrets,
+    ) {
+        for (ws_id, ws) in &mut self.websockets {
+            if ws.host_close.is_some() {
+                continue;
+            }
+            let Some(slot) = ws
+                .spent_slots
+                .iter()
+                .find(|slot| self.credential_secrets.slot_differs(incoming, slot))
+            else {
+                continue;
+            };
+            tracing::info!(
+                ws_id = ws_id.to_wire(),
+                slot,
+                "closing WebSocket: the account it spent has changed"
+            );
+            ws.host_close = Some(WsHostClose::AccountChanged);
+            let _ = ws
+                .msg_tx
+                .send(WsOutbound::Close(Some(WS_CLOSE_SERVICE_RESTART)));
+        }
+    }
+
     /// Whether the widget reads the host's closes of a WebSocket as events of their own;
     /// not before its version is known.
     #[must_use]
@@ -2232,6 +2269,86 @@ mod tests {
             state.hermetic.as_ref().expect("BUG: set above").breaches,
             ["fetch: GET https://x/y", "websocket: wss://z"]
         );
+    }
+
+    fn secrets_of(tokens: &[(&str, &str)]) -> bmc_widget_protocol::CredentialSecrets {
+        bmc_widget_protocol::CredentialSecrets::new(
+            tokens
+                .iter()
+                .map(|(slot, token)| {
+                    (
+                        (*slot).to_owned(),
+                        serde_json::json!({ "fields": { "token": token } }),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn only_a_socket_whose_spent_account_changed_is_closed() {
+        let current = [("pool", "s3cr3t"), ("weather", "w3ather")];
+
+        for (incoming, spent, closes, case) in [
+            (
+                vec![("pool", "r0tated"), ("weather", "w3ather")],
+                "pool",
+                true,
+                "a rotated token",
+            ),
+            (
+                vec![("weather", "w3ather")],
+                "pool",
+                true,
+                "an unbound slot",
+            ),
+            (
+                vec![("pool", "r0tated"), ("weather", "w3ather")],
+                "weather",
+                false,
+                "another slot's change",
+            ),
+            (
+                current.to_vec(),
+                "pool",
+                false,
+                "an unchanged account, as after a rename",
+            ),
+        ] {
+            let mut state = HostState::new(
+                RuntimeResourceLimits::default(),
+                chrono::Local::now().fixed_offset(),
+                FetchAgent::default(),
+            );
+            state.credential_secrets = secrets_of(&current);
+            let (msg_tx, msg_rx) = std::sync::mpsc::channel();
+            let (_event_tx, event_rx) = std::sync::mpsc::channel();
+            let ws_id = bmc_wasm_protocol::WebsocketId::from_wire(1).expect("BUG: 1 is a valid id");
+            state.websockets.insert(
+                ws_id,
+                super::ActiveWebSocket {
+                    msg_tx,
+                    event_rx,
+                    destination: super::WsDestination::Stub,
+                    spent_slots: [spent.to_owned()].into(),
+                    host_close: None,
+                },
+            );
+
+            state.close_websockets_on_account_change(&secrets_of(&incoming));
+
+            assert_eq!(
+                state.websockets[&ws_id].host_close,
+                closes.then_some(super::WsHostClose::AccountChanged),
+                "{case} spending {spent:?}"
+            );
+            let expected_code = closes.then_some(super::WS_CLOSE_SERVICE_RESTART);
+            assert_eq!(
+                matches!(msg_rx.try_recv(), Ok(super::WsOutbound::Close(code)) if code == expected_code),
+                closes,
+                "{case}: the peer must be told exactly when the widget is",
+            );
+        }
     }
 
     /// A state carrying damage from two walks, as a settled widget has.

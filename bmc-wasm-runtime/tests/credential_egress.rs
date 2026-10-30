@@ -131,6 +131,22 @@ fn fetch_wat(url: &str) -> String {
 /// It is omitted when empty, as the firmware writes it, so an unpinned test
 /// exercises the absent-key path rather than an empty list.
 fn config_with(type_id: &str, token: &str, allow_hosts: &[&str]) -> RuntimeConfig {
+    let (credentials, credential_secrets) = bound_pool(type_id, token, allow_hosts);
+    RuntimeConfig {
+        credentials,
+        credential_secrets,
+        // Adding an interceptor or hermetic mode here would answer the fetch
+        // before the pin is ever consulted, quietly voiding both tests.
+        ..RuntimeConfig::default()
+    }
+}
+
+/// Both halves of the `pool` binding, as the host is handed them.
+fn bound_pool(
+    type_id: &str,
+    token: &str,
+    allow_hosts: &[&str],
+) -> (CredentialView, bmc_widget_protocol::CredentialSecrets) {
     let mut view = BTreeMap::new();
     view.insert(
         "pool".to_owned(),
@@ -149,13 +165,10 @@ fn config_with(type_id: &str, token: &str, allow_hosts: &[&str]) -> RuntimeConfi
     let mut secrets = serde_json::Map::new();
     secrets.insert("pool".to_owned(), serde_json::Value::Object(slot));
 
-    RuntimeConfig {
-        credentials: CredentialView::new(view),
-        credential_secrets: bmc_widget_protocol::CredentialSecrets::new(secrets),
-        // Adding an interceptor or hermetic mode here would answer the fetch
-        // before the pin is ever consulted, quietly voiding both tests.
-        ..RuntimeConfig::default()
-    }
+    (
+        CredentialView::new(view),
+        bmc_widget_protocol::CredentialSecrets::new(secrets),
+    )
 }
 
 /// Every log line the process emits, from any thread.
@@ -597,7 +610,8 @@ const AUTH_MESSAGE: &str = "auth {{ credential.pool.token }}";
 /// One-shot WebSocket server. Reports `accepted` once a connection arrives,
 /// so even a dial whose handshake fails shows,
 /// then the handshake's request target,
-/// then the first frame the widget sends, as `text …` or `close <code>`.
+/// then each frame the widget sends, as `text …` or `close <code>`,
+/// up to the first that is not text.
 /// After a close it reports `ended` once the widget's side has gone,
 /// which the host's socket thread does only after queueing its own close event.
 #[expect(
@@ -628,23 +642,30 @@ fn ws_listener() -> (u16, mpsc::Receiver<String>) {
         let Ok(mut socket) = tungstenite::accept_hdr(stream, report_target) else {
             return;
         };
-        let frame = match socket.read() {
-            Ok(Message::Text(text)) => format!("text {text}"),
-            Ok(Message::Close(frame)) => {
-                format!("close {}", frame.map_or(0, |frame| u16::from(frame.code)))
+        loop {
+            let (frame, last) = match socket.read() {
+                Ok(Message::Text(text)) => (format!("text {text}"), false),
+                Ok(Message::Close(frame)) => (
+                    format!("close {}", frame.map_or(0, |frame| u16::from(frame.code))),
+                    true,
+                ),
+                Ok(
+                    other @ (Message::Binary(_)
+                    | Message::Ping(_)
+                    | Message::Pong(_)
+                    | Message::Frame(_)),
+                ) => (format!("{other:?}"), true),
+                Err(error) => (format!("error {error}"), true),
+            };
+            let closed = frame.starts_with("close");
+            let _ = tx.send(frame);
+            if closed {
+                let _ = tx.send(wait_for_the_end(socket));
+                return;
             }
-            Ok(
-                other @ (Message::Binary(_)
-                | Message::Ping(_)
-                | Message::Pong(_)
-                | Message::Frame(_)),
-            ) => format!("{other:?}"),
-            Err(error) => format!("error {error}"),
-        };
-        let closed = frame.starts_with("close");
-        let _ = tx.send(frame);
-        if closed {
-            let _ = tx.send(wait_for_the_end(socket));
+            if last {
+                return;
+            }
         }
     });
 
@@ -1001,6 +1022,54 @@ fn a_refused_message_never_leaves_and_closes_the_socket_as_refused() {
             runtime.call_export_i32("close_code"),
             Some(0),
             "{why}: the host's close is none a peer could have sent",
+        );
+    }
+}
+
+/// A service keeps a socket authenticated after the one message that spent
+/// the token, so a rotated token would otherwise stay in use.
+/// A socket that spent it only in its URL is held to the same.
+#[test]
+fn rotating_the_account_closes_the_socket_that_spent_it() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let type_id = credential::BuiltinType::GenericToken.id();
+
+    for (query, message, first_frame, spent_in) in [
+        ("", AUTH_MESSAGE, "text auth s3cr3t-before", "its message"),
+        (
+            "?t={{ credential.pool.token }}",
+            "hello",
+            "text hello",
+            "its URL",
+        ),
+    ] {
+        let (port, frames) = ws_listener();
+        let url = format!("ws://127.0.0.1:{port}/{query}");
+        let mut runtime = ws_runtime(
+            &url,
+            message,
+            config_with(type_id, "s3cr3t-before", &[]),
+            &gl,
+        );
+        received(&frames, "the handshake");
+        assert_eq!(received(&frames, "the first frame"), first_frame);
+
+        let (view, rotated) = bound_pool(type_id, "s3cr3t-after", &[]);
+        runtime.deliver_credentials_update(view, rotated);
+
+        assert_eq!(
+            received(&frames, "the close"),
+            "close 1012",
+            "a socket that spent the token in {spent_in} must drop the session it opened",
+        );
+        // The socket thread queued its own close before it dropped the connection.
+        assert_eq!(received(&frames, "the connection's end"), "ended");
+        assert_eq!(
+            host_close_after_a_delivery(&mut runtime),
+            Some(WsHostClose::AccountChanged),
+            "the widget must learn to reconnect with the account as it now is",
         );
     }
 }

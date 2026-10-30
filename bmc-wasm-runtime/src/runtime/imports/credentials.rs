@@ -259,7 +259,8 @@ pub(in crate::runtime) struct SpentRequest {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
-    pub carries_secret: bool,
+    /// Credential slots whose secrets the request carries.
+    pub spent_slots: Vec<String>,
 }
 
 /// Substitute the widget's credential placeholders into one outbound request.
@@ -296,7 +297,7 @@ pub(in crate::runtime) fn spend(
             url: url.to_owned(),
             headers: headers.to_vec(),
             body,
-            carries_secret: false,
+            spent_slots: spent,
         });
     }
 
@@ -330,7 +331,7 @@ pub(in crate::runtime) fn spend(
         url,
         headers,
         body,
-        carries_secret: true,
+        spent_slots: spent,
     })
 }
 
@@ -370,6 +371,14 @@ impl<'a> CredentialAccess<'a> {
     }
 }
 
+/// One WebSocket message with its placeholders already resolved.
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+pub(in crate::runtime) struct SpentMessage {
+    pub text: String,
+    /// Credential slots whose secrets the message carries.
+    pub spent_slots: Vec<String>,
+}
+
 /// Substitute the widget's credential placeholders into one WebSocket message,
 /// judged by where its socket was dialled.
 /// A message naming no credential is returned untouched.
@@ -377,19 +386,26 @@ pub(in crate::runtime) fn spend_message(
     access: CredentialAccess<'_>,
     destination: &WsDestination,
     message: String,
-) -> Result<String, CredentialRefusal> {
+) -> Result<SpentMessage, CredentialRefusal> {
     let mut spent = Vec::new();
     collect_slots(&message, &mut spent);
+    let untouched = |text| SpentMessage {
+        text,
+        spent_slots: Vec::new(),
+    };
     if spent.is_empty() {
-        return Ok(message);
+        return Ok(untouched(message));
     }
 
     match destination {
-        WsDestination::Stub => Ok(message),
+        WsDestination::Stub => Ok(untouched(message)),
         WsDestination::Unpinnable => Err(CredentialRefusal::SocketDestinationUnpinnable),
         WsDestination::Dialled { host, port } => {
             egress_permitted(access, host, Some(*port), &spent)?;
-            Ok(substitute(&message, access.secrets)?)
+            Ok(SpentMessage {
+                text: substitute(&message, access.secrets)?,
+                spent_slots: spent,
+            })
         }
     }
 }
@@ -1137,7 +1153,10 @@ mod tests {
                 &dialled("api.braiins.com", 443),
                 AUTH_MESSAGE.to_owned()
             ),
-            Ok(r#"{"type":"auth","access_token":"s3cr3t"}"#.to_owned()),
+            Ok(SpentMessage {
+                text: r#"{"type":"auth","access_token":"s3cr3t"}"#.to_owned(),
+                spent_slots: vec!["pool".to_owned()],
+            }),
         );
     }
 
@@ -1217,9 +1236,11 @@ mod tests {
                     CredentialAccess::of(&state),
                     &destination,
                     template.to_owned()
-                )
-                .as_deref(),
-                Ok(template),
+                ),
+                Ok(SpentMessage {
+                    text: template.to_owned(),
+                    spent_slots: Vec::new(),
+                }),
             );
         }
     }
@@ -1233,9 +1254,12 @@ mod tests {
                 CredentialAccess::of(&state),
                 &WsDestination::Stub,
                 AUTH_MESSAGE.to_owned()
-            )
-            .as_deref(),
-            Ok(AUTH_MESSAGE),
+            ),
+            Ok(SpentMessage {
+                text: AUTH_MESSAGE.to_owned(),
+                spent_slots: Vec::new(),
+            }),
+            "a socket that dialled nothing has nothing to close when the account changes",
         );
     }
 
@@ -1370,7 +1394,7 @@ mod tests {
 
         let plain = spend(&state, "https://attacker.example/x", &[], None)
             .expect("BUG: a request spending nothing is unpinned");
-        assert!(!plain.carries_secret);
+        assert!(plain.spent_slots.is_empty());
 
         let spent = spend(
             &state,
@@ -1379,7 +1403,7 @@ mod tests {
             None,
         )
         .expect("BUG: the pinned host must be permitted");
-        assert!(spent.carries_secret);
+        assert_eq!(spent.spent_slots, ["pool"]);
     }
 
     #[test]

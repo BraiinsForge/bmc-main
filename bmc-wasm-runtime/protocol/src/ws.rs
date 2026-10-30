@@ -21,7 +21,7 @@
 //! Why the host ended a WebSocket, as it crosses the host/widget seam.
 //!
 //! A close the peer sent carries the peer's code. One the host chose arrives
-//! as its own event carrying a [`WsHostClose`], so a peer's 1008
+//! as its own event carrying a [`WsHostClose`], so a peer's 1008 or 1012
 //! is never taken for the host's decision.
 //!
 //! Wire format: one byte. `from_wire` rejects every value this build cannot name,
@@ -72,6 +72,9 @@ pub enum WsHostClose {
     /// The URL or a message spends a credential the host will not send there,
     /// such as one whose slot is unbound. Retrying is futile until the credentials change.
     Credential,
+    /// The account behind a credential the socket spent changed.
+    /// A new socket spends the account as it now is.
+    AccountChanged,
 }
 
 /// The close code a widget older than [`WS_HOST_CLOSE_PROTOCOL`](crate::version::WS_HOST_CLOSE_PROTOCOL)
@@ -85,6 +88,7 @@ impl WsHostClose {
     pub const fn to_wire(self) -> u8 {
         match self {
             Self::Credential => 1,
+            Self::AccountChanged => 2,
         }
     }
 
@@ -93,6 +97,7 @@ impl WsHostClose {
     pub const fn from_wire(raw: u8) -> Option<Self> {
         match raw {
             1 => Some(Self::Credential),
+            2 => Some(Self::AccountChanged),
             _ => None,
         }
     }
@@ -117,13 +122,14 @@ mod tests {
 
     #[test]
     fn round_trips_every_reason() {
-        let reason = WsHostClose::Credential;
-        assert_eq!(WsHostClose::from_wire(reason.to_wire()), Some(reason));
+        for reason in [WsHostClose::Credential, WsHostClose::AccountChanged] {
+            assert_eq!(WsHostClose::from_wire(reason.to_wire()), Some(reason));
+        }
     }
 
     #[test]
     fn an_unnamed_value_is_no_reason() {
         assert_eq!(WsHostClose::from_wire(0), None);
-        assert_eq!(WsHostClose::from_wire(2), None);
+        assert_eq!(WsHostClose::from_wire(3), None);
     }
 }

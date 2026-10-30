@@ -132,12 +132,19 @@ caused it, and reconnecting does not clear it:
   `WsEvent::HostClosed(WsHostClose::Credential)`. `Ws::send` returns nothing, so that event is how the widget learns of
   it.
 
-The host's own closes arrive as `WsEvent::HostClosed`, which no peer can send, so a peer's 1008 in a `WsEvent::Close` is
-never mistaken for one. The peer of a refused message still gets a close frame with 1008. A widget built for a protocol
-older than 0.10 has no `HostClosed` to read, and gets the same close as a `WsEvent::Close` with that code instead.
+The host's own closes arrive as `WsEvent::HostClosed`, which no peer can send, so a peer's 1008 or 1012 in a
+`WsEvent::Close` is never mistaken for one. The peer still gets a close frame: 1008 for a refused message, 1012 for a
+changed account. A widget built for a protocol older than 0.10 has no `HostClosed` to read, and gets the same close as a
+`WsEvent::Close` with that code instead.
 
 A socket whose URL the host cannot read a host from carries no credential in any message. The value goes in verbatim:
 the host does not escape it for JSON or anything else.
+
+When the operator changes or removes the account behind a slot a socket has spent, in its URL, headers or any message,
+the host closes that socket and the widget receives `WsEvent::HostClosed(WsHostClose::AccountChanged)`. A service keeps
+a socket authenticated after the message that spent the token, so this is what makes a rotated or removed token stop
+working at once. Reconnect; the new socket spends the account as it now is. Renaming an account changes nothing the
+socket spent and leaves it open.
 
 ### Reserved Braces
 

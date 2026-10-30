@@ -22,7 +22,7 @@
 
 #![expect(clippy::cast_possible_truncation)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -209,9 +209,9 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 url,
                 headers,
                 body,
-                carries_secret,
+                spent_slots,
             } = spent;
-            let redirects = Redirects::for_request(carries_secret);
+            let redirects = Redirects::for_request(!spent_slots.is_empty());
 
             let tx = settle;
             let agent = state.fetch_agent.clone();
@@ -426,6 +426,7 @@ fn stub_websocket(
         msg_tx,
         event_rx,
         destination: WsDestination::Stub,
+        spent_slots: BTreeSet::new(),
         host_close: None,
     }
 }
@@ -500,6 +501,12 @@ fn register_ws_connect_import(linker: &mut Linker<HostState>) -> Result<()> {
                     return host_closed_websocket(state, WsHostClose::Credential);
                 }
             };
+            let super::credentials::SpentRequest {
+                url: dialled_url,
+                headers: dialled_headers,
+                spent_slots,
+                ..
+            } = spent;
             let ws_id = WebsocketId::alloc(&mut state.next_ws_id);
             let (msg_tx, msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
             state.websockets.insert(
@@ -507,7 +514,8 @@ fn register_ws_connect_import(linker: &mut Linker<HostState>) -> Result<()> {
                 ActiveWebSocket {
                     msg_tx,
                     event_rx,
-                    destination: super::credentials::dialled_destination(&spent.url),
+                    destination: super::credentials::dialled_destination(&dialled_url),
+                    spent_slots: spent_slots.into_iter().collect(),
                     host_close: None,
                 },
             );
@@ -515,9 +523,9 @@ fn register_ws_connect_import(linker: &mut Linker<HostState>) -> Result<()> {
             std::thread::spawn(move || {
                 ws_background_thread(
                     ws_id_wire,
-                    &spent.url,
+                    &dialled_url,
                     &url,
-                    &spent.headers,
+                    &dialled_headers,
                     event_tx,
                     msg_rx,
                 );
@@ -553,8 +561,12 @@ fn register_ws_send_import(linker: &mut Linker<HostState>) -> Result<()> {
             if ws.host_close.is_some() {
                 return 1;
             }
-            let refusal = match super::credentials::spend_message(access, &ws.destination, msg) {
-                Ok(msg) => return u32::from(ws.msg_tx.send(WsOutbound::Text(msg)).is_err()),
+            let spent = super::credentials::spend_message(access, &ws.destination, msg);
+            let refusal = match spent {
+                Ok(spent) => {
+                    ws.spent_slots.extend(spent.spent_slots);
+                    return u32::from(ws.msg_tx.send(WsOutbound::Text(spent.text)).is_err());
+                }
                 Err(refusal) => refusal,
             };
 

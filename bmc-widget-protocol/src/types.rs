@@ -237,6 +237,13 @@ impl CredentialSecrets {
             .unwrap_or_default()
     }
 
+    /// Whether the account behind `slot` differs in `other`:
+    /// its fields or its pin changed, or the slot was bound or unbound.
+    #[must_use]
+    pub fn slot_differs(&self, other: &Self, slot: &str) -> bool {
+        self.0.get(slot) != other.0.get(slot)
+    }
+
     /// The JSON text emitted on the `credential_secrets` event.
     #[must_use]
     pub fn to_json_string(&self) -> String {

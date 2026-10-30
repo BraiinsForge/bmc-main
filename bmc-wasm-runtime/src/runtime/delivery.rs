@@ -1585,9 +1585,9 @@ impl WasmWidgetRuntime {
                 url: resolved,
                 headers,
                 body,
-                carries_secret,
+                spent_slots,
             } = spent;
-            let redirects = Redirects::for_request(carries_secret);
+            let redirects = Redirects::for_request(!spent_slots.is_empty());
 
             let tx = settle;
             let agent = state.fetch_agent.clone();
