@@ -151,7 +151,8 @@ fn hash_layout_contribution<H: Hasher>(
             // hash those, not the anchor nor the words, so a frame formats nothing
             // and an unchanged label has moved nothing, whatever the clock did.
             // The translations too: a pack (re)loaded for the same language rewords it.
-            crate::components::rel_parts(now_unix_secs - *anchor, *format, *clamp).hash(hasher);
+            crate::components::rel_parts(now_unix_secs.saturating_sub(*anchor), *format, *clamp)
+                .hash(hasher);
             intl.wording().hash(hasher);
             hash_debug(style, hasher);
         }

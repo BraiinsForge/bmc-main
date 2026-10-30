@@ -655,6 +655,45 @@ fn within(outer: &[crate::interaction::Rect], inner: crate::interaction::Rect) -
 }
 
 #[test]
+fn a_guest_anchor_at_the_ends_of_time_keeps_its_direction() {
+    let english = bmc_intl::formatter(bmc_intl::Language::default());
+    let rel_time = crate::components::RelTimeWords::new();
+    for (anchor, now, elapsed) in [(i64::MIN, 90, true), (i64::MAX, -90, false)] {
+        let node = Node::RelTime {
+            anchor,
+            format: RelTimeFormat {
+                length: RelTimeLength::Short,
+                segments: RelTimeSegments::Single,
+            },
+            clamp: RelTimeClamp::default(),
+            style: TextStyle::default(),
+        };
+        let mut taffy = TaffyTree::new();
+        let id = build_taffy_node(
+            &mut taffy,
+            &node,
+            now,
+            &english,
+            &rel_time,
+            &mut TreeResult::default(),
+            &mut Vec::new(),
+        )
+        .expect("BUG: a RelTime leaf always builds");
+        let label = &taffy
+            .get_node_context(id)
+            .and_then(|context| context.paragraph.as_ref())
+            .expect("BUG: a RelTime leaf carries its label")
+            .spans[0]
+            .text;
+        assert_eq!(
+            label.ends_with(" ago"),
+            elapsed,
+            "{label:?} for anchor {anchor} at {now}"
+        );
+    }
+}
+
+#[test]
 fn test_props_size() {
     // In-memory size may differ from wire SIZE due to alignment padding
     assert!(std::mem::size_of::<PropsData>() >= PropsData::SIZE);

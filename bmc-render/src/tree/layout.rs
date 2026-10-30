@@ -305,7 +305,7 @@ fn build_taffy_node_inner(
             clamp,
             style,
         } => {
-            let delta = now_unix_secs - *anchor;
+            let delta = now_unix_secs.saturating_sub(*anchor);
             let text = rel_time.word(intl, crate::components::rel_parts(delta, *format, *clamp));
             // A pinned label yields no delay, so it never schedules a wake.
             if let Some(delay) = crate::components::next_change_delay_ms(delta, *format, *clamp) {

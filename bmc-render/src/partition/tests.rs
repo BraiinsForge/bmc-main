@@ -229,6 +229,12 @@ fn reloaded_translations_move_the_layout_key_of_the_same_label() {
     );
 }
 
+#[test]
+fn a_guest_anchor_at_the_ends_of_time_keys_without_overflow() {
+    let _ = host_layout_key(&rel_time_at(i64::MIN), 90, &english());
+    let _ = host_layout_key(&rel_time_at(i64::MAX), -90, &english());
+}
+
 fn english() -> bmc_intl::Intl {
     bmc_intl::formatter(Language::default())
 }
