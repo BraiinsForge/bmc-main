@@ -157,8 +157,7 @@ pub fn prewarm_hosted_overlay(
             // by construction and the renderer outlives this call; the prewarm pass
             // runs before the event loop, one overlay at a time, so no other `&mut
             // dyn Renderer` to this renderer is live.
-            let renderer = unsafe { ptr.as_ptr().as_mut() }
-                .expect("BUG: NonNull renderer is non-null by construction");
+            let renderer = unsafe { &mut *ptr.as_ptr() };
             begin_surface_frame(renderer, (w, h));
             overlay.prewarm(renderer, viewport);
             renderer.flush();
@@ -237,8 +236,7 @@ pub fn render_hosted_overlay(
             overlay.target_mut().ensure_current(&shared.egl)?;
             // SAFETY: the renderer outlives this call and the single-threaded host
             // does not hold another mutable renderer reference during this pass.
-            let renderer = unsafe { ptr.as_ptr().as_mut() }
-                .expect("BUG: NonNull renderer is non-null by construction");
+            let renderer = unsafe { &mut *ptr.as_ptr() };
             begin_surface_frame(renderer, size);
             let outcome = overlay.render(renderer, viewport, frame);
             renderer.flush();

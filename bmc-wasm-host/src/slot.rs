@@ -1013,12 +1013,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
                     HostRenderProfiling::log_phase(wasm_basename, "runtime_render", phase_start);
 
                     let phase_start = HostRenderProfiling::start_phase();
-                    unsafe { ptr.as_ptr().as_mut() }
-                        .expect(
-                            "BUG: renderer pointer was NonNull when stored, \
-                             raw-pointer reborrow must produce a non-null reference",
-                        )
-                        .flush();
+                    unsafe { &mut *ptr.as_ptr() }.flush();
                     HostRenderProfiling::log_phase(wasm_basename, "femtovg_flush", phase_start);
 
                     gl_wait_phase.set(HostRenderProfiling::start_phase());
@@ -1675,10 +1670,7 @@ fn bind_export_target_for_frame(
         "frame framebuffer incomplete after retargeting to the export buffer"
     );
 
-    let renderer = unsafe { ptr.as_ptr().as_mut() }.expect(
-        "BUG: renderer pointer was NonNull when stored, \
-         raw-pointer reborrow must produce a non-null reference",
-    );
+    let renderer = unsafe { &mut *ptr.as_ptr() };
     let clear = if preserve {
         FrameClear::Keep
     } else {
