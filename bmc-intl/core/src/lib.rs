@@ -63,7 +63,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
 use bmc_intl_message::BOLD_MARKS;
-pub use bmc_intl_message::Message;
+pub use bmc_intl_message::{Message, message_descriptor};
 pub use bmc_intl_units as units;
 pub use bmc_shared_utils::language::Language;
 pub use data::Data;

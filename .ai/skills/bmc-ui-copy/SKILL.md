@@ -26,8 +26,14 @@ The pattern, its description and its values sit together. Always give values in 
 that form checks the placeholders against the English at compile time, and `no-unchecked-message-values` refuses a
 `values: some_map` that would skip the check. A `format_message!` with one caller is written at that site; a function
 exists only for shared words or for an enum mapping (one sentence per variant). The `no-message-descriptor` rule refuses
-a hoisted `message_descriptor!`, and `no-format-message-in-macro` refuses one nested in another macro (`vec![…]`,
-`assert!(…)`), which the extractor cannot see into: bind it to a local first.
+a hoisted `message_descriptor!` whose message takes an argument or a tag, and `no-format-message-in-macro` refuses a
+`format_message!` nested in another macro (`vec![…]`, `assert!(…)`), which the extractor cannot see into: bind it to a
+local first.
+
+**An argument-free message may be a constant**, a `bmc_intl::message_descriptor!` worded with `bmc_intl::format_lazy`.
+Name it for the place it is drawn (`SETUP_EYEBROW`, not `TITLE`) and declare it in the module that draws it. Never reuse
+it in another context: one message has one description and one translation, and a button and a title that read alike in
+English may not in another language, so the second place declares its own.
 
 **A sentence is one message, never halves laid side by side.** Two messages fix their order, and a language that wants
 it the other way cannot follow. A stretch drawn differently, such as a bold gesture, is a `<b>…</b>` tag in that one
@@ -54,8 +60,7 @@ name: format_lazy(intl, &t.name),
 
 A lazy message carries **no arguments**: values can only be checked where they exist, so text that needs values is a
 `format_message!` where the values are, taking the lazy label as one of them. `Message` is neither `Display` nor
-`Into<String>`; it cannot become a string without a language. Adopting one means adding the crate to the
-`no-message-descriptor` rule's `ignores`.
+`Into<String>`; it cannot become a string without a language.
 
 **The web** calls `formatMessage({ defaultMessage, description }, values)` or `<FormattedMessage>` where the text is
 rendered. `no-define-messages-ts` refuses a `defineMessages` table. Copy that belongs to data (a step list, a table of
