@@ -27,6 +27,7 @@ pub(crate) mod coordinator;
 mod discovery;
 mod led_state;
 mod manager;
+pub(crate) mod params_migration;
 mod registry;
 mod signals;
 mod spawner;

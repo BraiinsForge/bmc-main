@@ -305,6 +305,7 @@ mod tests {
 
     use crate::test_support::answering_migrator;
     use crate::test_support::manifest::{param_key, widget_manifest, write_manifest};
+    use crate::widget::params_migration::SUPPORTED_MIGRATOR_PROTOCOL;
 
     /// Package `name` at 1.0.0 in a 317×238 slot.
     fn named_manifest(name: &str, uid: &str) -> Manifest {
@@ -706,7 +707,7 @@ mod tests {
             named_manifest("migrating-widget", "550e8400-e29b-41d4-a716-446655440001");
         manifest.programs.params_migrator = Some(ProgramEntry {
             path: PathBuf::from("migrate"),
-            protocol: 0,
+            protocol: SUPPORTED_MIGRATOR_PROTOCOL,
         });
         create_widget(base_dir, &manifest)
     }
@@ -848,7 +849,7 @@ mod tests {
                 named_manifest("escaping-widget", "550e8400-e29b-41d4-a716-446655440001");
             manifest.programs.params_migrator = Some(ProgramEntry {
                 path: path.clone(),
-                protocol: 0,
+                protocol: SUPPORTED_MIGRATOR_PROTOCOL,
             });
             let widget_dir = create_widget(temp_dir.path(), &manifest);
 

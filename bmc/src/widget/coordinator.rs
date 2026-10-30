@@ -24,6 +24,7 @@ use bmc_widget_manifest::{Manifest, ParamKey, ParamValue};
 use bmc_widget_protocol::{
     Localization, NextAlarm, SettingUpdate, ViewportShape, WidgetInitialConfig,
 };
+use futures::StreamExt;
 use futures::future::join_all;
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -48,7 +49,10 @@ use crate::scene::{Scene, SceneId, Widget, WidgetPosition};
 use crate::secret_store::SecretStoreHandle;
 use bmc_net::NetworkManager;
 
-use super::manager::{ManagedWidgetState, ManagerMode, StartError, StartPermit, WidgetLaunch};
+use super::manager::{
+    ManagedWidgetState, ManagerMode, ManagerSnapshot, StartError, StartPermit, WidgetLaunch,
+};
+use super::params_migration::{self, MigratorStatus};
 use super::{WidgetInfo, WidgetManager, WidgetRegistry};
 
 #[must_use]
@@ -779,12 +783,159 @@ impl Coordinator {
         self.widget_manager.refresh().await
     }
 
+    /// Bring every configured widget's params up to its installed package
+    /// through the package migrator, `MIGRATOR_CONCURRENCY` widgets at a time.
+    /// A package without one has nothing to run: its defaults apply at launch.
+    /// Returns the widgets whose new params were committed.
+    pub(crate) async fn migrate_stale_params(
+        &self,
+        config_handle: &Arc<RwLock<ConfigHandle>>,
+    ) -> Vec<crate::scene::WidgetId> {
+        let stale = self.widgets_with_stale_params(config_handle).await;
+        let mut jobs = Vec::new();
+        let mut warned_unsupported = HashSet::new();
+        for (scene_id, widget, installed) in &stale {
+            match params_migration::migrator_status(installed) {
+                MigratorStatus::Usable(migrator) => {
+                    jobs.push(self.run_widget_migrator(*scene_id, widget, migrator));
+                }
+                MigratorStatus::Absent => {}
+                MigratorStatus::UnsupportedProtocol(protocol) => {
+                    if warned_unsupported.insert(widget.widget_type_id) {
+                        warn!(
+                            widget = %installed.manifest.uid,
+                            protocol,
+                            supported = params_migration::SUPPORTED_MIGRATOR_PROTOCOL,
+                            "params migrator speaks a protocol this build does not implement; skipping"
+                        );
+                    }
+                }
+            }
+        }
+
+        let migrated: Vec<_> = futures::stream::iter(jobs)
+            .buffer_unordered(params_migration::MIGRATOR_CONCURRENCY)
+            .filter_map(|migrated| async move { migrated })
+            .collect()
+            .await;
+        params_migration::commit_migrated_params(config_handle, migrated).await
+    }
+
+    /// Every configured widget whose params predate its installed package,
+    /// with that package.
+    async fn widgets_with_stale_params(
+        &self,
+        config_handle: &Arc<RwLock<ConfigHandle>>,
+    ) -> Vec<(SceneId, Widget, WidgetInfo)> {
+        let config = config_handle.read().await;
+        config
+            .scenes()
+            .values()
+            .flat_map(|scene| scene.widgets.values().map(move |widget| (scene.id, widget)))
+            .filter_map(|(scene_id, widget)| {
+                let installed = self.widget_registry.get(&widget.widget_type_id)?;
+                let stamp = widget.params_version.as_ref();
+                if params_migration::params_predate(stamp, &installed.manifest.version) {
+                    return Some((scene_id, widget.clone(), installed));
+                }
+                if let Some(stamp) = stamp.filter(|stamp| **stamp != installed.manifest.version) {
+                    info!(widget_id = %widget.id, %stamp, installed = %installed.manifest.version, "params are stamped newer than the installed package; keeping them");
+                }
+                None
+            })
+            .collect()
+    }
+
+    /// Run one widget's migrator; the job comes back with the params it produced.
+    async fn run_widget_migrator<'a>(
+        &self,
+        scene_id: SceneId,
+        widget: &'a Widget,
+        migrator: params_migration::Migrator<'a>,
+    ) -> Option<(
+        params_migration::MigrationJob<'a>,
+        BTreeMap<ParamKey, ParamValue>,
+    )> {
+        let installed = migrator.installed();
+        let fullscreen_descriptor =
+            fullscreen_descriptor_for_widget(widget, &self.hardware_capabilities);
+        let Some(viewport) = placement_viewport_size(&widget.placement, &fullscreen_descriptor)
+        else {
+            warn!(widget_id = %widget.id, widget = %installed.manifest.uid, "skipping params migration: the placement has no viewport size");
+            return None;
+        };
+        let job = params_migration::MigrationJob {
+            scene_id,
+            widget_id: widget.id,
+            stored_params: &widget.params,
+            params_version: widget.params_version.as_ref(),
+            migrator,
+            viewport: self.widget_viewport(widget, viewport),
+        };
+        info!(
+            widget_id = %widget.id,
+            from = ?widget.params_version,
+            to = %installed.manifest.version,
+            "migrating widget params"
+        );
+        let params = match params_migration::run_migrator(&job).await {
+            Ok(params) => params,
+            Err(failure) => {
+                warn!(widget_id = %widget.id, widget = %installed.manifest.uid, %failure, "params migration failed; keeping the stored params");
+                return None;
+            }
+        };
+        Some((job, params))
+    }
+
+    /// Push migrated params to each widget the reload kept running:
+    /// its package identity did not change, so it still runs on its pre-migration params.
+    /// A `replaced` widget registered with the migrated params already.
+    async fn push_migrated_params(
+        &self,
+        config_handle: &Arc<RwLock<ConfigHandle>>,
+        migrated: Vec<crate::scene::WidgetId>,
+        before_reload: &ManagerSnapshot,
+        replaced: &[crate::scene::WidgetId],
+    ) {
+        for widget_id in migrated {
+            let was_running = before_reload
+                .widgets
+                .iter()
+                .any(|managed| managed.launch.config_key.instance_id == widget_id.as_uuid());
+            if !was_running || replaced.contains(&widget_id) {
+                continue;
+            }
+            let pushed = {
+                let config = config_handle.read().await;
+                let Some(widget) = config
+                    .scenes()
+                    .values()
+                    .find_map(|scene| scene.widgets.get(&widget_id))
+                else {
+                    continue;
+                };
+                self.update_widget_params(
+                    WidgetInstanceKey::new(widget_id.as_uuid()),
+                    &widget.params,
+                )
+            };
+            if let Err(error) = pushed {
+                warn!(%widget_id, %error, "failed to push migrated params to the running widget");
+                continue;
+            }
+            self.retry_pending_widget(&widget_id.to_string()).await;
+        }
+    }
+
     pub(crate) async fn reload_changed_widgets(&self, config_handle: &Arc<RwLock<ConfigHandle>>) {
         if let Err(error) = self.refresh_widgets().await {
             warn!(%error, "widget registry refresh failed; keeping running widgets");
             return;
         }
+        let migrated = self.migrate_stale_params(config_handle).await;
         let manager_snapshot = self.widget_manager.snapshot().await;
+        let mut replaced = Vec::new();
 
         let configured = {
             let config = config_handle.read().await;
@@ -820,6 +971,7 @@ impl Coordinator {
                 }
                 Some(_) => {
                     info!(%instance_id, widget_type = %widget.widget_type_id, "reloading changed widget");
+                    replaced.push(widget.id);
                     self.replace_configured_widget(config_handle, scene_id, widget.id)
                         .await;
                 }
@@ -829,6 +981,9 @@ impl Coordinator {
                 }
             }
         }
+
+        self.push_migrated_params(config_handle, migrated, &manager_snapshot, &replaced)
+            .await;
 
         self.refresh_configured_widget_credentials(config_handle)
             .await;
@@ -862,6 +1017,7 @@ impl Coordinator {
             let _ = self.compositor.broadcast_setting(setting);
         }
 
+        self.migrate_stale_params(config_handle).await;
         self.spawn_all_configured_widgets(config_handle).await;
 
         info!("finished initial widget reconciliation");
@@ -1218,15 +1374,16 @@ impl Coordinator {
         accounts: &IndexMap<AccountId, Account>,
     ) -> WidgetRegistration {
         let resolved = self.resolve_credentials_for(widget, manifest, accounts);
+        let geometry = self.widget_viewport(widget, viewport);
         WidgetRegistration {
             key: WidgetInstanceKey::new(widget.id.as_uuid()),
             connection_mode: WidgetConnectionMode::Inactive,
             initial_config: WidgetInitialConfig {
-                width: viewport.width,
-                height: viewport.height,
-                viewport_shape: manifest_to_protocol_viewport_shape(widget.viewport_shape),
-                display: platform_to_protocol_display(self.hardware_capabilities.display),
-                params: params_to_json_map(&widget.params),
+                width: geometry.width,
+                height: geometry.height,
+                viewport_shape: geometry.viewport_shape,
+                display: geometry.display,
+                params: params_to_json_map(&params_migration::launch_params(widget, manifest)),
                 credentials: resolved.view,
                 credential_secrets: resolved.secrets,
                 token: format!(
@@ -1235,6 +1392,20 @@ impl Coordinator {
                     placement_tag(&widget.placement)
                 ),
             },
+        }
+    }
+
+    /// The geometry a widget is spawned with, which its migrator learns too.
+    fn widget_viewport(
+        &self,
+        widget: &Widget,
+        viewport: Size,
+    ) -> params_migration::MigratorViewport {
+        params_migration::MigratorViewport {
+            width: viewport.width,
+            height: viewport.height,
+            viewport_shape: manifest_to_protocol_viewport_shape(widget.viewport_shape),
+            display: platform_to_protocol_display(self.hardware_capabilities.display),
         }
     }
 
@@ -1896,7 +2067,7 @@ impl crate::system_upgrade::WidgetLifecycle for UpgradeWidgetLifecycle {
     }
 }
 
-fn params_to_json_map(
+pub(crate) fn params_to_json_map(
     params: &BTreeMap<ParamKey, ParamValue>,
 ) -> serde_json::Map<String, serde_json::Value> {
     params
@@ -1910,7 +2081,9 @@ mod tests {
     use super::*;
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
     use crate::test_support::SLEEPING_WIDGET;
-    use crate::test_support::manifest::{widget_manifest, write_manifest};
+    use crate::test_support::manifest::{
+        integer_param, param_key, widget_manifest, write_manifest,
+    };
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
     use std::time::Duration;
@@ -1988,7 +2161,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("BUG: test tempdir");
         let widget_dir = temp.path().join("widget-package");
         std::fs::create_dir(&widget_dir).expect("BUG: create widget directory");
-        write_manifest(&widget_dir, &package_manifest("1.0.0"));
+        let mut manifest = package_manifest("1.0.0");
+        manifest
+            .params
+            .insert(param_key("current"), integer_param(0));
+        write_manifest(&widget_dir, &manifest);
         if let Some(body) = binary {
             crate::test_support::write_executable(&widget_dir.join("widget"), body);
         }
