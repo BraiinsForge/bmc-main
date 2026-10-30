@@ -23,6 +23,7 @@ workspace = true
 
 [dependencies]
 bmc-intl-console.workspace = true
+bmc-intl-message.workspace = true
 bmc-intl-units.workspace = true
 bmc-shared-utils = { workspace = true, features = ["language"] }
 clap.workspace = true
@@ -39,7 +40,6 @@ toml_edit.workspace = true
 ureq.workspace = true
 
 [dev-dependencies]
-bmc-intl-message.workspace = true
 console.workspace = true
 prettyplease.workspace = true
 proc-macro2.workspace = true

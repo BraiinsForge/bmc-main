@@ -139,6 +139,71 @@ fn a_message_speaks_its_translation_once_its_pack_is_loaded() {
     assert_eq!(text, "Connect to deck");
 }
 
+#[test]
+fn a_translation_puts_the_bold_stretch_where_its_language_wants_it() {
+    let root = Root::new();
+    root.write(
+        "zh",
+        "system.json",
+        &translator_file(&[(
+            "probe.runs",
+            "Then <b>swipe down</b>",
+            Some("<b>向下滑动</b>即可"),
+        )]),
+    );
+    let (translations, report) = Translations::load(&[profile(), root.path()]);
+    assert!(report.is_clean(), "{report}");
+    let runs_in = |language| {
+        let intl = translations.formatter(language);
+        runs(&format_message!(
+            intl,
+            id: "probe.runs",
+            default_message: "Then <b>swipe down</b>",
+            values: { b: bold },
+        ))
+    };
+    let run = |text: &str, bold| Run {
+        text: text.to_owned(),
+        bold,
+    };
+
+    assert_eq!(
+        runs_in(Language::EN),
+        [run("Then ", false), run("swipe down", true)]
+    );
+    assert_eq!(
+        runs_in(Language::ZH),
+        [run("向下滑动", true), run("即可", false)]
+    );
+}
+
+#[test]
+fn a_translation_carrying_a_bold_mark_is_refused() {
+    let [open, _] = bmc_intl_message::BOLD_MARKS;
+    let root = Root::new();
+    root.write(
+        "zh",
+        "system.json",
+        &translator_file(&[("probe.marked", "Plain", Some(&format!("{open}纯文本")))]),
+    );
+
+    let (translations, report) = Translations::load(&[profile(), root.path()]);
+
+    assert!(
+        report
+            .invalid
+            .iter()
+            .any(|line| line.contains("probe.marked")),
+        "{report}"
+    );
+    let zh = translations.formatter(Language::ZH);
+    let text = format_message!(zh, id: "probe.marked", default_message: "Plain");
+    assert_eq!(
+        text, "Plain",
+        "a refused translation falls back to the English"
+    );
+}
+
 /// The catalog formatjs picks for `requested` when English and `offered` are on offer.
 fn negotiated(requested: &str, offered: &str) -> R<String> {
     let mut catalog = MessageCatalog::new();

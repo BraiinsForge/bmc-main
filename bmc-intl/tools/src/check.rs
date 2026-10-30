@@ -19,7 +19,8 @@
 // the grant above.
 
 //! What a translation must be beside its English: a pattern the runtime parses,
-//! with the same arguments of the same types, and no locale-grouped `#`.
+//! with the same arguments of the same types, no locale-grouped `#`,
+//! and none of the characters reserved for marking a bold stretch.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,6 +54,11 @@ pub fn translations(extracted: &Extraction, entries: &Entries) -> Vec<String> {
 }
 
 fn translation_problem(id: &str, english: &str, translation: &str) -> Option<String> {
+    if translation.contains(bmc_intl_message::BOLD_MARKS) {
+        return Some(format!(
+            "{id}: carries a character reserved for marking a bold stretch"
+        ));
+    }
     let parse = |pattern: &str| Parser::new(pattern, Options::default_parser_options()).parse();
     let translated = match parse(translation) {
         Ok(ast) => ast,
@@ -283,6 +289,20 @@ mod tests {
                 "grouped: `#` in a plural branch is locale-grouped; write the argument by name",
                 "ordinal: `#` in a plural branch is locale-grouped; write the argument by name",
             ]
+        );
+    }
+
+    #[test]
+    fn a_translation_carrying_a_bold_mark_is_named() {
+        let [open, _] = bmc_intl_message::BOLD_MARKS;
+        let found = problems(&[(
+            "marked",
+            "Then <b>swipe</b>",
+            Some(&format!("<b>滑动</b>{open}")),
+        )]);
+        assert!(
+            matches!(&found[..], [one] if one.starts_with("marked: ")),
+            "{found:?}"
         );
     }
 

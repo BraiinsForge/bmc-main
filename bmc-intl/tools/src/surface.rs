@@ -270,13 +270,14 @@ fn workspace_packages(repo: &Path) -> Result<Vec<Package>, String> {
 /// so it is passed over, as is a crate whose dependency is only
 /// for its tests, which are fixtures, not copy.
 ///
-/// The message crates themselves are left out,
+/// The message crates themselves are left out, and so is this tool,
 /// their own tests' messages being fixtures too.
 #[must_use]
 fn host_sources(packages: &[Package]) -> Vec<String> {
     let mut sources: Vec<String> = packages
         .iter()
         .filter(|package| !MESSAGE_CRATES.contains(&package.name.as_str()))
+        .filter(|package| package.name != env!("CARGO_PKG_NAME"))
         .filter(|package| {
             !package
                 .targets
@@ -455,6 +456,14 @@ mod tests {
                 "bmc-intl/core",
                 &["bmc-intl-message"],
                 "lib",
+                None,
+            ),
+            package(
+                root,
+                env!("CARGO_PKG_NAME"),
+                "bmc-intl/tools",
+                &["bmc-intl-message"],
+                "bin",
                 None,
             ),
             package(root, "bmc-audio", "bmc-audio", &["anyhow"], "lib", None),

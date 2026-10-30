@@ -61,11 +61,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, RwLock};
 
+use bmc_intl_message::BOLD_MARKS;
 pub use bmc_intl_message::Message;
 pub use bmc_intl_units as units;
 pub use bmc_shared_utils::language::Language;
 pub use data::Data;
-use formatjs_icu_messageformat::Options;
+use formatjs_icu_messageformat::{Options, Part};
 pub use formatjs_icu_messageformat::{Value, Values};
 use formatjs_icu_messageformat_parser::error::ParserError;
 use formatjs_icu_messageformat_parser::parser::Parser;
@@ -145,8 +146,12 @@ fn same_arguments(source: &str, translation: &[MessageFormatElement]) -> Result<
 }
 
 /// A pack's translation as the runtime will take it: ICU MessageFormat that parses,
-/// with the same arguments as the `source` beside it when the entry carries one.
+/// with the same arguments as the `source` beside it when the entry carries one,
+/// and none of the [`BOLD_MARKS`] that [`runs`] would read as a bold stretch.
 pub(crate) fn check_translation(source: Option<&str>, translation: &str) -> Result<(), String> {
+    if translation.contains(BOLD_MARKS) {
+        return Err("carries a character reserved for marking a bold stretch".to_owned());
+    }
     let parsed = parse_pattern(translation).map_err(|error| error.to_string())?;
     source.map_or(Ok(()), |source| same_arguments(source, &parsed))
 }
@@ -160,6 +165,58 @@ pub fn format_lazy(intl: &Intl, message: &Message) -> String {
         descriptor = descriptor.with_description(description);
     }
     intl.format_message_to_string_or_default_ref(descriptor, &Values::new())
+}
+
+/// A stretch of a formatted message, bold where the message wraps it in `<b>…</b>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Run {
+    pub text: String,
+    pub bold: bool,
+}
+
+/// The value of a message's `<b>` tag, `format_message!(…, values: { b: bmc_intl::bold })`,
+/// for a sentence with a bold stretch that a translation is free to move;
+/// [`runs`] splits the formatted text back into its stretches.
+/// Translations cannot carry the [`BOLD_MARKS`] it brackets the stretch in, but a value can,
+/// so keep its message free of values that hold arbitrary text, such as a network's name.
+///
+/// # Errors
+///
+/// Never: the signature is the one a tag's value must have.
+pub fn bold(children: Vec<Part<String>>) -> formatjs_icu_messageformat::Result<Vec<Part<String>>> {
+    let [open, close] = BOLD_MARKS;
+    let mut parts = Vec::with_capacity(children.len() + 2);
+    parts.push(Part::Literal(open.into()));
+    parts.extend(children);
+    parts.push(Part::Literal(close.into()));
+    Ok(parts)
+}
+
+/// `text`, formatted with [`bold`] as its `<b>` tag, as its plain and bold [`Run`]s.
+#[must_use]
+pub fn runs(text: &str) -> Vec<Run> {
+    let [open, close] = BOLD_MARKS;
+    let mut runs: Vec<Run> = Vec::new();
+    let mut depth = 0_usize;
+    for character in text.chars() {
+        if character == open {
+            depth += 1;
+            continue;
+        }
+        if character == close {
+            depth = depth.saturating_sub(1);
+            continue;
+        }
+        let bold = depth > 0;
+        match runs.last_mut() {
+            Some(last) if last.bold == bold => last.text.push(character),
+            _ => runs.push(Run {
+                text: character.into(),
+                bold,
+            }),
+        }
+    }
+    runs
 }
 
 /// A formatter over the translations in effect for `language`.

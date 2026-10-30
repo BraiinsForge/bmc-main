@@ -29,6 +29,11 @@ exists only for shared words or for an enum mapping (one sentence per variant). 
 a hoisted `message_descriptor!`, and `no-format-message-in-macro` refuses one nested in another macro (`vec![…]`,
 `assert!(…)`), which the extractor cannot see into: bind it to a local first.
 
+**A sentence is one message, never halves laid side by side.** Two messages fix their order, and a language that wants
+it the other way cannot follow. A stretch drawn differently, such as a bold gesture, is a `<b>…</b>` tag in that one
+message: `values: { b: bmc_intl::bold }`, then `bmc_intl::runs` splits the text into the plain and bold runs a paragraph
+draws as spans. The description says the tag may move.
+
 Hold the formatter, never build one per render: `bmc_intl::Localized` keeps one for the surface's language and says when
 it changes; code answering many callers takes `bmc_intl::shared_formatter`.
 

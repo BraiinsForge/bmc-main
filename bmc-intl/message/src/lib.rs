@@ -40,6 +40,10 @@ pub struct Message {
     pub description: Option<&'static str>,
 }
 
+/// The private-use characters a formatted `<b>` tag's text is bracketed in, opening then closing,
+/// for the drawing side to split back out; a translation may carry neither.
+pub const BOLD_MARKS: [char; 2] = ['\u{E000}', '\u{E001}'];
+
 /// Declare a message where its data is, in the grammar of `format_message!` without `values`.
 /// `default_message` is the English ICU pattern, `description` the translator's context,
 /// `id` a hash of both unless given. The pattern is parsed at compile time
