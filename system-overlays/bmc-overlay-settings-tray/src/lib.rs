@@ -35,12 +35,12 @@ pub mod ui;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use bmc_intl::{Intl, Localized, format_lazy};
+use bmc_intl::{Intl, format_lazy};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, FrameKind, InputRegion, Language, Layer, LayerConfig, NextFrame, OverlayViewport,
-    RenderOutcome, RestartDeclined, ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay,
-    TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
+    Anchor, FrameKind, InputRegion, Layer, LayerConfig, NextFrame, OverlayViewport, RenderOutcome,
+    RestartDeclined, ScreenEdge, SettingsRequest, SnapshotVersion, SystemOverlay, TickOutcome,
+    TouchEvent, TreeUi, VersionedSnapshot,
 };
 
 use crate::dismiss::Pt;
@@ -96,6 +96,11 @@ impl Env for NoNetworkEnv {
     fn snapshot_if_changed(&self, _seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
         None
     }
+}
+
+#[cfg(test)]
+fn english() -> Intl {
+    bmc_intl::formatter(bmc_intl::Language::default())
 }
 
 /// The active touch's start point and latest position, for the dismiss
@@ -430,7 +435,6 @@ pub struct SettingsTrayOverlay {
     snapshot_version: Option<SnapshotVersion>,
     /// WiFi setup-AP SSID from `on_wifi_ap` (`None` = not in setup mode).
     setup_ssid: Option<String>,
-    localized: Localized,
 
     button: ButtonState,
 
@@ -487,7 +491,6 @@ impl SettingsTrayOverlay {
             cable_uplink: false,
             snapshot_version: None,
             setup_ssid: None,
-            localized: Localized::new(),
             button: ButtonState::default(),
             restart: RestartState::default(),
             declined_reason: None,
@@ -505,7 +508,7 @@ impl SettingsTrayOverlay {
     }
 
     #[must_use]
-    fn view(&self, now: Instant) -> SettingsTrayView {
+    fn view(&self, now: Instant, intl: &Intl) -> SettingsTrayView {
         let mut view = SettingsTrayView::resting();
         view.brightness = self.brightness;
         view.volume = self.volume;
@@ -513,7 +516,7 @@ impl SettingsTrayOverlay {
             active: self.night_active,
             until: self.night_until.clone(),
         });
-        view.status = self.status(now);
+        view.status = self.status(now, intl);
         view.hostname.clone_from(&self.hostname);
         view.ip.clone_from(&self.ip);
         view.wifi_signal = self.wifi_signal;
@@ -550,35 +553,35 @@ impl SettingsTrayOverlay {
         self.content_dirty |= content_changed;
     }
 
-    /// The action the notice reports on. Restart wins a tie, which the input
-    /// model keeps unreachable: one key is pressed at a time, and the notice
-    /// strips every other button's key besides.
-    fn status(&self, now: Instant) -> Option<ui::Status> {
-        let restart = self.restart.phase(now).map(|phase| ui::Status {
-            action: ui::Action::Restart,
-            phase,
-            reason: self
-                .declined_reason
-                .as_ref()
-                .filter(|_| matches!(phase, ui::Phase::Failed))
-                .and_then(|reason| self.declined_sentence(reason)),
-        });
-        restart.or_else(|| {
-            self.button.phase(now).map(|phase| ui::Status {
-                action: ui::Action::WifiReconfig,
-                phase,
-                reason: None,
+    /// The action the notice reports on, and its phase.
+    /// Restart wins a tie, which the input model keeps unreachable:
+    /// one key is pressed at a time, and the notice strips every other button's key besides.
+    fn notice(&self, now: Instant) -> Option<(ui::Action, ui::Phase)> {
+        self.restart
+            .phase(now)
+            .map(|phase| (ui::Action::Restart, phase))
+            .or_else(|| {
+                self.button
+                    .phase(now)
+                    .map(|phase| (ui::Action::WifiReconfig, phase))
             })
+    }
+
+    /// The notice as the tray draws it, a failed restart's reason worded in `intl`'s language.
+    fn status(&self, now: Instant, intl: &Intl) -> Option<ui::Status> {
+        self.notice(now).map(|(action, phase)| ui::Status {
+            action,
+            phase,
+            reason: (action == ui::Action::Restart && matches!(phase, ui::Phase::Failed))
+                .then(|| self.declined_sentence(intl))
+                .flatten(),
         })
     }
 
-    /// The decline's sentence in the tray's language,
-    /// or `None` for a reason it has no words for.
-    fn declined_sentence(&self, reason: &RestartDeclined) -> Option<String> {
-        match reason {
-            RestartDeclined::Reason(reason) => {
-                Some(format_lazy(self.localized.intl(), &reason.sentence()))
-            }
+    /// The decline's sentence in `intl`'s language, or `None` for a reason the tray has no words for.
+    fn declined_sentence(&self, intl: &Intl) -> Option<String> {
+        match self.declined_reason.as_ref()? {
+            RestartDeclined::Reason(reason) => Some(format_lazy(intl, &reason.sentence())),
             RestartDeclined::Worded(sentence) => Some(sentence.clone()),
             RestartDeclined::Unknown => None,
         }
@@ -859,12 +862,6 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
-    fn on_language(&mut self, language: Option<Language>) {
-        if self.localized.set(language.unwrap_or_default()) {
-            self.content_dirty = true;
-        }
-    }
-
     fn on_restart_declined(&mut self, reason: RestartDeclined) {
         self.declined_reason = Some(reason);
         self.restart.on_declined(Instant::now());
@@ -905,7 +902,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         // A notice still waiting for its outcome counts too, mainly so the user sees
         // a failure: closing mid-wait would hide it, and reopening resets the button.
         // The timeout then counts from the notice clearing.
-        if self.touch_track.is_some() || self.status(now).is_some() {
+        if self.touch_track.is_some() || self.notice(now).is_some() {
             self.last_interaction = now;
         } else if now.duration_since(self.last_interaction) >= INACTIVITY_TIMEOUT {
             self.begin_dismiss();
@@ -947,7 +944,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
-    fn prewarm(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport) {
+    fn prewarm(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport, intl: &Intl) {
         // One full off-screen render at host startup, so the first screen-edge
         // reveal does not stall mid-swipe paying these one-time costs: the
         // Wi-Fi SVG icon compile/upload, rasterizing the panel's text into the
@@ -956,7 +953,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         // three; the painted pixels are discarded (the host exports no prewarm
         // buffer).
         let now = Instant::now();
-        let mut view = self.view(now);
+        let mut view = self.view(now, intl);
         view.show_volume = true;
         view.wifi_button = true;
         view.night_mode = Some(NightModeView {
@@ -969,7 +966,7 @@ impl SystemOverlay for SettingsTrayOverlay {
             viewport,
             &mut self.render_state,
             &view,
-            self.localized.intl(),
+            intl,
             now,
             FrameKind::Fresh,
         );
@@ -979,16 +976,17 @@ impl SystemOverlay for SettingsTrayOverlay {
         &mut self,
         renderer: &mut dyn Renderer,
         viewport: OverlayViewport,
+        intl: &Intl,
         frame: FrameKind,
     ) -> RenderOutcome {
         let now = Instant::now();
-        let view = self.view(now);
+        let view = self.view(now, intl);
         let output = render_settings_tray(
             renderer,
             viewport,
             &mut self.render_state,
             &view,
-            self.localized.intl(),
+            intl,
             now,
             frame,
         );
@@ -1169,8 +1167,7 @@ pub fn render_settings_tray(
 
 #[cfg(test)]
 mod view_tests {
-    use bmc_system_overlay::{DeclineReason, Snapshot};
-    use serial_test::serial;
+    use bmc_system_overlay::{DeclineReason, Language, Snapshot};
 
     use super::*;
 
@@ -1189,7 +1186,7 @@ mod view_tests {
         overlay.ssid = Some("Braiins-WiFi".to_owned());
         overlay.on_wifi_ap(Some("Deck setup"));
 
-        let view = overlay.view(now);
+        let view = overlay.view(now, &english());
 
         assert_eq!(view.brightness, 70);
         assert_eq!(view.hostname.as_deref(), Some("braiins-deck"));
@@ -1209,8 +1206,9 @@ mod view_tests {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_restart_declined(RestartDeclined::Reason(DeclineReason::UpgradeInProgress));
+        let english = english();
         assert_eq!(
-            overlay.view(Instant::now()).status,
+            overlay.view(Instant::now(), &english).status,
             Some(ui::Status {
                 action: ui::Action::Restart,
                 phase: ui::Phase::Failed,
@@ -1220,21 +1218,27 @@ mod view_tests {
     }
 
     #[test]
-    #[serial(translations)]
     fn a_shown_decline_reason_follows_a_language_switch() {
         let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/intl/profile-languages");
-        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
+        let translations = bmc_intl::Translations::load(&[profile]).0;
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_restart_declined(RestartDeclined::Reason(DeclineReason::UpgradeInProgress));
 
-        overlay.on_language(Some(Language::ZH));
+        let reason = |language| {
+            overlay
+                .view(now, &translations.formatter(language))
+                .status
+                .and_then(|status| status.reason)
+        };
 
-        assert_eq!(
-            overlay.view(now).status.and_then(|status| status.reason),
-            Some("正在进行更新".to_owned()),
-            "the reason under the title must not stay in the language it was declined in"
+        let english = "An upgrade is in progress";
+        assert_eq!(reason(Language::EN_GB).as_deref(), Some(english));
+        let chinese = reason(Language::ZH);
+        assert!(
+            chinese.as_deref().is_some_and(|reason| reason != english),
+            "the reason under the title must not stay in the language it was declined in: {chinese:?}"
         );
     }
 
@@ -1245,7 +1249,7 @@ mod view_tests {
         overlay.restart.tick(true, now);
         overlay.button.tick(true, now);
         let status = overlay
-            .view(now)
+            .view(now, &english())
             .status
             .expect("BUG: two holds are running");
         assert_eq!(status.action, ui::Action::Restart);
@@ -1265,7 +1269,7 @@ mod view_tests {
         });
         overlay.on_night_mode(true, Some("06:30"));
         assert_eq!(
-            overlay.view(now).night_mode,
+            overlay.view(now, &english()).night_mode,
             Some(NightModeView {
                 active: true,
                 until: Some("06:30".to_owned()),
@@ -1280,7 +1284,7 @@ mod view_tests {
         let mut overlay = SettingsTrayOverlay::new(None, now);
         overlay.on_wifi_ap(Some(""));
         assert_eq!(
-            overlay.view(now).setup_ssid,
+            overlay.view(now, &english()).setup_ssid,
             None,
             "an empty AP SSID means setup inactive — the setup view must not show"
         );
@@ -1291,7 +1295,7 @@ mod view_tests {
         let now = Instant::now();
         let overlay = SettingsTrayOverlay::new(None, now);
         // No capabilities event ever arrived (v1 compositor).
-        let view = overlay.view(now);
+        let view = overlay.view(now, &english());
         assert!(view.show_brightness, "brightness is v1");
         assert!(!view.show_volume, "volume is v2-only");
         assert!(view.night_mode.is_none(), "night mode is v2-only");
@@ -1312,7 +1316,7 @@ mod view_tests {
                 sound,
                 wifi_setup,
             });
-            let view = overlay.view(now);
+            let view = overlay.view(now, &english());
             assert_eq!(view.show_volume, sound);
             assert_eq!(view.wifi_button, wifi_setup);
             assert!(
@@ -1356,7 +1360,7 @@ mod view_tests {
         });
 
         let _ = overlay.tick(now);
-        let view = overlay.view(now);
+        let view = overlay.view(now, &english());
 
         assert_eq!(view.ip.as_deref(), Some("192.168.1.42"));
         assert_eq!(view.ssid.as_deref(), Some("Braiins-WiFi"));
@@ -1410,7 +1414,7 @@ mod view_tests {
         overlay.env = Box::new(StaticEnv { snapshot: None });
 
         let _ = overlay.tick(now);
-        let view = overlay.view(now);
+        let view = overlay.view(now, &english());
 
         assert_eq!(view.ip, None);
         assert_eq!(view.ssid, None);
@@ -1445,47 +1449,34 @@ mod view_tests {
     }
 
     #[test]
-    #[serial(translations)]
-    fn a_language_change_dirties_content_once() {
-        let now = Instant::now();
-        let mut overlay = SettingsTrayOverlay::new(None, now);
-        let _ = overlay.take_content_dirty();
-
-        overlay.on_language(Some(Language::ZH));
-        assert!(
-            overlay.take_content_dirty(),
-            "a new language is new content"
-        );
-        overlay.on_language(Some(Language::ZH));
-        assert!(
-            !overlay.content_dirty(),
-            "the language already shown is not a change"
-        );
-    }
-
-    #[test]
-    #[serial(translations)]
     fn the_tray_speaks_the_language_it_was_handed() {
         use bmc_render::renderer::test_support::ShapingRecorder;
 
         let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/intl/profile-languages");
-        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
-        let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
-        overlay.env = Box::new(NoNetworkEnv);
-        overlay.on_language(Some(Language::ZH));
+        let translations = bmc_intl::Translations::load(&[profile]).0;
+        let drawn_in = |language| {
+            let mut overlay = SettingsTrayOverlay::new(None, Instant::now());
+            overlay.env = Box::new(NoNetworkEnv);
+            let mut recorder = ShapingRecorder::new(1_280.0, 480.0);
+            let _ = overlay.render(
+                &mut recorder,
+                OverlayViewport::rectangular(1_280, 480),
+                &translations.formatter(language),
+                FrameKind::Fresh,
+            );
+            recorder
+        };
+        let english = drawn_in(Language::EN_GB);
+        let english = english.drawn_texts();
+        let chinese = drawn_in(Language::ZH);
+        let chinese = chinese.drawn_texts();
 
-        let mut recorder = ShapingRecorder::new(1_280.0, 480.0);
-        let _ = overlay.render(
-            &mut recorder,
-            OverlayViewport::rectangular(1_280, 480),
-            FrameKind::Fresh,
-        );
-
-        let drawn = recorder.drawn_texts();
+        let brightness = "Brightness";
+        assert!(english.contains(&brightness), "{english:?}");
         assert!(
-            drawn.contains(&"亮度"),
-            "the tray must speak the language it was handed: {drawn:?}"
+            !chinese.contains(&brightness) && chinese.len() == english.len(),
+            "the tray must speak the language it was handed: {chinese:?}"
         );
     }
 
@@ -1558,7 +1549,7 @@ mod view_tests {
         let _ = overlay.tick(now);
 
         assert!(overlay.content_dirty(), "the row must switch to the cable");
-        assert!(overlay.view(now).cable_uplink);
+        assert!(overlay.view(now, &english()).cable_uplink);
     }
 
     #[test]
@@ -1586,7 +1577,7 @@ fn deck_tray_pressing_restart() -> (SettingsTrayOverlay, OverlayViewport) {
     let viewport = OverlayViewport::rectangular(1_280, 480);
     // Hit regions are the previous frame's, so a touch needs one frame drawn before it.
     let mut warm_up = ShapingRecorder::new(1_280.0, 480.0);
-    let _ = overlay.render(&mut warm_up, viewport, FrameKind::Fresh);
+    let _ = overlay.render(&mut warm_up, viewport, &english(), FrameKind::Fresh);
     let label = warm_up
         .paragraphs
         .iter()
@@ -1665,6 +1656,7 @@ mod wake_tests {
         let outcome = overlay.render(
             &mut ShapingRecorder::new(1_280.0, 480.0),
             viewport,
+            &english(),
             FrameKind::Fresh,
         );
         assert!(
@@ -2049,7 +2041,7 @@ mod step_tests {
         let failed = t0 + fsm::RECONFIGURE_TIMEOUT;
         let _ = overlay.tick(failed);
         assert_eq!(
-            overlay.status(failed).map(|status| status.phase),
+            overlay.notice(failed).map(|(_, phase)| phase),
             Some(ui::Phase::Failed)
         );
         assert!(
@@ -2059,7 +2051,7 @@ mod step_tests {
 
         let cleared = failed + fsm::ERROR_DISPLAY;
         let _ = overlay.tick(cleared);
-        assert_eq!(overlay.status(cleared), None);
+        assert_eq!(overlay.notice(cleared), None);
         let _ = overlay.tick(failed + INACTIVITY_TIMEOUT + Duration::from_millis(1));
         assert!(
             overlay.slide.is_dismissing(),
@@ -2150,7 +2142,7 @@ mod replay_tests {
     ) -> RenderOutcome {
         let mut recorder = ShapingRecorder::new(480.0, 320.0);
         let viewport = OverlayViewport::rectangular(480, 320);
-        let english = bmc_intl::formatter(Language::default());
+        let english = english();
         render_settings_tray(
             &mut recorder,
             viewport,
@@ -2227,7 +2219,12 @@ mod replay_tests {
                 FrameKind::AnimationOnly
             };
             next = overlay
-                .render(&mut ShapingRecorder::new(1_280.0, 480.0), viewport, kind)
+                .render(
+                    &mut ShapingRecorder::new(1_280.0, 480.0),
+                    viewport,
+                    &english(),
+                    kind,
+                )
                 .next;
             let _ = overlay.take_content_dirty();
             replays += usize::from(overlay.render_state.tree.replayed_last_frame());
@@ -2278,7 +2275,7 @@ mod slider_release_tests {
         now: Instant,
     ) -> (SettingsTrayRenderOutput, ShapingRecorder) {
         let mut recorder = ShapingRecorder::new(480.0, 320.0);
-        let english = bmc_intl::formatter(Language::default());
+        let english = english();
         let output = render_settings_tray(
             &mut recorder,
             bmm101(),

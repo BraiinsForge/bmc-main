@@ -21,15 +21,18 @@
 use std::os::fd::RawFd;
 use std::time::{Duration, Instant};
 
+use bmc_intl::Localized;
+use bmc_render::renderer::Renderer;
 use bmc_widget::egl::{DmaBufInfo, EglContext};
 
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
     AlarmEvent, FenceState, FrameKind, HideFenceAction, HideFenceGate, MIN_INTER_FRAME,
-    OverlayFrames, PollGate, RenderGate, RenderOutcome, SystemOverlay, deliver_localization,
-    deliver_platform_events, deliver_upgrade_update_and_tick, hide_fence_action,
-    hide_fence_after_tick, overlay_needs_hide, overlay_needs_render, overlay_poll_timeout,
-    resize_transition, resolved_configured_size, screen_edge_visible, whole_millis_up,
+    OverlayFrames, OverlayViewport, PollGate, RenderGate, RenderOutcome, SystemOverlay,
+    deliver_localization, deliver_platform_events, deliver_upgrade_update_and_tick,
+    hide_fence_action, hide_fence_after_tick, overlay_needs_hide, overlay_needs_render,
+    overlay_poll_timeout, resize_transition, resolved_configured_size, screen_edge_visible,
+    whole_millis_up,
 };
 use crate::surface::LayerSurfaceClient;
 
@@ -72,6 +75,8 @@ pub struct HostedOverlay {
     screen_edge: Option<crate::overlay::ScreenEdge>,
     /// True between a `revealed` event and the next hide+re-arm.
     revealed: bool,
+    /// The device language the overlay's frames are worded in.
+    localized: Localized,
 }
 
 impl HostedOverlay {
@@ -110,6 +115,7 @@ impl HostedOverlay {
             failed: false,
             screen_edge,
             revealed: false,
+            localized: Localized::new(),
         })
     }
 
@@ -167,7 +173,7 @@ impl HostedOverlay {
             }
         }
         deliver_platform_events(&mut *self.overlay, self.client.take_platform_events());
-        deliver_localization(&mut *self.overlay, self.client.take_localization());
+        self.deliver_language();
         if self.overlay.uses_settings() {
             // Capabilities go first: the wire sends them first on bind, and
             // the trait promises them before any other settings event.
@@ -450,6 +456,32 @@ impl HostedOverlay {
 
     pub fn overlay_mut(&mut self) -> &mut dyn SystemOverlay {
         &mut *self.overlay
+    }
+
+    fn deliver_language(&mut self) {
+        deliver_localization(
+            &mut *self.overlay,
+            &mut self.localized,
+            &mut self.frames,
+            self.client.take_localization(),
+        );
+    }
+
+    /// [`SystemOverlay::render`], worded in the device language.
+    pub fn render(
+        &mut self,
+        renderer: &mut dyn Renderer,
+        viewport: OverlayViewport,
+        frame: FrameKind,
+    ) -> RenderOutcome {
+        self.overlay
+            .render(renderer, viewport, self.localized.intl(), frame)
+    }
+
+    /// [`SystemOverlay::prewarm`], with the formatter the first render will get.
+    pub fn prewarm(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport) {
+        self.overlay
+            .prewarm(renderer, viewport, self.localized.intl());
     }
 
     pub fn target_mut(&mut self) -> &mut OverlayRenderTarget {

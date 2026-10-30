@@ -166,7 +166,7 @@ pub fn prewarm_hosted_overlay(
                 FrameBackground::TransparentBlack,
                 FrameClear::Clear,
             );
-            overlay.overlay_mut().prewarm(renderer, viewport);
+            overlay.prewarm(renderer, viewport);
             renderer.flush();
             Ok(())
         },
@@ -234,7 +234,7 @@ pub fn render_hosted_overlay(
                 FrameBackground::TransparentBlack,
                 FrameClear::Clear,
             );
-            let outcome = overlay.overlay_mut().render(renderer, viewport, frame);
+            let outcome = overlay.render(renderer, viewport, frame);
             renderer.flush();
             let _ = overlay.overlay_mut().take_content_dirty();
             let fbo = overlay.target_mut().current_fbo();

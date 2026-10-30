@@ -23,6 +23,7 @@
 use std::time::{Duration, Instant};
 
 use bmc_gpu_render_lock::GpuRenderLock;
+use bmc_intl::{Intl, Localized};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::prelude::*;
 use bmc_render::renderer::{FrameBackground, FrameClear};
@@ -66,6 +67,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
     let mut last_render: Option<Instant> = None;
     let mut mapped = false;
     let mut frames = OverlayFrames::new(overlay.animation_frame_delay_ms());
+    let mut localized = Localized::new();
 
     while client.running() {
         // Drain what the previous poll_dispatch delivered.
@@ -102,7 +104,12 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
         );
 
         deliver_platform_events(&mut *overlay, client.take_platform_events());
-        deliver_localization(&mut *overlay, client.take_localization());
+        deliver_localization(
+            &mut *overlay,
+            &mut localized,
+            &mut frames,
+            client.take_localization(),
+        );
         deliver_settings_events(&mut client, &mut *overlay);
         deliver_alarm_events(&mut client, &mut *overlay);
         deliver_device_info_events(&mut client, &mut *overlay);
@@ -147,6 +154,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             &mut target,
             &mut renderer,
             &mut *overlay,
+            localized.intl(),
             &mut client,
             &mut frames,
             want_visible,
@@ -410,6 +418,7 @@ fn render_standalone_if_ready(
     target: &mut OverlayRenderTarget,
     renderer: &mut FemtoVgRenderer,
     overlay: &mut dyn SystemOverlay,
+    intl: &Intl,
     client: &mut LayerSurfaceClient,
     frames: &mut OverlayFrames,
     visible: bool,
@@ -427,7 +436,7 @@ fn render_standalone_if_ready(
     prepare_standalone_for_render(egl, scratch, renderer, target, client, config_size, size)?;
     let frame = frames.frame_kind(*mapped);
     let outcome = render_frame(
-        egl, scratch, gpu_lock, target, renderer, overlay, client, *size, frame,
+        egl, scratch, gpu_lock, target, renderer, overlay, intl, client, *size, frame,
     )?;
     frames.rendered(now, outcome);
     *mapped = true;
@@ -482,6 +491,7 @@ fn render_frame(
     target: &mut OverlayRenderTarget,
     renderer: &mut FemtoVgRenderer,
     overlay: &mut dyn SystemOverlay,
+    intl: &Intl,
     client: &mut LayerSurfaceClient,
     size: (u32, u32),
     frame: FrameKind,
@@ -498,7 +508,7 @@ fn render_frame(
         FrameBackground::TransparentBlack,
         FrameClear::Clear,
     );
-    let outcome = overlay.render(renderer, client.viewport(size), frame);
+    let outcome = overlay.render(renderer, client.viewport(size), intl, frame);
     renderer.flush();
     scratch.blit_to(egl, target.current_fbo(), size.0, size.1);
     wait_for_gpu(egl);

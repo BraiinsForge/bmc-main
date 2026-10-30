@@ -30,7 +30,6 @@ ureq.workspace = true
 
 [dev-dependencies]
 bmc-render = { workspace = true, features = ["test-support"] }
-serial_test.workspace = true
 tempfile.workspace = true
 
 [lints]

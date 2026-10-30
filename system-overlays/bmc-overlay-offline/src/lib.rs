@@ -35,7 +35,7 @@ mod poller;
 
 use std::time::{Duration, Instant};
 
-use bmc_intl::{Intl, Localized, format_message};
+use bmc_intl::{Intl, format_message};
 use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
@@ -43,8 +43,8 @@ use bmc_render::ui::{
     VerticalAlign,
 };
 use bmc_system_overlay::{
-    FrameKind, Language, LayerConfig, OverlayViewport, PlatformCaps, RenderOutcome,
-    SnapshotVersion, SystemOverlay, TickOutcome, VersionedSnapshot, register_icon,
+    FrameKind, LayerConfig, OverlayViewport, PlatformCaps, RenderOutcome, SnapshotVersion,
+    SystemOverlay, TickOutcome, VersionedSnapshot, register_icon,
 };
 
 use crate::bos::BosClient;
@@ -262,9 +262,6 @@ pub struct OfflineOverlay {
     mining: Option<Status>,
     /// Version of the status in `mining` (`None` = none yet).
     status_version: Option<StatusVersion>,
-    localized: Localized,
-    /// The language changed under an unchanged view, whose chip then needs a frame of its own.
-    relabel: bool,
     env: Box<dyn Env>,
 }
 
@@ -285,8 +282,6 @@ impl Default for OfflineOverlay {
             snapshot_version: None,
             mining: None,
             status_version: None,
-            localized: Localized::new(),
-            relabel: false,
             env: Box::new(OsEnv::default()),
         }
     }
@@ -359,7 +354,7 @@ impl SystemOverlay for OfflineOverlay {
         }
     }
 
-    fn prewarm(&mut self, renderer: &mut dyn Renderer, _viewport: OverlayViewport) {
+    fn prewarm(&mut self, renderer: &mut dyn Renderer, _viewport: OverlayViewport, _intl: &Intl) {
         register_pickaxe(renderer);
     }
 
@@ -379,8 +374,7 @@ impl SystemOverlay for OfflineOverlay {
             self.mining = Some(status);
         }
         let view = decide(self.connectivity, self.mining);
-        let relabel = std::mem::take(&mut self.relabel) && view.visible();
-        let wants_render = wants_render(self.view, view) || relabel;
+        let wants_render = wants_render(self.view, view);
         self.view = view;
         TickOutcome {
             visible: view.visible(),
@@ -393,14 +387,11 @@ impl SystemOverlay for OfflineOverlay {
         &mut self,
         r: &mut dyn Renderer,
         viewport: OverlayViewport,
+        intl: &Intl,
         _frame: FrameKind,
     ) -> RenderOutcome {
-        render_offline(r, viewport.size(), self.view, self.localized.intl());
+        render_offline(r, viewport.size(), self.view, intl);
         RenderOutcome::default()
-    }
-
-    fn on_language(&mut self, language: Option<Language>) {
-        self.relabel |= self.localized.set(language.unwrap_or_default());
     }
 }
 
@@ -410,8 +401,7 @@ mod tests {
     use std::collections::VecDeque;
 
     use bmc_render::renderer::test_support::ShapingRecorder;
-    use bmc_system_overlay::Snapshot;
-    use serial_test::serial;
+    use bmc_system_overlay::{Language, Snapshot};
 
     use super::*;
 
@@ -611,41 +601,20 @@ mod tests {
     }
 
     #[test]
-    #[serial(translations)]
-    fn a_new_language_redraws_the_unchanged_chip() {
-        let start = Instant::now();
-        let mut overlay = overlay_with(Some(offline()), Vec::new());
-        assert!(overlay.tick(start).wants_render, "the chip needs a frame");
-
-        overlay.on_language(Some(Language::default()));
-        assert!(
-            !overlay.tick(start).wants_render,
-            "the language it already speaks"
-        );
-
-        overlay.on_language(Some(Language::ZH));
-        assert!(
-            overlay.tick(start).wants_render,
-            "a new language needs a frame"
-        );
-        assert!(!overlay.tick(start).wants_render, "and only one");
-    }
-
-    #[test]
-    #[serial(translations)]
     fn the_chip_speaks_the_language_it_was_handed() {
         let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/intl/profile-languages");
-        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
-        let start = Instant::now();
+        let chinese = bmc_intl::Translations::load(&[profile])
+            .0
+            .formatter(Language::ZH);
         let mut overlay = overlay_with(Some(offline()), Vec::new());
-        let _ = overlay.tick(start);
-        overlay.on_language(Some(Language::ZH));
+        let _ = overlay.tick(Instant::now());
 
         let mut recorder = ShapingRecorder::new(160.0, 48.0);
         let _ = overlay.render(
             &mut recorder,
             OverlayViewport::rectangular(160, 48),
+            &chinese,
             FrameKind::Fresh,
         );
 

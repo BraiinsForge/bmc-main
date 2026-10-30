@@ -20,6 +20,7 @@
 
 use std::time::{Duration, Instant};
 
+use bmc_intl::{Intl, Localized};
 use bmc_platform::DisplayShape;
 use bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS;
 use bmc_render::renderer::Renderer;
@@ -709,16 +710,21 @@ pub trait SystemOverlay {
     /// wake next. Must not block.
     fn tick(&mut self, now: Instant) -> TickOutcome;
 
-    /// Draw the overlay into `viewport`, replaying its last tree on a
-    /// [`FrameKind::AnimationOnly`] frame, and report what the frame asks for next.
+    /// Draw the overlay into `viewport` and report what the frame asks for next,
+    /// replaying its last tree on a [`FrameKind::AnimationOnly`] frame.
+    ///
+    /// `intl` words the overlay's copy in the device language;
+    /// the framework holds it and asks for a fresh frame when the language changes.
+    ///
     /// The clicks and drags this frame hit-tests come back from this same call,
-    /// so an overlay whose handling of them changes what it draws asks for
-    /// [`NextFrame::Rebuild`] itself; nothing else rebuilds for them.
+    /// so an overlay whose handling of them changes what it draws asks
+    /// for [`NextFrame::Rebuild`] itself; nothing else rebuilds for them.
     /// The `&mut dyn Renderer` is valid only for this call: do not store it.
     fn render(
         &mut self,
         renderer: &mut dyn Renderer,
         viewport: OverlayViewport,
+        intl: &Intl,
         frame: FrameKind,
     ) -> RenderOutcome;
 
@@ -734,9 +740,9 @@ pub trait SystemOverlay {
     /// first reveal. The host calls this once, before the event loop, with the
     /// GL context current. Use it to register SVG icons and warm font glyphs so
     /// the first swipe-reveal does not stall.
-    /// `viewport` is the one the first render will get.
+    /// `viewport` and `intl` are the ones the first render will get.
     /// Default: no-op. The `&mut dyn Renderer` is valid only for this call: do not store it.
-    fn prewarm(&mut self, _renderer: &mut dyn Renderer, _viewport: OverlayViewport) {}
+    fn prewarm(&mut self, _renderer: &mut dyn Renderer, _viewport: OverlayViewport, _intl: &Intl) {}
 
     /// Handle a touch event (only delivered when input region is not `None`).
     fn on_touch(&mut self, _event: TouchEvent) {}
@@ -837,6 +843,7 @@ pub trait SystemOverlay {
     /// The device language: once on connect and again on every change, before `tick`,
     /// and only on a device that offers its languages.
     /// `None` when the device no longer offers the one its setting carries, so none is current.
+    /// The framework already words `render` in it; only an overlay that shows the language itself needs this.
     /// Default: no-op.
     fn on_language(&mut self, _language: Option<Language>) {}
 
@@ -952,19 +959,29 @@ pub(crate) fn deliver_platform_events(overlay: &mut dyn SystemOverlay, events: P
     }
 }
 
+/// Hand the overlay the languages and the language, and word its frames in the language:
+/// in English while the device speaks none of those it offers.
+/// A change of wording marks the overlay's content dirty and asks for a fresh frame.
 #[expect(
     clippy::option_option,
     reason = "the surface's language latch, as `take_localization` hands it over"
 )]
 pub(crate) fn deliver_localization(
     overlay: &mut dyn SystemOverlay,
+    localized: &mut Localized,
+    frames: &mut OverlayFrames,
     (offered, language): (Option<Vec<Language>>, Option<Option<Language>>),
 ) {
     if let Some(offered) = offered {
         overlay.on_languages(&offered);
     }
-    if let Some(language) = language {
-        overlay.on_language(language);
+    let Some(language) = language else {
+        return;
+    };
+    overlay.on_language(language);
+    if localized.set(language.unwrap_or_default()) {
+        overlay.mark_content_dirty();
+        frames.request_fresh();
     }
 }
 
@@ -1021,6 +1038,7 @@ mod tests {
             &mut self,
             _renderer: &mut dyn Renderer,
             _viewport: OverlayViewport,
+            _intl: &Intl,
             _frame: FrameKind,
         ) -> RenderOutcome {
             RenderOutcome::default()
@@ -1125,6 +1143,8 @@ mod tests {
         language: Option<Option<Language>>,
         /// The offered languages, and whether they came before any language.
         offered: Option<(Vec<Language>, bool)>,
+        /// How often the framework marked the content dirty.
+        dirtied: usize,
     }
 
     impl SystemOverlay for RecordingPlatformOverlay {
@@ -1140,6 +1160,7 @@ mod tests {
             &mut self,
             _renderer: &mut dyn Renderer,
             _viewport: OverlayViewport,
+            _intl: &Intl,
             _frame: FrameKind,
         ) -> RenderOutcome {
             RenderOutcome::default()
@@ -1163,6 +1184,10 @@ mod tests {
 
         fn on_languages(&mut self, offered: &[Language]) {
             self.offered = Some((offered.to_vec(), self.language.is_none()));
+        }
+
+        fn mark_content_dirty(&mut self) {
+            self.dirtied += 1;
         }
     }
 
@@ -1202,13 +1227,17 @@ mod tests {
     #[test]
     fn a_received_language_reaches_an_overlay_that_never_opted_in() {
         let mut overlay = RecordingPlatformOverlay::default();
-        deliver_localization(&mut overlay, (None, None));
+        let mut localized = Localized::new();
+        let mut frames = OverlayFrames::new(DEFAULT_ANIMATION_FRAME_DELAY_MS);
+        deliver_localization(&mut overlay, &mut localized, &mut frames, (None, None));
         assert_eq!(
             overlay.language, None,
             "nothing received, nothing delivered"
         );
         deliver_localization(
             &mut overlay,
+            &mut localized,
+            &mut frames,
             (
                 Some(vec![Language::EN_GB, Language::ZH]),
                 Some(Some(Language::ZH)),
@@ -1220,11 +1249,56 @@ mod tests {
             Some((vec![Language::EN_GB, Language::ZH], true)),
             "the offered languages come first"
         );
-        deliver_localization(&mut overlay, (None, Some(None)));
+        deliver_localization(
+            &mut overlay,
+            &mut localized,
+            &mut frames,
+            (None, Some(None)),
+        );
         assert_eq!(
             overlay.language,
             Some(None),
             "a language no longer offered is delivered as none"
+        );
+    }
+
+    #[test]
+    fn a_new_language_rewords_the_overlay_once() {
+        let mut overlay = RecordingPlatformOverlay::default();
+        let mut localized = Localized::new();
+        let mut frames = OverlayFrames::new(DEFAULT_ANIMATION_FRAME_DELAY_MS);
+        // Whether the delivery asked for a fresh frame, the request then cleared for the next.
+        let mut deliver = |language| {
+            deliver_localization(
+                &mut overlay,
+                &mut localized,
+                &mut frames,
+                (None, Some(language)),
+            );
+            let fresh = frames.wanted(true, Instant::now());
+            frames.drop_request();
+            fresh
+        };
+
+        assert!(
+            deliver(Some(Language::ZH)),
+            "a new language needs a fresh frame"
+        );
+        assert!(
+            !deliver(Some(Language::ZH)),
+            "the language already worded is no change"
+        );
+        assert!(
+            deliver(None),
+            "speaking none of those offered words in English"
+        );
+        assert!(
+            !deliver(Some(Language::EN_GB)),
+            "and English is what it already speaks"
+        );
+        assert_eq!(
+            overlay.dirtied, 2,
+            "each change marks the content dirty once"
         );
     }
 
@@ -1637,6 +1711,7 @@ mod tests {
             &mut self,
             _renderer: &mut dyn Renderer,
             _viewport: OverlayViewport,
+            _intl: &Intl,
             _frame: FrameKind,
         ) -> RenderOutcome {
             RenderOutcome::default()

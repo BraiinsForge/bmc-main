@@ -28,7 +28,7 @@
 use std::time::Instant;
 use std::vec;
 
-use bmc_intl::{Intl, Localized, format_message};
+use bmc_intl::{Intl, format_message};
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
     ArcCap, ArcFill, ArcSegments, BLACK, Color, CrossAlign, Draw, Fill, FontFamily, FontWeight,
@@ -36,7 +36,7 @@ use bmc_render::ui::{
     TRANSPARENT, TextAlign, TextStyle, VerticalAlign, WHITE, col, fixed_height, row, text,
 };
 use bmc_system_overlay::{
-    AlarmRequest, Anchor, FrameKind, InputRegion, Language, Layer, LayerConfig, OverlayViewport,
+    AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayViewport,
     RenderOutcome, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
 };
 
@@ -90,7 +90,6 @@ pub struct AlarmOverlay {
     pending: Vec<AlarmRequest>,
     /// Content changed since the last paint; asks the framework for a redraw.
     dirty: bool,
-    localized: Localized,
     /// UI rendering context.
     render_state: AlarmRenderState,
 }
@@ -419,7 +418,6 @@ impl AlarmOverlay {
             ringing: None,
             pending: Vec::new(),
             dirty: false,
-            localized: Localized::new(),
             render_state: AlarmRenderState::new(now),
         }
     }
@@ -462,10 +460,6 @@ impl SystemOverlay for AlarmOverlay {
         self.ringing = None;
     }
 
-    fn on_language(&mut self, language: Option<Language>) {
-        self.dirty |= self.localized.set(language.unwrap_or_default());
-    }
-
     fn tick(&mut self, _now: Instant) -> TickOutcome {
         TickOutcome {
             visible: self.ringing.is_some(),
@@ -492,6 +486,7 @@ impl SystemOverlay for AlarmOverlay {
         &mut self,
         r: &mut dyn Renderer,
         viewport: OverlayViewport,
+        intl: &Intl,
         frame: FrameKind,
     ) -> RenderOutcome {
         let Some(ring) = self.ringing.as_ref() else {
@@ -510,7 +505,7 @@ impl SystemOverlay for AlarmOverlay {
             viewport.size(),
             &mut self.render_state,
             &view,
-            self.localized.intl(),
+            intl,
             frame,
         );
 
@@ -532,7 +527,7 @@ mod tests {
     use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
     use bmc_render::partition::tree_static_key;
     use bmc_render::renderer::test_support::ShapingRecorder;
-    use serial_test::serial;
+    use bmc_system_overlay::Language;
 
     use super::*;
 
@@ -554,48 +549,32 @@ mod tests {
     }
 
     #[test]
-    #[serial(translations)]
-    fn a_new_language_redraws_the_ringing_alarm() {
-        let now = Instant::now();
-        let mut overlay = AlarmOverlay::new(now);
-        overlay.on_alarm_ring("7:30", "AM", "", true);
-        assert!(overlay.tick(now).wants_render, "the ring needs a frame");
-
-        overlay.on_language(Some(Language::default()));
-        assert!(
-            !overlay.tick(now).wants_render,
-            "the language it already speaks"
-        );
-
-        overlay.on_language(Some(Language::ZH));
-        assert!(
-            overlay.tick(now).wants_render,
-            "a new language needs a frame"
-        );
-    }
-
-    #[test]
-    #[serial(translations)]
     fn the_ringing_alarm_speaks_the_language_it_was_handed() {
         let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/intl/profile-languages");
-        bmc_intl::Translations::install(bmc_intl::Translations::load(&[profile]).0);
-        let now = Instant::now();
-        let mut overlay = AlarmOverlay::new(now);
-        overlay.on_alarm_ring("7:30", "AM", "", true);
-        overlay.on_language(Some(Language::ZH));
+        let translations = bmc_intl::Translations::load(&[profile]).0;
+        let drawn_in = |language| {
+            let mut overlay = AlarmOverlay::new(Instant::now());
+            overlay.on_alarm_ring("7:30", "AM", "", true);
+            let mut recorder = ShapingRecorder::new(480.0, 1280.0);
+            let _ = overlay.render(
+                &mut recorder,
+                OverlayViewport::rectangular(SIZE.0, SIZE.1),
+                &translations.formatter(language),
+                FrameKind::Fresh,
+            );
+            recorder
+        };
+        let english = drawn_in(Language::EN_GB);
+        let english = english.drawn_texts();
+        let chinese = drawn_in(Language::ZH);
+        let chinese = chinese.drawn_texts();
 
-        let mut recorder = ShapingRecorder::new(480.0, 1280.0);
-        let _ = overlay.render(
-            &mut recorder,
-            OverlayViewport::rectangular(SIZE.0, SIZE.1),
-            FrameKind::Fresh,
-        );
-
-        let drawn = recorder.drawn_texts();
+        let stop = "Stop Alarm";
+        assert!(english.contains(&stop), "{english:?}");
         assert!(
-            drawn.contains(&"停止闹钟"),
-            "the alarm must speak the language it was handed: {drawn:?}"
+            !chinese.contains(&stop) && chinese.len() == english.len(),
+            "the alarm must speak the language it was handed: {chinese:?}"
         );
     }
 

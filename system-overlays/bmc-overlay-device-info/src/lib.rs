@@ -38,7 +38,7 @@ pub use ui::{
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use bmc_intl::Localized;
+use bmc_intl::{Intl, Localized};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
     AccessPoint, DeviceState, FrameKind, Language, Layer, LayerConfig, LocalizationRequest,
@@ -653,7 +653,7 @@ impl SystemOverlay for DeviceInfoOverlay {
         self.dirty = true;
     }
 
-    fn prewarm(&mut self, renderer: &mut dyn Renderer, _viewport: OverlayViewport) {
+    fn prewarm(&mut self, renderer: &mut dyn Renderer, _viewport: OverlayViewport, _intl: &Intl) {
         let _ = self.render_state.ensure_icons(renderer);
     }
 
@@ -816,12 +816,13 @@ impl SystemOverlay for DeviceInfoOverlay {
         &mut self,
         r: &mut dyn Renderer,
         viewport: OverlayViewport,
+        _device_language: &Intl,
         frame: FrameKind,
     ) -> RenderOutcome {
         let view = self.view();
         let switch = self.language_switch();
-        // Not the switch's current chip: the words follow a tap at once,
-        // and still speak the device's language once the switch is gone.
+        // Its own formatter, not `_device_language`: the words follow a tap at once,
+        // ahead of the device's answer, and still speak its language once the switch is gone.
         self.localized
             .set(self.chosen.or(self.language).unwrap_or_default());
         let drawn = render_device_info(
@@ -2312,6 +2313,11 @@ mod tests {
         )
     }
 
+    /// The framework's formatter, which device-info leaves aside for its own.
+    fn english() -> Intl {
+        bmc_intl::formatter(Language::default())
+    }
+
     /// Czech, whose pack in [`install_languages`] brings a name and no flag.
     fn czech() -> Language {
         Language::parse("cs").expect("BUG: `cs` is a tag")
@@ -2365,7 +2371,12 @@ mod tests {
     }
 
     fn chip_center(overlay: &mut DeviceInfoOverlay, language: Language) -> (f64, f64) {
-        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let _ = overlay.render(
+            &mut recorder_for(PANEL),
+            PANEL,
+            &english(),
+            FrameKind::Fresh,
+        );
         let rect = overlay
             .render_state
             .element_bounds(&ui::language_key(language))
@@ -2378,7 +2389,12 @@ mod tests {
 
     /// The offered languages a fresh render lays out a chip for.
     fn chips_laid_out(overlay: &mut DeviceInfoOverlay) -> Vec<Language> {
-        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let _ = overlay.render(
+            &mut recorder_for(PANEL),
+            PANEL,
+            &english(),
+            FrameKind::Fresh,
+        );
         bmc_intl::Translations::shared()
             .languages()
             .into_iter()
@@ -2393,7 +2409,12 @@ mod tests {
 
     /// Which of `candidates` a fresh render lays out a chip for, left to right.
     fn chips_in_order(overlay: &mut DeviceInfoOverlay, candidates: &[Language]) -> Vec<Language> {
-        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let _ = overlay.render(
+            &mut recorder_for(PANEL),
+            PANEL,
+            &english(),
+            FrameKind::Fresh,
+        );
         let mut laid_out: Vec<(f32, Language)> = candidates
             .iter()
             .filter_map(|&language| {
@@ -2416,7 +2437,12 @@ mod tests {
             y: at.1,
         });
         overlay.on_touch(TouchEvent::Up { id: 0 });
-        overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh)
+        overlay.render(
+            &mut recorder_for(PANEL),
+            PANEL,
+            &english(),
+            FrameKind::Fresh,
+        )
     }
 
     #[test]
@@ -2514,7 +2540,7 @@ mod tests {
         overlay.on_language(Some(Language::ZH));
 
         let mut recorder = recorder_for(PANEL);
-        let _ = overlay.render(&mut recorder, PANEL, FrameKind::Fresh);
+        let _ = overlay.render(&mut recorder, PANEL, &english(), FrameKind::Fresh);
 
         let drawn = recorder.drawn_texts();
         assert!(
@@ -2528,7 +2554,12 @@ mod tests {
     #[test]
     fn every_offered_language_has_a_chip_on_the_deck_panel() {
         let mut overlay = setup_start_in_british();
-        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let _ = overlay.render(
+            &mut recorder_for(PANEL),
+            PANEL,
+            &english(),
+            FrameKind::Fresh,
+        );
 
         let offered = bmc_intl::Translations::shared().languages();
         assert!(
@@ -2564,7 +2595,12 @@ mod tests {
             x: american.0,
             y: american.1,
         });
-        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let _ = overlay.render(
+            &mut recorder_for(PANEL),
+            PANEL,
+            &english(),
+            FrameKind::Fresh,
+        );
         let chip = ui::language_key(Language::EN_US);
         assert!(
             overlay.render_state.tree.is_pressed(&chip),
@@ -2578,7 +2614,12 @@ mod tests {
             "the switch is gone"
         );
         overlay.on_touch(TouchEvent::Up { id: 0 });
-        let _ = overlay.render(&mut recorder_for(PANEL), PANEL, FrameKind::Fresh);
+        let _ = overlay.render(
+            &mut recorder_for(PANEL),
+            PANEL,
+            &english(),
+            FrameKind::Fresh,
+        );
 
         assert!(
             !overlay.render_state.tree.is_pressed(&chip),
