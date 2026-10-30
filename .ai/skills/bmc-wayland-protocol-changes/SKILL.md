@@ -29,7 +29,8 @@ message as the one before it.
 - An object a factory hands out takes the factory's bound version, so the factory interface's `version` goes up with it:
   `deck_widget_surface_v2` objects come from `deck_widget_manager_v3`'s `get_widget_surface`, so a message added to the
   surface raises both interfaces to the same `N`.
-- The compositor advertises the new version in its `create_global::<…>(N, ())` under `bmc-openwrt/src/compositor/`.
+- The compositor advertises the new version in its `create_global` under `bmc-openwrt/src/compositor/`, taken from the
+  generated interface (`DeckSettingsV1::interface().version`) rather than restated as a number.
 - A client asks for what it understands with `registry.bind::<…>(name, version.min(N), qh, ())`; raise the cap when the
   client learns the new messages.
 
@@ -40,8 +41,9 @@ A peer bound at a lower version never receives what it does not know.
 - The compositor sends a new event only to resources with `resource.version() >= SINCE`, as the settings and device-info
   broadcasts filter their resources.
 - A client sends a new request only when the object it holds is bound at `version() >= SINCE`.
-- Name the threshold once, next to the code that gates on it, and say which `since` it mirrors — as `PRODUCT_NAME_SINCE`
-  and `DISPLAY_INFO_SINCE` do in `bmc-openwrt/src/compositor/platform.rs`.
+- Gate on the constant the scanner generates from the XML, `EVT_<NAME>_SINCE` or `REQ_<NAME>_SINCE` in the interface's
+  module, as `restart_declined` in `bmc-openwrt/src/compositor/settings.rs` does with
+  `EVT_RESTART_DECLINED_REASON_SINCE`. A hand-written `*_SINCE`, as in the older modules, can drift from the XML.
 
 ## A protocol that has not shipped
 
@@ -60,6 +62,7 @@ entries with no length. The SDK's decoder (`find` in `bmc-wasm-runtime/sdk/src/s
 
 1. The new message is the last of its kind in its interface, with `since="N"`; a new enum entry has a fresh `value=`.
 2. The interface's `version` is `N`, and so is its factory's.
-3. `create_global` advertises `N`; every client's `bind` caps at `N` once it understands the new messages.
-4. Both sides gate on a named `*_SINCE` constant.
+3. `create_global` advertises the generated interface's `version`; every client's `bind` caps at `N` once it understands
+   the new messages.
+4. Both sides gate on the scanner's `EVT_*_SINCE` or `REQ_*_SINCE` constant.
 5. A protocol new in this MR is at version 1 with no `since`.
