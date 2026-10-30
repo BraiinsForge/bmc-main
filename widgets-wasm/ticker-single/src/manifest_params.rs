@@ -90,6 +90,7 @@ bmc_wasm_sdk::impl_manifest_str_enum!(View);
 pub struct Params {
     pub pair: Option<String>,
     pub period: Period,
+    pub precision: Option<i32>,
     pub view: View,
 }
 impl Params {
@@ -99,6 +100,7 @@ impl Params {
         Self {
             pair: <String as ParamRead>::read_optional(snap, "pair"),
             period: <Period as ParamRead>::read_required(snap, "period"),
+            precision: <i32 as ParamRead>::read_optional(snap, "precision"),
             view: <View as ParamRead>::read_required(snap, "view"),
         }
     }
@@ -150,6 +152,9 @@ impl Params {
         }
         if self.period != other.period {
             out.push("period");
+        }
+        if self.precision != other.precision {
+            out.push("precision");
         }
         if self.view != other.view {
             out.push("view");
