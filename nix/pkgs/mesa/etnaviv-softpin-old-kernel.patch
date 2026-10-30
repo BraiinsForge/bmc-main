@@ -1,0 +1,45 @@
+--- a/src/etnaviv/drm/etnaviv_device.c
++++ b/src/etnaviv/drm/etnaviv_device.c
+@@ -24,6 +24,9 @@
+  *    Christian Gmeiner <christian.gmeiner@gmail.com>
+  */
+ 
++#include <stdio.h>
++#include <sys/utsname.h>
++
+ #include "util/hash_table.h"
+ #include "util/os_file.h"
+ 
+@@ -33,6 +36,23 @@
+ /* Declare symbol in case we don't link with etnaviv's gallium driver */
+ int etna_mesa_debug __attribute__((weak)) = 0;
+ 
++/* Softpin relies on the kernel reaping idle mappings that block a requested
++ * address (Linux 2829a9fcb738, 5.19). Without that, a buffer freed here but
++ * still held by another process, such as an exported DMA-BUF, keeps its GPU
++ * mapping, and reusing its address fails the submit with ENOSPC. Older
++ * kernels place buffers themselves and reap idle mappings as needed.
++ */
++static bool kernel_reaps_softpin_mappings(void)
++{
++	struct utsname u;
++	unsigned major, minor;
++
++	if (uname(&u) || sscanf(u.release, "%u.%u", &major, &minor) != 2)
++		return true;
++
++	return major > 5 || (major == 5 && minor >= 19);
++}
++
+ struct etna_device *etna_device_new(int fd)
+ {
+ 	struct etna_device *dev;
+@@ -69,7 +89,7 @@
+ 	etna_bo_cache_init(&dev->bo_cache);
+ 
+ 	ret = drmCommandWriteRead(dev->fd, DRM_ETNAVIV_GET_PARAM, &req, sizeof(req));
+-	if (!ret && req.value != ~0ULL) {
++	if (!ret && req.value != ~0ULL && kernel_reaps_softpin_mappings()) {
+ 		const uint64_t _4GB = 1ull << 32;
+ 
+ 		list_inithead(&dev->zombie_list);
