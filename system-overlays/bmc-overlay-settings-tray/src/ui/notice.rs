@@ -23,7 +23,7 @@
 //! but the action's own button dims and stops taking touches.
 
 use super::{Action, Hold, Phase, Status};
-use bmc_intl::{Intl, format_message};
+use bmc_intl::{Intl, Message, format_lazy, format_message, message_descriptor};
 use bmc_render::ui::{
     CrossAlign, FontWeight, Justify, Node, PropsData, TextAlign, TextStyle, WHITE, col, dimmed,
     text,
@@ -42,6 +42,15 @@ pub(super) const DIMMED: f32 = 1.0 - DIM_ALPHA;
 /// Size of both notice lines where the layout names none of its own.
 pub(super) const NOTICE_SIZE: u32 = 20;
 
+const NOTICE_KEEP_HOLDING: Message = message_descriptor!(
+    default_message: "Keep holding, or release to cancel",
+    description: "Settings tray notice, under the title while a hold-to-confirm button is held",
+);
+const NOTICE_TRY_AGAIN: Message = message_descriptor!(
+    default_message: "Try again",
+    description: "Settings tray notice, under a failure title: the button can be held again",
+);
+
 /// The notice's lines: what is happening, then, if anything,
 /// what the user can do about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,20 +63,8 @@ impl NoticeText {
     /// bmc words its own decline: the reason is a sentence,
     /// shown as the body under the tray's title. A timeout with no word from bmc is the tray's.
     pub(super) fn for_status(intl: &Intl, status: &Status) -> Self {
-        let keep_holding = || {
-            format_message!(
-                intl,
-                default_message: "Keep holding, or release to cancel",
-                description: "Settings tray notice, under the title while a hold-to-confirm button is held",
-            )
-        };
-        let try_again = || {
-            format_message!(
-                intl,
-                default_message: "Try again",
-                description: "Settings tray notice, under a failure title: the button can be held again",
-            )
-        };
+        let keep_holding = || format_lazy(intl, &NOTICE_KEEP_HOLDING);
+        let try_again = || format_lazy(intl, &NOTICE_TRY_AGAIN);
         let (title, body) = match (status.action, status.phase) {
             (Action::Restart, Phase::Holding(_)) => (
                 format_message!(
@@ -367,8 +364,8 @@ mod tests {
             let text = NoticeText::for_status(&english(), &status);
             (text.title, text.body)
         };
-        let keep_holding = || Some("Keep holding, or release to cancel".to_owned());
-        let try_again = || Some("Try again".to_owned());
+        let keep_holding = || Some(format_lazy(&english(), &NOTICE_KEEP_HOLDING));
+        let try_again = || Some(format_lazy(&english(), &NOTICE_TRY_AGAIN));
         let holding = holding(0.5);
         let restart = Action::Restart;
         let wifi = Action::WifiReconfig;
@@ -489,7 +486,7 @@ mod tests {
                         WHITE
                     ),
                     (
-                        "Keep holding, or release to cancel".to_owned(),
+                        format_lazy(&english(), &NOTICE_KEEP_HOLDING),
                         size,
                         FontWeight::REGULAR,
                         WHITE

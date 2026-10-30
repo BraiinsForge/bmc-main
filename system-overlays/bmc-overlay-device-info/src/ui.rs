@@ -26,7 +26,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
-use bmc_intl::{Intl, bold, format_message, runs};
+use bmc_intl::{Intl, Message, bold, format_lazy, format_message, message_descriptor, runs};
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
     ArcCap, ArcFill, ArcSegments, BLACK, ButtonSize, ButtonStyle, CrossAlign, Draw, Fill,
@@ -189,6 +189,50 @@ impl DeviceInfoRenderState {
     }
 }
 
+const SETUP_EYEBROW: Message = message_descriptor!(
+    default_message: "Initial Setup",
+    description: "Device-info eyebrow above every first-boot setup screen",
+);
+const SETUP_AP_PENDING_TITLE: Message = message_descriptor!(
+    default_message: "Starting setup Wi-Fi...",
+    description: "Device-info setup title while the device's own network is coming up",
+);
+const CONNECTING_TITLE: Message = message_descriptor!(
+    default_message: "Connecting to Wi-Fi...",
+    description: "Device-info screen title while the device joins a Wi-Fi network",
+);
+const CONNECTING_CABLE_TITLE: Message = message_descriptor!(
+    default_message: "Connecting to network...",
+    description: "Device-info screen title while the device waits on its Ethernet cable, no Wi-Fi join under way",
+);
+const WAITING_FOR_IP: Message = message_descriptor!(
+    default_message: "Waiting for IP address",
+    description: "Device-info connect progress line while DHCP has not assigned an address yet",
+);
+const CABLE_HINT: Message = message_descriptor!(
+    default_message: "or connect the Ethernet cable",
+    description: "Device-info setup line under the Wi-Fi instructions, the wired alternative on a board with an Ethernet port",
+);
+const CONNECT_CABLE_TITLE: Message = message_descriptor!(
+    default_message: "Connect the Ethernet cable",
+    description: "Device-info setup title on a board without Wi-Fi, before its cable is plugged in",
+);
+const NO_NETWORK_TITLE: Message = message_descriptor!(
+    default_message: "No network connection",
+    description: "Device-info title when the boot connect over the Ethernet cable got no address",
+);
+const CHECK_CABLE: Message = message_descriptor!(
+    default_message: "Check the Ethernet cable",
+    description: "Device-info line under the no-network title, asking to check the wired connection",
+);
+const UPGRADE_SUCCESS_TITLE: Message = message_descriptor!(
+    default_message: "Update Finished",
+    description: "Device-info title on the first boot after a firmware upgrade",
+);
+const SETUP_FATAL_TITLE: Message = message_descriptor!(
+    default_message: "Problem Occurred",
+    description: "Device-info screen title when setup failed and the device must restart",
+);
 /// Modules of white border around the QR (the legacy white plate).
 const QR_QUIET_ZONE: u8 = 4;
 /// Tap target around the close glyph, and the glyph inside it.
@@ -370,13 +414,8 @@ fn style(
 }
 
 fn eyebrow(intl: &Intl, tier: Tier) -> Node {
-    let label = format_message!(
-        intl,
-        default_message: "Initial Setup",
-        description: "Device-info eyebrow above every first-boot setup screen",
-    );
     text(
-        label,
+        format_lazy(intl, &SETUP_EYEBROW),
         style(
             tier.eyebrow,
             GRAY_40,
@@ -1150,26 +1189,16 @@ fn connecting_parts(
     link: &Link,
 ) -> (Icon, String, Vec<Node>) {
     match link {
-        Link::Wifi { ssid } => {
-            let title_text = format_message!(
-                intl,
-                default_message: "Connecting to Wi-Fi...",
-                description: "Device-info screen title while the device joins a Wi-Fi network",
-            );
-            (
-                icons.wifi,
-                title_text,
-                ssid_lines(intl, tier, ssid.as_deref()),
-            )
-        }
-        Link::Cable => {
-            let title_text = format_message!(
-                intl,
-                default_message: "Connecting to network...",
-                description: "Device-info screen title while the device waits on its Ethernet cable, no Wi-Fi join under way",
-            );
-            (icons.ethernet, title_text, Vec::new())
-        }
+        Link::Wifi { ssid } => (
+            icons.wifi,
+            format_lazy(intl, &CONNECTING_TITLE),
+            ssid_lines(intl, tier, ssid.as_deref()),
+        ),
+        Link::Cable => (
+            icons.ethernet,
+            format_lazy(intl, &CONNECTING_CABLE_TITLE),
+            Vec::new(),
+        ),
     }
 }
 
@@ -1191,13 +1220,12 @@ fn setup_connecting_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: 
 /// The operational flow's connect progress: the setup screen's parts, centered
 /// and saying what the device is still waiting for.
 fn connecting_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
-    let waiting = format_message!(
-        intl,
-        default_message: "Waiting for IP address",
-        description: "Device-info connect progress line while DHCP has not assigned an address yet",
-    );
     let (icon_id, title_text, mut lines) = connecting_parts(intl, tier, icons, link);
-    lines.push(content(tier, &waiting, TextAlign::Center));
+    lines.push(content(
+        tier,
+        &format_lazy(intl, &WAITING_FOR_IP),
+        TextAlign::Center,
+    ));
     template_tree(
         intl,
         tier,
@@ -1226,14 +1254,7 @@ fn setup_start_tree(
     uplinks: Uplinks,
     switch: Option<Switch<'_>>,
 ) -> Node {
-    let cable_hint = || {
-        let hint = format_message!(
-            intl,
-            default_message: "or connect the Ethernet cable",
-            description: "Device-info setup line under the Wi-Fi instructions, the wired alternative on a board with an Ethernet port",
-        );
-        content(tier, &hint, TextAlign::Center)
-    };
+    let cable_hint = || content(tier, &format_lazy(intl, &CABLE_HINT), TextAlign::Center);
     match ap {
         // Setup over a wired uplink: no AP to join, so no WiFi column -
         // only the wizard address as text and QR code.
@@ -1282,11 +1303,7 @@ fn setup_start_tree(
             cornered(tree, switch_corner)
         }
         None if !uplinks.wifi => {
-            let connect_cable = format_message!(
-                intl,
-                default_message: "Connect the Ethernet cable",
-                description: "Device-info setup title on a board without Wi-Fi, before its cable is plugged in",
-            );
+            let connect_cable = format_lazy(intl, &CONNECT_CABLE_TITLE);
             let (switch_line, switch_corner) = Switch::placed(switch, tier);
             let tree = template_tree(
                 intl,
@@ -1302,23 +1319,16 @@ fn setup_start_tree(
         // The authored illustration on every tier, unlike the screen above:
         // this variant holds the panel on its own, so there is nothing per-panel
         // to choose between.
-        None => {
-            let starting = format_message!(
-                intl,
-                default_message: "Starting setup Wi-Fi...",
-                description: "Device-info setup title while the device's own network is coming up",
-            );
-            template_tree_with_icon_width(
-                intl,
-                tier,
-                tier.icon_width.ap_pending,
-                Justify::Start,
-                true,
-                icons.wifi_connect,
-                &starting,
-                uplinks.ethernet.then(cable_hint).into_iter().collect(),
-            )
-        }
+        None => template_tree_with_icon_width(
+            intl,
+            tier,
+            tier.icon_width.ap_pending,
+            Justify::Start,
+            true,
+            icons.wifi_connect,
+            &format_lazy(intl, &SETUP_AP_PENDING_TITLE),
+            uplinks.ethernet.then(cable_hint).into_iter().collect(),
+        ),
     }
 }
 
@@ -1372,18 +1382,13 @@ fn setup_fatal_tree(
         );
         (icons.error, line)
     };
-    let title_text = format_message!(
-        intl,
-        default_message: "Problem Occurred",
-        description: "Device-info screen title when setup failed and the device must restart",
-    );
     template_tree(
         intl,
         tier,
         Justify::Center,
         false,
         icon_id,
-        &title_text,
+        &format_lazy(intl, &SETUP_FATAL_TITLE),
         vec![content(tier, &line, TextAlign::Center)],
     )
 }
@@ -1470,18 +1475,13 @@ fn setup_error_tree(intl: &Intl, tier: Tier, wifi_error: Icon) -> Node {
 }
 
 fn upgrade_success_tree(intl: &Intl, tier: Tier, success: Icon) -> Node {
-    let title_text = format_message!(
-        intl,
-        default_message: "Update Finished",
-        description: "Device-info title on the first boot after a firmware upgrade",
-    );
     template_tree(
         intl,
         tier,
         Justify::Center,
         false,
         success,
-        &title_text,
+        &format_lazy(intl, &UPGRADE_SUCCESS_TITLE),
         Vec::new(),
     )
 }
@@ -1525,18 +1525,13 @@ fn failed_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link) -> 
             (icons.wifi_error, title_text, lines)
         }
         Link::Cable => {
-            let title_text = format_message!(
-                intl,
-                default_message: "No network connection",
-                description: "Device-info title when the boot connect over the Ethernet cable got no address",
-            );
-            let check_cable = format_message!(
-                intl,
-                default_message: "Check the Ethernet cable",
-                description: "Device-info line under the no-network title, asking to check the wired connection",
-            );
+            let check_cable = format_lazy(intl, &CHECK_CABLE);
             let lines = vec![content(tier, &check_cable, TextAlign::Center)];
-            (icons.ethernet_error, title_text, lines)
+            (
+                icons.ethernet_error,
+                format_lazy(intl, &NO_NETWORK_TITLE),
+                lines,
+            )
         }
     };
     template_tree(

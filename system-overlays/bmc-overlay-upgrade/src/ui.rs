@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_intl::{Intl, format_lazy, format_message};
+use bmc_intl::{Intl, Message, format_lazy, format_message, message_descriptor};
 use bmc_render::ui::{
     AnimProperty, AnimationDef, AutoFit, BLACK, Color, ColorSpace, Draw, Easing, Fill, FontFamily,
     FontWeight, GRAY_50, GRAY_70, LoopMode, Node, PropsData, SvgId, TRANSPARENT, TextAlign,
@@ -29,6 +29,10 @@ use bmc_system_overlay::{DownloadProgress, UpgradeKind, UpgradePhase};
 use crate::icons::UpgradeIcons;
 use crate::{SurfaceTier, UpgradeView};
 
+const SAFETY_TEXT: Message = message_descriptor!(
+    default_message: "Keep the device plugged in and online during the update",
+    description: "Firmware upgrade overlay, below the title: warning not to unplug or disconnect the device",
+);
 const ACTIVE_BAR_TRAVEL_MS: u32 = 800;
 /// Divider along the compact card's top and left edges. Both the card and the
 /// widgets behind it are black, so without it the card has no visible extent.
@@ -301,11 +305,7 @@ fn tier_for(surface: Surface) -> Tier {
     reason = "type sizes are a couple of dozen pixels"
 )]
 fn safety_draw(intl: &Intl, safety: SafetyText, width: f32, center_y: f32, size: u32) -> Draw {
-    let text = format_message!(
-        intl,
-        default_message: "Keep the device plugged in and online during the update",
-        description: "Firmware upgrade overlay, below the title: warning not to unplug or disconnect the device",
-    );
+    let text = format_lazy(intl, &SAFETY_TEXT);
     let SafetyText::Wrapped { lines, inset } = safety else {
         return text_draw(
             width / 2.0,
@@ -587,10 +587,12 @@ mod tests {
 
     use super::*;
 
-    const SAFETY_TEXT: &str = "Keep the device plugged in and online during the update";
-
     fn english() -> Intl {
         bmc_intl::formatter(bmc_intl::Language::default())
+    }
+
+    fn safety_text() -> String {
+        format_lazy(&english(), &SAFETY_TEXT)
     }
 
     fn test_icons() -> UpgradeIcons {
@@ -736,7 +738,7 @@ mod tests {
         assert!(matches!(
             &draws[3],
             Draw::Text { text, style, .. }
-                if text == SAFETY_TEXT
+                if *text == safety_text()
                     && style.size == 18
                     && style.weight == FontWeight::REGULAR
                     && style.color == GRAY_50
@@ -1111,7 +1113,7 @@ mod tests {
                 text,
                 style,
                 ..
-            } if text == SAFETY_TEXT
+            } if *text == safety_text()
                 && style.size == 14
                 && (*box_height - 39.2).abs() < 0.01
         ));
@@ -1132,7 +1134,7 @@ mod tests {
             );
             assert!(matches!(
                 &draws[3],
-                Draw::Text { text, .. } if text == SAFETY_TEXT
+                Draw::Text { text, .. } if *text == safety_text()
             ));
         }
     }

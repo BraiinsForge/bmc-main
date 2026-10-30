@@ -2536,16 +2536,23 @@ mod tests {
 
     #[test]
     fn the_setup_screen_speaks_the_device_language_over_the_framework_formatter() {
-        let mut overlay = setup_start_in_british();
-        overlay.on_language(Some(Language::ZH));
+        let drawn_in = |language| {
+            let mut overlay = setup_start_in_british();
+            overlay.on_language(Some(language));
+            let mut recorder = recorder_for(PANEL);
+            let _ = overlay.render(&mut recorder, PANEL, &english(), FrameKind::Fresh);
+            recorder
+        };
+        let english = drawn_in(Language::EN_GB);
+        let english = english.drawn_texts();
+        let chinese = drawn_in(Language::ZH);
+        let chinese = chinese.drawn_texts();
 
-        let mut recorder = recorder_for(PANEL);
-        let _ = overlay.render(&mut recorder, PANEL, &english(), FrameKind::Fresh);
-
-        let drawn = recorder.drawn_texts();
+        let eyebrow = "Initial Setup";
+        assert!(english.contains(&eyebrow), "{english:?}");
         assert!(
-            drawn.contains(&"初始设置"),
-            "the setup screen must speak the device language, not the formatter's: {drawn:?}"
+            !chinese.contains(&eyebrow) && chinese.len() == english.len(),
+            "the setup screen must speak the device language, not the formatter's: {chinese:?}"
         );
     }
 

@@ -35,7 +35,7 @@ mod poller;
 
 use std::time::{Duration, Instant};
 
-use bmc_intl::{Intl, format_message};
+use bmc_intl::{Intl, Message, format_lazy, message_descriptor};
 use bmc_render::include_svg;
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
@@ -54,6 +54,10 @@ use crate::poller::{Poller, StatusVersion};
 /// Surface size in logical pixels. The visible indicator is a content-tight box
 /// drawn at the surface's bottom-right corner; the remainder stays transparent.
 const SIZE: (u32, u32) = (160, 48);
+const OFFLINE_CHIP_LABEL: Message = message_descriptor!(
+    default_message: "OFFLINE",
+    description: "Small chip in the screen corner while the device has no network connection; shown in capitals where the script has them",
+);
 /// Label font size in logical pixels.
 const FONT_PX: u32 = 16;
 /// Stable Slint status item used one 16px text line inside 8px vertical padding.
@@ -287,17 +291,9 @@ impl Default for OfflineOverlay {
     }
 }
 
-fn offline_label(intl: &Intl) -> String {
-    format_message!(
-        intl,
-        default_message: "OFFLINE",
-        description: "Small chip in the screen corner while the device has no network connection; shown in capitals where the script has them",
-    )
-}
-
 fn render_chip(r: &mut dyn Renderer, size: (u32, u32), intl: &Intl) {
     let style = offline_text_style();
-    let label = offline_label(intl);
+    let label = format_lazy(intl, &OFFLINE_CHIP_LABEL);
     #[expect(
         clippy::cast_precision_loss,
         reason = "font dimensions fit comfortably in f32 mantissa"
@@ -553,7 +549,10 @@ mod tests {
     #[test]
     fn constants_keep_offline_indicator_legible_and_translucent() {
         assert_eq!(
-            offline_label(&bmc_intl::formatter(Language::default())),
+            format_lazy(
+                &bmc_intl::formatter(Language::default()),
+                &OFFLINE_CHIP_LABEL
+            ),
             "OFFLINE"
         );
         assert_eq!(FONT_PX, 16);
@@ -604,24 +603,29 @@ mod tests {
     fn the_chip_speaks_the_language_it_was_handed() {
         let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/intl/profile-languages");
-        let chinese = bmc_intl::Translations::load(&[profile])
-            .0
-            .formatter(Language::ZH);
-        let mut overlay = overlay_with(Some(offline()), Vec::new());
-        let _ = overlay.tick(Instant::now());
+        let translations = bmc_intl::Translations::load(&[profile]).0;
+        let drawn_in = |language| {
+            let mut overlay = overlay_with(Some(offline()), Vec::new());
+            let _ = overlay.tick(Instant::now());
+            let mut recorder = ShapingRecorder::new(160.0, 48.0);
+            let _ = overlay.render(
+                &mut recorder,
+                OverlayViewport::rectangular(160, 48),
+                &translations.formatter(language),
+                FrameKind::Fresh,
+            );
+            recorder
+        };
+        let english = drawn_in(Language::EN_GB);
+        let english = english.drawn_texts();
+        let chinese = drawn_in(Language::ZH);
+        let chinese = chinese.drawn_texts();
 
-        let mut recorder = ShapingRecorder::new(160.0, 48.0);
-        let _ = overlay.render(
-            &mut recorder,
-            OverlayViewport::rectangular(160, 48),
-            &chinese,
-            FrameKind::Fresh,
-        );
-
-        let drawn = recorder.drawn_texts();
+        let label = "OFFLINE";
+        assert!(english.contains(&label), "{english:?}");
         assert!(
-            drawn.contains(&"离线"),
-            "the chip must speak the language it was handed: {drawn:?}"
+            !chinese.contains(&label) && chinese.len() == english.len(),
+            "the chip must speak the language it was handed: {chinese:?}"
         );
     }
 
