@@ -49,7 +49,8 @@ use crate::renderer::prelude::*;
 use crate::renderer::reservations::TagReservations;
 use crate::renderer::{AssetSuspendResult, AssetTagState, FrameBackground, FrameClear};
 
-/// One recorded [`RenderText::draw_text`] call.
+/// One recorded line of text: a [`RenderText::draw_text`]
+/// or [`RenderText::draw_canvas_text`] call.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawnText {
     pub text: String,
@@ -137,11 +138,11 @@ impl ShapingRecorder {
         }
     }
 
-    /// The single recorded text draw, for tests that expect exactly one.
+    /// The single recorded line of text, for tests that expect exactly one.
     ///
     /// # Panics
     ///
-    /// Panics unless exactly one [`RenderText::draw_text`] call was recorded.
+    /// Panics unless exactly one [`DrawnText`] was recorded.
     #[must_use]
     pub fn only_text(&self) -> &DrawnText {
         assert_eq!(
@@ -151,6 +152,16 @@ impl ShapingRecorder {
             self.texts
         );
         &self.texts[0]
+    }
+
+    /// The text of every recorded line and paragraph.
+    #[must_use]
+    pub fn drawn_texts(&self) -> Vec<&str> {
+        self.texts
+            .iter()
+            .map(|text| text.text.as_str())
+            .chain(self.paragraphs.iter().map(|p| p.text.as_str()))
+            .collect()
     }
 }
 
@@ -337,7 +348,18 @@ impl RenderText for ShapingRecorder {
         });
     }
 
-    fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
+    fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a font size fits an f32 mantissa"
+        )]
+        self.texts.push(DrawnText {
+            text: text.to_owned(),
+            x,
+            y,
+            size: style.size as f32,
+        });
+    }
 
     fn draw_curved_text(
         &mut self,
