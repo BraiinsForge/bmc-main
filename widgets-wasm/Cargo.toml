@@ -37,6 +37,7 @@ members = [
     "spacex-launch",
     "ticker-list",
     "ticker-single",
+    "victron-solar",
     "weather",
 ]
 
