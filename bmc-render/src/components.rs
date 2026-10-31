@@ -31,7 +31,9 @@ pub(crate) mod switcher;
 pub(crate) mod tag;
 
 pub use button::*;
-pub use notification::{measure_notification_banner, render_notification_banner};
+pub use notification::{
+    measure_notification_banner, render_notification_banner, render_stopped_widget_banner,
+};
 pub(crate) use relative_time::rel_parts;
 pub use relative_time::{RelTimeWords, next_change_delay_ms};
 pub use switcher::{SwitcherData, switcher_size};

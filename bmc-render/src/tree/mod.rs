@@ -70,7 +70,7 @@ mod walk;
 
 // Re-export for other modules
 pub use crate::components::notification::{
-    measure_notification_banner, render_notification_banner,
+    measure_notification_banner, render_notification_banner, render_stopped_widget_banner,
 };
 pub use bmc_ui::tree::*;
 

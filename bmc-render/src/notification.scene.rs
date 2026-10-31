@@ -39,3 +39,25 @@ fn notification_kinds(ctx: &mut SceneCtx, ui: &mut Ui) {
         )
     });
 }
+
+/// What a widget's surface shows once the host stops it for using too many resources,
+/// over a frame the widget can no longer draw, at every widget size, BFM's round face masked.
+#[scene]
+fn stopped_widget(ctx: &mut SceneCtx, ui: &mut Ui) {
+    for viewport in DEVICE_VIEWPORTS {
+        ui.heading(viewport.label);
+        ctx.custom_stage(
+            ui,
+            viewport.size,
+            Box::new(|renderer, _interaction, _w, _h, _delta| {
+                let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
+                bmc_render::tree::render_stopped_widget_banner(
+                    &intl,
+                    bmc_render::ui::BLACK,
+                    renderer,
+                );
+                false
+            }),
+        );
+    }
+}

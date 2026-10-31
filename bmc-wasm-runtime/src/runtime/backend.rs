@@ -27,8 +27,8 @@ use std::ptr::NonNull;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
-use bmc_intl::{Language, format_message};
-use bmc_ui::{BLACK, BitmapId, Color, ICON_METER, MeshId, RED_60, SVG_RESERVED_MIN, SvgId};
+use bmc_intl::Language;
+use bmc_ui::{BLACK, BitmapId, Color, MeshId, SVG_RESERVED_MIN, SvgId};
 use bmc_wasm_protocol::{ON_TIMER_EXPORT, SDK_INIT_EXPORT, SDK_VERSION, version_unpack};
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
@@ -1644,36 +1644,7 @@ impl WasmWidgetRuntime {
             .expect("BUG: draw_dead_overlay called outside `with_renderer` scope");
         // SAFETY: same as `render_cached_tree`.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
-        let canvas_w = renderer.width();
-        let canvas_h = renderer.height();
-
-        let intl = &*state.host_intl;
-        let title = format_message!(
-            intl,
-            default_message: "This widget has been stopped",
-            description: "Banner title over a widget the host suspended for using too many resources",
-        );
-        let subtitle = format_message!(
-            intl,
-            default_message: "It used too many resources and was suspended.",
-            description: "Banner line under the stopped-widget title",
-        );
-        let banner_w = f32::clamp(canvas_w * 0.6, 250.0, 400.0);
-        let banner_h = tree::measure_notification_banner(&title, &subtitle, banner_w, renderer);
-
-        renderer.fill_rect(0.0, 0.0, canvas_w, canvas_h, background.scrim());
-
-        tree::render_notification_banner(
-            &title,
-            &subtitle,
-            RED_60,
-            ICON_METER,
-            (canvas_w - banner_w) / 2.0,
-            (canvas_h - banner_h) / 2.0,
-            banner_w,
-            banner_h,
-            renderer,
-        );
+        tree::render_stopped_widget_banner(&state.host_intl, background.scrim(), renderer);
     }
 
     /// Reset the fuel strike counter and dead state.

@@ -21,8 +21,11 @@
 //! Notification banner component.
 
 #![expect(clippy::cast_precision_loss)]
-#![allow(clippy::wildcard_imports)]
+// Clippy leaves `wildcard_imports` alone under `cfg(test)`,
+// so a plain `expect` goes unfulfilled in the `lib test` build `just clippy` checks.
+#![cfg_attr(not(test), expect(clippy::wildcard_imports))]
 
+use bmc_intl::{Intl, format_message};
 // Vocabulary modules rather than the root, whose component builders clash
 // with taffy's prelude, `span` for one.
 use bmc_ui::NotificationKind;
@@ -225,6 +228,37 @@ pub fn render_notification_banner(
         w,
         h,
         &mut target,
+    );
+}
+
+/// The banner over a widget the host stopped for using too many resources,
+/// centred on a canvas first filled with `scrim`, which dims the widget's last frame or hides it.
+pub fn render_stopped_widget_banner(intl: &Intl, scrim: Color, renderer: &mut dyn Renderer) {
+    let (canvas_w, canvas_h) = (renderer.width(), renderer.height());
+    let title = format_message!(
+        intl,
+        default_message: "This widget has been stopped",
+        description: "Banner title over a widget the host suspended for using too many resources",
+    );
+    let subtitle = format_message!(
+        intl,
+        default_message: "It used too many resources and was suspended.",
+        description: "Banner line under the stopped-widget title",
+    );
+    let banner_w = f32::clamp(canvas_w * 0.6, 250.0, 400.0);
+    let banner_h = measure_notification_banner(&title, &subtitle, banner_w, renderer);
+
+    renderer.fill_rect(0.0, 0.0, canvas_w, canvas_h, scrim);
+    render_notification_banner(
+        &title,
+        &subtitle,
+        RED_60,
+        ICON_METER,
+        (canvas_w - banner_w) / 2.0,
+        (canvas_h - banner_h) / 2.0,
+        banner_w,
+        banner_h,
+        renderer,
     );
 }
 
