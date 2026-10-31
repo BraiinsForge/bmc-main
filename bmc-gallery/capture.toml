@@ -94,7 +94,7 @@ Trend = "Falling"
 
 [[shot]]
 name = "ticker-list-mixed-trends"
-scene = "bmc_gallery::ticker_list::Ticker List"
+scene = "bmc_gallery::ticker_list::Healthy"
 frames = 4
 
 # The two shots straddle the 92 px cutoff:
