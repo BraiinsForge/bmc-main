@@ -133,6 +133,9 @@ stdenv.mkDerivation (finalAttrs: {
 
   patches = [
     ./opencl.patch
+    # Softpin needs Linux 5.19+ (2829a9fcb738) to reap idle mappings; on the
+    # Deck's 5.10 kernel address reuse fails GPU submits with ENOSPC.
+    ./etnaviv-softpin-old-kernel.patch
   ];
 
   postPatch = ''
