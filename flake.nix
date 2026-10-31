@@ -142,9 +142,12 @@
               pyproject-build-systems.overlays.default
               pythonOverlay
             ]);
-        # The harness venv contains both members (bmc-virt depends on bmc-tui),
-        # so bmc_virt and bmc_tui are both importable for the guest daemon.
-        bmc-virt-harness-venv = pythonSet.mkVirtualEnv "bmc-virt-harness" pythonWorkspace.deps.default;
+        # The guest daemon's venv: bmc-virt and the bmc-tui it depends on,
+        # named so a member added to the workspace does not land in the guest.
+        bmc-virt-harness-venv = pythonSet.mkVirtualEnv "bmc-virt-harness" { bmc-virt = [ ]; };
+
+        # Every member, for the scripts whose `#!nix shell` lines run on it.
+        python-tools-venv = pythonSet.mkVirtualEnv "python-tools" pythonWorkspace.deps.default;
 
         # Light venv backing the `deck` app — bmc-tui alone, without the other members.
         bmc-tui-venv = pythonSet.mkVirtualEnv "bmc-tui" { bmc-tui = [ ]; };
@@ -364,8 +367,7 @@
             text = ''exec ${./scripts/check-binary-lfs.sh} "$@"'';
           };
           bmc-virt-harness = bmc-virt-harness-venv;
-          # The same locked workspace venv, named for the scripts whose `#!nix shell` lines run on it.
-          python-tools = bmc-virt-harness-venv;
+          python-tools = python-tools-venv;
         };
 
         apps.fmt-svg = {
