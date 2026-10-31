@@ -294,6 +294,8 @@
             "bmc-virt/harness/**/*.py"
             # bmc-tui has its own formatter config (bmc-tui/pyproject.toml)
             "bmc-tui/**/*.py"
+            # web-probe has its own formatter config (web-probe/pyproject.toml)
+            "web-probe/**/*.py"
             # yamlfmt canonicalises folded scalars to a single line (collapsing
             # the readable multi-line `>-` form used for `workspace_lints_ignore`).
             # Skip entirely; CI YAML is stable enough to hand-format.
@@ -368,6 +370,13 @@
           };
           bmc-virt-harness = bmc-virt-harness-venv;
           python-tools = python-tools-venv;
+          # What web-probe launches: headless Chromium, which runs on the headless shell alone.
+          web-probe-browsers = pkgs.playwright-driver.browsers.override {
+            withChromium = false;
+            withFirefox = false;
+            withWebkit = false;
+            withFfmpeg = false;
+          };
         };
 
         apps.fmt-svg = {

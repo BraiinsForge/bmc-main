@@ -1,0 +1,48 @@
+[project]
+name = "web-probe"
+version = "0.1.0"
+description = "Drives the device's web UI in a browser: log in, switch language, walk its pages, take shots"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.13"
+dependencies = [
+    # The release of nixpkgs' `playwright-driver`, whose browsers it runs.
+    "playwright==1.64.1",
+    "tyro>=1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+cache-dir = "../.tmp/ruff_cache"
+
+[tool.ruff.lint]
+preview = true
+explicit-preview-rules = true
+select = [
+    "F", # pyflakes
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "I", # isort
+    "N", # pep8-naming
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
+    "A", # flake8-builtins
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+    "PTH", # flake8-use-pathlib
+    "PL", # pylint
+    "PERF", # perflint
+    "FURB", # refurb
+    "PLR0917", # too many positional arguments (preview in ruff < 0.16)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["web_probe"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests routinely assert against literal expected values.
+"tests/**" = ["PLR2004"]

@@ -450,6 +450,7 @@ in
             ../widgets-wasm-examples
             ../bmc-virt/harness
             ../bmc-tui
+            ../web-probe
           ]);
       };
     } ''

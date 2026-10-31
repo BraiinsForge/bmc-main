@@ -1,0 +1,14 @@
+# Browsers for driving the device's web UI, and a walk through it.
+
+import '../common.justfile'
+
+set working-directory := '..'
+set positional-arguments
+
+# Print the nixpkgs browsers web-probe runs, for `PLAYWRIGHT_BROWSERS_PATH`.
+browsers:
+    @nix build --no-link --print-out-paths .#web-probe-browsers
+
+# Walk the web UI at ORIGIN, a shot of every page into `.tmp/web-probe`; `--language TAG` switches first.
+walk ORIGIN *ARGS:
+    PLAYWRIGHT_BROWSERS_PATH="$(just --justfile {{ quote(source_file()) }} browsers)" {{ NIX_DEV }} uv run python -m web_probe "$@"

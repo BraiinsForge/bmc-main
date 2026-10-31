@@ -7,6 +7,7 @@ members = [
     "bmc-virt/harness",
     "bmc-wasm-runtime/tools",
     "scripts",
+    "web-probe",
     "widgets-wasm/clock/tools",
 ]
 
@@ -32,6 +33,7 @@ testpaths = [
     "bmc-tui/tests",
     "bmc-virt/harness/tests",
     "scripts/tests",
+    "web-probe/tests",
 ]
 # The scripts are run as files rather than installed, so their tests import them from here.
 pythonpath = ["scripts"]
@@ -80,6 +82,8 @@ executionEnvironments = [
     # bmc_tui as the in-repo source it is, not the untyped install the venv holds.
     { root = "bmc-virt/harness", extraPaths = ["bmc-tui"] },
     { root = "scripts" },
+    { root = "web-probe/tests", extraPaths = ["web-probe"], reportPrivateUsage = false },
+    { root = "web-probe" },
     # Run as files, so each script's own directory is on `sys.path` for its sibling imports.
     { root = "bmc-wasm-runtime/tools" },
     # Blender 4.0, the oldest the README supports, embeds Python 3.10.

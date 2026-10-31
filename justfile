@@ -14,6 +14,8 @@ mod netsim 'bmc-netsim/justfile'
 mod virt 'bmc-virt/justfile'
 # WASM widget tooling: dev testbed, capture, profiling, size gates.
 mod wasm 'bmc-wasm-runtime/justfile'
+# Browsers for driving the device's web UI.
+mod web-probe 'web-probe/justfile'
 # Per-widget dev recipes.
 mod widgets 'widgets-wasm'
 
@@ -84,9 +86,9 @@ format:
     # rejects, so without it a clean `just validate` says nothing about the fmt job.
     nix fmt -- --no-cache
     nix run .#fmt-svg
-    # The two workspace members only; `scripts/` is treefmt's,
+    # The members with a ruff config of their own; `scripts/` is treefmt's,
     # and handing it to both leaves them fighting for style.
-    {{ NIX_DEV }} ruff format bmc-tui bmc-virt/harness
+    {{ NIX_DEV }} ruff format bmc-tui bmc-virt/harness web-probe
 
 # Stamp the `.license.tpl` GPL header onto any first-party source missing it.
 license-fix:
@@ -107,13 +109,13 @@ clippy:
     # Quiet as a whole, comments included, so stdout carries the ADF alone.
     {{ NIX_DEV }} uv run scripts/md_to_adf.py {{ FILE }} {{ ARGS }}
 
-# Lint, type-check and test the Python uv workspace (bmc-tui + harness).
+# Lint, type-check and test the Python uv workspace (bmc-tui, harness, web-probe).
 python:
     # ruff/basedpyright are nix-provided, matching the pure-nix CI; pytest
     # runs through uv. `uv sync` first so basedpyright sees the workspace .venv.
     {{ NIX_DEV }} uv sync
-    {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness scripts
-    {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness
+    {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness web-probe scripts
+    {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness web-probe
     {{ NIX_DEV }} basedpyright
     # coverage.py opens its data file without creating the directory above it,
     # and this one lives under the scratch tree, which gets cleaned out —
