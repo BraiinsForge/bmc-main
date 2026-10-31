@@ -47,6 +47,13 @@ pub struct Entry {
     pub description: Option<String>,
 }
 
+impl Extracted {
+    /// The description a translator file keeps: none for an empty one.
+    fn kept_description(&self) -> Option<String> {
+        self.description.clone().filter(|d| !d.is_empty())
+    }
+}
+
 pub type Extraction = BTreeMap<String, Extracted>;
 pub type Entries = BTreeMap<String, Entry>;
 
@@ -180,7 +187,7 @@ pub fn merge(extracted: &Extraction, prior: &Entries) -> Entries {
             let entry = Entry {
                 source: message.message.clone(),
                 translation,
-                description: message.description.clone().filter(|d| !d.is_empty()),
+                description: message.kept_description(),
             };
             (id.clone(), entry)
         })
@@ -240,6 +247,47 @@ pub fn stale_entries(extracted: &Extraction, entries: &Entries, fix_command: &st
         &redescribed,
         |id| format!("{id}: description is stale; {fix}"),
         |count| format!("{count} descriptions stale; {fix}"),
+    ));
+    found
+}
+
+/// The pseudo-locale's entries for `extracted`, each translation its source respelled.
+#[must_use]
+pub fn pseudo_entries(extracted: &Extraction) -> Entries {
+    extracted
+        .iter()
+        .map(|(id, message)| {
+            let entry = Entry {
+                source: message.message.clone(),
+                translation: Some(bmc_intl_pseudo::respell(&message.message)),
+                description: message.kept_description(),
+            };
+            (id.clone(), entry)
+        })
+        .collect()
+}
+
+/// How the pseudo-locale's file lags the extraction: as [`stale_entries`],
+/// then a translation that is not its source respelled, each naming `fix_command`.
+#[must_use]
+pub fn stale_pseudo(extracted: &Extraction, entries: &Entries, fix_command: &str) -> Vec<String> {
+    let mut found = stale_entries(extracted, entries, fix_command);
+    let fix = format!("run {fix_command}");
+    let expected = pseudo_entries(extracted);
+    // A reworded source is already reported above, its translation with it.
+    let not_respelled: Vec<&String> = entries
+        .iter()
+        .filter(|(id, entry)| {
+            expected.get(*id).is_some_and(|expected| {
+                expected.source == entry.source && expected.translation != entry.translation
+            })
+        })
+        .map(|(id, _)| id)
+        .collect();
+    found.extend(named_or_counted(
+        &not_respelled,
+        |id| format!("{id}: translation is not its source respelled; {fix}"),
+        |count| format!("{count} translations are not their source respelled; {fix}"),
     ));
     found
 }
@@ -415,5 +463,52 @@ mod tests {
         let text = std::fs::read_to_string(&path).expect("BUG: just written");
         assert!(text.contains("\"Loading…\""), "non-ASCII as itself: {text}");
         assert!(text.ends_with("}\n"), "a newline at the end");
+    }
+
+    #[test]
+    fn the_pseudo_locale_translates_each_message_as_its_source_respelled() {
+        let entries = pseudo_entries(&extracted());
+        assert_eq!(
+            entries.get("aaa"),
+            Some(&Entry {
+                source: "Clear".to_owned(),
+                translation: Some(bmc_intl_pseudo::respell("Clear")),
+                description: Some("Weather condition".to_owned()),
+            })
+        );
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn a_current_pseudo_file_is_not_stale() {
+        let extracted = extracted();
+        assert!(stale_pseudo(&extracted, &pseudo_entries(&extracted), "fix").is_empty());
+    }
+
+    #[test]
+    fn a_pseudo_translation_edited_by_hand_is_stale() {
+        let extracted = extracted();
+        let mut entries = pseudo_entries(&extracted);
+        if let Some(entry) = entries.get_mut("aaa") {
+            entry.translation = Some("[Clear]".to_owned());
+        }
+        assert_eq!(
+            stale_pseudo(&extracted, &entries, "fix"),
+            ["aaa: translation is not its source respelled; run fix"]
+        );
+    }
+
+    #[test]
+    fn a_reworded_source_is_reported_once() {
+        let extracted = extracted();
+        let mut entries = pseudo_entries(&extracted);
+        if let Some(entry) = entries.get_mut("aaa") {
+            entry.source = "Cloudy".to_owned();
+        }
+        let found = stale_pseudo(&extracted, &entries, "fix");
+        assert!(
+            matches!(&found[..], [only] if only.starts_with("aaa: source is")),
+            "{found:?}"
+        );
     }
 }

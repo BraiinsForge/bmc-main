@@ -315,10 +315,12 @@ mod tests {
         entries.get_mut(&id).expect("BUG: present").translation = Some("你好 {nom}".to_owned());
         write_json(&translator_file, &entries).expect("BUG: writable");
         let checked = verify::verify_surface(&surface, &pattern).expect("BUG: readable");
-        let [file] = &checked[..] else {
-            panic!("one translator file: {checked:?}");
+        let [file, pseudo] = &checked[..] else {
+            panic!("one translator file, then the pseudo-locale's: {checked:?}");
         };
         assert_eq!(file.file, translator_file);
+        assert_eq!(pseudo.file, surface.pseudo_file());
+        assert!(pseudo.problems.is_empty(), "{checked:?}");
         assert!(
             matches!(&file.problems[..], [one] if one.contains(&id)),
             "{checked:?}"
@@ -423,6 +425,7 @@ mod tests {
         let counts: Vec<(String, usize)> = verify::verify_surface(&surface, &pattern)
             .expect("BUG: readable")
             .iter()
+            .filter(|file| file.file != surface.pseudo_file())
             .map(|file| (language_of(&file.file), file.untranslated))
             .collect();
         assert_eq!(

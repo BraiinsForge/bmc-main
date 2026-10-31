@@ -38,7 +38,8 @@ pub fn run(surfaces: &[SurfaceName], repo: &Path) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Extract `surface` and sync each of its translator files through [`translator::merge`].
+/// Extract `surface`, sync each of its translator files through
+/// [`translator::merge`], and write the pseudo-locale's whole.
 ///
 /// # Errors
 /// The extraction's failure, or a translator file that cannot be read or written.
@@ -49,15 +50,17 @@ pub fn extract_surface(surface: &Surface, id_pattern: &str) -> Result<(), String
         let merged = translator::merge(&extracted, &translator::read_entries(translator_file)?);
         translator::write_json(translator_file, &merged)?;
     }
+    translator::write_json(
+        &surface.pseudo_file(),
+        &translator::pseudo_entries(&extracted),
+    )?;
     let languages: Vec<String> = files
         .iter()
-        .map(|file| console::lit(&surface::language_of(file)))
+        .map(|file| surface::language_of(file))
+        .chain([bmc_intl_pseudo::LANGUAGE.tag()])
+        .map(|language| console::lit(&language))
         .collect();
-    let synced = if languages.is_empty() {
-        "no translator files yet".to_owned()
-    } else {
-        format!("translator files synced: {}", languages.join(", "))
-    };
+    let synced = format!("translator files synced: {}", languages.join(", "));
     console::ok(&format!(
         "{}: {} messages extracted, {synced}",
         console::name(&surface.name),

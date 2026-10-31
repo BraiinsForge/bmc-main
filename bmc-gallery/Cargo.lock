@@ -734,6 +734,7 @@ name = "bmc-intl"
 version = "0.1.0"
 dependencies = [
  "bmc-intl-message",
+ "bmc-intl-pseudo",
  "bmc-intl-units",
  "bmc-shared-utils",
  "bmc-ui",
@@ -759,6 +760,17 @@ name = "bmc-intl-message"
 version = "0.1.0"
 dependencies = [
  "formatjs_intl_macros",
+]
+
+[[package]]
+name = "bmc-intl-pseudo"
+version = "0.1.0"
+dependencies = [
+ "bmc-shared-utils",
+ "formatjs_icu_messageformat",
+ "formatjs_icu_messageformat_parser",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

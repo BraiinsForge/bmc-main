@@ -21,7 +21,8 @@
 //! Locale selection and the translations language packs bring.
 //!
 //! English is the source: every message carries its `default_message` inline and `en` has no catalog.
-//! Every other language is a pack read at run time ([`packs`]), with the CLDR data to format it by.
+//! Every other language is a pack read at run time ([`packs`]), with the CLDR data to format it by,
+//! but for the pseudo-locale, whose catalogs a development build embeds ([`pseudo`]).
 //!
 //! A language's pack is filed under [`pack_language`], where negotiation starts its fallback chain:
 //! `zh` for Simplified Chinese, as `zh-Hans`, `zh-CN` and `zh-Hans-CN` all fall back to it.
@@ -53,6 +54,7 @@ mod data;
 mod formatter;
 mod localized;
 pub mod packs;
+pub mod pseudo;
 mod time;
 
 use std::borrow::Cow;
@@ -92,7 +94,7 @@ struct BuiltInEnglish {
     flag_bin: &'static [u8],
 }
 
-const BUILT_IN_ENGLISHES: [BuiltInEnglish; 2] = [
+const BUILT_IN_ENGLISHES: &[BuiltInEnglish] = &[
     BuiltInEnglish {
         language: Language::EN_GB,
         native_name: "English (UK)",
@@ -104,6 +106,14 @@ const BUILT_IN_ENGLISHES: [BuiltInEnglish; 2] = [
         native_name: "English (US)",
         flag_svg: include_bytes!("../../../assets/intl/english/us.svg"),
         flag_bin: bmc_shared_utils::include_lfs!("../../../assets/intl/english/us.bin"),
+    },
+    // A development build alone offers the pseudo-locale.
+    #[cfg(debug_assertions)]
+    BuiltInEnglish {
+        language: Language::EN_XA,
+        native_name: "en-XA",
+        flag_svg: include_bytes!("../../../assets/intl/pseudo/flag.svg"),
+        flag_bin: bmc_shared_utils::include_lfs!("../../../assets/intl/pseudo/flag.bin"),
     },
 ];
 
@@ -575,9 +585,13 @@ impl Translations {
             .find(|step| self.packs.get(step).is_some_and(|pack| !pack.refused()))
     }
 
-    /// The first pack along `language`'s fallback chain the load does not refuse,
-    /// as negotiation passes a language with no catalog.
+    /// The pseudo-locale's embedded catalogs, else the first pack along `language`'s fallback chain
+    /// the load does not refuse, as negotiation passes a language with no catalog.
     fn contents_for(&self, language: Language) -> Option<&PackContents> {
+        #[cfg(debug_assertions)]
+        if language == Language::EN_XA {
+            return Some(pseudo::contents());
+        }
         fallback_chain(language)
             .into_iter()
             .find_map(|step| self.packs.get(&step)?.loaded(step, true).contents.as_ref())

@@ -837,6 +837,7 @@ name = "bmc-intl"
 version = "0.1.0"
 dependencies = [
  "bmc-intl-message",
+ "bmc-intl-pseudo",
  "bmc-intl-units",
  "bmc-shared-utils",
  "bmc-ui",
@@ -884,11 +885,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-intl-pseudo"
+version = "0.1.0"
+dependencies = [
+ "bmc-shared-utils",
+ "formatjs_icu_messageformat",
+ "formatjs_icu_messageformat_parser",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bmc-intl-tools"
 version = "0.1.0"
 dependencies = [
  "bmc-intl-console",
  "bmc-intl-message",
+ "bmc-intl-pseudo",
  "bmc-intl-units",
  "bmc-shared-utils",
  "clap",

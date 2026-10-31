@@ -1,0 +1,45 @@
+{
+  "source": "formatjs_cli 1.8.2, crates/formatjs_cli/compile.rs: EN_XA_PREFIX, EN_XA_SUFFIX, ACCENTED_CAPS, ACCENTED_SMALL, transform_ascii",
+  "brackets": [
+    "[",
+    "]"
+  ],
+  "letters": "ȦƁƇḒḖƑƓĦĪĴĶĿḾȠǾƤɊŘŞŦŬṼẆẊẎẐȧƀƈḓḗƒɠħīĵķŀḿƞǿƥɋřşŧŭṽẇẋẏẑ",
+  "doubled": "aeou",
+  "samples": [
+    {
+      "source": "Connect to {ssid}",
+      "values": {
+        "ssid": "deck"
+      },
+      "spoken": "[Ƈǿǿƞƞḗḗƈŧ ŧǿǿ deck]"
+    },
+    {
+      "source": "{count, plural, one {{count} widget} other {{count} widgets}} loaded",
+      "values": {
+        "count": 3
+      },
+      "spoken": "[3 ẇīḓɠḗḗŧş ŀǿǿȧȧḓḗḗḓ]"
+    },
+    {
+      "source": "It''s {state}",
+      "values": {
+        "state": "on"
+      },
+      "spoken": "[Īŧ'ş on]"
+    },
+    {
+      "source": "Ẇī-Fi 5 GHz",
+      "values": {},
+      "spoken": "[Ẇī-Ƒī 5 ƓĦẑ]"
+    },
+    {
+      "source": "Tap <b>here</b> to start",
+      "values": {},
+      "tags": [
+        "b"
+      ],
+      "spoken": "[Ŧȧȧƥ ħḗḗřḗḗ ŧǿǿ şŧȧȧřŧ]"
+    }
+  ]
+}

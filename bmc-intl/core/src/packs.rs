@@ -456,8 +456,17 @@ fn read_units(path: &Path, report: &mut LoadReport) -> Option<units::Loaded> {
 
 /// `id → translation`; `None` when there is no such file or it is not an object.
 fn read_translations(path: &Path, report: &mut LoadReport) -> Option<Messages> {
-    let text = read_text(path, report)?;
-    let entries: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text)
+    decode_translations(&read_text(path, report)?, path, report)
+}
+
+/// `id → translation` of a translator file's `text`, read from `path`,
+/// or `None` when it is not an object.
+pub(crate) fn decode_translations(
+    text: &str,
+    path: &Path,
+    report: &mut LoadReport,
+) -> Option<Messages> {
+    let entries: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)
         .map_err(|error| report.skip(path, format_args!("not a JSON object: {error}")))
         .ok()?;
     Some(

@@ -24,6 +24,7 @@ workspace = true
 [dependencies]
 bmc-intl-console.workspace = true
 bmc-intl-message.workspace = true
+bmc-intl-pseudo.workspace = true
 bmc-intl-units.workspace = true
 bmc-shared-utils = { workspace = true, features = ["language"] }
 clap.workspace = true

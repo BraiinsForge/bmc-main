@@ -45,6 +45,9 @@ impl Language {
     pub const EN_GB: Self = Self::regional(language!("en"), region!("GB"));
     /// American English.
     pub const EN_US: Self = Self::regional(language!("en"), region!("US"));
+    /// The pseudo-locale: English respelled with accents and brackets,
+    /// so plain English left on screen is copy that bypassed the translation pipeline.
+    pub const EN_XA: Self = Self::regional(language!("en"), region!("XA"));
     /// Simplified Chinese, spelled as its pack is filed: Han simplified is `zh`'s default script.
     pub const ZH: Self = Self::bare(language!("zh"));
 
@@ -175,8 +178,12 @@ mod tests {
     }
 
     #[test]
-    fn both_englishes_are_their_regional_tags() {
-        for (tag, language) in [("en-GB", Language::EN_GB), ("en-US", Language::EN_US)] {
+    fn the_englishes_are_their_regional_tags() {
+        for (tag, language) in [
+            ("en-GB", Language::EN_GB),
+            ("en-US", Language::EN_US),
+            ("en-XA", Language::EN_XA),
+        ] {
             assert_eq!(Language::parse(tag).expect("BUG: a tag"), language);
             assert_eq!(language.tag(), tag);
         }

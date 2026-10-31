@@ -1,0 +1,19 @@
+[package]
+name = "bmc-intl-pseudo"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "How the en-XA pseudo-locale respells English: the one transform its catalogs and the runtime share"
+
+[package.metadata.nix]
+include = ["../../assets/intl/pseudo-locale.json"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bmc-shared-utils = { workspace = true, features = ["language"] }
+formatjs_icu_messageformat.workspace = true
+formatjs_icu_messageformat_parser.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

@@ -31,6 +31,17 @@ fn profile() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/intl/profile-languages")
 }
 
+/// What [`Translations::languages`] lists over `packs`: the built-in Englishes,
+/// the pseudo-locale in a development build alone, then the packs.
+fn offered(packs: &[Language]) -> Vec<Language> {
+    let mut languages = vec![Language::EN_GB, Language::EN_US];
+    if cfg!(debug_assertions) {
+        languages.push(Language::EN_XA);
+    }
+    languages.extend_from_slice(packs);
+    languages
+}
+
 /// The profile's Chinese pack's `file`.
 fn profile_zh(file: &str) -> Vec<u8> {
     std::fs::read(profile().join("zh").join(file))
@@ -117,6 +128,89 @@ fn a_message_speaks_english_with_no_pack() {
         let text = format_message!(intl, id: "probe", default_message: "Connect to {ssid}", values: { ssid: "deck" });
         assert_eq!(text, "Connect to deck", "{language}");
     }
+}
+
+#[test]
+fn the_pseudo_locale_is_offered_by_a_development_build_alone() {
+    let (translations, _) = Translations::load(&[]);
+    assert_eq!(
+        translations.languages().contains(&Language::EN_XA),
+        cfg!(debug_assertions)
+    );
+}
+
+/// The pseudo-locale's extracted entries for `file`, by id: its source, then its translation.
+#[cfg(debug_assertions)]
+fn pseudo_entries(file: &str) -> BTreeMap<String, (String, String)> {
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        source: String,
+        translation: String,
+    }
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/intl/pseudo").join(file),
+    )
+    .expect("BUG: `intl extract` writes the pseudo-locale's catalogs");
+    serde_json::from_str::<BTreeMap<String, Entry>>(&text)
+        .expect("BUG: a translator file")
+        .into_iter()
+        .map(|(id, entry)| (id, (entry.source, entry.translation)))
+        .collect()
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn the_pseudo_locale_speaks_an_extracted_message_from_its_catalog() {
+    let entries = pseudo_entries("system.json");
+    let (id, (_, translation)) = entries
+        .iter()
+        .find(|(_, (source, _))| !source.contains(['{', '<', '\'']))
+        .expect("BUG: the host extracts a message that takes no values");
+    let intl = Translations::load(&[]).0.formatter(Language::EN_XA);
+    // A default unlike the message's English, so only the catalog can answer the translation.
+    assert_eq!(
+        intl.format_message_to_string_or_default_ref(
+            MessageDescriptorRef::new(id, "Not the extracted English"),
+            &Values::new()
+        ),
+        *translation
+    );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_message_the_extraction_missed_speaks_plain_english_in_the_pseudo_locale() {
+    let intl = Translations::load(&[]).0.formatter(Language::EN_XA);
+    assert_eq!(
+        intl.format_message_to_string_or_default_ref(
+            MessageDescriptorRef::new("never-extracted", "Tap here"),
+            &Values::new()
+        ),
+        "Tap here"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn the_pseudo_locale_serves_its_extracted_web_catalog() {
+    let web = Translations::load(&[])
+        .0
+        .web(Language::EN_XA)
+        .expect("BUG: a development build serves the pseudo-locale's web catalog");
+    let entries = pseudo_entries("web.json");
+    assert_eq!(web.len(), entries.len());
+    let (id, (_, translation)) = entries.iter().next().expect("BUG: the web extracts messages");
+    assert_eq!(web.get(id), Some(translation));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn the_pseudo_locale_accents_relative_times_without_brackets() {
+    let intl = Translations::load(&[]).0.formatter(Language::EN_XA);
+    assert_eq!(
+        intl.relative_time(5, TimeUnit::Hour, TimeWidth::Long, Direction::Past),
+        "5 ħǿǿŭŭřş ȧȧɠǿǿ"
+    );
 }
 
 #[test]
@@ -273,10 +367,7 @@ fn the_offered_languages_are_both_englishes_then_every_accepted_pack() -> R {
     let (translations, report) = Translations::load(&[profile()]);
     assert!(report.is_clean(), "{report}");
     assert_eq!(report.languages, [Language::ZH]);
-    assert_eq!(
-        translations.languages(),
-        [Language::EN_GB, Language::EN_US, Language::ZH]
-    );
+    assert_eq!(translations.languages(), offered(&[Language::ZH]));
     assert_eq!(translations.info(Language::ZH).native_name, "简体中文");
     assert_eq!(
         translations.info(Language::EN_GB).native_name,
@@ -308,7 +399,10 @@ fn the_offered_languages_are_both_englishes_then_every_accepted_pack() -> R {
 #[test]
 fn every_built_in_english_flag_is_drawable() -> R {
     let translations = Translations::load(&[]).0;
-    for language in crate::BUILT_IN_ENGLISHES.map(|english| english.language) {
+    for language in crate::BUILT_IN_ENGLISHES
+        .iter()
+        .map(|english| english.language)
+    {
         let compiled = translations
             .flag_bin(language)?
             .expect("BUG: every built-in English carries a flag");
@@ -327,7 +421,7 @@ fn a_pack_without_cldr_data_for_its_language_is_refused() {
     let (translations, report) = Translations::load(&[root.path()]);
     assert_eq!(report.refused.len(), 1, "{report}");
     assert_eq!(report.refused[0].0.tag(), "cs");
-    assert_eq!(translations.languages(), [Language::EN_GB, Language::EN_US]);
+    assert_eq!(translations.languages(), offered(&[]));
 }
 
 #[test]
@@ -340,11 +434,7 @@ fn a_pack_with_no_cldr_blob_is_refused_on_its_facts_even_where_the_base_blob_spe
             &translator_file(&[("colour", "Color", Some("Colour"))]),
         );
     let (translations, report) = Translations::read(&[root.path()]);
-    assert_eq!(
-        translations.languages(),
-        [Language::EN_GB, Language::EN_US],
-        "{report}"
-    );
+    assert_eq!(translations.languages(), offered(&[]), "{report}");
     assert_eq!(
         report
             .refused
@@ -449,7 +539,7 @@ fn a_later_roots_misspelt_direction_is_skipped_and_the_language_stays() {
     );
     assert_eq!(
         translations.languages(),
-        [Language::EN_GB, Language::EN_US, Language::ZH],
+        offered(&[Language::ZH]),
         "{report}"
     );
 }
@@ -469,11 +559,7 @@ fn a_later_root_turning_a_language_right_to_left_withdraws_it() {
             &translator_file(&[("web", "Settings", Some("设置"))]),
         );
     let (translations, report) = Translations::load(&[profile(), later.path()]);
-    assert_eq!(
-        translations.languages(),
-        [Language::EN_GB, Language::EN_US],
-        "{report}"
-    );
+    assert_eq!(translations.languages(), offered(&[]), "{report}");
     assert_eq!(report.refused.len(), 1, "{report}");
     assert!(report.languages.is_empty(), "{report}");
     assert!(translations.web(Language::ZH).is_none(), "{report}");
@@ -490,7 +576,7 @@ fn a_later_root_turning_a_language_left_to_right_offers_it_unrefused() {
     let (translations, report) = Translations::load(&[earlier.path(), profile()]);
     assert_eq!(
         translations.languages(),
-        [Language::EN_GB, Language::EN_US, Language::ZH],
+        offered(&[Language::ZH]),
         "{report}"
     );
     assert!(report.is_clean(), "{report}");
@@ -779,10 +865,7 @@ fn reading_the_facts_opens_no_translation_or_cldr_data() -> R {
 
     let (translations, report) = Translations::read(&[root.path()]);
     assert!(report.is_clean(), "{report}");
-    assert_eq!(
-        translations.languages(),
-        [Language::EN_GB, Language::EN_US, cs]
-    );
+    assert_eq!(translations.languages(), offered(&[cs]));
     assert_eq!(translations.info(cs).native_name, "Čeština");
     assert!(
         matches!(translations.flag_svg(cs), Ok(Some(_)))
@@ -825,10 +908,7 @@ fn reading_the_facts_passes_over_contents_that_cannot_be_opened() -> R {
     }
     let (translations, report) = Translations::read(&[root.path()]);
     assert!(report.is_clean(), "{report}");
-    assert_eq!(
-        translations.languages(),
-        [Language::EN_GB, Language::EN_US, Language::parse("cs")?]
-    );
+    assert_eq!(translations.languages(), offered(&[Language::parse("cs")?]));
     Ok(())
 }
 
@@ -988,10 +1068,7 @@ fn a_pack_stands_on_its_own_cldr_data() {
         ["zh-SG"],
         "the zh pack's data does not stand in for a regional pack's own: {report}"
     );
-    assert_eq!(
-        translations.languages(),
-        [Language::EN_GB, Language::EN_US, Language::ZH]
-    );
+    assert_eq!(translations.languages(), offered(&[Language::ZH]));
 }
 
 /// A `zh` pack translating `a`, `b` and a `web.json` entry,

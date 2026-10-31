@@ -230,6 +230,7 @@ bmc-grpc = { path = "bmc-grpc", default-features = false }
 bmc-intl = { path = "bmc-intl/core" }
 bmc-intl-console = { path = "bmc-intl/console" }
 bmc-intl-message = { path = "bmc-intl/message" }
+bmc-intl-pseudo = { path = "bmc-intl/pseudo" }
 bmc-intl-units = { path = "bmc-intl/units" }
 bmc-ipc = { path = "bmc-ipc" }
 bmc-kobject = { path = "bmc-kobject" }

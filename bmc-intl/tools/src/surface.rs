@@ -36,6 +36,9 @@ use crate::translator::{ByLanguage, read_entries};
 /// The firmware's own language packs, one `<key>/` directory per language.
 pub const PROFILE_PACKS: &str = "assets/intl/profile-languages";
 
+/// The pseudo-locale's translator files, which `intl extract` writes whole.
+pub const PSEUDO_FILES: &str = "assets/intl/pseudo";
+
 /// A crate that depends on one of these can declare host copy:
 /// `format_message!` through the formatter, `message_descriptor!` through the lazy-message crate.
 const MESSAGE_CRATES: [&str; 2] = ["bmc-intl", "bmc-intl-message"];
@@ -59,6 +62,8 @@ pub struct Surface {
     pub packs: PathBuf,
     /// Each pack's translator file for the surface.
     pub file_name: &'static str,
+    /// Where the pseudo-locale's translator file for the surface goes, under `file_name`.
+    pub pseudo: PathBuf,
     /// Globs `formatjs extract` skips.
     pub ignore: Vec<String>,
 }
@@ -103,6 +108,11 @@ impl Surface {
     #[must_use]
     pub fn translator_file(&self, language: &str) -> PathBuf {
         self.packs.join(language).join(self.file_name)
+    }
+
+    #[must_use]
+    pub fn pseudo_file(&self) -> PathBuf {
+        self.pseudo.join(self.file_name)
     }
 
     #[must_use]
@@ -219,6 +229,7 @@ fn surface(name: SurfaceName, repo: &Path) -> Result<Surface, String> {
             sources: host_sources(&workspace_packages(repo)?),
             packs: repo.join(PROFILE_PACKS),
             file_name: "system.json",
+            pseudo: repo.join(PSEUDO_FILES),
             ignore: Vec::new(),
         },
         SurfaceName::Web => Surface {
@@ -230,6 +241,7 @@ fn surface(name: SurfaceName, repo: &Path) -> Result<Surface, String> {
             ],
             packs: repo.join(PROFILE_PACKS),
             file_name: "web.json",
+            pseudo: repo.join(PSEUDO_FILES),
             // A spec's messages are fixtures, not copy.
             ignore: vec!["**/*.d.ts".to_owned(), "**/*.spec.{ts,tsx}".to_owned()],
         },
@@ -312,6 +324,7 @@ pub fn probe_surface(root: &Path, sources: &str) -> Surface {
         sources: vec![root.join(sources).display().to_string()],
         packs: root.join("packs"),
         file_name: "system.json",
+        pseudo: root.join("pseudo"),
         ignore: Vec::new(),
     }
 }

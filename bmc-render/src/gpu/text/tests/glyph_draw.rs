@@ -843,6 +843,37 @@ fn delegated_runs_carry_cosmic_kerning() {
     );
 }
 
+/// Tofu in a pseudo-locale shot would read as copy that bypassed the pipeline.
+#[test]
+fn every_pseudo_locale_letter_shapes_to_a_glyph_in_either_family() {
+    let mut font_system = font_system();
+    for family in [SANS_FAMILY, DECK_FAMILY] {
+        let mut buffer = Buffer::new(&mut font_system, Metrics::new(20.0, 20.0));
+        buffer.set_text(
+            &mut font_system,
+            bmc_intl::pseudo::letters(),
+            &named(family, false),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut font_system, false);
+        let tofu: Vec<&str> = buffer
+            .layout_runs()
+            .flat_map(|run| {
+                run.glyphs
+                    .iter()
+                    .filter(|glyph| glyph.glyph_id == 0)
+                    .map(|glyph| {
+                        run.text
+                            .get(glyph.start..glyph.end)
+                            .expect("BUG: a glyph's range slices its own line")
+                    })
+            })
+            .collect();
+        assert!(tofu.is_empty(), "{family} draws no glyph for {tofu:?}");
+    }
+}
+
 const SANS_FAMILY: &str = "Braiins Sans";
 const DECK_FAMILY: &str = "Braiins Deck Sans";
 

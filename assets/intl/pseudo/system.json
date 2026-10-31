@@ -1,0 +1,462 @@
+{
+  "+SR1j9Py5N": {
+    "source": "Starting setup Wi-Fi...",
+    "translation": "[Şŧȧȧřŧīƞɠ şḗḗŧŭŭƥ Ẇī-Ƒī...]",
+    "description": "Device-info setup title while the device's own network is coming up"
+  },
+  "//NWDATvZK": {
+    "source": "Your {device_name} is connected!",
+    "translation": "[Ẏǿǿŭŭř {device_name} īş ƈǿǿƞƞḗḗƈŧḗḗḓ!]",
+    "description": "Device-info setup title once the chosen Wi-Fi is joined; device_name is the product name"
+  },
+  "/2EDRFyDcn": {
+    "source": "Check the Ethernet cable",
+    "translation": "[Ƈħḗḗƈķ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ]",
+    "description": "Device-info line under the no-network title, asking to check the wired connection"
+  },
+  "/UvA/X77Kt": {
+    "source": "Building",
+    "translation": "[Ɓŭŭīŀḓīƞɠ]",
+    "description": "Upgrade overlay, short title before a percentage on a small display: building packages"
+  },
+  "/lA4E/MHR1": {
+    "source": "Restart the device?",
+    "translation": "[Řḗḗşŧȧȧřŧ ŧħḗḗ ḓḗḗṽīƈḗḗ?]",
+    "description": "Settings tray notice title while the restart button is held"
+  },
+  "0/a3gsKAgV": {
+    "source": "Initial Setup",
+    "translation": "[Īƞīŧīȧȧŀ Şḗḗŧŭŭƥ]",
+    "description": "Device-info eyebrow above every first-boot setup screen"
+  },
+  "0bkJP9Nd1C": {
+    "source": "Until {time}",
+    "translation": "[Ŭƞŧīŀ {time}]",
+    "description": "Settings tray, under the night mode button; time is when the current state ends, a time of day as the device formats it"
+  },
+  "2D5xRkSeHq": {
+    "source": "Verifying firmware",
+    "translation": "[Ṽḗḗřīƒẏīƞɠ ƒīřḿẇȧȧřḗḗ]",
+    "description": "Upgrade overlay title while the downloaded firmware is checked"
+  },
+  "2Iz1yoG1of": {
+    "source": "{label} {percent}%...",
+    "translation": "[{label} {percent}%...]",
+    "description": "Upgrade overlay title during a download; label is the phase title (e.g. Downloading firmware), percent a whole number"
+  },
+  "2nTvm7AyE8": {
+    "source": "Update Finished",
+    "translation": "[Ŭƥḓȧȧŧḗḗ Ƒīƞīşħḗḗḓ]",
+    "description": "Device-info title on the first boot after a firmware upgrade"
+  },
+  "3KMjhU/aZV": {
+    "source": "Restarting {device_name}...",
+    "translation": "[Řḗḗşŧȧȧřŧīƞɠ {device_name}...]",
+    "description": "Device-info setup failure line while the BMC application restarts the device; device_name is the product name"
+  },
+  "5E2DQVd7xu": {
+    "source": "This widget has been stopped",
+    "translation": "[Ŧħīş ẇīḓɠḗḗŧ ħȧȧş ƀḗḗḗḗƞ şŧǿǿƥƥḗḗḓ]",
+    "description": "Banner title over a widget the host suspended for using too many resources"
+  },
+  "5G6S3R/wX9": {
+    "source": "Scan the code!",
+    "translation": "[Şƈȧȧƞ ŧħḗḗ ƈǿǿḓḗḗ!]",
+    "description": "Device-info setup, second line of the headline above the QR code"
+  },
+  "5MRDD18SBl": {
+    "source": "Connect to {device_name} Wi-Fi",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧ ŧǿǿ {device_name} Ẇī-Ƒī]",
+    "description": "Device-info setup title asking to join the device's own network; device_name is the product name"
+  },
+  "5cpSLnDaAQ": {
+    "source": "Building packages",
+    "translation": "[Ɓŭŭīŀḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
+    "description": "Upgrade overlay title while the packages are built"
+  },
+  "5kQYXsPgl4": {
+    "source": "Waiting for Wi-Fi connection",
+    "translation": "[Ẇȧȧīŧīƞɠ ƒǿǿř Ẇī-Ƒī ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
+    "description": "Device-info connect progress line while no network is joined yet"
+  },
+  "60DqZHm87/": {
+    "source": "No network connection",
+    "translation": "[Ƞǿǿ ƞḗḗŧẇǿǿřķ ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
+    "description": "Device-info title when the boot connect over the Ethernet cable got no address"
+  },
+  "62xcXwpGep": {
+    "source": "{primary} {secondary}",
+    "translation": "[{primary} {secondary}]",
+    "description": "Relative time, the two segments side by side: 7m 30s"
+  },
+  "97LQdzs6/Y": {
+    "source": "{device_name} is ready!",
+    "translation": "[{device_name} īş řḗḗȧȧḓẏ!]",
+    "description": "Device-info title once setup is complete; device_name is the product name"
+  },
+  "9Jzi3MNKhb": {
+    "source": "Hostname",
+    "translation": "[Ħǿǿşŧƞȧȧḿḗḗ]",
+    "description": "Settings tray, label of the device's host name"
+  },
+  "9Tuj5FXuUB": {
+    "source": "Problem with connection",
+    "translation": "[Ƥřǿǿƀŀḗḗḿ ẇīŧħ ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
+    "description": "Device-info title when the boot connect got no address"
+  },
+  "E/6Fq+RKSo": {
+    "source": "Access the device at",
+    "translation": "[Ȧƈƈḗḗşş ŧħḗḗ ḓḗḗṽīƈḗḗ ȧȧŧ]",
+    "description": "Device-info connect-info title above the device address after boot"
+  },
+  "EBXH9L6MKo": {
+    "source": "Restarting the device…",
+    "translation": "[Řḗḗşŧȧȧřŧīƞɠ ŧħḗḗ ḓḗḗṽīƈḗḗ…]",
+    "description": "Settings tray notice title after the restart hold completed"
+  },
+  "Ep9jX08a/n": {
+    "source": "{downloaded} MB of {total} MB",
+    "translation": "[{downloaded} ḾƁ ǿǿƒ {total} ḾƁ]",
+    "description": "Upgrade overlay, below the progress bar; downloaded and total are amounts in megabytes, e.g. 82 and 151"
+  },
+  "FS/TsScuu+": {
+    "source": "in {hours, plural, one {{hours} hour} other {{hours} hours}} {minutes, plural, one {{minutes} minute} other {{minutes} minutes}}",
+    "translation": "[īƞ {hours,plural,one{{hours} ħǿǿŭŭř} other{{hours} ħǿǿŭŭřş}} {minutes,plural,one{{minutes} ḿīƞŭŭŧḗḗ} other{{minutes} ḿīƞŭŭŧḗḗş}}]",
+    "description": "Relative time label for a moment ahead, hours and minutes spelled out; both are whole numbers"
+  },
+  "FcloNeoS34": {
+    "source": "Verifying",
+    "translation": "[Ṽḗḗřīƒẏīƞɠ]",
+    "description": "Upgrade overlay, short title before a percentage on a small display: verifying"
+  },
+  "FnqgN2Rm7X": {
+    "source": "To access the controls, IP and Wi-Fi info, <b>swipe down</b>",
+    "translation": "[Ŧǿǿ ȧȧƈƈḗḗşş ŧħḗḗ ƈǿǿƞŧřǿǿŀş, ĪƤ ȧȧƞḓ Ẇī-Ƒī īƞƒǿǿ, <b>şẇīƥḗḗ ḓǿǿẇƞ</b>]",
+    "description": "Device-info connect screen, corner hint; <b> marks the gesture that opens the settings tray, drawn bold, and may go wherever the sentence needs it"
+  },
+  "GhuimBN087": {
+    "source": "Connected but nothing happens?",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧḗḗḓ ƀŭŭŧ ƞǿǿŧħīƞɠ ħȧȧƥƥḗḗƞş?]",
+    "description": "Device-info setup, first line of the headline above the QR code"
+  },
+  "HsiwpZhFtX": {
+    "source": "Can't restart now",
+    "translation": "[Ƈȧȧƞ'ŧ řḗḗşŧȧȧřŧ ƞǿǿẇ]",
+    "description": "Settings tray notice title when the device declined to restart; its reason follows under it"
+  },
+  "Hyj2FLeG53": {
+    "source": "Snooze",
+    "translation": "[Şƞǿǿǿǿẑḗḗ]",
+    "description": "Ringing alarm screen, button that silences the alarm and rings it again a few minutes later"
+  },
+  "HzB8UpC34D": {
+    "source": "OFFLINE",
+    "translation": "[ǾƑƑĿĪȠḖ]",
+    "description": "Small chip in the screen corner while the device has no network connection; shown in capitals where the script has them"
+  },
+  "JdGGKBEmmO": {
+    "source": "Complete the setup{br}by accessing",
+    "translation": "[Ƈǿǿḿƥŀḗḗŧḗḗ ŧħḗḗ şḗḗŧŭŭƥ{br}ƀẏ ȧȧƈƈḗḗşşīƞɠ]",
+    "description": "Device-info setup title above the device address; {br} is the line break between its two lines"
+  },
+  "JkfoKLzFy/": {
+    "source": "{hours, plural, one {{hours} hour} other {{hours} hours}} {minutes, plural, one {{minutes} minute} other {{minutes} minutes}} ago",
+    "translation": "[{hours,plural,one{{hours} ħǿǿŭŭř} other{{hours} ħǿǿŭŭřş}} {minutes,plural,one{{minutes} ḿīƞŭŭŧḗḗ} other{{minutes} ḿīƞŭŭŧḗḗş}} ȧȧɠǿǿ]",
+    "description": "Relative time label for a moment behind, hours and minutes spelled out; both are whole numbers"
+  },
+  "LmOJe5rX2r": {
+    "source": "Wi-Fi Connection",
+    "translation": "[Ẇī-Ƒī Ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
+    "description": "Settings tray, header over the connected network"
+  },
+  "LyJkem2Xkh": {
+    "source": "or scan the QR code",
+    "translation": "[ǿǿř şƈȧȧƞ ŧħḗḗ ɊŘ ƈǿǿḓḗḗ]",
+    "description": "Device-info connect screen, under the address: the QR code beside it opens the same page"
+  },
+  "M4vLI4nG4+": {
+    "source": "or connect the Ethernet cable",
+    "translation": "[ǿǿř ƈǿǿƞƞḗḗƈŧ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ]",
+    "description": "Device-info setup line under the Wi-Fi instructions, the wired alternative on a board with an Ethernet port"
+  },
+  "OWV4zp14B/": {
+    "source": "Activating packages",
+    "translation": "[Ȧƈŧīṽȧȧŧīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
+    "description": "Upgrade overlay title while the new packages are switched in"
+  },
+  "P8lT7FDrGZ": {
+    "source": "Starting Wi-Fi setup…",
+    "translation": "[Şŧȧȧřŧīƞɠ Ẇī-Ƒī şḗḗŧŭŭƥ…]",
+    "description": "Settings tray notice title after the Wi-Fi reconfigure hold completed"
+  },
+  "PSTdgryZCA": {
+    "source": "Activating",
+    "translation": "[Ȧƈŧīṽȧȧŧīƞɠ]",
+    "description": "Upgrade overlay, short title before a percentage on a small display: activating packages"
+  },
+  "RKPljShnpm": {
+    "source": "Update Failed",
+    "translation": "[Ŭƥḓȧȧŧḗḗ Ƒȧȧīŀḗḗḓ]",
+    "description": "Upgrade overlay title once the upgrade has failed"
+  },
+  "RKTaOddcJj": {
+    "source": "Connecting to Wi-Fi...",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧīƞɠ ŧǿǿ Ẇī-Ƒī...]",
+    "description": "Device-info screen title while the device joins a Wi-Fi network"
+  },
+  "S6DYT1b/D3": {
+    "source": "Alarm",
+    "translation": "[Ȧŀȧȧřḿ]",
+    "description": "Ringing alarm screen, above the time, when the owner gave the alarm no name"
+  },
+  "SfQ6MwX6ZT": {
+    "source": "It used too many resources and was suspended.",
+    "translation": "[Īŧ ŭŭşḗḗḓ ŧǿǿǿǿ ḿȧȧƞẏ řḗḗşǿǿŭŭřƈḗḗş ȧȧƞḓ ẇȧȧş şŭŭşƥḗḗƞḓḗḗḓ.]",
+    "description": "Banner line under the stopped-widget title"
+  },
+  "UkW/zUhInw": {
+    "source": "SETUP",
+    "translation": "[ŞḖŦŬƤ]",
+    "description": "Settings tray, short badge in capitals beside the Wi-Fi setup network's name; five characters or fewer"
+  },
+  "VstI3V3Hsf": {
+    "source": "Wi-Fi SSID",
+    "translation": "[Ẇī-Ƒī ŞŞĪḒ]",
+    "description": "Device-info label above the name of the Wi-Fi network joined or offered"
+  },
+  "WHbVPT51W7": {
+    "source": "Your device is being set up...",
+    "translation": "[Ẏǿǿŭŭř ḓḗḗṽīƈḗḗ īş ƀḗḗīƞɠ şḗḗŧ ŭŭƥ...]",
+    "description": "Device-info title while a miner leaves its setup network for the chosen one"
+  },
+  "WPLNkBNuHa": {
+    "source": "Downloading firmware",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ ƒīřḿẇȧȧřḗḗ]",
+    "description": "Upgrade overlay title during the firmware download"
+  },
+  "XAK9Pep0j+": {
+    "source": "Reconfigure Wi-Fi",
+    "translation": "[Řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī]",
+    "description": "Settings tray, label under the Wi-Fi reconfigure button"
+  },
+  "XoQtZlfRZz": {
+    "source": "in {minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
+    "translation": "[īƞ {minutes,plural,one{{minutes} ḿīƞŭŭŧḗḗ} other{{minutes} ḿīƞŭŭŧḗḗş}} {seconds,plural,one{{seconds} şḗḗƈǿǿƞḓ} other{{seconds} şḗḗƈǿǿƞḓş}}]",
+    "description": "Relative time label for a moment ahead, minutes and seconds spelled out; both are whole numbers"
+  },
+  "YBaDTp75gI": {
+    "source": "Restart {device_name} to try again",
+    "translation": "[Řḗḗşŧȧȧřŧ {device_name} ŧǿǿ ŧřẏ ȧȧɠȧȧīƞ]",
+    "description": "Device-info setup failure line asking the user to restart; device_name is the product name"
+  },
+  "YCJHkln//6": {
+    "source": "Join this network from your phone to reconfigure Wi-Fi.",
+    "translation": "[Ĵǿǿīƞ ŧħīş ƞḗḗŧẇǿǿřķ ƒřǿǿḿ ẏǿǿŭŭř ƥħǿǿƞḗḗ ŧǿǿ řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī.]",
+    "description": "Settings tray, hint under the setup network's name"
+  },
+  "ZpT42pFYon": {
+    "source": "Applying firmware",
+    "translation": "[Ȧƥƥŀẏīƞɠ ƒīřḿẇȧȧřḗḗ]",
+    "description": "Upgrade overlay title while the firmware is written"
+  },
+  "ZytF+u89Vc": {
+    "source": "Keep the device plugged in and online during the update",
+    "translation": "[Ķḗḗḗḗƥ ŧħḗḗ ḓḗḗṽīƈḗḗ ƥŀŭŭɠɠḗḗḓ īƞ ȧȧƞḓ ǿǿƞŀīƞḗḗ ḓŭŭřīƞɠ ŧħḗḗ ŭŭƥḓȧȧŧḗḗ]",
+    "description": "Firmware upgrade overlay, below the title: warning not to unplug or disconnect the device"
+  },
+  "a6Q04bMOSz": {
+    "source": "Open the web browser at",
+    "translation": "[Ǿƥḗḗƞ ŧħḗḗ ẇḗḗƀ ƀřǿǿẇşḗḗř ȧȧŧ]",
+    "description": "Device-info wired setup, title above the setup wizard's address"
+  },
+  "bFKhQ/MiVz": {
+    "source": "Downloading packages",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
+    "description": "Upgrade overlay title during the package download"
+  },
+  "bnxAOQxJ+J": {
+    "source": "Volume",
+    "translation": "[Ṽǿǿŀŭŭḿḗḗ]",
+    "description": "Settings tray, label under the volume buttons"
+  },
+  "c4PCwy/FL7": {
+    "source": "Keep holding, or release to cancel",
+    "translation": "[Ķḗḗḗḗƥ ħǿǿŀḓīƞɠ, ǿǿř řḗḗŀḗḗȧȧşḗḗ ŧǿǿ ƈȧȧƞƈḗḗŀ]",
+    "description": "Settings tray notice, under the title while a hold-to-confirm button is held"
+  },
+  "cPNcF89Mog": {
+    "source": "No IP address assigned",
+    "translation": "[Ƞǿǿ ĪƤ ȧȧḓḓřḗḗşş ȧȧşşīɠƞḗḗḓ]",
+    "description": "Device-info line under the connection-problem title"
+  },
+  "cQU31w4qIV": {
+    "source": "in {days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}}",
+    "translation": "[īƞ {days,plural,one{{days} ḓȧȧẏ} other{{days} ḓȧȧẏş}} {hours,plural,one{{hours} ħǿǿŭŭř} other{{hours} ħǿǿŭŭřş}}]",
+    "description": "Relative time label for a moment ahead, days and hours spelled out; both are whole numbers"
+  },
+  "d9K8NSW9TS": {
+    "source": "Update Finished",
+    "translation": "[Ŭƥḓȧȧŧḗḗ Ƒīƞīşħḗḗḓ]",
+    "description": "Upgrade overlay title once the upgrade has completed"
+  },
+  "dcysy6W8xK": {
+    "source": "Restart",
+    "translation": "[Řḗḗşŧȧȧřŧ]",
+    "description": "Settings tray, label under the restart button"
+  },
+  "dnBRMZe2Go": {
+    "source": "hold {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
+    "translation": "[ħǿǿŀḓ {seconds,plural,one{{seconds} şḗḗƈǿǿƞḓ} other{{seconds} şḗḗƈǿǿƞḓş}}]",
+    "description": "Settings tray, under a hold-to-confirm button: how long to hold it; seconds is a whole number"
+  },
+  "f+3IQb8cxo": {
+    "source": "in {duration}",
+    "translation": "[īƞ {duration}]",
+    "description": "Relative time label for a moment ahead; duration is 7m 30s or 7m"
+  },
+  "gVSC85AlCJ": {
+    "source": "Could not connect. Please try again.",
+    "translation": "[Ƈǿǿŭŭŀḓ ƞǿǿŧ ƈǿǿƞƞḗḗƈŧ. Ƥŀḗḗȧȧşḗḗ ŧřẏ ȧȧɠȧȧīƞ.]",
+    "description": "Device-info setup title when joining the chosen Wi-Fi failed"
+  },
+  "gYrIsgqAjn": {
+    "source": "Or open directly in browser:",
+    "translation": "[Ǿř ǿǿƥḗḗƞ ḓīřḗḗƈŧŀẏ īƞ ƀřǿǿẇşḗḗř:]",
+    "description": "Device-info QR column, label above the address the code encodes"
+  },
+  "gap8mTi9PY": {
+    "source": "{days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}} ago",
+    "translation": "[{days,plural,one{{days} ḓȧȧẏ} other{{days} ḓȧȧẏş}} {hours,plural,one{{hours} ħǿǿŭŭř} other{{hours} ħǿǿŭŭřş}} ȧȧɠǿǿ]",
+    "description": "Relative time label for a moment behind, days and hours spelled out; both are whole numbers"
+  },
+  "hIhRaewzgO": {
+    "source": "Reconfigure Wi-Fi?",
+    "translation": "[Řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī?]",
+    "description": "Settings tray notice title while the Wi-Fi reconfigure button is held"
+  },
+  "hPccsCm8wS": {
+    "source": "Connecting to network...",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧīƞɠ ŧǿǿ ƞḗḗŧẇǿǿřķ...]",
+    "description": "Device-info screen title while the device waits on its Ethernet cable, no Wi-Fi join under way"
+  },
+  "hbnq1MI1KD": {
+    "source": "IP Address",
+    "translation": "[ĪƤ Ȧḓḓřḗḗşş]",
+    "description": "Settings tray, label of the device's IP address"
+  },
+  "jvAv2WBCt0": {
+    "source": "{duration} ago",
+    "translation": "[{duration} ȧȧɠǿǿ]",
+    "description": "Relative time label for a moment behind; duration is 7m 30s or 7m"
+  },
+  "jy7RGjwZhS": {
+    "source": "Connection",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
+    "description": "Settings tray, label of what the device is online through: a Wi-Fi network or its cable"
+  },
+  "kmFsbpoffG": {
+    "source": "Downloading",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ]",
+    "description": "Upgrade overlay, short title before a percentage on a small display: downloading"
+  },
+  "ku2YHFZK7u": {
+    "source": "Try again",
+    "translation": "[Ŧřẏ ȧȧɠȧȧīƞ]",
+    "description": "Settings tray notice, under a failure title: the button can be held again"
+  },
+  "lSAYfQugPW": {
+    "source": "Restart failed",
+    "translation": "[Řḗḗşŧȧȧřŧ ƒȧȧīŀḗḗḓ]",
+    "description": "Settings tray notice title when the restart did not happen and no reason came"
+  },
+  "n8XlxYQaXU": {
+    "source": "Rebooting",
+    "translation": "[Řḗḗƀǿǿǿǿŧīƞɠ]",
+    "description": "Upgrade overlay title while the device restarts into the upgrade"
+  },
+  "nWIgEogReV": {
+    "source": "Connect the Ethernet cable",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ]",
+    "description": "Device-info setup title on a board without Wi-Fi, before its cable is plugged in"
+  },
+  "o1Bb3Mh6rm": {
+    "source": "An upgrade is in progress",
+    "translation": "[Ȧƞ ŭŭƥɠřȧȧḓḗḗ īş īƞ ƥřǿǿɠřḗḗşş]",
+    "description": "Settings tray notice, under its title when the restart is declined: an upgrade is running"
+  },
+  "p1zd18L0pf": {
+    "source": "Not configured",
+    "translation": "[Ƞǿǿŧ ƈǿǿƞƒīɠŭŭřḗḗḓ]",
+    "description": "Settings tray, in place of the network name when no Wi-Fi is configured"
+  },
+  "pNBxerckHU": {
+    "source": "Verifying packages",
+    "translation": "[Ṽḗḗřīƒẏīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
+    "description": "Upgrade overlay title while the downloaded packages are checked"
+  },
+  "pmgW8kKAju": {
+    "source": "Night Mode: Off",
+    "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ: Ǿƒƒ]",
+    "description": "Settings tray, label under the night mode button while inactive"
+  },
+  "qBRFBymcul": {
+    "source": "Ethernet",
+    "translation": "[Ḗŧħḗḗřƞḗḗŧ]",
+    "description": "Settings tray, in place of the network name while the device is online through its cable"
+  },
+  "r3jw8uUjHW": {
+    "source": "Couldn't start Wi-Fi setup",
+    "translation": "[Ƈǿǿŭŭŀḓƞ'ŧ şŧȧȧřŧ Ẇī-Ƒī şḗḗŧŭŭƥ]",
+    "description": "Settings tray notice title when Wi-Fi setup did not start in time"
+  },
+  "scfJRAEtKn": {
+    "source": "Waiting for IP address",
+    "translation": "[Ẇȧȧīŧīƞɠ ƒǿǿř ĪƤ ȧȧḓḓřḗḗşş]",
+    "description": "Device-info connect progress line while DHCP has not assigned an address yet"
+  },
+  "t7xuQK4wPs": {
+    "source": "Night Mode: On",
+    "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ: Ǿƞ]",
+    "description": "Settings tray, label under the night mode button while active"
+  },
+  "uDS7/RsopS": {
+    "source": "Preparing update",
+    "translation": "[Ƥřḗḗƥȧȧřīƞɠ ŭŭƥḓȧȧŧḗḗ]",
+    "description": "Upgrade overlay title before the upgrade reports its first phase"
+  },
+  "v8yqe1Qm2t": {
+    "source": "Stop Alarm",
+    "translation": "[Şŧǿǿƥ Ȧŀȧȧřḿ]",
+    "description": "Ringing alarm screen, button that dismisses the alarm"
+  },
+  "vZ+Z0Il3rV": {
+    "source": "Applying",
+    "translation": "[Ȧƥƥŀẏīƞɠ]",
+    "description": "Upgrade overlay, short title before a percentage on a small display: applying firmware"
+  },
+  "wYMNAQyCIN": {
+    "source": "{minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}} ago",
+    "translation": "[{minutes,plural,one{{minutes} ḿīƞŭŭŧḗḗ} other{{minutes} ḿīƞŭŭŧḗḗş}} {seconds,plural,one{{seconds} şḗḗƈǿǿƞḓ} other{{seconds} şḗḗƈǿǿƞḓş}} ȧȧɠǿǿ]",
+    "description": "Relative time label for a moment behind, minutes and seconds spelled out; both are whole numbers"
+  },
+  "xCLk12kuRj": {
+    "source": "Problem Occurred",
+    "translation": "[Ƥřǿǿƀŀḗḗḿ Ǿƈƈŭŭřřḗḗḓ]",
+    "description": "Device-info screen title when setup failed and the device must restart"
+  },
+  "xHiHFfHwhH": {
+    "source": "Brightness",
+    "translation": "[Ɓřīɠħŧƞḗḗşş]",
+    "description": "Settings tray, label under the brightness buttons"
+  },
+  "xyfII58PwR": {
+    "source": "Login to continue",
+    "translation": "[Ŀǿǿɠīƞ ŧǿǿ ƈǿǿƞŧīƞŭŭḗḗ]",
+    "description": "Device-info line under the ready title, pointing at the web UI login"
+  },
+  "yBXCaNi47m": {
+    "source": "The restart command failed",
+    "translation": "[Ŧħḗḗ řḗḗşŧȧȧřŧ ƈǿǿḿḿȧȧƞḓ ƒȧȧīŀḗḗḓ]",
+    "description": "Settings tray notice, under its title when the restart is declined: the device's reboot call failed"
+  }
+}

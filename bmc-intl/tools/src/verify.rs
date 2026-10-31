@@ -100,7 +100,7 @@ pub fn summary(surface: &str, checked: &[Checked]) -> String {
     }
 }
 
-/// Each of the surface's translator files, checked against its extraction.
+/// Each of the surface's translator files, the pseudo-locale's last, checked against its extraction.
 ///
 /// # Errors
 /// The extraction's failure, or a translator file that cannot be read.
@@ -108,7 +108,7 @@ pub fn verify_surface(surface: &Surface, id_pattern: &str) -> Result<Vec<Checked
     let extracted = formatjs::extract(surface, id_pattern)?;
     let fix = console::command(&surface.fix_command());
     let by_language = surface.translator_entries()?;
-    Ok(by_language
+    let mut checked: Vec<Checked> = by_language
         .iter()
         .map(|(language, entries)| {
             let mut problems = translator::stale_entries(&extracted, entries, &fix);
@@ -119,5 +119,47 @@ pub fn verify_surface(surface: &Surface, id_pattern: &str) -> Result<Vec<Checked
                 problems,
             }
         })
-        .collect())
+        .collect();
+    let pseudo_file = surface.pseudo_file();
+    let pseudo = translator::read_entries(&pseudo_file)?;
+    checked.push(Checked {
+        problems: pseudo_problems(&extracted, &pseudo, &fix),
+        file: pseudo_file,
+        untranslated: 0,
+    });
+    Ok(checked)
+}
+
+/// The pseudo-locale's file checked as a pack's is, beside its lag behind the transform:
+/// comparing it with the transform alone would pass a transform that breaks a message.
+fn pseudo_problems(
+    extracted: &translator::Extraction,
+    entries: &translator::Entries,
+    fix: &str,
+) -> Vec<String> {
+    let mut problems = translator::stale_pseudo(extracted, entries, fix);
+    problems.extend(check::translations(extracted, entries));
+    problems
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::translator::{Extracted, Extraction, pseudo_entries};
+
+    #[test]
+    fn a_pseudo_translation_that_drops_an_argument_is_named() {
+        let extracted = Extraction::from([("aaa".to_owned(), Extracted::new("Hello {name}"))]);
+        let mut entries = pseudo_entries(&extracted);
+        if let Some(entry) = entries.get_mut("aaa") {
+            entry.translation = Some("[Ħḗḗŀŀǿǿ]".to_owned());
+        }
+        let problems = pseudo_problems(&extracted, &entries, "fix");
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("drops {name}")),
+            "{problems:?}"
+        );
+    }
 }

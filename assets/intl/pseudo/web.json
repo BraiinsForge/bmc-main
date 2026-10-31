@@ -1,0 +1,1919 @@
+{
+  "++FVOVUwj7": {
+    "source": "5 minutes",
+    "translation": "[5 ḿīƞŭŭŧḗḗş]"
+  },
+  "+CwN9C/QFk": {
+    "source": "System",
+    "translation": "[Şẏşŧḗḗḿ]"
+  },
+  "+Fq+uiG9o4": {
+    "source": "Failed to enable automatic updates!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḗḗƞȧȧƀŀḗḗ ȧȧŭŭŧǿǿḿȧȧŧīƈ ŭŭƥḓȧȧŧḗḗş!]"
+  },
+  "+Ie90xdrnE": {
+    "source": "Failed to add scene!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ȧȧḓḓ şƈḗḗƞḗḗ!]"
+  },
+  "+U6ozcnv4r": {
+    "source": "Type",
+    "translation": "[Ŧẏƥḗḗ]"
+  },
+  "+iflmHcgdG": {
+    "source": "Are you sure you want to delete this alarm?",
+    "translation": "[Ȧřḗḗ ẏǿǿŭŭ şŭŭřḗḗ ẏǿǿŭŭ ẇȧȧƞŧ ŧǿǿ ḓḗḗŀḗḗŧḗḗ ŧħīş ȧȧŀȧȧřḿ?]"
+  },
+  "+rza1dO42W": {
+    "source": "Failed to add widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ȧȧḓḓ ẇīḓɠḗḗŧ!]"
+  },
+  "+vVZ/G11Zg": {
+    "source": "Connect",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧ]"
+  },
+  "+xzXEbUQHs": {
+    "source": "Upgrades",
+    "translation": "[Ŭƥɠřȧȧḓḗḗş]"
+  },
+  "+yM5CCcNxI": {
+    "source": "Restarting…",
+    "translation": "[Řḗḗşŧȧȧřŧīƞɠ…]"
+  },
+  "/06iwcQHPz": {
+    "source": "Large",
+    "translation": "[Ŀȧȧřɠḗḗ]"
+  },
+  "/0AXxSDrrR": {
+    "source": "Drag and Drop your File Here",
+    "translation": "[Ḓřȧȧɠ ȧȧƞḓ Ḓřǿǿƥ ẏǿǿŭŭř Ƒīŀḗḗ Ħḗḗřḗḗ]"
+  },
+  "/6iExgDC34": {
+    "source": "Invalid time format",
+    "translation": "[Īƞṽȧȧŀīḓ ŧīḿḗḗ ƒǿǿřḿȧȧŧ]"
+  },
+  "/8eVbWgyJF": {
+    "source": "Night mode brightness saved",
+    "translation": "[Ƞīɠħŧ ḿǿǿḓḗḗ ƀřīɠħŧƞḗḗşş şȧȧṽḗḗḓ]"
+  },
+  "/9nk8Wab4P": {
+    "source": "Device Setup",
+    "translation": "[Ḓḗḗṽīƈḗḗ Şḗḗŧŭŭƥ]"
+  },
+  "/BsylLdsrR": {
+    "source": "{count, plural, one {+{count} Older Update} other {+{count} Older Updates}}",
+    "translation": "[{count,plural,one{+{count} Ǿŀḓḗḗř Ŭƥḓȧȧŧḗḗ} other{+{count} Ǿŀḓḗḗř Ŭƥḓȧȧŧḗḗş}}]"
+  },
+  "/Hem87bEbl": {
+    "source": "Could not list the widgets using this account.",
+    "translation": "[Ƈǿǿŭŭŀḓ ƞǿǿŧ ŀīşŧ ŧħḗḗ ẇīḓɠḗḗŧş ŭŭşīƞɠ ŧħīş ȧȧƈƈǿǿŭŭƞŧ.]"
+  },
+  "/P26rKYjCj": {
+    "source": "Failed to remove scene!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ řḗḗḿǿǿṽḗḗ şƈḗḗƞḗḗ!]"
+  },
+  "/RqouoHUXX": {
+    "source": "{name} {version} was reinstalled.",
+    "translation": "[{name} {version} ẇȧȧş řḗḗīƞşŧȧȧŀŀḗḗḓ.]"
+  },
+  "/VnDMl81rh": {
+    "source": "Other",
+    "translation": "[Ǿŧħḗḗř]"
+  },
+  "/hZOvEruoS": {
+    "source": "Display Widgets",
+    "translation": "[Ḓīşƥŀȧȧẏ Ẇīḓɠḗḗŧş]"
+  },
+  "/hv08Ikekx": {
+    "source": "{name} {version} was already installed.",
+    "translation": "[{name} {version} ẇȧȧş ȧȧŀřḗḗȧȧḓẏ īƞşŧȧȧŀŀḗḗḓ.]"
+  },
+  "/j7GSsWreI": {
+    "source": "Remove Widget",
+    "translation": "[Řḗḗḿǿǿṽḗḗ Ẇīḓɠḗḗŧ]"
+  },
+  "0AXMjjEUXt": {
+    "source": "24-hour",
+    "translation": "[24-ħǿǿŭŭř]"
+  },
+  "0O2C6Wx1sx": {
+    "source": "WEP Shared",
+    "translation": "[ẆḖƤ Şħȧȧřḗḗḓ]"
+  },
+  "0QLzxohl4D": {
+    "source": "Protocol",
+    "translation": "[Ƥřǿǿŧǿǿƈǿǿŀ]"
+  },
+  "0VQ/N07D8f": {
+    "source": "Invalid state, cannot move widget without combined scene!",
+    "translation": "[Īƞṽȧȧŀīḓ şŧȧȧŧḗḗ, ƈȧȧƞƞǿǿŧ ḿǿǿṽḗḗ ẇīḓɠḗḗŧ ẇīŧħǿǿŭŭŧ ƈǿǿḿƀīƞḗḗḓ şƈḗḗƞḗḗ!]"
+  },
+  "0YiaLrW4UW": {
+    "source": "Sound",
+    "translation": "[Şǿǿŭŭƞḓ]"
+  },
+  "0ah2udCSKF": {
+    "source": "Space",
+    "translation": "[Şƥȧȧƈḗḗ]"
+  },
+  "0c4/C8Va7J": {
+    "source": "No Connected Accounts Yet.",
+    "translation": "[Ƞǿǿ Ƈǿǿƞƞḗḗƈŧḗḗḓ Ȧƈƈǿǿŭŭƞŧş Ẏḗḗŧ.]"
+  },
+  "0h/lPMeYkq": {
+    "source": "Upgrade",
+    "translation": "[Ŭƥɠřȧȧḓḗḗ]"
+  },
+  "0mIjkY4pgU": {
+    "source": "Alarm Sound",
+    "translation": "[Ȧŀȧȧřḿ Şǿǿŭŭƞḓ]"
+  },
+  "0otzmrvQrQ": {
+    "source": "3 snoozes",
+    "translation": "[3 şƞǿǿǿǿẑḗḗş]"
+  },
+  "0sOHRSE46E": {
+    "source": "Fade",
+    "translation": "[Ƒȧȧḓḗḗ]"
+  },
+  "0tc/9YxCIn": {
+    "source": "Upgrade & reboot",
+    "translation": "[Ŭƥɠřȧȧḓḗḗ & řḗḗƀǿǿǿǿŧ]"
+  },
+  "1Aday2s3it": {
+    "source": "Sun",
+    "translation": "[Şŭŭƞ]"
+  },
+  "1Fwe4lt9St": {
+    "source": "Add New Account",
+    "translation": "[Ȧḓḓ Ƞḗḗẇ Ȧƈƈǿǿŭŭƞŧ]"
+  },
+  "1MZGBfDJ6f": {
+    "source": "Boot Sound",
+    "translation": "[Ɓǿǿǿǿŧ Şǿǿŭŭƞḓ]"
+  },
+  "1OK0Tyma4D": {
+    "source": "Downloading firmware",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ ƒīřḿẇȧȧřḗḗ]"
+  },
+  "1UlEAXGW0C": {
+    "source": "Netmask",
+    "translation": "[Ƞḗḗŧḿȧȧşķ]"
+  },
+  "1WwMZP3Z2/": {
+    "source": "Select a Wi-Fi Network…",
+    "translation": "[Şḗḗŀḗḗƈŧ ȧȧ Ẇī-Ƒī Ƞḗḗŧẇǿǿřķ…]"
+  },
+  "1aH4BWz5x/": {
+    "source": "Braiins Deck is restarting…",
+    "translation": "[Ɓřȧȧīīƞş Ḓḗḗƈķ īş řḗḗşŧȧȧřŧīƞɠ…]"
+  },
+  "1eJ3yKy9wd": {
+    "source": "Install a Third-Party Widget",
+    "translation": "[Īƞşŧȧȧŀŀ ȧȧ Ŧħīřḓ-Ƥȧȧřŧẏ Ẇīḓɠḗḗŧ]"
+  },
+  "1iEPTMDqmi": {
+    "source": "General",
+    "translation": "[Ɠḗḗƞḗḗřȧȧŀ]"
+  },
+  "1r9uaKTER1": {
+    "source": "Clone {scene}",
+    "translation": "[Ƈŀǿǿƞḗḗ {scene}]"
+  },
+  "1z9Wn8gnFk": {
+    "source": "Download Support Archive",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓ Şŭŭƥƥǿǿřŧ Ȧřƈħīṽḗḗ]"
+  },
+  "2/2yg+qAwp": {
+    "source": "Add",
+    "translation": "[Ȧḓḓ]"
+  },
+  "2/nV0r0AXx": {
+    "source": "Unknown connection error",
+    "translation": "[Ŭƞķƞǿǿẇƞ ƈǿǿƞƞḗḗƈŧīǿǿƞ ḗḗřřǿǿř]"
+  },
+  "2NqUghZFW1": {
+    "source": "Wed",
+    "translation": "[Ẇḗḗḓ]"
+  },
+  "2Rb7NuJWUu": {
+    "source": "Enable Screen Cycling",
+    "translation": "[Ḗƞȧȧƀŀḗḗ Şƈřḗḗḗḗƞ Ƈẏƈŀīƞɠ]"
+  },
+  "2YcWO70nn6": {
+    "source": "The device didn't answer in time.",
+    "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ ḓīḓƞ'ŧ ȧȧƞşẇḗḗř īƞ ŧīḿḗḗ.]"
+  },
+  "2e/mPZwi27": {
+    "source": "Failed to move widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḿǿǿṽḗḗ ẇīḓɠḗḗŧ!]"
+  },
+  "2jVWOHc9qn": {
+    "source": "Screen Brightness",
+    "translation": "[Şƈřḗḗḗḗƞ Ɓřīɠħŧƞḗḗşş]"
+  },
+  "2kBrtfEhBU": {
+    "source": "Passwords must match!",
+    "translation": "[Ƥȧȧşşẇǿǿřḓş ḿŭŭşŧ ḿȧȧŧƈħ!]"
+  },
+  "2m+pAldxBC": {
+    "source": "Finishing up…",
+    "translation": "[Ƒīƞīşħīƞɠ ŭŭƥ…]"
+  },
+  "3/x9lBGo11": {
+    "source": "Add New Widget",
+    "translation": "[Ȧḓḓ Ƞḗḗẇ Ẇīḓɠḗḗŧ]"
+  },
+  "38Me3kUFe1": {
+    "source": "Date format changed",
+    "translation": "[Ḓȧȧŧḗḗ ƒǿǿřḿȧȧŧ ƈħȧȧƞɠḗḗḓ]"
+  },
+  "3Hv4FbI9Kl": {
+    "source": "Sat",
+    "translation": "[Şȧȧŧ]"
+  },
+  "3S2fPSV+r5": {
+    "source": "First day of the week changed",
+    "translation": "[Ƒīřşŧ ḓȧȧẏ ǿǿƒ ŧħḗḗ ẇḗḗḗḗķ ƈħȧȧƞɠḗḗḓ]"
+  },
+  "3WkdVPzexe": {
+    "source": "Account Name",
+    "translation": "[Ȧƈƈǿǿŭŭƞŧ Ƞȧȧḿḗḗ]"
+  },
+  "3XWwCpGTuD": {
+    "source": "The widget package was installed.",
+    "translation": "[Ŧħḗḗ ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ ẇȧȧş īƞşŧȧȧŀŀḗḗḓ.]"
+  },
+  "3ojzO1+QQ0": {
+    "source": "Account deletion failed!",
+    "translation": "[Ȧƈƈǿǿŭŭƞŧ ḓḗḗŀḗḗŧīǿǿƞ ƒȧȧīŀḗḗḓ!]"
+  },
+  "3qWhLpVmMJ": {
+    "source": "Widget moved!",
+    "translation": "[Ẇīḓɠḗḗŧ ḿǿǿṽḗḗḓ!]"
+  },
+  "40TKTxkJcZ": {
+    "source": "Save and Continue",
+    "translation": "[Şȧȧṽḗḗ ȧȧƞḓ Ƈǿǿƞŧīƞŭŭḗḗ]"
+  },
+  "44r4J4aTog": {
+    "source": "Failed to save firs week day",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ƒīřş ẇḗḗḗḗķ ḓȧȧẏ]"
+  },
+  "450Fty8ldn": {
+    "source": "None",
+    "translation": "[Ƞǿǿƞḗḗ]"
+  },
+  "47FYwba+bI": {
+    "source": "Cancel",
+    "translation": "[Ƈȧȧƞƈḗḗŀ]"
+  },
+  "4ADCb5CROg": {
+    "source": "Other…",
+    "translation": "[Ǿŧħḗḗř…]"
+  },
+  "4GbFNA1bYh": {
+    "source": "Confirm New Password",
+    "translation": "[Ƈǿǿƞƒīřḿ Ƞḗḗẇ Ƥȧȧşşẇǿǿřḓ]"
+  },
+  "4NpzK+fv33": {
+    "source": "No matching account",
+    "translation": "[Ƞǿǿ ḿȧȧŧƈħīƞɠ ȧȧƈƈǿǿŭŭƞŧ]"
+  },
+  "4Oks/z3gRz": {
+    "source": "Failed to save screen auto-off timeout!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ şƈřḗḗḗḗƞ ȧȧŭŭŧǿǿ-ǿǿƒƒ ŧīḿḗḗǿǿŭŭŧ!]"
+  },
+  "4VPIXtykhw": {
+    "source": "Alarms",
+    "translation": "[Ȧŀȧȧřḿş]"
+  },
+  "4fa8lmNc5i": {
+    "source": "Scene has no widget configured.",
+    "translation": "[Şƈḗḗƞḗḗ ħȧȧş ƞǿǿ ẇīḓɠḗḗŧ ƈǿǿƞƒīɠŭŭřḗḗḓ.]"
+  },
+  "4g30pbZpx7": {
+    "source": "Hide Older Updates",
+    "translation": "[Ħīḓḗḗ Ǿŀḓḗḗř Ŭƥḓȧȧŧḗḗş]"
+  },
+  "4onmuJxEo0": {
+    "source": "Enter Wi-Fi details manually",
+    "translation": "[Ḗƞŧḗḗř Ẇī-Ƒī ḓḗḗŧȧȧīŀş ḿȧȧƞŭŭȧȧŀŀẏ]"
+  },
+  "4pJVaSn3tl": {
+    "source": "Select row",
+    "translation": "[Şḗḗŀḗḗƈŧ řǿǿẇ]"
+  },
+  "55k4TtPFCa": {
+    "source": "Factory reset",
+    "translation": "[Ƒȧȧƈŧǿǿřẏ řḗḗşḗḗŧ]"
+  },
+  "56Ld4uAyYb": {
+    "source": "Change the password used to access device settings.",
+    "translation": "[Ƈħȧȧƞɠḗḗ ŧħḗḗ ƥȧȧşşẇǿǿřḓ ŭŭşḗḗḓ ŧǿǿ ȧȧƈƈḗḗşş ḓḗḗṽīƈḗḗ şḗḗŧŧīƞɠş.]"
+  },
+  "5MHgr85l1L": {
+    "source": "Failed to clone the widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈŀǿǿƞḗḗ ŧħḗḗ ẇīḓɠḗḗŧ!]"
+  },
+  "5NNCMEOsZn": {
+    "source": "This account isn’t used in any display widgets. You can safely delete {name} now.",
+    "translation": "[Ŧħīş ȧȧƈƈǿǿŭŭƞŧ īşƞ’ŧ ŭŭşḗḗḓ īƞ ȧȧƞẏ ḓīşƥŀȧȧẏ ẇīḓɠḗḗŧş. Ẏǿǿŭŭ ƈȧȧƞ şȧȧƒḗḗŀẏ ḓḗḗŀḗḗŧḗḗ {name} ƞǿǿẇ.]"
+  },
+  "5OteMImbhA": {
+    "source": "Knowledge",
+    "translation": "[Ķƞǿǿẇŀḗḗḓɠḗḗ]"
+  },
+  "5OzDRN7DaT": {
+    "source": "Enable Night Mode",
+    "translation": "[Ḗƞȧȧƀŀḗḗ Ƞīɠħŧ Ḿǿǿḓḗḗ]"
+  },
+  "5nQKjImifb": {
+    "source": "Failed to load LED settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ĿḖḒ şḗḗŧŧīƞɠş!]"
+  },
+  "5o1fLY9oqK": {
+    "source": "Night Mode - First widget stays displayed during the night mode, when the rotation is disabled.",
+    "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ - Ƒīřşŧ ẇīḓɠḗḗŧ şŧȧȧẏş ḓīşƥŀȧȧẏḗḗḓ ḓŭŭřīƞɠ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ, ẇħḗḗƞ ŧħḗḗ řǿǿŧȧȧŧīǿǿƞ īş ḓīşȧȧƀŀḗḗḓ.]"
+  },
+  "5q3qC0sC3r": {
+    "source": "Download",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓ]"
+  },
+  "5sg7KCrrLg": {
+    "source": "Password",
+    "translation": "[Ƥȧȧşşẇǿǿřḓ]"
+  },
+  "5smd8ZaF0D": {
+    "source": "Remove Password",
+    "translation": "[Řḗḗḿǿǿṽḗḗ Ƥȧȧşşẇǿǿřḓ]"
+  },
+  "62nsdyMyIO": {
+    "source": "Retry",
+    "translation": "[Řḗḗŧřẏ]"
+  },
+  "64NAinTqss": {
+    "source": "Display",
+    "translation": "[Ḓīşƥŀȧȧẏ]"
+  },
+  "6BrZqItPa/": {
+    "source": "Edit Combined Scene",
+    "translation": "[Ḗḓīŧ Ƈǿǿḿƀīƞḗḗḓ Şƈḗḗƞḗḗ]"
+  },
+  "6RFmTPnch5": {
+    "source": "Your system and packages are up to date",
+    "translation": "[Ẏǿǿŭŭř şẏşŧḗḗḿ ȧȧƞḓ ƥȧȧƈķȧȧɠḗḗş ȧȧřḗḗ ŭŭƥ ŧǿǿ ḓȧȧŧḗḗ]"
+  },
+  "6U8Js1j4xh": {
+    "source": "Failed to load credential types!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ƈřḗḗḓḗḗƞŧīȧȧŀ ŧẏƥḗḗş!]"
+  },
+  "6ZE7d2DVYF": {
+    "source": "Boot sound disabled",
+    "translation": "[Ɓǿǿǿǿŧ şǿǿŭŭƞḓ ḓīşȧȧƀŀḗḗḓ]"
+  },
+  "6k7YW7/BgE": {
+    "source": "Snooze Limit",
+    "translation": "[Şƞǿǿǿǿẑḗḗ Ŀīḿīŧ]"
+  },
+  "6pFt8xDblI": {
+    "source": "Timezone changed",
+    "translation": "[Ŧīḿḗḗẑǿǿƞḗḗ ƈħȧȧƞɠḗḗḓ]"
+  },
+  "6zRFuL43iT": {
+    "source": "No {type} account exists yet — <a>add one in Accounts</a>.",
+    "translation": "[Ƞǿǿ {type} ȧȧƈƈǿǿŭŭƞŧ ḗḗẋīşŧş ẏḗḗŧ — <a>ȧȧḓḓ ǿǿƞḗḗ īƞ Ȧƈƈǿǿŭŭƞŧş</a>.]"
+  },
+  "70xp2mezFn": {
+    "source": "Invalid state, can't create alarm when create dialog is not open!",
+    "translation": "[Īƞṽȧȧŀīḓ şŧȧȧŧḗḗ, ƈȧȧƞ'ŧ ƈřḗḗȧȧŧḗḗ ȧȧŀȧȧřḿ ẇħḗḗƞ ƈřḗḗȧȧŧḗḗ ḓīȧȧŀǿǿɠ īş ƞǿǿŧ ǿǿƥḗḗƞ!]"
+  },
+  "753yX5necH": {
+    "source": "Label",
+    "translation": "[Ŀȧȧƀḗḗŀ]"
+  },
+  "7OW8BTDziy": {
+    "source": "Configuration",
+    "translation": "[Ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ]"
+  },
+  "7nUCu9PCvd": {
+    "source": "Timezone",
+    "translation": "[Ŧīḿḗḗẑǿǿƞḗḗ]"
+  },
+  "89U3XmXMGH": {
+    "source": "Sound & Light",
+    "translation": "[Şǿǿŭŭƞḓ & Ŀīɠħŧ]"
+  },
+  "8B04tJq/Lm": {
+    "source": "WPA",
+    "translation": "[ẆƤȦ]"
+  },
+  "8GCvb689bL": {
+    "source": "Delete {scene}",
+    "translation": "[Ḓḗḗŀḗḗŧḗḗ {scene}]"
+  },
+  "8GOiJst7oC": {
+    "source": "Combined Scene",
+    "translation": "[Ƈǿǿḿƀīƞḗḗḓ Şƈḗḗƞḗḗ]"
+  },
+  "8KdPmeHGkx": {
+    "source": "We couldn't find the page or file you're looking for.",
+    "translation": "[Ẇḗḗ ƈǿǿŭŭŀḓƞ'ŧ ƒīƞḓ ŧħḗḗ ƥȧȧɠḗḗ ǿǿř ƒīŀḗḗ ẏǿǿŭŭ'řḗḗ ŀǿǿǿǿķīƞɠ ƒǿǿř.]"
+  },
+  "8gpgar5ojS": {
+    "source": "12-Hour",
+    "translation": "[12-Ħǿǿŭŭř]"
+  },
+  "8lf7Gok71M": {
+    "source": "Running widgets: {running} / {maximum}",
+    "translation": "[Řŭŭƞƞīƞɠ ẇīḓɠḗḗŧş: {running} / {maximum}]"
+  },
+  "9BBNEzxnNi": {
+    "source": "Metric (km, kg)",
+    "translation": "[Ḿḗḗŧřīƈ (ķḿ, ķɠ)]"
+  },
+  "9SAv6hjlSC": {
+    "source": "Screen Auto-Off",
+    "translation": "[Şƈřḗḗḗḗƞ Ȧŭŭŧǿǿ-Ǿƒƒ]"
+  },
+  "9U4hUqRFI3": {
+    "source": "Please wait for the device to restart.",
+    "translation": "[Ƥŀḗḗȧȧşḗḗ ẇȧȧīŧ ƒǿǿř ŧħḗḗ ḓḗḗṽīƈḗḗ ŧǿǿ řḗḗşŧȧȧřŧ.]"
+  },
+  "9U7nURYOdU": {
+    "source": "Reboot",
+    "translation": "[Řḗḗƀǿǿǿǿŧ]"
+  },
+  "9VTzdj7tS7": {
+    "source": "System Timezone",
+    "translation": "[Şẏşŧḗḗḿ Ŧīḿḗḗẑǿǿƞḗḗ]"
+  },
+  "9Xi1jY8vEk": {
+    "source": "Automatically switch to red light theme after dark to preserve night vision.",
+    "translation": "[Ȧŭŭŧǿǿḿȧȧŧīƈȧȧŀŀẏ şẇīŧƈħ ŧǿǿ řḗḗḓ ŀīɠħŧ ŧħḗḗḿḗḗ ȧȧƒŧḗḗř ḓȧȧřķ ŧǿǿ ƥřḗḗşḗḗřṽḗḗ ƞīɠħŧ ṽīşīǿǿƞ.]"
+  },
+  "9a3FKhxIG0": {
+    "source": "Failed to save the sound volume!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ!]"
+  },
+  "9aTc/6lwDs": {
+    "source": "Use LED lights for notifications and alerts during Night Mode.",
+    "translation": "[Ŭşḗḗ ĿḖḒ ŀīɠħŧş ƒǿǿř ƞǿǿŧīƒīƈȧȧŧīǿǿƞş ȧȧƞḓ ȧȧŀḗḗřŧş ḓŭŭřīƞɠ Ƞīɠħŧ Ḿǿǿḓḗḗ.]"
+  },
+  "9qc7BXrqrf": {
+    "source": "Snooze",
+    "translation": "[Şƞǿǿǿǿẑḗḗ]"
+  },
+  "A97Uu0JdVs": {
+    "source": "Packages updated",
+    "translation": "[Ƥȧȧƈķȧȧɠḗḗş ŭŭƥḓȧȧŧḗḗḓ]"
+  },
+  "ALTo8Sekfo": {
+    "source": "Widget Package Installed",
+    "translation": "[Ẇīḓɠḗḗŧ Ƥȧȧƈķȧȧɠḗḗ Īƞşŧȧȧŀŀḗḗḓ]"
+  },
+  "AOpaouJV7E": {
+    "source": "WPA2",
+    "translation": "[ẆƤȦ2]"
+  },
+  "APcOSiy5Je": {
+    "source": "Snooze Duration",
+    "translation": "[Şƞǿǿǿǿẑḗḗ Ḓŭŭřȧȧŧīǿǿƞ]"
+  },
+  "AYXyukWL5P": {
+    "source": "Downloading",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ]"
+  },
+  "AhQdiCzbWT": {
+    "source": "If you forget this password, you'll need to reset the device to regain access.",
+    "translation": "[Īƒ ẏǿǿŭŭ ƒǿǿřɠḗḗŧ ŧħīş ƥȧȧşşẇǿǿřḓ, ẏǿǿŭŭ'ŀŀ ƞḗḗḗḗḓ ŧǿǿ řḗḗşḗḗŧ ŧħḗḗ ḓḗḗṽīƈḗḗ ŧǿǿ řḗḗɠȧȧīƞ ȧȧƈƈḗḗşş.]"
+  },
+  "AmRwcWcZAS": {
+    "source": "Allowed destinations (optional)",
+    "translation": "[Ȧŀŀǿǿẇḗḗḓ ḓḗḗşŧīƞȧȧŧīǿǿƞş (ǿǿƥŧīǿǿƞȧȧŀ)]"
+  },
+  "AniU1R459l": {
+    "source": "Upgrade the System",
+    "translation": "[Ŭƥɠřȧȧḓḗḗ ŧħḗḗ Şẏşŧḗḗḿ]"
+  },
+  "AxkJv1TcEW": {
+    "source": "Failed to upgrade the system!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŭŭƥɠřȧȧḓḗḗ ŧħḗḗ şẏşŧḗḗḿ!]"
+  },
+  "AyGauyc55S": {
+    "source": "Login",
+    "translation": "[Ŀǿǿɠīƞ]"
+  },
+  "AzAl/plMkU": {
+    "source": "Failed to save SecondsInStatusbar",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŞḗḗƈǿǿƞḓşĪƞŞŧȧȧŧŭŭşƀȧȧř]"
+  },
+  "BG9UOWuEog": {
+    "source": "Forever",
+    "translation": "[Ƒǿǿřḗḗṽḗḗř]"
+  },
+  "BOXNKj1bEj": {
+    "source": "Mining Pool",
+    "translation": "[Ḿīƞīƞɠ Ƥǿǿǿǿŀ]"
+  },
+  "BPnT3TVya+": {
+    "source": "Small",
+    "translation": "[Şḿȧȧŀŀ]"
+  },
+  "BRdveaWxa+": {
+    "source": "{item} is outside the list.",
+    "translation": "[{item} īş ǿǿŭŭŧşīḓḗḗ ŧħḗḗ ŀīşŧ.]"
+  },
+  "BYsiHiCbMG": {
+    "source": "{name} ({unit}, optional)",
+    "translation": "[{name} ({unit}, ǿǿƥŧīǿǿƞȧȧŀ)]"
+  },
+  "BeT3j933EU": {
+    "source": "WPA3",
+    "translation": "[ẆƤȦ3]"
+  },
+  "BnoW5VAdUi": {
+    "source": "DNS Servers",
+    "translation": "[ḒȠŞ Şḗḗřṽḗḗřş]"
+  },
+  "Bpaoa6Zflc": {
+    "source": "Failed to delete alarm!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḓḗḗŀḗḗŧḗḗ ȧȧŀȧȧřḿ!]"
+  },
+  "Bt4GHVbIbC": {
+    "source": "Edit {account}",
+    "translation": "[Ḗḓīŧ {account}]"
+  },
+  "C4ENlvYIEr": {
+    "source": "Tue",
+    "translation": "[Ŧŭŭḗḗ]"
+  },
+  "C81/uGekIK": {
+    "source": "Logout",
+    "translation": "[Ŀǿǿɠǿǿŭŭŧ]"
+  },
+  "CA24+j3ogx": {
+    "source": "System reboot triggered",
+    "translation": "[Şẏşŧḗḗḿ řḗḗƀǿǿǿǿŧ ŧřīɠɠḗḗřḗḗḓ]"
+  },
+  "CBgx6wbEkO": {
+    "source": "Number format changed",
+    "translation": "[Ƞŭŭḿƀḗḗř ƒǿǿřḿȧȧŧ ƈħȧȧƞɠḗḗḓ]"
+  },
+  "CDT3TuAZaA": {
+    "source": "Account \"{name}\" saved",
+    "translation": "[Ȧƈƈǿǿŭŭƞŧ \"{name}\" şȧȧṽḗḗḓ]"
+  },
+  "CNaG5SBORy": {
+    "source": "10 minutes",
+    "translation": "[10 ḿīƞŭŭŧḗḗş]"
+  },
+  "CaZ2W20Icy": {
+    "source": "Failed to delete widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḓḗḗŀḗḗŧḗḗ ẇīḓɠḗḗŧ!]"
+  },
+  "CcEB2qq85P": {
+    "source": "Download system diagnostics and logs for troubleshooting.",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓ şẏşŧḗḗḿ ḓīȧȧɠƞǿǿşŧīƈş ȧȧƞḓ ŀǿǿɠş ƒǿǿř ŧřǿǿŭŭƀŀḗḗşħǿǿǿǿŧīƞɠ.]"
+  },
+  "CjIxKgl2tD": {
+    "source": "Widget updated!",
+    "translation": "[Ẇīḓɠḗḗŧ ŭŭƥḓȧȧŧḗḗḓ!]"
+  },
+  "CmlT0+QJd9": {
+    "source": "Whats new in this Upgrade?",
+    "translation": "[Ẇħȧȧŧş ƞḗḗẇ īƞ ŧħīş Ŭƥɠřȧȧḓḗḗ?]"
+  },
+  "Coy6SHGifn": {
+    "source": "Calendar",
+    "translation": "[Ƈȧȧŀḗḗƞḓȧȧř]"
+  },
+  "Cs6TWMDMUO": {
+    "source": "WPA2 / WPA3",
+    "translation": "[ẆƤȦ2 / ẆƤȦ3]"
+  },
+  "D34tusvKSb": {
+    "source": "Screen Cycling",
+    "translation": "[Şƈřḗḗḗḗƞ Ƈẏƈŀīƞɠ]"
+  },
+  "D3idYvSLF9": {
+    "source": "Settings",
+    "translation": "[Şḗḗŧŧīƞɠş]"
+  },
+  "DY1jOLKpiw": {
+    "source": "New firmware version available",
+    "translation": "[Ƞḗḗẇ ƒīřḿẇȧȧřḗḗ ṽḗḗřşīǿǿƞ ȧȧṽȧȧīŀȧȧƀŀḗḗ]"
+  },
+  "DuOxNPp/me": {
+    "source": "{count, plural, one {{count} package update available} other {{count} package updates available}}",
+    "translation": "[{count,plural,one{{count} ƥȧȧƈķȧȧɠḗḗ ŭŭƥḓȧȧŧḗḗ ȧȧṽȧȧīŀȧȧƀŀḗḗ} other{{count} ƥȧȧƈķȧȧɠḗḗ ŭŭƥḓȧȧŧḗḗş ȧȧṽȧȧīŀȧȧƀŀḗḗ}}]"
+  },
+  "EGe5tCAxZi": {
+    "source": "{name} was upgraded from {previous} to {version}.",
+    "translation": "[{name} ẇȧȧş ŭŭƥɠřȧȧḓḗḗḓ ƒřǿǿḿ {previous} ŧǿǿ {version}.]"
+  },
+  "Ev6SEFBkdw": {
+    "source": "New Password",
+    "translation": "[Ƞḗḗẇ Ƥȧȧşşẇǿǿřḓ]"
+  },
+  "EwRIOmjuqR": {
+    "source": "User",
+    "translation": "[Ŭşḗḗř]"
+  },
+  "F/Yedquj8Z": {
+    "source": "To remove your password, please enter your current password.",
+    "translation": "[Ŧǿǿ řḗḗḿǿǿṽḗḗ ẏǿǿŭŭř ƥȧȧşşẇǿǿřḓ, ƥŀḗḗȧȧşḗḗ ḗḗƞŧḗḗř ẏǿǿŭŭř ƈŭŭřřḗḗƞŧ ƥȧȧşşẇǿǿřḓ.]"
+  },
+  "F5407kPK6u": {
+    "source": "Sound Volume in Night Mode",
+    "translation": "[Şǿǿŭŭƞḓ Ṽǿǿŀŭŭḿḗḗ īƞ Ƞīɠħŧ Ḿǿǿḓḗḗ]"
+  },
+  "FC0AP4JIua": {
+    "source": "Thu",
+    "translation": "[Ŧħŭŭ]"
+  },
+  "FDWa/3tu5m": {
+    "source": "Failed to delete scene with an unknown error!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḓḗḗŀḗḗŧḗḗ şƈḗḗƞḗḗ ẇīŧħ ȧȧƞ ŭŭƞķƞǿǿẇƞ ḗḗřřǿǿř!]"
+  },
+  "FFZ6+pC8NU": {
+    "source": "All {selected, plural, =1 {{selected} item} other {{selected} items}} on this page are selected. <a>Select all {available, plural, =1 {{available} item} other {{available} items}}</a>",
+    "translation": "[Ȧŀŀ {selected,plural,other{{selected} īŧḗḗḿş} =1{{selected} īŧḗḗḿ}} ǿǿƞ ŧħīş ƥȧȧɠḗḗ ȧȧřḗḗ şḗḗŀḗḗƈŧḗḗḓ. <a>Şḗḗŀḗḗƈŧ ȧȧŀŀ {available,plural,other{{available} īŧḗḗḿş} =1{{available} īŧḗḗḿ}}</a>]"
+  },
+  "Fg65lXT4B2": {
+    "source": "Move cancelled, {item} is back at position {position} of {count}.",
+    "translation": "[Ḿǿǿṽḗḗ ƈȧȧƞƈḗḗŀŀḗḗḓ, {item} īş ƀȧȧƈķ ȧȧŧ ƥǿǿşīŧīǿǿƞ {position} ǿǿƒ {count}.]"
+  },
+  "Fm3M+yFIbr": {
+    "source": "Finance",
+    "translation": "[Ƒīƞȧȧƞƈḗḗ]"
+  },
+  "GJwREVlv5b": {
+    "source": "Failed to load accounts!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ȧȧƈƈǿǿŭŭƞŧş!]"
+  },
+  "GQvqkI1lyL": {
+    "source": "Weekdays",
+    "translation": "[Ẇḗḗḗḗķḓȧȧẏş]"
+  },
+  "GTyKt+zd0k": {
+    "source": "Top level navigation",
+    "translation": "[Ŧǿǿƥ ŀḗḗṽḗḗŀ ƞȧȧṽīɠȧȧŧīǿǿƞ]"
+  },
+  "GYoIyTRzA5": {
+    "source": "Configure Widget",
+    "translation": "[Ƈǿǿƞƒīɠŭŭřḗḗ Ẇīḓɠḗḗŧ]"
+  },
+  "GbD/jtYw9J": {
+    "source": "Reset to Defaults",
+    "translation": "[Řḗḗşḗḗŧ ŧǿǿ Ḓḗḗƒȧȧŭŭŀŧş]"
+  },
+  "Ge9e7TvlRp": {
+    "source": "Remove {row}",
+    "translation": "[Řḗḗḿǿǿṽḗḗ {row}]"
+  },
+  "GretYfMDAh": {
+    "source": "Current Password",
+    "translation": "[Ƈŭŭřřḗḗƞŧ Ƥȧȧşşẇǿǿřḓ]"
+  },
+  "H5+7kJZSt4": {
+    "source": "Wi-Fi connection: Unknown error!",
+    "translation": "[Ẇī-Ƒī ƈǿǿƞƞḗḗƈŧīǿǿƞ: Ŭƞķƞǿǿẇƞ ḗḗřřǿǿř!]"
+  },
+  "HLZ9CCz32R": {
+    "source": "Credentials",
+    "translation": "[Ƈřḗḗḓḗḗƞŧīȧȧŀş]"
+  },
+  "HRnS4bKmua": {
+    "source": "Reload {scene}",
+    "translation": "[Řḗḗŀǿǿȧȧḓ {scene}]"
+  },
+  "HVe69RMKpZ": {
+    "source": "The device did not answer in time. The install may still finish; check the widget list in a moment.",
+    "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ ḓīḓ ƞǿǿŧ ȧȧƞşẇḗḗř īƞ ŧīḿḗḗ. Ŧħḗḗ īƞşŧȧȧŀŀ ḿȧȧẏ şŧīŀŀ ƒīƞīşħ; ƈħḗḗƈķ ŧħḗḗ ẇīḓɠḗḗŧ ŀīşŧ īƞ ȧȧ ḿǿǿḿḗḗƞŧ.]"
+  },
+  "HW39/g3o6g": {
+    "source": "Failed to save TemperatureUnits",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŦḗḗḿƥḗḗřȧȧŧŭŭřḗḗŬƞīŧş]"
+  },
+  "HcMCsgsQYb": {
+    "source": "Scanning for networks…",
+    "translation": "[Şƈȧȧƞƞīƞɠ ƒǿǿř ƞḗḗŧẇǿǿřķş…]"
+  },
+  "HfjuVieGvU": {
+    "source": "{row}, {field}",
+    "translation": "[{row}, {field}]"
+  },
+  "HgTldytn+Q": {
+    "source": "Verifying firmware",
+    "translation": "[Ṽḗḗřīƒẏīƞɠ ƒīřḿẇȧȧřḗḗ]"
+  },
+  "Hik1D1+qcq": {
+    "source": "Enable Boot Sound",
+    "translation": "[Ḗƞȧȧƀŀḗḗ Ɓǿǿǿǿŧ Şǿǿŭŭƞḓ]"
+  },
+  "HpqIzCxBjE": {
+    "source": "Failed to save DateFormat",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ḒȧȧŧḗḗƑǿǿřḿȧȧŧ]"
+  },
+  "HwloAb5Dhs": {
+    "source": "Language saved; reload the page to see it",
+    "translation": "[Ŀȧȧƞɠŭŭȧȧɠḗḗ şȧȧṽḗḗḓ; řḗḗŀǿǿȧȧḓ ŧħḗḗ ƥȧȧɠḗḗ ŧǿǿ şḗḗḗḗ īŧ]",
+    "description": "Settings error toast when the device saved the new language but the page could not load its translation; the page stays in its current language until reloaded"
+  },
+  "I+NzfLjj7o": {
+    "source": "Alarm Name (optional)",
+    "translation": "[Ȧŀȧȧřḿ Ƞȧȧḿḗḗ (ǿǿƥŧīǿǿƞȧȧŀ)]"
+  },
+  "I3JhPSOAlX": {
+    "source": "Network",
+    "translation": "[Ƞḗḗŧẇǿǿřķ]"
+  },
+  "IQlKPF5j+y": {
+    "source": "Select a File",
+    "translation": "[Şḗḗŀḗḗƈŧ ȧȧ Ƒīŀḗḗ]"
+  },
+  "IqBkBltijz": {
+    "source": "DHCP",
+    "translation": "[ḒĦƇƤ]"
+  },
+  "IqlxFbmoO5": {
+    "source": "Reset to Factory Defaults",
+    "translation": "[Řḗḗşḗḗŧ ŧǿǿ Ƒȧȧƈŧǿǿřẏ Ḓḗḗƒȧȧŭŭŀŧş]"
+  },
+  "J1aHyWGu76": {
+    "source": "Widget cycling: {status}",
+    "translation": "[Ẇīḓɠḗḗŧ ƈẏƈŀīƞɠ: {status}]"
+  },
+  "JCebdsA/Mm": {
+    "source": "One per line: host / \"*.example.com\" wildcard / CIDR range.{br}Leave empty to allow any destination.",
+    "translation": "[Ǿƞḗḗ ƥḗḗř ŀīƞḗḗ: ħǿǿşŧ / \"*.ḗḗẋȧȧḿƥŀḗḗ.ƈǿǿḿ\" ẇīŀḓƈȧȧřḓ / ƇĪḒŘ řȧȧƞɠḗḗ.{br}Ŀḗḗȧȧṽḗḗ ḗḗḿƥŧẏ ŧǿǿ ȧȧŀŀǿǿẇ ȧȧƞẏ ḓḗḗşŧīƞȧȧŧīǿǿƞ.]"
+  },
+  "JM1RKrlz+4": {
+    "source": "{selected, plural, =1 {{selected} item} other {{selected} items}} selected",
+    "translation": "[{selected,plural,other{{selected} īŧḗḗḿş} =1{{selected} īŧḗḗḿ}} şḗḗŀḗḗƈŧḗḗḓ]"
+  },
+  "JXdbo8Vnlw": {
+    "source": "Done",
+    "translation": "[Ḓǿǿƞḗḗ]"
+  },
+  "Jbgu7fFUrf": {
+    "source": "Upgrade info not available!",
+    "translation": "[Ŭƥɠřȧȧḓḗḗ īƞƒǿǿ ƞǿǿŧ ȧȧṽȧȧīŀȧȧƀŀḗḗ!]"
+  },
+  "JeVWXz9ma9": {
+    "source": "Edit Widget",
+    "translation": "[Ḗḓīŧ Ẇīḓɠḗḗŧ]"
+  },
+  "JkSSY7O18o": {
+    "source": "Configure your mining pool and network to get your miner online.",
+    "translation": "[Ƈǿǿƞƒīɠŭŭřḗḗ ẏǿǿŭŭř ḿīƞīƞɠ ƥǿǿǿǿŀ ȧȧƞḓ ƞḗḗŧẇǿǿřķ ŧǿǿ ɠḗḗŧ ẏǿǿŭŭř ḿīƞḗḗř ǿǿƞŀīƞḗḗ.]"
+  },
+  "JpuxyvnBVd": {
+    "source": "{label} (required)",
+    "translation": "[{label} (řḗḗɋŭŭīřḗḗḓ)]"
+  },
+  "JysiHXF5Ew": {
+    "source": "First Day of the Week",
+    "translation": "[Ƒīřşŧ Ḓȧȧẏ ǿǿƒ ŧħḗḗ Ẇḗḗḗḗķ]"
+  },
+  "Jz8GKSuiax": {
+    "source": "Use LED lights for notifications and alerts.",
+    "translation": "[Ŭşḗḗ ĿḖḒ ŀīɠħŧş ƒǿǿř ƞǿǿŧīƒīƈȧȧŧīǿǿƞş ȧȧƞḓ ȧȧŀḗḗřŧş.]"
+  },
+  "K0zjRZQeqc": {
+    "source": "Automatically install firmware updates when available.",
+    "translation": "[Ȧŭŭŧǿǿḿȧȧŧīƈȧȧŀŀẏ īƞşŧȧȧŀŀ ƒīřḿẇȧȧřḗḗ ŭŭƥḓȧȧŧḗḗş ẇħḗḗƞ ȧȧṽȧȧīŀȧȧƀŀḗḗ.]"
+  },
+  "K2DDr1Ji/l": {
+    "source": "Fahrenheit",
+    "translation": "[Ƒȧȧħřḗḗƞħḗḗīŧ]"
+  },
+  "K3r6DQW7h+": {
+    "source": "Delete",
+    "translation": "[Ḓḗḗŀḗḗŧḗḗ]"
+  },
+  "KFgd4bAFhh": {
+    "source": "This widget has no parameters to configure",
+    "translation": "[Ŧħīş ẇīḓɠḗḗŧ ħȧȧş ƞǿǿ ƥȧȧřȧȧḿḗḗŧḗḗřş ŧǿǿ ƈǿǿƞƒīɠŭŭřḗḗ]"
+  },
+  "KN7zKn8z4F": {
+    "source": "Error",
+    "translation": "[Ḗřřǿǿř]"
+  },
+  "KS6WuePUU0": {
+    "source": "LED notifications in night mode enabled",
+    "translation": "[ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş īƞ ƞīɠħŧ ḿǿǿḓḗḗ ḗḗƞȧȧƀŀḗḗḓ]"
+  },
+  "Knv5mnobZb": {
+    "source": "Please follow up instructions on the device screen to continue.",
+    "translation": "[Ƥŀḗḗȧȧşḗḗ ƒǿǿŀŀǿǿẇ ŭŭƥ īƞşŧřŭŭƈŧīǿǿƞş ǿǿƞ ŧħḗḗ ḓḗḗṽīƈḗḗ şƈřḗḗḗḗƞ ŧǿǿ ƈǿǿƞŧīƞŭŭḗḗ.]"
+  },
+  "KrJB4VGD1A": {
+    "source": "Checking for updates…",
+    "translation": "[Ƈħḗḗƈķīƞɠ ƒǿǿř ŭŭƥḓȧȧŧḗḗş…]"
+  },
+  "LMNOdP7nhY": {
+    "source": "Time, Date and Regional Settings",
+    "translation": "[Ŧīḿḗḗ, Ḓȧȧŧḗḗ ȧȧƞḓ Řḗḗɠīǿǿƞȧȧŀ Şḗḗŧŧīƞɠş]"
+  },
+  "LPxYNwTIK9": {
+    "source": "Verifying",
+    "translation": "[Ṽḗḗřīƒẏīƞɠ]"
+  },
+  "LmZmQy1UMy": {
+    "source": "Failed to save the Night Mode!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ Ƞīɠħŧ Ḿǿǿḓḗḗ!]"
+  },
+  "Lo38iy8/VE": {
+    "source": "Device Password",
+    "translation": "[Ḓḗḗṽīƈḗḗ Ƥȧȧşşẇǿǿřḓ]"
+  },
+  "Lt4OBpG8iT": {
+    "source": "Download size:",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓ şīẑḗḗ:]"
+  },
+  "MdbO645xRR": {
+    "source": "Failed to load sound settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ şǿǿŭŭƞḓ şḗḗŧŧīƞɠş!]"
+  },
+  "Mirphk5bbO": {
+    "source": "Network Configuration",
+    "translation": "[Ƞḗḗŧẇǿǿřķ Ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ]"
+  },
+  "Mz/gsaLDvA": {
+    "source": "Page Not Found",
+    "translation": "[Ƥȧȧɠḗḗ Ƞǿǿŧ Ƒǿǿŭŭƞḓ]"
+  },
+  "N03g5tFdW6": {
+    "source": "Install Widget",
+    "translation": "[Īƞşŧȧȧŀŀ Ẇīḓɠḗḗŧ]"
+  },
+  "N0eaIbNmoY": {
+    "source": "Confirm Changes",
+    "translation": "[Ƈǿǿƞƒīřḿ Ƈħȧȧƞɠḗḗş]"
+  },
+  "N2IrpMDHDB": {
+    "source": "Confirm",
+    "translation": "[Ƈǿǿƞƒīřḿ]"
+  },
+  "NCOaGdiOid": {
+    "source": "Failed to load general settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ɠḗḗƞḗḗřȧȧŀ şḗḗŧŧīƞɠş!]"
+  },
+  "NLj70mm7Oj": {
+    "source": "Delete Alarm",
+    "translation": "[Ḓḗḗŀḗḗŧḗḗ Ȧŀȧȧřḿ]"
+  },
+  "NOryR7jM7l": {
+    "source": "Alarm has been successfully toggled.",
+    "translation": "[Ȧŀȧȧřḿ ħȧȧş ƀḗḗḗḗƞ şŭŭƈƈḗḗşşƒŭŭŀŀẏ ŧǿǿɠɠŀḗḗḓ.]"
+  },
+  "NuJ+vlDJ2V": {
+    "source": "LED Notification Lights",
+    "translation": "[ĿḖḒ Ƞǿǿŧīƒīƈȧȧŧīǿǿƞ Ŀīɠħŧş]"
+  },
+  "NxoPuwTtM4": {
+    "source": "Downloading packages",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]"
+  },
+  "O2sqh9Nj5X": {
+    "source": "Weather",
+    "translation": "[Ẇḗḗȧȧŧħḗḗř]"
+  },
+  "O6TzPNzw67": {
+    "source": "Verifying packages",
+    "translation": "[Ṽḗḗřīƒẏīƞɠ ƥȧȧƈķȧȧɠḗḗş]"
+  },
+  "OLVyHLE2VH": {
+    "source": "WEP",
+    "translation": "[ẆḖƤ]"
+  },
+  "OOIqa+VSgl": {
+    "source": "Wi-Fi scan: Unknown error!",
+    "translation": "[Ẇī-Ƒī şƈȧȧƞ: Ŭƞķƞǿǿẇƞ ḗḗřřǿǿř!]"
+  },
+  "OUIFSP71gj": {
+    "source": "Automatic Updates",
+    "translation": "[Ȧŭŭŧǿǿḿȧȧŧīƈ Ŭƥḓȧȧŧḗḗş]"
+  },
+  "ObjU4OMvI8": {
+    "source": "Mining",
+    "translation": "[Ḿīƞīƞɠ]"
+  },
+  "Ol7jyfc/aV": {
+    "source": "Failed to save the brightness!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƀřīɠħŧƞḗḗşş!]"
+  },
+  "Oly+qTRQkb": {
+    "source": "SSID (network name)",
+    "translation": "[ŞŞĪḒ (ƞḗḗŧẇǿǿřķ ƞȧȧḿḗḗ)]"
+  },
+  "OnVBfY2Jqm": {
+    "source": "Manage your API credentials and service accounts.",
+    "translation": "[Ḿȧȧƞȧȧɠḗḗ ẏǿǿŭŭř ȦƤĪ ƈřḗḗḓḗḗƞŧīȧȧŀş ȧȧƞḓ şḗḗřṽīƈḗḗ ȧȧƈƈǿǿŭŭƞŧş.]"
+  },
+  "Or+NmhSRMY": {
+    "source": "Failed to load scene!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ şƈḗḗƞḗḗ!]"
+  },
+  "Os/StIOY+6": {
+    "source": "Start the upgrade?",
+    "translation": "[Şŧȧȧřŧ ŧħḗḗ ŭŭƥɠřȧȧḓḗḗ?]"
+  },
+  "OvzONl52rs": {
+    "source": "Off",
+    "translation": "[Ǿƒƒ]"
+  },
+  "P6PLpip+L0": {
+    "source": "Join",
+    "translation": "[Ĵǿǿīƞ]"
+  },
+  "PcBtrgfx1Z": {
+    "source": "Upload the widget as a .nar archive of its package. See the <a>bmc-main repository</a> for instructions.",
+    "translation": "[Ŭƥŀǿǿȧȧḓ ŧħḗḗ ẇīḓɠḗḗŧ ȧȧş ȧȧ .ƞȧȧř ȧȧřƈħīṽḗḗ ǿǿƒ īŧş ƥȧȧƈķȧȧɠḗḗ. Şḗḗḗḗ ŧħḗḗ <a>ƀḿƈ-ḿȧȧīƞ řḗḗƥǿǿşīŧǿǿřẏ</a> ƒǿǿř īƞşŧřŭŭƈŧīǿǿƞş.]"
+  },
+  "PeYyCLgn2e": {
+    "source": "Failed to save LED notifications night mode setting!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş ƞīɠħŧ ḿǿǿḓḗḗ şḗḗŧŧīƞɠ!]"
+  },
+  "Py189GY9df": {
+    "source": "Security",
+    "translation": "[Şḗḗƈŭŭřīŧẏ]"
+  },
+  "PzevgpbqT7": {
+    "source": "Alarm has been deleted.",
+    "translation": "[Ȧŀȧȧřḿ ħȧȧş ƀḗḗḗḗƞ ḓḗḗŀḗḗŧḗḗḓ.]"
+  },
+  "Q4tXfw4c63": {
+    "source": "Passwords have to match!",
+    "translation": "[Ƥȧȧşşẇǿǿřḓş ħȧȧṽḗḗ ŧǿǿ ḿȧȧŧƈħ!]"
+  },
+  "Q6ICnmpaJn": {
+    "source": "{done} downloaded",
+    "translation": "[{done} ḓǿǿẇƞŀǿǿȧȧḓḗḗḓ]"
+  },
+  "QMUuIJvBmO": {
+    "source": "Unknown widget ({id})",
+    "translation": "[Ŭƞķƞǿǿẇƞ ẇīḓɠḗḗŧ ({id})]"
+  },
+  "QiKKFzEENt": {
+    "source": "Change Password",
+    "translation": "[Ƈħȧȧƞɠḗḗ Ƥȧȧşşẇǿǿřḓ]"
+  },
+  "QlsDcroITH": {
+    "source": "Action",
+    "translation": "[Ȧƈŧīǿǿƞ]"
+  },
+  "QrihTZnk0x": {
+    "source": "Friday",
+    "translation": "[Ƒřīḓȧȧẏ]"
+  },
+  "QyXIfLqwDE": {
+    "source": "Failed to update widget duration! Please try again!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŭŭƥḓȧȧŧḗḗ ẇīḓɠḗḗŧ ḓŭŭřȧȧŧīǿǿƞ! Ƥŀḗḗȧȧşḗḗ ŧřẏ ȧȧɠȧȧīƞ!]"
+  },
+  "R2OqnWvv5S": {
+    "source": "Delete Account",
+    "translation": "[Ḓḗḗŀḗḗŧḗḗ Ȧƈƈǿǿŭŭƞŧ]"
+  },
+  "R9A/SYzgqu": {
+    "source": "Default Display Duration",
+    "translation": "[Ḓḗḗƒȧȧŭŭŀŧ Ḓīşƥŀȧȧẏ Ḓŭŭřȧȧŧīǿǿƞ]"
+  },
+  "RI2CsW84g7": {
+    "source": "Weekends",
+    "translation": "[Ẇḗḗḗḗķḗḗƞḓş]"
+  },
+  "Rix4MaINp4": {
+    "source": "Move Widget",
+    "translation": "[Ḿǿǿṽḗḗ Ẇīḓɠḗḗŧ]"
+  },
+  "Ro7cbvfVzK": {
+    "source": "Do you really want to reboot the device?",
+    "translation": "[Ḓǿǿ ẏǿǿŭŭ řḗḗȧȧŀŀẏ ẇȧȧƞŧ ŧǿǿ řḗḗƀǿǿǿǿŧ ŧħḗḗ ḓḗḗṽīƈḗḗ?]"
+  },
+  "RspokqfaHp": {
+    "source": "Enable sound during splash screen animation played at every startup of the Deck.",
+    "translation": "[Ḗƞȧȧƀŀḗḗ şǿǿŭŭƞḓ ḓŭŭřīƞɠ şƥŀȧȧşħ şƈřḗḗḗḗƞ ȧȧƞīḿȧȧŧīǿǿƞ ƥŀȧȧẏḗḗḓ ȧȧŧ ḗḗṽḗḗřẏ şŧȧȧřŧŭŭƥ ǿǿƒ ŧħḗḗ Ḓḗḗƈķ.]"
+  },
+  "SC8+tLYfi3": {
+    "source": "Password for {ssid}",
+    "translation": "[Ƥȧȧşşẇǿǿřḓ ƒǿǿř {ssid}]"
+  },
+  "SDajU6uhn5": {
+    "source": "Night mode time interval saved",
+    "translation": "[Ƞīɠħŧ ḿǿǿḓḗḗ ŧīḿḗḗ īƞŧḗḗřṽȧȧŀ şȧȧṽḗḗḓ]"
+  },
+  "SP7AGQeYkz": {
+    "source": "Create your first alarm to get started",
+    "translation": "[Ƈřḗḗȧȧŧḗḗ ẏǿǿŭŭř ƒīřşŧ ȧȧŀȧȧřḿ ŧǿǿ ɠḗḗŧ şŧȧȧřŧḗḗḓ]"
+  },
+  "Sadv9ep2vs": {
+    "source": "No Alarms Yet",
+    "translation": "[Ƞǿǿ Ȧŀȧȧřḿş Ẏḗḗŧ]"
+  },
+  "T8JZHei06V": {
+    "source": "Mon",
+    "translation": "[Ḿǿǿƞ]"
+  },
+  "TFnbe20MHH": {
+    "source": "{name} ({unit})",
+    "translation": "[{name} ({unit})]"
+  },
+  "TKmub+jF8a": {
+    "source": "This field is required",
+    "translation": "[Ŧħīş ƒīḗḗŀḓ īş řḗḗɋŭŭīřḗḗḓ]"
+  },
+  "TwyMauNL3r": {
+    "source": "Account",
+    "translation": "[Ȧƈƈǿǿŭŭƞŧ]"
+  },
+  "UILcXulI13": {
+    "source": "Unit system changed",
+    "translation": "[Ŭƞīŧ şẏşŧḗḗḿ ƈħȧȧƞɠḗḗḓ]"
+  },
+  "UTWdjErGLJ": {
+    "source": "Configure the content displayed on your Deck. Enable, order, and set durations for each widget to control what’s shown.",
+    "translation": "[Ƈǿǿƞƒīɠŭŭřḗḗ ŧħḗḗ ƈǿǿƞŧḗḗƞŧ ḓīşƥŀȧȧẏḗḗḓ ǿǿƞ ẏǿǿŭŭř Ḓḗḗƈķ. Ḗƞȧȧƀŀḗḗ, ǿǿřḓḗḗř, ȧȧƞḓ şḗḗŧ ḓŭŭřȧȧŧīǿǿƞş ƒǿǿř ḗḗȧȧƈħ ẇīḓɠḗḗŧ ŧǿǿ ƈǿǿƞŧřǿǿŀ ẇħȧȧŧ’ş şħǿǿẇƞ.]"
+  },
+  "UpN2gsF1KK": {
+    "source": "Drag and drop widgets to organize your screen layout. You'll see a live preview on your device as you make changes. Changes are saved automatically.",
+    "translation": "[Ḓřȧȧɠ ȧȧƞḓ ḓřǿǿƥ ẇīḓɠḗḗŧş ŧǿǿ ǿǿřɠȧȧƞīẑḗḗ ẏǿǿŭŭř şƈřḗḗḗḗƞ ŀȧȧẏǿǿŭŭŧ. Ẏǿǿŭŭ'ŀŀ şḗḗḗḗ ȧȧ ŀīṽḗḗ ƥřḗḗṽīḗḗẇ ǿǿƞ ẏǿǿŭŭř ḓḗḗṽīƈḗḗ ȧȧş ẏǿǿŭŭ ḿȧȧķḗḗ ƈħȧȧƞɠḗḗş. Ƈħȧȧƞɠḗḗş ȧȧřḗḗ şȧȧṽḗḗḓ ȧȧŭŭŧǿǿḿȧȧŧīƈȧȧŀŀẏ.]"
+  },
+  "UqjScD3V9N": {
+    "source": "Duration (s)",
+    "translation": "[Ḓŭŭřȧȧŧīǿǿƞ (ş)]"
+  },
+  "V1+/awQkXv": {
+    "source": "Find and join a Wi-Fi network",
+    "translation": "[Ƒīƞḓ ȧȧƞḓ ĵǿǿīƞ ȧȧ Ẇī-Ƒī ƞḗḗŧẇǿǿřķ]"
+  },
+  "V3RA+WWpRe": {
+    "source": "Unknown widget type — no matching manifest installed.",
+    "translation": "[Ŭƞķƞǿǿẇƞ ẇīḓɠḗḗŧ ŧẏƥḗḗ — ƞǿǿ ḿȧȧŧƈħīƞɠ ḿȧȧƞīƒḗḗşŧ īƞşŧȧȧŀŀḗḗḓ.]"
+  },
+  "VPtfWY4Ix4": {
+    "source": "Brightness",
+    "translation": "[Ɓřīɠħŧƞḗḗşş]"
+  },
+  "Vuh1Db/8tr": {
+    "source": "24-Hour",
+    "translation": "[24-Ħǿǿŭŭř]"
+  },
+  "W4YHJMVlCJ": {
+    "source": "15 minutes",
+    "translation": "[15 ḿīƞŭŭŧḗḗş]"
+  },
+  "W7FByj/i8r": {
+    "source": "— Invalid —",
+    "translation": "[— Īƞṽȧȧŀīḓ —]"
+  },
+  "WMNHPhDie+": {
+    "source": "Saturday",
+    "translation": "[Şȧȧŧŭŭřḓȧȧẏ]"
+  },
+  "WZBZ4Ay6rr": {
+    "source": "Failed to add manifest widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ȧȧḓḓ ḿȧȧƞīƒḗḗşŧ ẇīḓɠḗḗŧ!]"
+  },
+  "WbZTz4Hgt1": {
+    "source": "Bind a {label} for this widget to work.",
+    "translation": "[Ɓīƞḓ ȧȧ {label} ƒǿǿř ŧħīş ẇīḓɠḗḗŧ ŧǿǿ ẇǿǿřķ.]"
+  },
+  "Wca/V/Lj9c": {
+    "source": "Date Format",
+    "translation": "[Ḓȧȧŧḗḗ Ƒǿǿřḿȧȧŧ]"
+  },
+  "XGOpYiYCX+": {
+    "source": "Failed to load initial values!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ īƞīŧīȧȧŀ ṽȧȧŀŭŭḗḗş!]"
+  },
+  "XWu7Z5IYJY": {
+    "source": "Latest system version:",
+    "translation": "[Ŀȧȧŧḗḗşŧ şẏşŧḗḗḿ ṽḗḗřşīǿǿƞ:]"
+  },
+  "XqQbkDMjPz": {
+    "source": "Account deleted",
+    "translation": "[Ȧƈƈǿǿŭŭƞŧ ḓḗḗŀḗḗŧḗḗḓ]"
+  },
+  "XsWGveVWP1": {
+    "source": "Delete Scene",
+    "translation": "[Ḓḗḗŀḗḗŧḗḗ Şƈḗḗƞḗḗ]"
+  },
+  "XvZXZgXX6o": {
+    "source": "LED notifications in night mode disabled",
+    "translation": "[ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş īƞ ƞīɠħŧ ḿǿǿḓḗḗ ḓīşȧȧƀŀḗḗḓ]"
+  },
+  "YAgYL60fLm": {
+    "source": "Tuesday",
+    "translation": "[Ŧŭŭḗḗşḓȧȧẏ]"
+  },
+  "YEeUZJzlqw": {
+    "source": "Failed to install the widget package!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ īƞşŧȧȧŀŀ ŧħḗḗ ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ!]"
+  },
+  "YKWofizr24": {
+    "source": "Picked up {item}, position {position} of {count}.",
+    "translation": "[Ƥīƈķḗḗḓ ŭŭƥ {item}, ƥǿǿşīŧīǿǿƞ {position} ǿǿƒ {count}.]"
+  },
+  "YeB6C1r2TZ": {
+    "source": "Transition Effect",
+    "translation": "[Ŧřȧȧƞşīŧīǿǿƞ Ḗƒƒḗḗƈŧ]"
+  },
+  "YtxGgOZEIf": {
+    "source": "Connecting…",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧīƞɠ…]"
+  },
+  "ZGZEMNAA8T": {
+    "source": "{name} {version} can now be added to a scene.",
+    "translation": "[{name} {version} ƈȧȧƞ ƞǿǿẇ ƀḗḗ ȧȧḓḓḗḗḓ ŧǿǿ ȧȧ şƈḗḗƞḗḗ.]"
+  },
+  "ZJyow0buty": {
+    "source": "Edit Alarm",
+    "translation": "[Ḗḓīŧ Ȧŀȧȧřḿ]"
+  },
+  "ZK1d6fQ6/I": {
+    "source": "SSID",
+    "translation": "[ŞŞĪḒ]"
+  },
+  "Zh+5A6yahu": {
+    "source": "On",
+    "translation": "[Ǿƞ]"
+  },
+  "ZvTCxcMw2z": {
+    "source": "{name}, item {n}",
+    "translation": "[{name}, īŧḗḗḿ {n}]"
+  },
+  "a0eWVoPXF7": {
+    "source": "WPA / WPA2",
+    "translation": "[ẆƤȦ / ẆƤȦ2]"
+  },
+  "aP+kh2b2GB": {
+    "source": "{elapsed}s elapsed",
+    "translation": "[{elapsed}ş ḗḗŀȧȧƥşḗḗḓ]"
+  },
+  "aSAPwRymvY": {
+    "source": "Time Format",
+    "translation": "[Ŧīḿḗḗ Ƒǿǿřḿȧȧŧ]"
+  },
+  "aY+gjepQSQ": {
+    "source": "Times alarm can be snoozed before dismissal",
+    "translation": "[Ŧīḿḗḗş ȧȧŀȧȧřḿ ƈȧȧƞ ƀḗḗ şƞǿǿǿǿẑḗḗḓ ƀḗḗƒǿǿřḗḗ ḓīşḿīşşȧȧŀ]"
+  },
+  "amAEbRkrtN": {
+    "source": "Add New Alarm",
+    "translation": "[Ȧḓḓ Ƞḗḗẇ Ȧŀȧȧřḿ]"
+  },
+  "azMsfMtNvt": {
+    "source": "Monday",
+    "translation": "[Ḿǿǿƞḓȧȧẏ]"
+  },
+  "b0jvOiDjyn": {
+    "source": "You are up to date",
+    "translation": "[Ẏǿǿŭŭ ȧȧřḗḗ ŭŭƥ ŧǿǿ ḓȧȧŧḗḗ]"
+  },
+  "b3QB1rD4Oj": {
+    "source": "Select a sound…",
+    "translation": "[Şḗḗŀḗḗƈŧ ȧȧ şǿǿŭŭƞḓ…]"
+  },
+  "bRjypXFEXV": {
+    "source": "Full Screen",
+    "translation": "[Ƒŭŭŀŀ Şƈřḗḗḗḗƞ]"
+  },
+  "bWjdfaXOzU": {
+    "source": "URL",
+    "translation": "[ŬŘĿ]"
+  },
+  "bbcNCXdzeQ": {
+    "source": "Upgrading the system",
+    "translation": "[Ŭƥɠřȧȧḓīƞɠ ŧħḗḗ şẏşŧḗḗḿ]"
+  },
+  "bgf7JdBM45": {
+    "source": "The device did not describe itself",
+    "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ ḓīḓ ƞǿǿŧ ḓḗḗşƈřīƀḗḗ īŧşḗḗŀƒ]"
+  },
+  "binyphTCPZ": {
+    "source": "Enable LED Notifications in Night Mode",
+    "translation": "[Ḗƞȧȧƀŀḗḗ ĿḖḒ Ƞǿǿŧīƒīƈȧȧŧīǿǿƞş īƞ Ƞīɠħŧ Ḿǿǿḓḗḗ]"
+  },
+  "c+hShrz7Cs": {
+    "source": "Alarm has been updated",
+    "translation": "[Ȧŀȧȧřḿ ħȧȧş ƀḗḗḗḗƞ ŭŭƥḓȧȧŧḗḗḓ]"
+  },
+  "c8uKl6Uqjw": {
+    "source": "Wi-Fi",
+    "translation": "[Ẇī-Ƒī]"
+  },
+  "cG0Q8MnYSg": {
+    "source": "Temperature",
+    "translation": "[Ŧḗḗḿƥḗḗřȧȧŧŭŭřḗḗ]"
+  },
+  "cLG1C/r6oY": {
+    "source": "On, {duration}, {limit}",
+    "translation": "[Ǿƞ, {duration}, {limit}]"
+  },
+  "cLoYgmcbyy": {
+    "source": "Failed to update widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŭŭƥḓȧȧŧḗḗ ẇīḓɠḗḗŧ!]"
+  },
+  "cek5PsWl65": {
+    "source": "Failed to load data for alarms!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ḓȧȧŧȧȧ ƒǿǿř ȧȧŀȧȧřḿş!]"
+  },
+  "cfZgTMi4zO": {
+    "source": "Failed to save the night mode time interval!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ ŧīḿḗḗ īƞŧḗḗřṽȧȧŀ!]"
+  },
+  "cnX85PQqDF": {
+    "source": "Failed to save LED notifications setting!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş şḗḗŧŧīƞɠ!]"
+  },
+  "cyR7KhiuaU": {
+    "source": "Back",
+    "translation": "[Ɓȧȧƈķ]"
+  },
+  "d/Gpx21dxG": {
+    "source": "Widget cloned!",
+    "translation": "[Ẇīḓɠḗḗŧ ƈŀǿǿƞḗḗḓ!]"
+  },
+  "d20WLcNS8q": {
+    "source": "Automatic updates enabled",
+    "translation": "[Ȧŭŭŧǿǿḿȧȧŧīƈ ŭŭƥḓȧȧŧḗḗş ḗḗƞȧȧƀŀḗḗḓ]"
+  },
+  "d3r+1u7D/1": {
+    "source": "Failed to load scene cycling settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ şƈḗḗƞḗḗ ƈẏƈŀīƞɠ şḗḗŧŧīƞɠş!]"
+  },
+  "dI4IXz/8W0": {
+    "source": "Failed to save NumberFormat",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ȠŭŭḿƀḗḗřƑǿǿřḿȧȧŧ]"
+  },
+  "dbxs1yxF03": {
+    "source": "Select snooze limit…",
+    "translation": "[Şḗḗŀḗḗƈŧ şƞǿǿǿǿẑḗḗ ŀīḿīŧ…]"
+  },
+  "e+KIbbJVo0": {
+    "source": "This Deck runs up to {max} widgets at once. Turn off or delete a scene to free a slot before adding another.",
+    "translation": "[Ŧħīş Ḓḗḗƈķ řŭŭƞş ŭŭƥ ŧǿǿ {max} ẇīḓɠḗḗŧş ȧȧŧ ǿǿƞƈḗḗ. Ŧŭŭřƞ ǿǿƒƒ ǿǿř ḓḗḗŀḗḗŧḗḗ ȧȧ şƈḗḗƞḗḗ ŧǿǿ ƒřḗḗḗḗ ȧȧ şŀǿǿŧ ƀḗḗƒǿǿřḗḗ ȧȧḓḓīƞɠ ȧȧƞǿǿŧħḗḗř.]"
+  },
+  "eK57EzWaF5": {
+    "source": "Sound volume in night mode saved",
+    "translation": "[Şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ īƞ ƞīɠħŧ ḿǿǿḓḗḗ şȧȧṽḗḗḓ]"
+  },
+  "eOJyfZiR7Q": {
+    "source": "— None —",
+    "translation": "[— Ƞǿǿƞḗḗ —]"
+  },
+  "ePaAfAmzJ2": {
+    "source": "Your system version:",
+    "translation": "[Ẏǿǿŭŭř şẏşŧḗḗḿ ṽḗḗřşīǿǿƞ:]"
+  },
+  "es7ci2x2yE": {
+    "source": "30 minutes",
+    "translation": "[30 ḿīƞŭŭŧḗḗş]"
+  },
+  "f8BVkPiX/X": {
+    "source": "Time elapsed: {time}",
+    "translation": "[Ŧīḿḗḗ ḗḗŀȧȧƥşḗḗḓ: {time}]"
+  },
+  "fBk8Jlutx3": {
+    "source": "Display widget has been successfully added.",
+    "translation": "[Ḓīşƥŀȧȧẏ ẇīḓɠḗḗŧ ħȧȧş ƀḗḗḗḗƞ şŭŭƈƈḗḗşşƒŭŭŀŀẏ ȧȧḓḓḗḗḓ.]"
+  },
+  "fCu/+nE6Za": {
+    "source": "Static",
+    "translation": "[Şŧȧȧŧīƈ]"
+  },
+  "fK3IL8V9tc": {
+    "source": "Start and end time cannot be the same!",
+    "translation": "[Şŧȧȧřŧ ȧȧƞḓ ḗḗƞḓ ŧīḿḗḗ ƈȧȧƞƞǿǿŧ ƀḗḗ ŧħḗḗ şȧȧḿḗḗ!]"
+  },
+  "fKD/v9nEKb": {
+    "source": "Failed to update widget state!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŭŭƥḓȧȧŧḗḗ ẇīḓɠḗḗŧ şŧȧȧŧḗḗ!]"
+  },
+  "fL4CRF11la": {
+    "source": "Night Mode",
+    "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ]"
+  },
+  "fN1xj1dGam": {
+    "source": "Failed to save boot sound setting!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ƀǿǿǿǿŧ şǿǿŭŭƞḓ şḗḗŧŧīƞɠ!]"
+  },
+  "fNH+GNUv5F": {
+    "source": "Display Widget Added",
+    "translation": "[Ḓīşƥŀȧȧẏ Ẇīḓɠḗḗŧ Ȧḓḓḗḗḓ]"
+  },
+  "fPyUaCQJug": {
+    "source": "The DHCP or static address configuration applies to the ethernet port.",
+    "translation": "[Ŧħḗḗ ḒĦƇƤ ǿǿř şŧȧȧŧīƈ ȧȧḓḓřḗḗşş ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ ȧȧƥƥŀīḗḗş ŧǿǿ ŧħḗḗ ḗḗŧħḗḗřƞḗḗŧ ƥǿǿřŧ.]"
+  },
+  "fV5Xr4T7bz": {
+    "source": "Configure essential settings like time, network, and access to prepare your clock for use.",
+    "translation": "[Ƈǿǿƞƒīɠŭŭřḗḗ ḗḗşşḗḗƞŧīȧȧŀ şḗḗŧŧīƞɠş ŀīķḗḗ ŧīḿḗḗ, ƞḗḗŧẇǿǿřķ, ȧȧƞḓ ȧȧƈƈḗḗşş ŧǿǿ ƥřḗḗƥȧȧřḗḗ ẏǿǿŭŭř ƈŀǿǿƈķ ƒǿǿř ŭŭşḗḗ.]"
+  },
+  "fVO6CYenwq": {
+    "source": "Time must be in HH:MM format!",
+    "translation": "[Ŧīḿḗḗ ḿŭŭşŧ ƀḗḗ īƞ ĦĦ:ḾḾ ƒǿǿřḿȧȧŧ!]"
+  },
+  "fs2vLGEYKg": {
+    "source": "Sound volume saved",
+    "translation": "[Şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ şȧȧṽḗḗḓ]"
+  },
+  "g1WnkhGz7l": {
+    "source": "Do you really want to reset the device to factory settings?",
+    "translation": "[Ḓǿǿ ẏǿǿŭŭ řḗḗȧȧŀŀẏ ẇȧȧƞŧ ŧǿǿ řḗḗşḗḗŧ ŧħḗḗ ḓḗḗṽīƈḗḗ ŧǿǿ ƒȧȧƈŧǿǿřẏ şḗḗŧŧīƞɠş?]"
+  },
+  "gEYUSsamWk": {
+    "source": "Imperial (mi, lb)",
+    "translation": "[Īḿƥḗḗřīȧȧŀ (ḿī, ŀƀ)]"
+  },
+  "gJUhDBplXf": {
+    "source": "Turn off the screen after a period of inactivity during night mode. Touch to wake.",
+    "translation": "[Ŧŭŭřƞ ǿǿƒƒ ŧħḗḗ şƈřḗḗḗḗƞ ȧȧƒŧḗḗř ȧȧ ƥḗḗřīǿǿḓ ǿǿƒ īƞȧȧƈŧīṽīŧẏ ḓŭŭřīƞɠ ƞīɠħŧ ḿǿǿḓḗḗ. Ŧǿǿŭŭƈħ ŧǿǿ ẇȧȧķḗḗ.]"
+  },
+  "gnJyZ1YE4o": {
+    "source": "No “Display widget” yet",
+    "translation": "[Ƞǿǿ “Ḓīşƥŀȧȧẏ ẇīḓɠḗḗŧ” ẏḗḗŧ]"
+  },
+  "gvpP3D9o8i": {
+    "source": "The Braiins Deck will reboot to finish, and be unavailable for a few minutes.",
+    "translation": "[Ŧħḗḗ Ɓřȧȧīīƞş Ḓḗḗƈķ ẇīŀŀ řḗḗƀǿǿǿǿŧ ŧǿǿ ƒīƞīşħ, ȧȧƞḓ ƀḗḗ ŭŭƞȧȧṽȧȧīŀȧȧƀŀḗḗ ƒǿǿř ȧȧ ƒḗḗẇ ḿīƞŭŭŧḗḗş.]"
+  },
+  "hDDA1JhyK5": {
+    "source": "Takes a {type} account — pick another, or clear it.",
+    "translation": "[Ŧȧȧķḗḗş ȧȧ {type} ȧȧƈƈǿǿŭŭƞŧ — ƥīƈķ ȧȧƞǿǿŧħḗḗř, ǿǿř ƈŀḗḗȧȧř īŧ.]"
+  },
+  "hFYE2MSlqH": {
+    "source": "Fri",
+    "translation": "[Ƒřī]"
+  },
+  "hNjc6nt/8q": {
+    "source": "Scene deleted!",
+    "translation": "[Şƈḗḗƞḗḗ ḓḗḗŀḗḗŧḗḗḓ!]"
+  },
+  "hYTNfCKVsr": {
+    "source": "Encryption Type",
+    "translation": "[Ḗƞƈřẏƥŧīǿǿƞ Ŧẏƥḗḗ]"
+  },
+  "hhvAMDdsdB": {
+    "source": "Failed to save the sound volume in night mode!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ īƞ ƞīɠħŧ ḿǿǿḓḗḗ!]"
+  },
+  "hmZ3BzBbwt": {
+    "source": "Media",
+    "translation": "[Ḿḗḗḓīȧȧ]"
+  },
+  "ho+kbzcz/c": {
+    "source": "<b>Note</b>: Check your device screen to see live preview",
+    "translation": "[<b>Ƞǿǿŧḗḗ</b>: Ƈħḗḗƈķ ẏǿǿŭŭř ḓḗḗṽīƈḗḗ şƈřḗḗḗḗƞ ŧǿǿ şḗḗḗḗ ŀīṽḗḗ ƥřḗḗṽīḗḗẇ]"
+  },
+  "hzSNj4+sgs": {
+    "source": "Dashboard",
+    "translation": "[Ḓȧȧşħƀǿǿȧȧřḓ]"
+  },
+  "iNtUkuk4tv": {
+    "source": "Unknown scene!",
+    "translation": "[Ŭƞķƞǿǿẇƞ şƈḗḗƞḗḗ!]"
+  },
+  "ij24tjgCOV": {
+    "source": "Password is already set!",
+    "translation": "[Ƥȧȧşşẇǿǿřḓ īş ȧȧŀřḗḗȧȧḓẏ şḗḗŧ!]"
+  },
+  "ipb90Od6xP": {
+    "source": "Password Repeat",
+    "translation": "[Ƥȧȧşşẇǿǿřḓ Řḗḗƥḗḗȧȧŧ]"
+  },
+  "isGKnzG5uL": {
+    "source": "Documentation",
+    "translation": "[Ḓǿǿƈŭŭḿḗḗƞŧȧȧŧīǿǿƞ]"
+  },
+  "j8vTk/IsNn": {
+    "source": "Enter your current password and a new password to update your credentials.",
+    "translation": "[Ḗƞŧḗḗř ẏǿǿŭŭř ƈŭŭřřḗḗƞŧ ƥȧȧşşẇǿǿřḓ ȧȧƞḓ ȧȧ ƞḗḗẇ ƥȧȧşşẇǿǿřḓ ŧǿǿ ŭŭƥḓȧȧŧḗḗ ẏǿǿŭŭř ƈřḗḗḓḗḗƞŧīȧȧŀş.]"
+  },
+  "jE808XpltQ": {
+    "source": "Utility",
+    "translation": "[Ŭŧīŀīŧẏ]"
+  },
+  "jN1RBpuT7o": {
+    "source": "Failed to save unit system",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŭŭƞīŧ şẏşŧḗḗḿ]"
+  },
+  "jdhiiiFvmK": {
+    "source": "Language changed",
+    "translation": "[Ŀȧȧƞɠŭŭȧȧɠḗḗ ƈħȧȧƞɠḗḗḓ]",
+    "description": "Settings toast after the device language is saved, worded in the language just chosen"
+  },
+  "jm/spnRSn+": {
+    "source": "Reset",
+    "translation": "[Řḗḗşḗḗŧ]"
+  },
+  "jm3rkcpJd6": {
+    "source": "Language",
+    "translation": "[Ŀȧȧƞɠŭŭȧȧɠḗḗ]",
+    "description": "Settings field label; picks the language of the device and its web UI"
+  },
+  "jmd2a35up4": {
+    "source": "Are you sure you want to delete this scene?",
+    "translation": "[Ȧřḗḗ ẏǿǿŭŭ şŭŭřḗḗ ẏǿǿŭŭ ẇȧȧƞŧ ŧǿǿ ḓḗḗŀḗḗŧḗḗ ŧħīş şƈḗḗƞḗḗ?]"
+  },
+  "jvo0vs3nF0": {
+    "source": "Save",
+    "translation": "[Şȧȧṽḗḗ]"
+  },
+  "k0/uvWEOGb": {
+    "source": "Boot sound enabled",
+    "translation": "[Ɓǿǿǿǿŧ şǿǿŭŭƞḓ ḗḗƞȧȧƀŀḗḗḓ]"
+  },
+  "k4qGTkAl2p": {
+    "source": "Toggle changelog for {name}",
+    "translation": "[Ŧǿǿɠɠŀḗḗ ƈħȧȧƞɠḗḗŀǿǿɠ ƒǿǿř {name}]"
+  },
+  "kGyxuq/Uj2": {
+    "source": "All days",
+    "translation": "[Ȧŀŀ ḓȧȧẏş]"
+  },
+  "kgDclasOl9": {
+    "source": "Night Mode Saved",
+    "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ Şȧȧṽḗḗḓ]"
+  },
+  "kkKi1pmaD3": {
+    "source": "Screen auto-off timeout saved",
+    "translation": "[Şƈřḗḗḗḗƞ ȧȧŭŭŧǿǿ-ǿǿƒƒ ŧīḿḗḗǿǿŭŭŧ şȧȧṽḗḗḓ]"
+  },
+  "klMbtIhsCF": {
+    "source": "It is only ever sent to {hosts}.",
+    "translation": "[Īŧ īş ǿǿƞŀẏ ḗḗṽḗḗř şḗḗƞŧ ŧǿǿ {hosts}.]"
+  },
+  "krT6JyvdFH": {
+    "source": "Failed to play the sound!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƥŀȧȧẏ ŧħḗḗ şǿǿŭŭƞḓ!]"
+  },
+  "l87iylhrfN": {
+    "source": "All widget slots are in use",
+    "translation": "[Ȧŀŀ ẇīḓɠḗḗŧ şŀǿǿŧş ȧȧřḗḗ īƞ ŭŭşḗḗ]"
+  },
+  "lEMUo8XFPi": {
+    "source": "Regional Settings",
+    "translation": "[Řḗḗɠīǿǿƞȧȧŀ Şḗḗŧŧīƞɠş]"
+  },
+  "lxblglMBAV": {
+    "source": "Wednesday",
+    "translation": "[Ẇḗḗḓƞḗḗşḓȧȧẏ]"
+  },
+  "mAkYaQQoNL": {
+    "source": "{item} moved to position {position} of {count}.",
+    "translation": "[{item} ḿǿǿṽḗḗḓ ŧǿǿ ƥǿǿşīŧīǿǿƞ {position} ǿǿƒ {count}.]"
+  },
+  "mJR06Pgp0X": {
+    "source": "Sunday",
+    "translation": "[Şŭŭƞḓȧȧẏ]"
+  },
+  "mTRdyHDEbW": {
+    "source": "Delete {account}",
+    "translation": "[Ḓḗḗŀḗḗŧḗḗ {account}]"
+  },
+  "mtdIQYUcGI": {
+    "source": "Widget added, but its settings could not be opened.",
+    "translation": "[Ẇīḓɠḗḗŧ ȧȧḓḓḗḗḓ, ƀŭŭŧ īŧş şḗḗŧŧīƞɠş ƈǿǿŭŭŀḓ ƞǿǿŧ ƀḗḗ ǿǿƥḗḗƞḗḗḓ.]"
+  },
+  "mu8xcWo2Ew": {
+    "source": "Let’s make sure your alarm wakes you just right – not too loud, not too chill.",
+    "translation": "[Ŀḗḗŧ’ş ḿȧȧķḗḗ şŭŭřḗḗ ẏǿǿŭŭř ȧȧŀȧȧřḿ ẇȧȧķḗḗş ẏǿǿŭŭ ĵŭŭşŧ řīɠħŧ – ƞǿǿŧ ŧǿǿǿǿ ŀǿǿŭŭḓ, ƞǿǿŧ ŧǿǿǿǿ ƈħīŀŀ.]"
+  },
+  "n2LnG7mrhM": {
+    "source": "Night Mode Brightness",
+    "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ Ɓřīɠħŧƞḗḗşş]"
+  },
+  "nFzA0isnPs": {
+    "source": "Applying",
+    "translation": "[Ȧƥƥŀẏīƞɠ]"
+  },
+  "nRcPOLhC3o": {
+    "source": "Accounts not loaded",
+    "translation": "[Ȧƈƈǿǿŭŭƞŧş ƞǿǿŧ ŀǿǿȧȧḓḗḗḓ]"
+  },
+  "ncad+6OuMM": {
+    "source": "Slide",
+    "translation": "[Şŀīḓḗḗ]"
+  },
+  "nd8oP8M80r": {
+    "source": "Temperature units changed",
+    "translation": "[Ŧḗḗḿƥḗḗřȧȧŧŭŭřḗḗ ŭŭƞīŧş ƈħȧȧƞɠḗḗḓ]"
+  },
+  "neGa+mSx96": {
+    "source": "System Settings",
+    "translation": "[Şẏşŧḗḗḿ Şḗḗŧŧīƞɠş]"
+  },
+  "nnTDy2H+X0": {
+    "source": "Move {scene}",
+    "translation": "[Ḿǿǿṽḗḗ {scene}]"
+  },
+  "o4UE9ZNe3H": {
+    "source": "System Actions",
+    "translation": "[Şẏşŧḗḗḿ Ȧƈŧīǿǿƞş]"
+  },
+  "o8xuT90FkD": {
+    "source": "Factory reset complete",
+    "translation": "[Ƒȧȧƈŧǿǿřẏ řḗḗşḗḗŧ ƈǿǿḿƥŀḗḗŧḗḗ]"
+  },
+  "oS/naeSX/F": {
+    "source": "Building",
+    "translation": "[Ɓŭŭīŀḓīƞɠ]"
+  },
+  "olRvTFoZAp": {
+    "source": "Password must be at least 6 characters long",
+    "translation": "[Ƥȧȧşşẇǿǿřḓ ḿŭŭşŧ ƀḗḗ ȧȧŧ ŀḗḗȧȧşŧ 6 ƈħȧȧřȧȧƈŧḗḗřş ŀǿǿƞɠ]"
+  },
+  "ovDuWcoNAA": {
+    "source": "5 snoozes",
+    "translation": "[5 şƞǿǿǿǿẑḗḗş]"
+  },
+  "ovJ26CKo4Q": {
+    "source": "Medium",
+    "translation": "[Ḿḗḗḓīŭŭḿ]"
+  },
+  "ow4ny+CfIN": {
+    "source": "Ethernet Network",
+    "translation": "[Ḗŧħḗḗřƞḗḗŧ Ƞḗḗŧẇǿǿřķ]"
+  },
+  "p7VmgosJJM": {
+    "source": "Time format changed",
+    "translation": "[Ŧīḿḗḗ ƒǿǿřḿȧȧŧ ƈħȧȧƞɠḗḗḓ]"
+  },
+  "p8p49fQ/4q": {
+    "source": "Widget deleted!",
+    "translation": "[Ẇīḓɠḗḗŧ ḓḗḗŀḗḗŧḗḗḓ!]"
+  },
+  "pMcQckggwt": {
+    "source": "Gateway",
+    "translation": "[Ɠȧȧŧḗḗẇȧȧẏ]"
+  },
+  "pXjKUB8Zer": {
+    "source": "Unknown error!",
+    "translation": "[Ŭƞķƞǿǿẇƞ ḗḗřřǿǿř!]"
+  },
+  "pojGrj/L/O": {
+    "source": "Failed to revert widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ řḗḗṽḗḗřŧ ẇīḓɠḗḗŧ!]"
+  },
+  "pqVMeByDIl": {
+    "source": "Failed to load automatic updates setting!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ȧȧŭŭŧǿǿḿȧȧŧīƈ ŭŭƥḓȧȧŧḗḗş şḗḗŧŧīƞɠ!]"
+  },
+  "pu+LcqsJhh": {
+    "source": "Display preview connection lost!",
+    "translation": "[Ḓīşƥŀȧȧẏ ƥřḗḗṽīḗḗẇ ƈǿǿƞƞḗḗƈŧīǿǿƞ ŀǿǿşŧ!]"
+  },
+  "q+Q148Vao1": {
+    "source": "Widget cycling settings updated!",
+    "translation": "[Ẇīḓɠḗḗŧ ƈẏƈŀīƞɠ şḗḗŧŧīƞɠş ŭŭƥḓȧȧŧḗḗḓ!]"
+  },
+  "q1E3nnQ04k": {
+    "source": "Warning: This will delete all your custom configurations and display widgets.",
+    "translation": "[Ẇȧȧřƞīƞɠ: Ŧħīş ẇīŀŀ ḓḗḗŀḗḗŧḗḗ ȧȧŀŀ ẏǿǿŭŭř ƈŭŭşŧǿǿḿ ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞş ȧȧƞḓ ḓīşƥŀȧȧẏ ẇīḓɠḗḗŧş.]"
+  },
+  "q3L+O2lMwX": {
+    "source": "Invalid state, widget seems not to fit!",
+    "translation": "[Īƞṽȧȧŀīḓ şŧȧȧŧḗḗ, ẇīḓɠḗḗŧ şḗḗḗḗḿş ƞǿǿŧ ŧǿǿ ƒīŧ!]"
+  },
+  "qAhUUOIWbF": {
+    "source": "Thursday",
+    "translation": "[Ŧħŭŭřşḓȧȧẏ]"
+  },
+  "qCyPKfisKN": {
+    "source": "Clock",
+    "translation": "[Ƈŀǿǿƈķ]"
+  },
+  "qEuXjx1B4z": {
+    "source": "Sports",
+    "translation": "[Şƥǿǿřŧş]"
+  },
+  "qFlSSB49+c": {
+    "source": "No account bound",
+    "translation": "[Ƞǿǿ ȧȧƈƈǿǿŭŭƞŧ ƀǿǿŭŭƞḓ]"
+  },
+  "qJIygmfSym": {
+    "source": "Alarm has been added",
+    "translation": "[Ȧŀȧȧřḿ ħȧȧş ƀḗḗḗḗƞ ȧȧḓḓḗḗḓ]"
+  },
+  "qTmm9R1dAe": {
+    "source": "All {selected, plural, =1 {{selected} item} other {{selected} items}} available items are selected",
+    "translation": "[Ȧŀŀ {selected,plural,other{{selected} īŧḗḗḿş} =1{{selected} īŧḗḗḿ}} ȧȧṽȧȧīŀȧȧƀŀḗḗ īŧḗḗḿş ȧȧřḗḗ şḗḗŀḗḗƈŧḗḗḓ]"
+  },
+  "qlTe+eC7Ec": {
+    "source": "new",
+    "translation": "[ƞḗḗẇ]"
+  },
+  "qqlyYMNHnF": {
+    "source": "Running widget limit reached.",
+    "translation": "[Řŭŭƞƞīƞɠ ẇīḓɠḗḗŧ ŀīḿīŧ řḗḗȧȧƈħḗḗḓ.]"
+  },
+  "r/nIyIvLvj": {
+    "source": "removed",
+    "translation": "[řḗḗḿǿǿṽḗḗḓ]"
+  },
+  "rCZGMBufoH": {
+    "source": "Select snooze duration…",
+    "translation": "[Şḗḗŀḗḗƈŧ şƞǿǿǿǿẑḗḗ ḓŭŭřȧȧŧīǿǿƞ…]"
+  },
+  "rELDbByu8U": {
+    "source": "Refresh",
+    "translation": "[Řḗḗƒřḗḗşħ]"
+  },
+  "rWD3607/k1": {
+    "source": "Go to Homepage",
+    "translation": "[Ɠǿǿ ŧǿǿ Ħǿǿḿḗḗƥȧȧɠḗḗ]"
+  },
+  "rXTgTqrJXy": {
+    "source": "Time & Date",
+    "translation": "[Ŧīḿḗḗ & Ḓȧȧŧḗḗ]"
+  },
+  "rclAAmG7Gz": {
+    "source": "Number Format",
+    "translation": "[Ƞŭŭḿƀḗḗř Ƒǿǿřḿȧȧŧ]"
+  },
+  "re9SasmZF8": {
+    "source": "Password is not set!",
+    "translation": "[Ƥȧȧşşẇǿǿřḓ īş ƞǿǿŧ şḗḗŧ!]"
+  },
+  "ris6V67rM0": {
+    "source": "Connected Accounts",
+    "translation": "[Ƈǿǿƞƞḗḗƈŧḗḗḓ Ȧƈƈǿǿŭŭƞŧş]"
+  },
+  "rnA57TlMWt": {
+    "source": "Invalid state, widget data not found!",
+    "translation": "[Īƞṽȧȧŀīḓ şŧȧȧŧḗḗ, ẇīḓɠḗḗŧ ḓȧȧŧȧȧ ƞǿǿŧ ƒǿǿŭŭƞḓ!]"
+  },
+  "rosBxTUr2A": {
+    "source": "No widgets are installed.",
+    "translation": "[Ƞǿǿ ẇīḓɠḗḗŧş ȧȧřḗḗ īƞşŧȧȧŀŀḗḗḓ.]"
+  },
+  "rtKsfVHhjU": {
+    "source": "The upgrade ended unexpectedly.",
+    "translation": "[Ŧħḗḗ ŭŭƥɠřȧȧḓḗḗ ḗḗƞḓḗḗḓ ŭŭƞḗḗẋƥḗḗƈŧḗḗḓŀẏ.]"
+  },
+  "s30llJGEgl": {
+    "source": "Failed to update widget cycling settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŭŭƥḓȧȧŧḗḗ ẇīḓɠḗḗŧ ƈẏƈŀīƞɠ şḗḗŧŧīƞɠş!]"
+  },
+  "sMAAlNmCJt": {
+    "source": "Add New",
+    "translation": "[Ȧḓḓ Ƞḗḗẇ]"
+  },
+  "sVCrGAa2dh": {
+    "source": "Reboot Device",
+    "translation": "[Řḗḗƀǿǿǿǿŧ Ḓḗḗṽīƈḗḗ]"
+  },
+  "saNv0u72vI": {
+    "source": "{name} (optional)",
+    "translation": "[{name} (ǿǿƥŧīǿǿƞȧȧŀ)]"
+  },
+  "sarXeRvcZa": {
+    "source": "Add to {list}",
+    "translation": "[Ȧḓḓ ŧǿǿ {list}]"
+  },
+  "sf72ybTg6t": {
+    "source": "Failed to check for upgrade!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ!]"
+  },
+  "sjSEXT1XSi": {
+    "source": "Side navigation",
+    "translation": "[Şīḓḗḗ ƞȧȧṽīɠȧȧŧīǿǿƞ]"
+  },
+  "ssL153Y+fz": {
+    "source": "Enable LED Notifications",
+    "translation": "[Ḗƞȧȧƀŀḗḗ ĿḖḒ Ƞǿǿŧīƒīƈȧȧŧīǿǿƞş]"
+  },
+  "sv/rpClw+A": {
+    "source": "Widget packages installed from a file are not checked by Braiins Forge. A malicious package can take over this device and anything it can reach on your network. Install only packages from a source you trust.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗş īƞşŧȧȧŀŀḗḗḓ ƒřǿǿḿ ȧȧ ƒīŀḗḗ ȧȧřḗḗ ƞǿǿŧ ƈħḗḗƈķḗḗḓ ƀẏ Ɓřȧȧīīƞş Ƒǿǿřɠḗḗ. Ȧ ḿȧȧŀīƈīǿǿŭŭş ƥȧȧƈķȧȧɠḗḗ ƈȧȧƞ ŧȧȧķḗḗ ǿǿṽḗḗř ŧħīş ḓḗḗṽīƈḗḗ ȧȧƞḓ ȧȧƞẏŧħīƞɠ īŧ ƈȧȧƞ řḗḗȧȧƈħ ǿǿƞ ẏǿǿŭŭř ƞḗḗŧẇǿǿřķ. Īƞşŧȧȧŀŀ ǿǿƞŀẏ ƥȧȧƈķȧȧɠḗḗş ƒřǿǿḿ ȧȧ şǿǿŭŭřƈḗḗ ẏǿǿŭŭ ŧřŭŭşŧ.]"
+  },
+  "t24w8RMlYf": {
+    "source": "Failed to save the night mode brightness!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ ƀřīɠħŧƞḗḗşş!]"
+  },
+  "tC2qpKg7rE": {
+    "source": "Braiins DECK",
+    "translation": "[Ɓřȧȧīīƞş ḒḖƇĶ]"
+  },
+  "tHi5lfQuKw": {
+    "source": "Failed to toggle alarm!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŧǿǿɠɠŀḗḗ ȧȧŀȧȧřḿ!]"
+  },
+  "tW6rkQ3J7V": {
+    "source": "{item} dropped at position {position} of {count}.",
+    "translation": "[{item} ḓřǿǿƥƥḗḗḓ ȧȧŧ ƥǿǿşīŧīǿǿƞ {position} ǿǿƒ {count}.]"
+  },
+  "tXea4KOYWN": {
+    "source": "Password (optional)",
+    "translation": "[Ƥȧȧşşẇǿǿřḓ (ǿǿƥŧīǿǿƞȧȧŀ)]"
+  },
+  "tw5j2+ZRIB": {
+    "source": "Repeat",
+    "translation": "[Řḗḗƥḗḗȧȧŧ]"
+  },
+  "tzMNF3jWoU": {
+    "source": "Status",
+    "translation": "[Şŧȧȧŧŭŭş]"
+  },
+  "u2EPPJoCNT": {
+    "source": "Deleting {name} will unbind it from <b>{count, plural, one {{count} widget} other {{count} widgets}}</b>, which will stop using it.",
+    "translation": "[Ḓḗḗŀḗḗŧīƞɠ {name} ẇīŀŀ ŭŭƞƀīƞḓ īŧ ƒřǿǿḿ <b>{count,plural,one{{count} ẇīḓɠḗḗŧ} other{{count} ẇīḓɠḗḗŧş}}</b>, ẇħīƈħ ẇīŀŀ şŧǿǿƥ ŭŭşīƞɠ īŧ.]"
+  },
+  "uJV0wUU6rg": {
+    "source": "IP Address",
+    "translation": "[ĪƤ Ȧḓḓřḗḗşş]"
+  },
+  "uPDgthpqmr": {
+    "source": "Hostname",
+    "translation": "[Ħǿǿşŧƞȧȧḿḗḗ]"
+  },
+  "uYDYVRXelb": {
+    "source": "Widget duration updated!",
+    "translation": "[Ẇīḓɠḗḗŧ ḓŭŭřȧȧŧīǿǿƞ ŭŭƥḓȧȧŧḗḗḓ!]"
+  },
+  "ug01MkZy2v": {
+    "source": "Time",
+    "translation": "[Ŧīḿḗḗ]"
+  },
+  "uhx3NcomO0": {
+    "source": "Accept the Risk and Install",
+    "translation": "[Ȧƈƈḗḗƥŧ ŧħḗḗ Řīşķ ȧȧƞḓ Īƞşŧȧȧŀŀ]"
+  },
+  "uiFoFmfuC9": {
+    "source": "Password is required",
+    "translation": "[Ƥȧȧşşẇǿǿřḓ īş řḗḗɋŭŭīřḗḗḓ]"
+  },
+  "v+ng25gutv": {
+    "source": "{item} dropped outside the list, back at position {position} of {count}.",
+    "translation": "[{item} ḓřǿǿƥƥḗḗḓ ǿǿŭŭŧşīḓḗḗ ŧħḗḗ ŀīşŧ, ƀȧȧƈķ ȧȧŧ ƥǿǿşīŧīǿǿƞ {position} ǿǿƒ {count}.]"
+  },
+  "v27vrZkq1S": {
+    "source": "Night Mode Time Interval",
+    "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ Ŧīḿḗḗ Īƞŧḗḗřṽȧȧŀ]"
+  },
+  "v5J239jcRm": {
+    "source": "Edit {scene}",
+    "translation": "[Ḗḓīŧ {scene}]"
+  },
+  "vBScEAvc3M": {
+    "source": "Building packages",
+    "translation": "[Ɓŭŭīŀḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]"
+  },
+  "vKXxSljc6J": {
+    "source": "Failed to remove widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ řḗḗḿǿǿṽḗḗ ẇīḓɠḗḗŧ!]"
+  },
+  "vR7ekU1U49": {
+    "source": "Required field!",
+    "translation": "[Řḗḗɋŭŭīřḗḗḓ ƒīḗḗŀḓ!]"
+  },
+  "va3qnMlzeB": {
+    "source": "Unit System",
+    "translation": "[Ŭƞīŧ Şẏşŧḗḗḿ]"
+  },
+  "vtaxH+XeV2": {
+    "source": "Failed to play the sound {name}",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƥŀȧȧẏ ŧħḗḗ şǿǿŭŭƞḓ {name}]"
+  },
+  "vuLI07G2N7": {
+    "source": "Your device is being set up, the setup continues here shortly.",
+    "translation": "[Ẏǿǿŭŭř ḓḗḗṽīƈḗḗ īş ƀḗḗīƞɠ şḗḗŧ ŭŭƥ, ŧħḗḗ şḗḗŧŭŭƥ ƈǿǿƞŧīƞŭŭḗḗş ħḗḗřḗḗ şħǿǿřŧŀẏ.]"
+  },
+  "wEQDC6Wv3/": {
+    "source": "Edit",
+    "translation": "[Ḗḓīŧ]"
+  },
+  "wG2x/1KAk3": {
+    "source": "Invalid file type",
+    "translation": "[Īƞṽȧȧŀīḓ ƒīŀḗḗ ŧẏƥḗḗ]"
+  },
+  "wH++OeQZY7": {
+    "source": "Invalid state, cannot edit widget without combined scene!",
+    "translation": "[Īƞṽȧȧŀīḓ şŧȧȧŧḗḗ, ƈȧȧƞƞǿǿŧ ḗḗḓīŧ ẇīḓɠḗḗŧ ẇīŧħǿǿŭŭŧ ƈǿǿḿƀīƞḗḗḓ şƈḗḗƞḗḗ!]"
+  },
+  "wHoQlHHTQH": {
+    "source": "Brightness Saved",
+    "translation": "[Ɓřīɠħŧƞḗḗşş Şȧȧṽḗḗḓ]"
+  },
+  "wL7VAE/fRX": {
+    "source": "Actions",
+    "translation": "[Ȧƈŧīǿǿƞş]"
+  },
+  "wVsPjYtMjP": {
+    "source": "It may be sent to any host.",
+    "translation": "[Īŧ ḿȧȧẏ ƀḗḗ şḗḗƞŧ ŧǿǿ ȧȧƞẏ ħǿǿşŧ.]"
+  },
+  "wX0ZJlx3oe": {
+    "source": "Time interval must be set!",
+    "translation": "[Ŧīḿḗḗ īƞŧḗḗřṽȧȧŀ ḿŭŭşŧ ƀḗḗ şḗḗŧ!]"
+  },
+  "whj3AtXd2e": {
+    "source": "Download & Upgrade",
+    "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓ & Ŭƥɠřȧȧḓḗḗ]"
+  },
+  "wittYyIpaf": {
+    "source": "Created At",
+    "translation": "[Ƈřḗḗȧȧŧḗḗḓ Ȧŧ]"
+  },
+  "wjB0LJJ6k2": {
+    "source": "Edit Account",
+    "translation": "[Ḗḓīŧ Ȧƈƈǿǿŭŭƞŧ]"
+  },
+  "wnqVvgY0Xz": {
+    "source": "LED notifications disabled",
+    "translation": "[ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş ḓīşȧȧƀŀḗḗḓ]"
+  },
+  "wtdY6GA76K": {
+    "source": "Please wait for the app to restart.",
+    "translation": "[Ƥŀḗḗȧȧşḗḗ ẇȧȧīŧ ƒǿǿř ŧħḗḗ ȧȧƥƥ ŧǿǿ řḗḗşŧȧȧřŧ.]"
+  },
+  "wz3ar7+Agy": {
+    "source": "Failed to load the languages",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ŧħḗḗ ŀȧȧƞɠŭŭȧȧɠḗḗş]",
+    "description": "Settings error toast when the device does not list the languages it offers"
+  },
+  "wzxIwY6j0B": {
+    "source": "Move {row}",
+    "translation": "[Ḿǿǿṽḗḗ {row}]"
+  },
+  "x+67sPei+f": {
+    "source": "Back to Scenes List",
+    "translation": "[Ɓȧȧƈķ ŧǿǿ Şƈḗḗƞḗḗş Ŀīşŧ]"
+  },
+  "xGb4YfSMXf": {
+    "source": "Expand row",
+    "translation": "[Ḗẋƥȧȧƞḓ řǿǿẇ]"
+  },
+  "xQ6aNcwuOd": {
+    "source": "Create Password",
+    "translation": "[Ƈřḗḗȧȧŧḗḗ Ƥȧȧşşẇǿǿřḓ]"
+  },
+  "xcbt8/90d+": {
+    "source": "Failed to save the language",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ŀȧȧƞɠŭŭȧȧɠḗḗ]",
+    "description": "Settings error toast when saving the device language fails"
+  },
+  "xn0iThoKdA": {
+    "source": "12-hour",
+    "translation": "[12-ħǿǿŭŭř]"
+  },
+  "xzSwWXzv/8": {
+    "source": "Sound Volume",
+    "translation": "[Şǿǿŭŭƞḓ Ṽǿǿŀŭŭḿḗḗ]"
+  },
+  "y/PhoM9SbF": {
+    "source": "Celsius",
+    "translation": "[Ƈḗḗŀşīŭŭş]"
+  },
+  "y867VsgbzT": {
+    "source": "Volume",
+    "translation": "[Ṽǿǿŀŭŭḿḗḗ]"
+  },
+  "y87+TNTw0B": {
+    "source": "Activating",
+    "translation": "[Ȧƈŧīṽȧȧŧīƞɠ]"
+  },
+  "yGW47+VBZ+": {
+    "source": "Check for a new version",
+    "translation": "[Ƈħḗḗƈķ ƒǿǿř ȧȧ ƞḗḗẇ ṽḗḗřşīǿǿƞ]"
+  },
+  "yLMog6i2hb": {
+    "source": "Latest packages version:",
+    "translation": "[Ŀȧȧŧḗḗşŧ ƥȧȧƈķȧȧɠḗḗş ṽḗḗřşīǿǿƞ:]"
+  },
+  "yR5aTqCnaJ": {
+    "source": "Your packages version:",
+    "translation": "[Ẏǿǿŭŭř ƥȧȧƈķȧȧɠḗḗş ṽḗḗřşīǿǿƞ:]"
+  },
+  "ySElrrqDXl": {
+    "source": "Remove the file",
+    "translation": "[Řḗḗḿǿǿṽḗḗ ŧħḗḗ ƒīŀḗḗ]"
+  },
+  "yb+ZynwpTp": {
+    "source": "LED notifications enabled",
+    "translation": "[ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş ḗḗƞȧȧƀŀḗḗḓ]"
+  },
+  "z327f5gKGl": {
+    "source": "The app may restart to finish the upgrade.",
+    "translation": "[Ŧħḗḗ ȧȧƥƥ ḿȧȧẏ řḗḗşŧȧȧřŧ ŧǿǿ ƒīƞīşħ ŧħḗḗ ŭŭƥɠřȧȧḓḗḗ.]"
+  },
+  "z8M0Ad2Ss3": {
+    "source": "This widget has no size that fits this cell.",
+    "translation": "[Ŧħīş ẇīḓɠḗḗŧ ħȧȧş ƞǿǿ şīẑḗḗ ŧħȧȧŧ ƒīŧş ŧħīş ƈḗḗŀŀ.]"
+  },
+  "zGpUqV5W/y": {
+    "source": "The device did not come back online after the upgrade. It may still be restarting — reload the page to check.",
+    "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ ḓīḓ ƞǿǿŧ ƈǿǿḿḗḗ ƀȧȧƈķ ǿǿƞŀīƞḗḗ ȧȧƒŧḗḗř ŧħḗḗ ŭŭƥɠřȧȧḓḗḗ. Īŧ ḿȧȧẏ şŧīŀŀ ƀḗḗ řḗḗşŧȧȧřŧīƞɠ — řḗḗŀǿǿȧȧḓ ŧħḗḗ ƥȧȧɠḗḗ ŧǿǿ ƈħḗḗƈķ.]"
+  },
+  "zeOegLHTsi": {
+    "source": "Failed to load display settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ḓīşƥŀȧȧẏ şḗḗŧŧīƞɠş!]"
+  },
+  "zgw2I8nSaM": {
+    "source": "Installing…",
+    "translation": "[Īƞşŧȧȧŀŀīƞɠ…]"
+  }
+}

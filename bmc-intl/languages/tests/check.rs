@@ -21,6 +21,13 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// The firmware's packs, and the pseudo-locale a development build offers beside them.
+const LANGUAGES: &str = if cfg!(debug_assertions) {
+    "✓ languages: en-GB, en-US, en-XA, zh"
+} else {
+    "✓ languages: en-GB, en-US, zh"
+};
+
 /// `bmc-languages check ROOTS`, the firmware's own packs being the roots a device reads.
 fn check(roots: &[&Path]) -> Output {
     let profile = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/intl/profile-languages");
@@ -36,10 +43,7 @@ fn check(roots: &[&Path]) -> Output {
 fn the_firmware_s_own_packs_check_clean() {
     let output = check(&[]);
     assert!(output.status.success(), "{output:?}");
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "✓ languages: en-GB, en-US, zh"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), LANGUAGES);
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 
@@ -74,7 +78,7 @@ fn a_pack_with_a_broken_entry_fails_the_check_and_is_named() {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        "✓ languages: en-GB, en-US, zh",
+        LANGUAGES,
         "the broken entry is left out, its language is not"
     );
     let findings = String::from_utf8_lossy(&output.stderr);
