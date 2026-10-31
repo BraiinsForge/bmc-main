@@ -499,6 +499,10 @@ mod wasm_glue {
     // Rendering
     // ---------------------------------------------------------------------
 
+    /// Line height of the power figure, in ems; its box is one such line high,
+    /// so a figure too wide for it shrinks rather than wraps.
+    const POWER_LINE_HEIGHT: f32 = 0.9;
+
     #[derive(Clone, Copy)]
     struct SizeParams {
         header_font: u32,
@@ -589,36 +593,27 @@ mod wasm_glue {
         }
     }
 
-    /// Width of `text` in DeckSans Bold at 1 px, from the font's advances
-    /// (its digits are tabular); the SDK can't measure text.
-    fn bold_width_em(text: &str) -> f32 {
-        text.chars()
-            .map(|c| match c {
-                ',' | '.' => 0.310,
-                ' ' | '\u{a0}' => 0.236,
-                'W' => 0.973,
-                '-' => 0.403,
-                _ => 0.600,
-            })
-            .sum()
-    }
-
-    /// The live power figure at `size`, shrunk only as far as it must be to
-    /// fit between the paddings of a `width` wide widget: the small layout
-    /// has room for four digits, not five.
+    /// The live power figure at `size` in a one-line box between the
+    /// paddings of a `width` wide widget. Canvas autofit only shrinks it, and
+    /// only as far as it must to fit: the small layout has room for four
+    /// digits, not five.
     #[expect(
-        clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
-        clippy::cast_sign_loss,
         reason = "widget widths and font sizes are small positive pixel counts"
     )]
-    fn power_text(data: &SolarData, size: u32, width: u32, padding: f32) -> Node {
-        let power = power_str(data);
-        let room = width as f32 - 2.0 * padding;
-        let fit = (room / bold_width_em(&power)).floor().max(1.0) as u32;
-        text(
-            power,
-            style!(size: size.min(fit), weight: FontWeight::BOLD, color: WHITE, family: FontFamily::DeckSans, line_height: 0.9),
+    fn power_text(data: &SolarData, size: u32, width: u32, padding: f32, align: TextAlign) -> Node {
+        let room = (width as f32 - 2.0 * padding).max(1.0);
+        let height = size as f32 * POWER_LINE_HEIGHT;
+        canvas(
+            props!(width: room, height: height),
+            [Draw::autofit_text(
+                0.0,
+                0.0,
+                room,
+                height,
+                power_str(data),
+                style!(size: size, weight: FontWeight::BOLD, color: WHITE, family: FontFamily::DeckSans, line_height: POWER_LINE_HEIGHT, align: align),
+            )],
         )
     }
 
@@ -729,7 +724,7 @@ mod wasm_glue {
             props!(background: BG_COLOR, padding: sp.padding, gap: sp.gap),
             [
                 col(props!(gap: 2.0), top),
-                power_text(data, sp.power_font, ws.width, sp.padding),
+                power_text(data, sp.power_font, ws.width, sp.padding, TextAlign::Left),
                 col(
                     props!(gap: sp.gap, flex: 1.0, justify_content: Justify::End),
                     stats(sp, data),
@@ -756,7 +751,13 @@ mod wasm_glue {
         };
         let mut children = vec![header(sp.header_font, sp.icon_px)];
         children.extend(status_node(&sp, data));
-        children.push(power_text(data, sp.power_font, ws.width, sp.padding));
+        children.push(power_text(
+            data,
+            sp.power_font,
+            ws.width,
+            sp.padding,
+            TextAlign::Center,
+        ));
         children.extend(stats(&sp, data));
         col(
             props!(background: BG_COLOR, padding: sp.padding, gap: sp.gap, cross_align: CrossAlign::Center),
