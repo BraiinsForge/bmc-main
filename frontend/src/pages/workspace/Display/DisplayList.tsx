@@ -32,7 +32,7 @@ import { getID } from './const';
 import { toast } from '@/lib/toast';
 import { serial } from '@/lib/async';
 import { listenDocumentEvent, unloadGuard } from '@/lib/dom';
-import { setState, Sized, stopEventPropagation } from '@/lib/react';
+import { setState, stopEventPropagation } from '@/lib/react';
 import { Form, type iField } from '@/lib/form';
 import { assertUnreachable } from '@/lib/ts';
 
@@ -143,6 +143,7 @@ interface State {
 
     cycle: {
         isOpen: boolean;
+        isMenuFlipped: boolean;
         isActive: boolean;
         defaultDurationSeconds: number;
         effect: pb.SceneCyclingTransition;
@@ -167,6 +168,7 @@ const getInitialState = (): State => ({
 
     cycle: {
         isOpen: false,
+        isMenuFlipped: true,
         isActive: true,
         defaultDurationSeconds: 0,
         effect: pb.SceneCyclingTransition.SLIDE,
@@ -229,6 +231,7 @@ class View extends Component<Props, State> {
     componentDidMount() {
         const { unsubscribe } = listenDocumentEvent({ name: 'click', handler: this.#windowClickHandle });
         this.#windowClickUnsubscribe = unsubscribe;
+        if (this.#headerRef.current) this.#headerResize.observe(this.#headerRef.current);
         this.#loadMetadata();
         this.#loadScenes();
         this.#loadManifestWidgets();
@@ -238,6 +241,7 @@ class View extends Component<Props, State> {
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
+        this.#headerResize.disconnect();
         pb.abort.all(this);
 
         // Every debounce this page owns, or it fires into a component that is gone:
@@ -1077,7 +1081,23 @@ class View extends Component<Props, State> {
     //
 
     #cycleDialogToggle = (open: boolean): void => this.setState(s => ({ cycle: { ...s.cycle, isOpen: open } }));
-    #cycleDialogOpen = (): void => this.#cycleDialogToggle(true);
+    #headerRef = createRef<HTMLElement>();
+    // A header stacked into a column holds the menu at the start of the row,
+    // where it unfolds rightwards rather than flipped to the left.
+    #isMenuFlipped = (): boolean => {
+        const header = this.#headerRef.current;
+        return header === null || getComputedStyle(header).flexDirection !== 'column';
+    };
+    // The header restacks when the window crosses its breakpoint, an open menu included.
+    #headerResize = new ResizeObserver(() => {
+        const isMenuFlipped = this.#isMenuFlipped();
+        if (isMenuFlipped !== this.state.cycle.isMenuFlipped) {
+            this.setState(s => ({ cycle: { ...s.cycle, isMenuFlipped } }));
+        }
+    });
+    #cycleDialogOpen = (): void => {
+        this.setState(s => ({ cycle: { ...s.cycle, isOpen: true, isMenuFlipped: this.#isMenuFlipped() } }));
+    };
     #cycleDialogClose = (): void => this.#cycleDialogToggle(false);
 
     private abortCycleSubmit = pb.abort.get();
@@ -1136,104 +1156,87 @@ class View extends Component<Props, State> {
         );
 
         return (
-            <Sized<HTMLDivElement>
-                render={(ref, size) => {
-                    const iconLayout: boolean = !!size && size.width <= 800;
-                    const mobileLayout: boolean = !!size && size.width <= 600;
-                    const overflowMenuHasLabel: boolean = !(iconLayout && !mobileLayout);
-
-                    return (
-                        <div className={css.headerControls} ref={ref}>
-                            {widgetPackageInstallable(this.props.hardwareCapabilities) && (
-                                <>
-                                    <Button
-                                        id={$('install-widget-package')}
-                                        kind="secondary"
-                                        renderIcon={IconUpload}
-                                        onClick={() => this.setState({ packageDialog: 'open' })}
-                                        children={txt.installPackage}
-                                    />
-                                    {/* Mounted per opening, so a cancelled pick does not come back. */}
-                                    {this.state.packageDialog !== 'closed' && (
-                                        <Comp.InstallWidgetPackageModal
-                                            id={$('install-widget-package-modal')}
-                                            installing={this.state.packageDialog === 'installing'}
-                                            onClose={this.#closePackageModal}
-                                            onInstall={this.#installWidgetPackage}
-                                        />
-                                    )}
-                                </>
-                            )}
-
-                            <ScreenCyclingConfigForm
-                                cycle={{ value: cycle.isActive, onChange: this.#cycleChangeActive }}
-                                duration={{
-                                    value: cycle.defaultDurationSeconds,
-                                    onChange: this.#cycleChangeDuration,
-                                }}
-                                transitionEffect={{ value: cycle.effect, onChange: this.#cycleChangeEffect }}
-                                render={x => {
-                                    return (
-                                        <div className={css.screenCycleButtonWrapper}>
-                                            <OverflowMenu
-                                                id={$('cycle-form-menu')}
-                                                menuOptionsClass={css.screenCycleMenu}
-                                                flipped={!mobileLayout}
-                                                focusTrap={false}
-                                                direction="bottom"
-                                                // Sadly we cannot remove this one because we get only three options:
-                                                // - leave it on default → "Options"
-                                                // - supply our own text
-                                                // - get an empty tooltip when giving it an empty string
-                                                iconDescription={cycleToggleText}
-                                                onOpen={this.#cycleDialogOpen}
-                                                onClose={this.#cycleDialogClose}
-                                                open={cycle.isOpen}
-                                                renderIcon={() => {
-                                                    const ToggleIcon: CarbonIconType = cycle.isOpen
-                                                        ? IconChevronUp
-                                                        : IconChevronDown;
-
-                                                    return (
-                                                        <div className={css.screenCycleButtonContent}>
-                                                            <IconCycle />
-                                                            {overflowMenuHasLabel ? (
-                                                                <span children={cycleToggleText} />
-                                                            ) : null}
-                                                            <ToggleIcon className={css.chevron} />
-                                                        </div>
-                                                    );
-                                                }}
-                                                selectorPrimaryFocus="input,button,select"
-                                                size="sm"
-                                                children={<Layer level={1} children={x.content} />}
-                                            />
-                                        </div>
-                                    );
-                                }}
+            <div className={css.headerControls}>
+                {widgetPackageInstallable(this.props.hardwareCapabilities) && (
+                    <>
+                        <Button
+                            id={$('install-widget-package')}
+                            kind="secondary"
+                            renderIcon={IconUpload}
+                            onClick={() => this.setState({ packageDialog: 'open' })}
+                            children={txt.installPackage}
+                        />
+                        {/* Mounted per opening, so a cancelled pick does not come back. */}
+                        {this.state.packageDialog !== 'closed' && (
+                            <Comp.InstallWidgetPackageModal
+                                id={$('install-widget-package-modal')}
+                                installing={this.state.packageDialog === 'installing'}
+                                onClose={this.#closePackageModal}
+                                onInstall={this.#installWidgetPackage}
                             />
+                        )}
+                    </>
+                )}
 
-                            <MenuButton
-                                label={txt.addNew}
-                                kind="primary"
-                                id={$('add-scene')}
-                                disabled={this.#atCapacity}
-                            >
-                                <MenuItem
-                                    label={formatMessage({ defaultMessage: 'Full Screen' })}
-                                    className={css.addMenuButton}
-                                    onClick={this.#sceneAddChooseKind}
+                <ScreenCyclingConfigForm
+                    cycle={{ value: cycle.isActive, onChange: this.#cycleChangeActive }}
+                    duration={{
+                        value: cycle.defaultDurationSeconds,
+                        onChange: this.#cycleChangeDuration,
+                    }}
+                    transitionEffect={{ value: cycle.effect, onChange: this.#cycleChangeEffect }}
+                    render={x => {
+                        return (
+                            <div className={css.screenCycleButtonWrapper}>
+                                <OverflowMenu
+                                    id={$('cycle-form-menu')}
+                                    menuOptionsClass={css.screenCycleMenu}
+                                    flipped={cycle.isMenuFlipped}
+                                    focusTrap={false}
+                                    direction="bottom"
+                                    // Sadly we cannot remove this one because we get only three options:
+                                    // - leave it on default → "Options"
+                                    // - supply our own text
+                                    // - get an empty tooltip when giving it an empty string
+                                    iconDescription={cycleToggleText}
+                                    onOpen={this.#cycleDialogOpen}
+                                    onClose={this.#cycleDialogClose}
+                                    open={cycle.isOpen}
+                                    renderIcon={() => {
+                                        const ToggleIcon: CarbonIconType = cycle.isOpen
+                                            ? IconChevronUp
+                                            : IconChevronDown;
+
+                                        return (
+                                            <div className={css.screenCycleButtonContent}>
+                                                <IconCycle />
+                                                <span children={cycleToggleText} />
+                                                <ToggleIcon className={css.chevron} />
+                                            </div>
+                                        );
+                                    }}
+                                    selectorPrimaryFocus="input,button,select"
+                                    size="sm"
+                                    children={<Layer level={1} children={x.content} />}
                                 />
-                                <CombinedSceneMenuAction
-                                    capabilities={this.props.hardwareCapabilities}
-                                    label={formatMessage({ defaultMessage: 'Combined Scene' })}
-                                    onClick={this.#sceneAddCombined}
-                                />
-                            </MenuButton>
-                        </div>
-                    );
-                }}
-            />
+                            </div>
+                        );
+                    }}
+                />
+
+                <MenuButton label={txt.addNew} kind="primary" id={$('add-scene')} disabled={this.#atCapacity}>
+                    <MenuItem
+                        label={formatMessage({ defaultMessage: 'Full Screen' })}
+                        className={css.addMenuButton}
+                        onClick={this.#sceneAddChooseKind}
+                    />
+                    <CombinedSceneMenuAction
+                        capabilities={this.props.hardwareCapabilities}
+                        label={formatMessage({ defaultMessage: 'Combined Scene' })}
+                        onClick={this.#sceneAddCombined}
+                    />
+                </MenuButton>
+            </div>
         );
     };
 
@@ -1244,7 +1247,7 @@ class View extends Component<Props, State> {
         return (
             <div className={css.root}>
                 <Helmet title={this.#txt.title} />
-                <header className={css.header}>
+                <header ref={this.#headerRef} className={css.header}>
                     <div className={css.headerLeft}>
                         <h1 className={css.title} children={this.#txt.title} />
                         <div

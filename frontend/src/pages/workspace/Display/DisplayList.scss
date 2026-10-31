@@ -29,6 +29,8 @@
     composes: horizontal justified from 'styles/layout.scss';
     margin-block-end: mini-units(3);
     gap: mini-units(4);
+    // The controls drop under the title when both do not fit, however long their labels run.
+    flex-wrap: wrap;
 
     container-type: inline-size;
     width: 100%;
@@ -39,7 +41,13 @@
         align-items: start;
         row-gap: mini-units(2);
 
+        // In a column the title's basis would be its height.
+        .headerLeft {
+            flex: none;
+        }
+
         .headerControls {
+            margin-inline-start: 0;
             margin-inline-end: auto;
             justify-content: start;
             flex-flow: row wrap;
@@ -53,6 +61,7 @@
 
 .headerLeft {
     position: relative;
+    flex: 1 1 to-rem(320px);
 }
 .title {
     composes: heading-06 from 'styles/carbon/typography.scss';
@@ -74,6 +83,7 @@
     composes: flex horizontal center endJustified selfEnd from 'styles/layout.scss';
     position: relative;
     gap: mini-units(2);
+    margin-inline-start: auto;
 }
 
 //
