@@ -527,6 +527,7 @@ wayland-protocols = { version = "0.32", features = ["client", "server", "staging
 wayland-protocols-wlr = { version = "0.3.12", default-features = false }
 wayland-scanner = "0.31.10"
 wayland-server = "0.31"
+webpki-root-certs = "1.0.6"
 webpki-roots = "1.0.6"
 winit = "0.30"
 wl-nl80211 = "0.3.2"
