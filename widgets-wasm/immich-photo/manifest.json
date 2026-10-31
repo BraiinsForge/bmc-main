@@ -1,0 +1,62 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "ebe1e87c-6f40-404f-aa1d-9407167915a0",
+  "version": "0.1.0",
+  "name": "Immich photo",
+  "description": "Show random photos from your Immich library and label them from the Deck",
+  "config_help": "Shows a random photo from an Immich library, a different one on each refresh, fitted to the widget. Videos, archived and hidden photos are skipped.\n\n**Immich address:** the address you open Immich at, e.g. `http://192.168.1.10:2283` or `https://photos.example.com`. HTTPS needs a certificate from a public CA; for a self-signed one use plain HTTP on the local network.\n\n**API key:** create one in Immich under **Account Settings → API Keys** with the permissions `asset.read`, `asset.view`, `tag.read`, `tag.create` and `tag.asset`, and save it as a token account on the Deck.\n\n**Label:** tap the photo and choose **Label it** to tag the photo on screen in Immich with this label; on a photo that already has it the button reads **Remove label**. Leave it empty to hide the button.",
+  "binary": "bin/immich-photo",
+  "icon": "assets/icon.svg",
+  "category": "media",
+  "supported_viewports": [
+    {
+      "type": "rectangular"
+    }
+  ],
+  "params": {
+    "server": {
+      "name": "Immich address",
+      "description": "Where Immich is reached, e.g. http://192.168.1.10:2283",
+      "type": "string",
+      "optional": true
+    },
+    "refresh_seconds": {
+      "name": "Refresh interval (seconds)",
+      "description": "How often to fetch the next photo",
+      "type": "integer",
+      "min": 300,
+      "default_value": 3600
+    },
+    "sizing": {
+      "name": "Sizing",
+      "description": "Fit the whole photo (letterboxed), or fill the widget and crop the overflow",
+      "type": "string",
+      "default_value": "contain",
+      "enum_values": [
+        {
+          "value": "contain",
+          "label": "Fit — whole photo"
+        },
+        {
+          "value": "cover",
+          "label": "Fill — crop to edges"
+        }
+      ],
+      "enum_control": "radio"
+    },
+    "label": {
+      "name": "Label",
+      "description": "Tag given to the photo on screen by Label it, e.g. Favourite",
+      "type": "string",
+      "optional": true
+    }
+  },
+  "credentials": {
+    "immich": {
+      "type": "generic-token",
+      "label": "Immich API key",
+      "description": "API key from Immich → Account Settings → API Keys",
+      "required": true
+    }
+  }
+}
