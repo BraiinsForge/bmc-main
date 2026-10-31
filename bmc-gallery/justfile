@@ -112,14 +112,15 @@ preview SCENE NAME SIZE="1280x720" FRAMES="4":
             --size {{ SIZE }} \
             --frames {{ FRAMES }}
 
-# Render every shot in a capture recipe (a render per knob set) into `.tmp/OUT`.
-capture FILE="capture.toml" OUT="gallery-renders":
+# Render every shot in a capture recipe into `.tmp/OUT`; ARGS go on to gallery, such as `--global Language=en-XA`.
+capture FILE="capture.toml" OUT="gallery-renders" *ARGS:
     # OUT names the run rather than its path — two of them compare without either
     # escaping the scratch dir, which is the one place generated output belongs.
-    @just --justfile {{ source_file() }} gl \
+    @shift 2; just --justfile {{ source_file() }} gl \
         cargo run --quiet --manifest-path bmc-gallery/Cargo.toml -- \
             --capture "{{ FILE }}" \
-            --out "{{ justfile_directory() }}/.tmp/{{ OUT }}"
+            --out "{{ justfile_directory() }}/.tmp/{{ OUT }}" \
+            "$@"
 
 # List SCENE's knobs, their kinds and their values — the labels a capture recipe sets.
 knobs SCENE:

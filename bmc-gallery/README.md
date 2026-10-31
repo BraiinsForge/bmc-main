@@ -15,6 +15,7 @@ just gallery::preview 'animation::Easing Curves' easing           # one scene at
 just gallery::knobs 'settings_tray_bmc100::Settings Tray'         # what a recipe can set
 just gallery::capture-init 'settings_tray_bmc100::Settings Tray'  # a recipe with those knobs filled in
 just gallery::capture                                             # every shot in capture.toml
+just gallery::capture capture.toml zh --global Language=zh        # every shot in one language, into .tmp/zh
 ```
 
 `preview` shows a scene as it declares itself; setting knobs is what `capture` is for. Both write under `.tmp/`, taking
