@@ -26,6 +26,7 @@ import { createIntl, createIntlCache, RawIntlProvider } from 'react-intl';
 
 import { readSystem } from '@/lib/system';
 import { BootError } from '@/components';
+import '@/lib/carbonFlags';
 import App from './pages/init/InitWifi';
 
 const noop = () => {};
@@ -41,14 +42,16 @@ export function IntlProvider(props: { children: ReactNode }) {
 
 function boot(rootEl: HTMLElement): void {
     let tree: ReactNode;
+
     try {
         tree = <App capabilities={readSystem().capabilities} />;
     } catch (error) {
         tree = <BootError error={error} />;
     }
+
     createRoot(rootEl).render(
         <StrictMode>
-            <IntlProvider>{tree}</IntlProvider>
+            <IntlProvider children={tree} />
         </StrictMode>,
     );
 }

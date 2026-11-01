@@ -21,6 +21,7 @@
 import { afterEach } from '@rstest/core';
 import { cleanup } from '@testing-library/react/pure';
 
+import '@/lib/carbonFlags';
 import { toast } from '@/lib/toast';
 
 // The `/pure` entry registers no cleanup of its own, and a tree left mounted

@@ -28,6 +28,7 @@ import { Component, type ReactNode, StrictMode } from 'react';
 import { IntlProvider } from 'react-intl';
 import { MemoryRouter } from 'react-router';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
+import '@/lib/carbonFlags';
 
 // Styles
 import '@/styles/carbon/carbon.global.scss';
@@ -100,9 +101,7 @@ export default class Container extends Component<Props> {
                 <HelmetProvider>
                     <IntlProvider key={locale} defaultLocale={locale} locale={locale} messages={msg} onError={noop}>
                         <MemoryRouter>
-                            <div role="main" className={className}>
-                                {story()}
-                            </div>
+                            <div role="main" className={className} children={story()} />
                         </MemoryRouter>
                     </IntlProvider>
                 </HelmetProvider>

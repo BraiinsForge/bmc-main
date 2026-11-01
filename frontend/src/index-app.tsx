@@ -28,6 +28,7 @@ import { store } from '@/store';
 import { BootError } from '@/components';
 import { AppHead } from '@/components/AppHead';
 import { LocaleProvider } from '@/components/LocaleProvider';
+import '@/lib/carbonFlags';
 import '@/styles/carbon/carbon.global.scss';
 
 function boot(rootEl: HTMLElement): void {
@@ -49,7 +50,7 @@ function boot(rootEl: HTMLElement): void {
     root.render(
         <StrictMode>
             <HelmetProvider>
-                <LocaleProvider>{tree}</LocaleProvider>
+                <LocaleProvider children={tree} />
             </HelmetProvider>
         </StrictMode>,
     );

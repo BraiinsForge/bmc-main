@@ -172,6 +172,9 @@ importers:
       '@bufbuild/protobuf':
         specifier: 2.16.0
         version: 2.16.0
+      '@carbon/feature-flags':
+        specifier: 1.11.0
+        version: 1.11.0
       '@carbon/icons-react':
         specifier: 11.91.0
         version: 11.91.0(react@19.3.1)
