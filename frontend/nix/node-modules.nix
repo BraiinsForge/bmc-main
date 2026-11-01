@@ -41,7 +41,7 @@ let
     pname = "bmc-fe-" + builtins.hashFile "sha1" ../pnpm-lock.yaml;
     inherit src pnpm;
     fetcherVersion = 4;
-    hash = "sha256-m5rjdACyQu+uMu/f7wOzOfd005ciy4ABt+dCUUt5ut8=";
+    hash = "sha256-ReJUQci04fSNfcAz78A5a3Dnd6KPbWjRf0XTKhUMNgE=";
     # pnpm 12 leaves an empty `v11/links` on darwin and not on linux, the one difference
     # between the two stores; `rmdir` fails should it ever hold anything.
     preFixup = ''
@@ -57,8 +57,8 @@ assert pkgs.lib.assertMsg
   (devEngines.packageManager.name == "pnpm" && sameMajor devEngines.packageManager.version pnpm.version)
   "frontend/package.json declares ${devEngines.packageManager.name} ${devEngines.packageManager.version} but nixpkgs provides pnpm ${pnpm.version}; align the major versions";
 
-assert pkgs.lib.assertMsg (sameMajor devEngines.runtime.version pkgs.nodejs.version)
-  "frontend/package.json declares node ${devEngines.runtime.version} but nixpkgs provides node ${pkgs.nodejs.version}; align the major versions";
+assert pkgs.lib.assertMsg (sameMajor devEngines.runtime.version pkgs.nodejsFrontend.version)
+  "frontend/package.json declares node ${devEngines.runtime.version} but the flake's nodejsFrontend is ${pkgs.nodejsFrontend.version}; align the major versions";
 
 pkgs.stdenv.mkDerivation {
   name = "bmc-fe-node-modules";
@@ -72,7 +72,7 @@ pkgs.stdenv.mkDerivation {
 
   # nodejs lets the fixup phase rewrite the `#!/usr/bin/env node` shebangs in node_modules;
   # it resolves them from `buildInputs`, the interpreters that run the output.
-  buildInputs = [ pkgs.gcc-unwrapped pkgs.nodejs ];
+  buildInputs = [ pkgs.gcc-unwrapped pkgs.nodejsFrontend ];
 
   dontBuild = true;
 

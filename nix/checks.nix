@@ -279,7 +279,10 @@ in
     checks = [ "bans" "sources" ];
   };
 
-  proto-bindings = pkgs.callPackage ./proto-bindings.nix { inherit protoPlugins frontendNodeModules; };
+  proto-bindings = pkgs.callPackage ./proto-bindings.nix {
+    inherit protoPlugins frontendNodeModules;
+    nodejs = pkgs.nodejsFrontend;
+  };
 
   intl-cldr-data = pkgs.callPackage ./intl/cldr-data.nix { inherit intl-cldr-blob intl-tools cldr-json; };
 

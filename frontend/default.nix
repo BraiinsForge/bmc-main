@@ -32,7 +32,7 @@ in
     # `src` keeps the repo shape; the recipes run from the frontend itself.
     sourceRoot = "bmc-fe-patched-src/frontend";
 
-    buildInputs = [ pkgs.nodejs pkgs.pnpmToolchain.pnpm pkgs.just ];
+    buildInputs = [ pkgs.nodejsFrontend pkgs.pnpmToolchain.pnpm pkgs.just ];
     # `pnpm exec` otherwise reinstalls first, into the read-only copied tree, offline.
     pnpm_config_verify_deps_before_run = "false";
 

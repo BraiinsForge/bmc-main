@@ -30,17 +30,25 @@ strictDepBuilds: true
 
 savePrefix: ''
 
+# Pulled in by Storybook's TypeScript docgen plugin (stable 1.0.1, via flat-cache 3),
+# which never runs: we keep Storybook's default `react-docgen`.
+allowedDeprecatedVersions:
+  glob: 7.2.3
+  inflight: 1.0.6
+  rimraf: 3.0.2
+
 # Unmet peers stay unmet, as under yarn: rspack stands in for the `webpack` peer
 # that postcss-loader, sass-loader and the Storybook docgen plugin declare.
 autoInstallPeers: false
 peerDependencyRules:
   ignoreMissing:
     - webpack
+  # react-popper 2.3.0 declares React up to 18; it runs on 19 regardless.
+  allowedVersions:
+    react-popper>react: '19'
+    react-popper>react-dom: '19'
 
 overrides:
-  react: 19.2.8
-  react-dom: 19.2.8
-  react-is: 19.2.8
-  react-refresh@^0.17.0: 0.18.0
-  core-js: 3.50.0
-  sass-embedded: 1.104.0
+  # React 19 marks elements with a symbol older react-is does not know;
+  # prop-types, hoist-non-react-statics and pretty-format pull 16 to 18.
+  react-is: ^19.0.0

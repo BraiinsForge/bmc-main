@@ -66,14 +66,16 @@
               file = ./rust-toolchain.toml;
               sha256 = "sha256-+xUr6Al1wZSqX8aEsq7DpuFOK4Ve/i+qTl+K5uWQ9GM=";
             })
+            # The frontend's Node, beside nixpkgs' default rather than replacing it:
+            # replacing `nodejs` misses the binary cache for everything built with it.
             (final: prev: {
-              nodejs = prev.nodejs_24;
+              nodejsFrontend = prev.nodejs_26;
             })
             # One set for the frontend, so its `fetchPnpmDeps` hashes track a single pnpm.
             (final: prev: {
               pnpmToolchain = {
                 inherit (prev) fetchPnpmDeps pnpmConfigHook;
-                pnpm = prev.pnpm_12;
+                pnpm = prev.pnpm_12.override { nodejs-slim = prev.nodejs-slim_26; };
               };
             })
           ];
@@ -180,7 +182,7 @@
         # Local dev shell with Rust + frontend + GUI deps (native only).
         localDevShell = (bmc.profiles.fast.mkShell {
           name = "bmc-local-env";
-          packages = (commonDeps.frontendDeps { inherit (pkgs) nodejs; inherit (pkgs.pnpmToolchain) pnpm; })
+          packages = (commonDeps.frontendDeps { nodejs = pkgs.nodejsFrontend; inherit (pkgs.pnpmToolchain) pnpm; })
             ++ [
             proto-plugins.protoc-gen-buffa
             proto-plugins.protoc-gen-connect-rust
