@@ -58,9 +58,12 @@ class View extends Component<Props, State> {
         this.#refPassword.current?.focus();
     };
 
-    #txt = {
-        login: this.props.intl.formatMessage({ defaultMessage: 'Login' }),
-    };
+    get #txt() {
+        const { formatMessage } = this.props.intl;
+        return {
+            login: formatMessage({ defaultMessage: 'Login' }),
+        };
+    }
 
     componentDidMount() {
         this.#ref.current?.querySelector('input')?.select();

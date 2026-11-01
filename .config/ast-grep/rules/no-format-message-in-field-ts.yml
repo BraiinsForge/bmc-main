@@ -1,0 +1,33 @@
+# A class field's initializer runs once, when the component is constructed.
+# Copy formatted there keeps that language: after a switch the component re-renders
+# with the new `intl`, but the field still holds the old wording.
+# A getter or a render-time call formats on each read;
+# a function stored in a field formats when called.
+
+id: no-format-message-in-field-ts
+language: tsx
+severity: error
+
+message: "A class field formats its copy once, at construction, so it does not follow a language change — make it a getter (`get #txt() { … }`) or format in render."
+
+files:
+  - "frontend/src/**/*.{ts,tsx}"
+ignores:
+  - "**/*.d.ts"
+  - "frontend/src/proto/gen/**"
+
+rule:
+  kind: call_expression
+  has:
+    field: function
+    regex: "(^|\\.)(formatMessage|\\$t)$"
+  inside:
+    kind: public_field_definition
+    stopBy: end
+  not:
+    inside:
+      any:
+        - kind: arrow_function
+        - kind: function_expression
+      stopBy:
+        kind: public_field_definition

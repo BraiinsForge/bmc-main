@@ -77,18 +77,21 @@ const getInitialState = (): State => ({});
 
 class Base extends Component<Props, State> {
     readonly state = getInitialState();
-    #txt = {
-        name: this.props.intl.formatMessage({ defaultMessage: 'Braiins DECK' }),
-        sidenav: this.props.intl.formatMessage({ defaultMessage: 'Side navigation' }),
+    get #txt() {
+        const { formatMessage } = this.props.intl;
+        return {
+            name: formatMessage({ defaultMessage: 'Braiins DECK' }),
+            sidenav: formatMessage({ defaultMessage: 'Side navigation' }),
 
-        topnav: this.props.intl.formatMessage({ defaultMessage: 'Top level navigation' }),
-        dashboard: this.props.intl.formatMessage({ defaultMessage: 'Dashboard' }),
-        configuration: this.props.intl.formatMessage({ defaultMessage: 'Configuration' }),
-        system: this.props.intl.formatMessage({ defaultMessage: 'System' }),
-        display: this.props.intl.formatMessage({ defaultMessage: 'Display' }),
-        documentation: this.props.intl.formatMessage({ defaultMessage: 'Documentation' }),
-        logout: this.props.intl.formatMessage({ defaultMessage: 'Logout' }),
-    };
+            topnav: formatMessage({ defaultMessage: 'Top level navigation' }),
+            dashboard: formatMessage({ defaultMessage: 'Dashboard' }),
+            configuration: formatMessage({ defaultMessage: 'Configuration' }),
+            system: formatMessage({ defaultMessage: 'System' }),
+            display: formatMessage({ defaultMessage: 'Display' }),
+            documentation: formatMessage({ defaultMessage: 'Documentation' }),
+            logout: formatMessage({ defaultMessage: 'Logout' }),
+        };
+    }
 
     #gotHome = (): void => {
         this.props.navigate(URLS.pages.display.list);

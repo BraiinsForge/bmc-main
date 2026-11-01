@@ -167,9 +167,12 @@ class View extends Component<Props, State> {
     static contextType = AppContext;
     declare context: AppContextType;
 
-    #txt = {
-        title: this.props.intl.formatMessage({ defaultMessage: 'Edit Combined Scene' }),
-    };
+    get #txt() {
+        const { formatMessage } = this.props.intl;
+        return {
+            title: formatMessage({ defaultMessage: 'Edit Combined Scene' }),
+        };
+    }
 
     componentDidMount() {
         this.#loadScene();

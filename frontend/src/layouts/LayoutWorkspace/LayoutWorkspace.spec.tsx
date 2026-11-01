@@ -20,12 +20,14 @@
 
 import { afterEach, describe, expect, rstest, test } from '@rstest/core';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react/pure';
-import { IntlProvider } from 'react-intl';
+import { type IntlShape, RawIntlProvider } from 'react-intl';
 import { MemoryRouter, Route, Routes } from 'react-router';
 
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
+import { intlFor } from '@/lib/intl';
+import { pseudoIntl } from '@/mocks/intl';
 import { stubLocation } from '@/mocks/location';
 import { store } from '@/store';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
@@ -56,9 +58,9 @@ async function signIn(hasPassword: boolean): Promise<ReturnType<typeof rstest.fn
 }
 
 // Under Root, as in the app: it is what redirects once the session ends.
-function renderLayout() {
-    return render(
-        <IntlProvider locale="en">
+function layoutTree(intl: IntlShape = intlFor({ tag: 'en' })) {
+    return (
+        <RawIntlProvider value={intl}>
             <MemoryRouter initialEntries={['/display']}>
                 <Routes>
                     <Route element={<Root />}>
@@ -66,8 +68,12 @@ function renderLayout() {
                     </Route>
                 </Routes>
             </MemoryRouter>
-        </IntlProvider>,
+        </RawIntlProvider>
     );
+}
+
+function renderLayout() {
+    return render(layoutTree());
 }
 
 afterEach(() => {
@@ -113,5 +119,20 @@ describe('LayoutWorkspace logout', () => {
         expect(router.navigate).toHaveBeenCalledOnce();
         expect(logout).toHaveBeenCalledOnce();
         expect(assign).not.toHaveBeenCalled();
+    });
+});
+
+describe('LayoutWorkspace language', () => {
+    test('its header and side navigation follow a language chosen while it is shown', async () => {
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: false }));
+        await signIn(true);
+        const view = renderLayout();
+        expect(screen.getByRole('navigation', { name: 'Side navigation' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Logout' })).toBeTruthy();
+
+        view.rerender(layoutTree(pseudoIntl));
+
+        expect(screen.queryByRole('navigation', { name: 'Side navigation' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Logout' })).toBeNull();
     });
 });
