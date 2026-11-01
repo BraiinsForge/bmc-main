@@ -96,6 +96,11 @@
     "source": "Remove Widget",
     "translation": "[Řḗḗḿǿǿṽḗḗ Ẇīḓɠḗḗŧ]"
   },
+  "/p/SkEUoHw": {
+    "source": "Picked up {widget}.",
+    "translation": "[Ƥīƈķḗḗḓ ŭŭƥ {widget}.]",
+    "description": "Screen-reader announcement on starting to drag a widget in the scene editor"
+  },
   "0AXMjjEUXt": {
     "source": "24-hour",
     "translation": "[24-ħǿǿŭŭř]"
@@ -123,6 +128,11 @@
   "0c4/C8Va7J": {
     "source": "No Connected Accounts Yet.",
     "translation": "[Ƞǿǿ Ƈǿǿƞƞḗḗƈŧḗḗḓ Ȧƈƈǿǿŭŭƞŧş Ẏḗḗŧ.]"
+  },
+  "0e5rlupkqG": {
+    "source": "To pick up an item, press Space or Enter. Move it with the arrow keys, then press Space or Enter to drop it in its new position, or Escape to cancel.",
+    "translation": "[Ŧǿǿ ƥīƈķ ŭŭƥ ȧȧƞ īŧḗḗḿ, ƥřḗḗşş Şƥȧȧƈḗḗ ǿǿř Ḗƞŧḗḗř. Ḿǿǿṽḗḗ īŧ ẇīŧħ ŧħḗḗ ȧȧřřǿǿẇ ķḗḗẏş, ŧħḗḗƞ ƥřḗḗşş Şƥȧȧƈḗḗ ǿǿř Ḗƞŧḗḗř ŧǿǿ ḓřǿǿƥ īŧ īƞ īŧş ƞḗḗẇ ƥǿǿşīŧīǿǿƞ, ǿǿř Ḗşƈȧȧƥḗḗ ŧǿǿ ƈȧȧƞƈḗḗŀ.]",
+    "description": "Screen-reader instructions read on reaching an item of a reorderable list"
   },
   "0h/lPMeYkq": {
     "source": "Upgrade",
@@ -726,6 +736,11 @@
     "source": "Remove {row}",
     "translation": "[Řḗḗḿǿǿṽḗḗ {row}]"
   },
+  "GlUWMLx9+V": {
+    "source": "Notifications",
+    "translation": "[Ƞǿǿŧīƒīƈȧȧŧīǿǿƞş]",
+    "description": "Screen-reader name of the corner region where the app's brief notifications appear"
+  },
   "GretYfMDAh": {
     "source": "Current Password",
     "translation": "[Ƈŭŭřřḗḗƞŧ Ƥȧȧşşẇǿǿřḓ]"
@@ -787,6 +802,11 @@
   "I3JhPSOAlX": {
     "source": "Network",
     "translation": "[Ƞḗḗŧẇǿǿřķ]"
+  },
+  "IFhoj6YIQD": {
+    "source": "movable widget",
+    "translation": "[ḿǿǿṽȧȧƀŀḗḗ ẇīḓɠḗḗŧ]",
+    "description": "Screen-reader role read after a widget's move handle in the scene editor, in place of 'button'"
   },
   "IQlKPF5j+y": {
     "source": "Select a File",
@@ -928,6 +948,11 @@
     "source": "Alarm has been successfully toggled.",
     "translation": "[Ȧŀȧȧřḿ ħȧȧş ƀḗḗḗḗƞ şŭŭƈƈḗḗşşƒŭŭŀŀẏ ŧǿǿɠɠŀḗḗḓ.]"
   },
+  "NqihMEPE7t": {
+    "source": "{widget} could not go there and is back in place.",
+    "translation": "[{widget} ƈǿǿŭŭŀḓ ƞǿǿŧ ɠǿǿ ŧħḗḗřḗḗ ȧȧƞḓ īş ƀȧȧƈķ īƞ ƥŀȧȧƈḗḗ.]",
+    "description": "Screen-reader announcement on dropping a widget where it does not fit"
+  },
   "NuJ+vlDJ2V": {
     "source": "LED Notification Lights",
     "translation": "[ĿḖḒ Ƞǿǿŧīƒīƈȧȧŧīǿǿƞ Ŀīɠħŧş]"
@@ -959,6 +984,11 @@
   "ObjU4OMvI8": {
     "source": "Mining",
     "translation": "[Ḿīƞīƞɠ]"
+  },
+  "OdQvXEZRcU": {
+    "source": "Drag this handle to move the widget to another slot.",
+    "translation": "[Ḓřȧȧɠ ŧħīş ħȧȧƞḓŀḗḗ ŧǿǿ ḿǿǿṽḗḗ ŧħḗḗ ẇīḓɠḗḗŧ ŧǿǿ ȧȧƞǿǿŧħḗḗř şŀǿǿŧ.]",
+    "description": "Screen-reader instructions read on reaching a widget's move handle in the scene editor"
   },
   "Ol7jyfc/aV": {
     "source": "Failed to save the brightness!",
@@ -1075,6 +1105,11 @@
   "RspokqfaHp": {
     "source": "Enable sound during splash screen animation played at every startup of the Deck.",
     "translation": "[Ḗƞȧȧƀŀḗḗ şǿǿŭŭƞḓ ḓŭŭřīƞɠ şƥŀȧȧşħ şƈřḗḗḗḗƞ ȧȧƞīḿȧȧŧīǿǿƞ ƥŀȧȧẏḗḗḓ ȧȧŧ ḗḗṽḗḗřẏ şŧȧȧřŧŭŭƥ ǿǿƒ ŧħḗḗ Ḓḗḗƈķ.]"
+  },
+  "S1zhHLd3YW": {
+    "source": "Move cancelled, {widget} is back in place.",
+    "translation": "[Ḿǿǿṽḗḗ ƈȧȧƞƈḗḗŀŀḗḗḓ, {widget} īş ƀȧȧƈķ īƞ ƥŀȧȧƈḗḗ.]",
+    "description": "Screen-reader announcement on cancelling a widget drag"
   },
   "SC8+tLYfi3": {
     "source": "Password for {ssid}",
@@ -1367,6 +1402,11 @@
     "source": "N/A",
     "translation": "[Ƞ/Ȧ]",
     "description": "Placeholder where a value is missing or cannot be named, such as a network without a name or an unknown option"
+  },
+  "dSRpV8rmJu": {
+    "source": "reorderable item",
+    "translation": "[řḗḗǿǿřḓḗḗřȧȧƀŀḗḗ īŧḗḗḿ]",
+    "description": "Screen-reader role read after a reorderable list item's name, in place of 'button'"
   },
   "dbxs1yxF03": {
     "source": "Select snooze limit…",
@@ -2049,6 +2089,11 @@
   "xn0iThoKdA": {
     "source": "12-hour",
     "translation": "[12-ħǿǿŭŭř]"
+  },
+  "xyQQ3l0dEP": {
+    "source": "{widget} moved.",
+    "translation": "[{widget} ḿǿǿṽḗḗḓ.]",
+    "description": "Screen-reader announcement on dropping a widget into a free slot"
   },
   "xzSwWXzv/8": {
     "source": "Sound Volume",

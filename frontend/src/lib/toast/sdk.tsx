@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { useIntl } from 'react-intl';
 import { Toaster as SonnerToaster, toast as sonnerToast } from 'sonner';
 import type { ToasterProps, ExternalToast } from 'sonner';
 
@@ -33,7 +34,20 @@ export interface ToastProps {
 }
 
 export function Toaster(props: ToasterProps) {
-    return <SonnerToaster {...props} toastOptions={{ ...props.toastOptions, className }} />;
+    const { formatMessage } = useIntl();
+    return (
+        <SonnerToaster
+            // Alt+T would focus the toasts, which leave on their own within seconds and hold no action;
+            // sonner does not stop the browser's own Alt+T, and on a Mac it is a character typed in a field.
+            hotkey={[]}
+            customAriaLabel={formatMessage({
+                defaultMessage: 'Notifications',
+                description: "Screen-reader name of the corner region where the app's brief notifications appear",
+            })}
+            {...props}
+            toastOptions={{ ...props.toastOptions, className }}
+        />
+    );
 }
 
 type Extra = ExternalToast & { title?: string };

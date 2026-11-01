@@ -96,6 +96,11 @@
     "source": "Remove Widget",
     "translation": "移除小组件"
   },
+  "/p/SkEUoHw": {
+    "source": "Picked up {widget}.",
+    "translation": "已拿起 {widget}。",
+    "description": "Screen-reader announcement on starting to drag a widget in the scene editor"
+  },
   "0AXMjjEUXt": {
     "source": "24-hour",
     "translation": "24 小时制"
@@ -123,6 +128,11 @@
   "0c4/C8Va7J": {
     "source": "No Connected Accounts Yet.",
     "translation": "尚未连接任何账户。"
+  },
+  "0e5rlupkqG": {
+    "source": "To pick up an item, press Space or Enter. Move it with the arrow keys, then press Space or Enter to drop it in its new position, or Escape to cancel.",
+    "translation": "按空格键或回车键拿起此项。用方向键移动，再按空格键或回车键放到新位置，或按 Esc 键取消。",
+    "description": "Screen-reader instructions read on reaching an item of a reorderable list"
   },
   "0h/lPMeYkq": {
     "source": "Upgrade",
@@ -726,6 +736,11 @@
     "source": "Remove {row}",
     "translation": "移除“{row}”"
   },
+  "GlUWMLx9+V": {
+    "source": "Notifications",
+    "translation": "通知",
+    "description": "Screen-reader name of the corner region where the app's brief notifications appear"
+  },
   "GretYfMDAh": {
     "source": "Current Password",
     "translation": "当前密码"
@@ -787,6 +802,11 @@
   "I3JhPSOAlX": {
     "source": "Network",
     "translation": "网络"
+  },
+  "IFhoj6YIQD": {
+    "source": "movable widget",
+    "translation": "可移动的小组件",
+    "description": "Screen-reader role read after a widget's move handle in the scene editor, in place of 'button'"
   },
   "IQlKPF5j+y": {
     "source": "Select a File",
@@ -928,6 +948,11 @@
     "source": "Alarm has been successfully toggled.",
     "translation": "闹钟状态已切换。"
   },
+  "NqihMEPE7t": {
+    "source": "{widget} could not go there and is back in place.",
+    "translation": "{widget} 无法放到该位置，已回到原处。",
+    "description": "Screen-reader announcement on dropping a widget where it does not fit"
+  },
   "NuJ+vlDJ2V": {
     "source": "LED Notification Lights",
     "translation": "LED 通知灯"
@@ -959,6 +984,11 @@
   "ObjU4OMvI8": {
     "source": "Mining",
     "translation": "挖矿"
+  },
+  "OdQvXEZRcU": {
+    "source": "Drag this handle to move the widget to another slot.",
+    "translation": "拖动此手柄可将小组件移到其他位置。",
+    "description": "Screen-reader instructions read on reaching a widget's move handle in the scene editor"
   },
   "Ol7jyfc/aV": {
     "source": "Failed to save the brightness!",
@@ -1075,6 +1105,11 @@
   "RspokqfaHp": {
     "source": "Enable sound during splash screen animation played at every startup of the Deck.",
     "translation": "Deck 每次启动播放开机动画时启用音效。"
+  },
+  "S1zhHLd3YW": {
+    "source": "Move cancelled, {widget} is back in place.",
+    "translation": "已取消移动，{widget} 已回到原处。",
+    "description": "Screen-reader announcement on cancelling a widget drag"
   },
   "SC8+tLYfi3": {
     "source": "Password for {ssid}",
@@ -1367,6 +1402,11 @@
     "source": "N/A",
     "translation": "无",
     "description": "Placeholder where a value is missing or cannot be named, such as a network without a name or an unknown option"
+  },
+  "dSRpV8rmJu": {
+    "source": "reorderable item",
+    "translation": "可排序项",
+    "description": "Screen-reader role read after a reorderable list item's name, in place of 'button'"
   },
   "dbxs1yxF03": {
     "source": "Select snooze limit…",
@@ -2049,6 +2089,11 @@
   "xn0iThoKdA": {
     "source": "12-hour",
     "translation": "12 小时制"
+  },
+  "xyQQ3l0dEP": {
+    "source": "{widget} moved.",
+    "translation": "{widget} 已移动。",
+    "description": "Screen-reader announcement on dropping a widget into a free slot"
   },
   "xzSwWXzv/8": {
     "source": "Sound Volume",

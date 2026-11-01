@@ -89,10 +89,17 @@ export type Item<D extends Datum> = {
     render(props: RenderSortableListItemProps<D>): ReactElement;
 };
 function Item<D extends Datum>({ index, data, disabled, render }: Item<D>) {
+    const { formatMessage } = useIntl();
     const { attributes, listeners, setNodeRef, transform, transition, isOver, isDragging } = useSortable({
         id: data.id,
         disabled,
         transition: { duration: 150, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
+        attributes: {
+            roleDescription: formatMessage({
+                defaultMessage: 'reorderable item',
+                description: "Screen-reader role read after a reorderable list item's name, in place of 'button'",
+            }),
+        },
     });
     const $transform = transform
         ? CSS.Transform.toString({ x: transform.x, y: transform.y, scaleX: 1, scaleY: 1 })
@@ -133,6 +140,14 @@ export interface SortableProps<D extends Datum> {
 export function Sortable<D extends Datum>(props: SortableProps<D>) {
     const { items, renderItem, getItemLabel, onChange, isItemDisabled, className, style, wrapperRef } = props;
     const announcements = useAnnouncements(items, getItemLabel);
+    const { formatMessage } = useIntl();
+    const screenReaderInstructions = {
+        draggable: formatMessage({
+            defaultMessage:
+                'To pick up an item, press Space or Enter. Move it with the arrow keys, then press Space or Enter to drop it in its new position, or Escape to cancel.',
+            description: 'Screen-reader instructions read on reaching an item of a reorderable list',
+        }),
+    };
 
     const [activeId, setActiveId] = useState<D['id'] | null>(null);
     const activeIndex = activeId !== null ? items.findIndex(x => x.id === activeId) : -1;
@@ -178,7 +193,7 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
         <div ref={wrapperRef} className={cn(css.root, className)} style={style}>
             <DndContext
                 sensors={sensors}
-                accessibility={{ announcements }}
+                accessibility={{ announcements, screenReaderInstructions }}
                 collisionDetection={closestCenter}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}

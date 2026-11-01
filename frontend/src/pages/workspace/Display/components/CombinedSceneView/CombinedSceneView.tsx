@@ -36,9 +36,11 @@ import {
     pointerWithin,
     useSensor,
     useSensors,
+    type Announcements,
     type DataRef,
     type DragEndEvent,
     type DropAnimation,
+    type UniqueIdentifier,
     useDroppable,
     useDraggable,
 } from '@dnd-kit/core';
@@ -226,6 +228,13 @@ function Widget(props: WidgetProps) {
         data: {
             getStartRect: () => ref?.current?.getBoundingClientRect() ?? null,
         } satisfies DraggableData,
+        attributes: {
+            roleDescription: intl.formatMessage({
+                defaultMessage: 'movable widget',
+                description:
+                    "Screen-reader role read after a widget's move handle in the scene editor, in place of 'button'",
+            }),
+        },
     });
     const disableTooltips = isPreview || $drag.active;
 
@@ -369,6 +378,61 @@ export function CombinedSceneView(props: CombinedSceneViewProps) {
     const intl = useIntl();
 
     const sensors = useSensors(useSensor(PointerSensor));
+    const { formatMessage } = intl;
+    // The slots have no names to announce, so only the widget is named and a move over slots stays quiet.
+    const widgetName = (id: UniqueIdentifier): string => {
+        return (
+            pb.widgetTitle(
+                widgets.find(w => w.id === id),
+                manifests,
+            ) ?? pb.notAvailable(intl)
+        );
+    };
+
+    const announcements: Announcements = {
+        onDragStart: ({ active }) => {
+            return formatMessage(
+                {
+                    defaultMessage: 'Picked up {widget}.',
+                    description: 'Screen-reader announcement on starting to drag a widget in the scene editor',
+                },
+                { widget: widgetName(active.id) },
+            );
+        },
+        onDragOver: () => undefined,
+        onDragEnd: ({ active, over }) => {
+            return over
+                ? formatMessage(
+                      {
+                          defaultMessage: '{widget} moved.',
+                          description: 'Screen-reader announcement on dropping a widget into a free slot',
+                      },
+                      { widget: widgetName(active.id) },
+                  )
+                : formatMessage(
+                      {
+                          defaultMessage: '{widget} could not go there and is back in place.',
+                          description: 'Screen-reader announcement on dropping a widget where it does not fit',
+                      },
+                      { widget: widgetName(active.id) },
+                  );
+        },
+        onDragCancel: ({ active }) => {
+            return formatMessage(
+                {
+                    defaultMessage: 'Move cancelled, {widget} is back in place.',
+                    description: 'Screen-reader announcement on cancelling a widget drag',
+                },
+                { widget: widgetName(active.id) },
+            );
+        },
+    };
+    const screenReaderInstructions = {
+        draggable: formatMessage({
+            defaultMessage: 'Drag this handle to move the widget to another slot.',
+            description: "Screen-reader instructions read on reaching a widget's move handle in the scene editor",
+        }),
+    };
     const [activeId, setActiveId] = useState<null | string>(null);
     const [activeRect, setActiveRect] = useState<null | DOMRect>(null);
     const activeWidget = (activeId ? widgets.find(w => w.id === activeId) : null) as Maybe<Required<pb.Widget>>;
@@ -418,6 +482,7 @@ export function CombinedSceneView(props: CombinedSceneViewProps) {
     return (
         <DndContext
             sensors={sensors}
+            accessibility={{ announcements, screenReaderInstructions }}
             collisionDetection={pointerWithin}
             onDragEnd={handleDragEnd}
             onDragStart={handleDragStart}
