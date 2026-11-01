@@ -1217,7 +1217,7 @@ class View extends Component<Props, State> {
                                     }}
                                     selectorPrimaryFocus="input,button,select"
                                     size="sm"
-                                    children={<Layer level={1} children={x.content} />}
+                                    children={<MenuPanel children={x.content} />}
                                 />
                             </div>
                         );
@@ -1303,6 +1303,12 @@ export function CombinedSceneMenuAction(props: {
     return <MenuItem label={props.label} className={css.addMenuButton} onClick={props.onClick} />;
 }
 
+// `OverflowMenu` clones its child with menu-item props; taking only `children` drops them
+// instead of letting `Layer` spread them onto its `div`.
+function MenuPanel({ children }: { children: ReactNode }) {
+    return <Layer level={1} children={children} />;
+}
+
 interface ScreenCyclingConfigFormProps {
     cycle: iField<boolean>;
     duration: iField<number>;
@@ -1324,45 +1330,43 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
         title: formatMessage({ defaultMessage: 'Screen Cycling' }),
     };
 
-    const Content = (): ReactElement => {
-        return (
-            <Form className={css.screenCycleForm} onClick={stopEventPropagation}>
-                <Toggle
-                    id={$('cycle-active')}
-                    size="md"
-                    toggled={!!cycle.value}
-                    onToggle={cycle.onChange}
-                    labelText={txt.enableCycling}
-                    labelA={txt.off}
-                    labelB={txt.on}
-                />
+    const content = (
+        <Form className={css.screenCycleForm} onClick={stopEventPropagation}>
+            <Toggle
+                id={$('cycle-active')}
+                size="md"
+                toggled={!!cycle.value}
+                onToggle={cycle.onChange}
+                labelText={txt.enableCycling}
+                labelA={txt.off}
+                labelB={txt.on}
+            />
 
-                <Dropdown<number>
-                    id={$('cycle-duration')}
-                    label={txt.defaultDuration}
-                    titleText={txt.defaultDuration}
-                    items={pb.sceneCycleDurationOptions}
-                    onChange={x => (x.selectedItem ? duration.onChange?.(x.selectedItem) : null)}
-                    selectedItem={duration.value ?? undefined}
-                    itemToString={x => pb.sceneCycleDurationToString(intl, x)}
-                    renderSelectedItem={x => pb.sceneCycleDurationToString(intl, x)}
-                />
+            <Dropdown<number>
+                id={$('cycle-duration')}
+                label={txt.defaultDuration}
+                titleText={txt.defaultDuration}
+                items={pb.sceneCycleDurationOptions}
+                onChange={x => (x.selectedItem ? duration.onChange?.(x.selectedItem) : null)}
+                selectedItem={duration.value ?? undefined}
+                itemToString={x => pb.sceneCycleDurationToString(intl, x)}
+                renderSelectedItem={x => pb.sceneCycleDurationToString(intl, x)}
+            />
 
-                <Dropdown<Exclude<pb.SceneCyclingTransition, 0>>
-                    id={$('cycle-transition-effect')}
-                    label={txt.transitionEffect}
-                    titleText={txt.transitionEffect}
-                    items={pb.sceneCyclingEffectOptions}
-                    onChange={x => (x.selectedItem ? transitionEffect.onChange?.(x.selectedItem) : null)}
-                    selectedItem={transitionEffect.value || undefined}
-                    itemToString={x => pb.sceneCyclingEffectToString(intl, x) ?? ''}
-                    renderSelectedItem={x => pb.sceneCyclingEffectToString(intl, x) ?? ''}
-                />
-            </Form>
-        );
-    };
+            <Dropdown<Exclude<pb.SceneCyclingTransition, 0>>
+                id={$('cycle-transition-effect')}
+                label={txt.transitionEffect}
+                titleText={txt.transitionEffect}
+                items={pb.sceneCyclingEffectOptions}
+                onChange={x => (x.selectedItem ? transitionEffect.onChange?.(x.selectedItem) : null)}
+                selectedItem={transitionEffect.value || undefined}
+                itemToString={x => pb.sceneCyclingEffectToString(intl, x) ?? ''}
+                renderSelectedItem={x => pb.sceneCyclingEffectToString(intl, x) ?? ''}
+            />
+        </Form>
+    );
 
-    return render({ title: txt.title, content: <Content /> });
+    return render({ title: txt.title, content });
 }
 
 export default function DisplayList() {

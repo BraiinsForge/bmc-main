@@ -146,6 +146,7 @@ afterEach(() => {
 describe('screen cycling transition effect', () => {
     const CYCLE_MENU_ID = 'display-list-cycle-form-menu';
     const EFFECT_DROPDOWN_ID = 'display-list-cycle-transition-effect';
+    const CYCLE_ACTIVE_ID = 'display-list-cycle-active';
 
     let saved: pb.SceneCycling[];
 
@@ -181,6 +182,20 @@ describe('screen cycling transition effect', () => {
     function effectOptions(): HTMLElement[] {
         return [...document.querySelectorAll<HTMLElement>('[role="option"]')];
     }
+
+    test('the form keeps its controls through the re-render a change brings', async () => {
+        renderPage();
+        await flush();
+        await openCyclingForm();
+        const cycling = document.getElementById(CYCLE_ACTIVE_ID);
+        if (!cycling) throw new Error('cycling switch not rendered');
+
+        fireEvent.click(cycling);
+        await flush();
+
+        expect(saved, 'the change re-rendered the page').toHaveLength(1);
+        expect(document.getElementById(CYCLE_ACTIVE_ID)).toBe(cycling);
+    });
 
     test('the selector shows the effect loaded from the backend', async () => {
         renderPage();
