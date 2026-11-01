@@ -19,35 +19,36 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
- { self, pkgs }:
+{ self, pkgs }:
 
- let
-   src = import ./nix/patched-src.nix { inherit pkgs; };
-   nodeModules = import ./nix/node-modules.nix { inherit pkgs; };
-in {
-    build = pkgs.stdenv.mkDerivation {
-      name = "bmc-frontend";
-      inherit src;
-      # `src` keeps the repo shape; the recipes run from the frontend itself.
-      sourceRoot = "bmc-fe-patched-src/frontend";
+let
+  src = import ./nix/patched-src.nix { inherit pkgs; };
+  nodeModules = import ./nix/node-modules.nix { inherit pkgs; };
+in
+{
+  build = pkgs.stdenv.mkDerivation {
+    name = "bmc-frontend";
+    inherit src;
+    # `src` keeps the repo shape; the recipes run from the frontend itself.
+    sourceRoot = "bmc-fe-patched-src/frontend";
 
-      buildInputs = [ pkgs.nodejs pkgs.pnpmToolchain.pnpm pkgs.just ];
-      # `pnpm exec` otherwise reinstalls first, into the read-only copied tree, offline.
-      pnpm_config_verify_deps_before_run = "false";
+    buildInputs = [ pkgs.nodejs pkgs.pnpmToolchain.pnpm pkgs.just ];
+    # `pnpm exec` otherwise reinstalls first, into the read-only copied tree, offline.
+    pnpm_config_verify_deps_before_run = "false";
 
-      buildPhase = ''
-        cp -r ${nodeModules}/. -t .
-        export HOME=$(pwd)
-        just build
-      '';
+    buildPhase = ''
+      cp -r ${nodeModules}/. -t .
+      export HOME=$(pwd)
+      just build
+    '';
 
-      installPhase = ''
-        mkdir -p $out
-        cp -r ./dist/. -t $out
-      '';
-    };
+    installPhase = ''
+      mkdir -p $out
+      cp -r ./dist/. -t $out
+    '';
+  };
 
-    checks = import ./nix/checks.nix { inherit pkgs src nodeModules; };
+  checks = import ./nix/checks.nix { inherit pkgs src nodeModules; };
 
-    inherit nodeModules;
+  inherit nodeModules;
 }

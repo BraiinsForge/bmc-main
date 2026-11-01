@@ -299,8 +299,14 @@
           copyright = true;
 
           config.exclude = [
-            # Frontend specifies it's own formatting rules
-            "frontend/*"
+            # Frontend formats its own code with Biome; its Markdown is formatted here.
+            # `**/` needs a directory between, so each pattern has a top-level twin.
+            "frontend/*.{ts,tsx,js,mjs,cjs,json,scss,html,svg,toml}"
+            "frontend/**/*.{ts,tsx,js,mjs,cjs,json,scss,html,svg,toml}"
+            "frontend/justfile"
+            # pnpm writes these.
+            "frontend/pnpm-lock.yaml"
+            "frontend/pnpm-workspace.yaml"
             # Harness has its own formatter config (bmc-virt/harness/pyproject.toml)
             "bmc-virt/harness/**/*.py"
             # bmc-tui has its own formatter config (bmc-tui/pyproject.toml)

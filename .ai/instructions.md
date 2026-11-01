@@ -159,8 +159,8 @@ split into self-contained directories: `name/mod.rs` is the production entry poi
 topic files under `name/tests/` declared by `name/tests/mod.rs` once a suite is large. Keep that layout there rather
 than converting it back.
 
-Always run the Nix formatter (treefmt) after changing any file — don't assume a file type is exempt; the one exclusion
-is `frontend/`, which formats itself with Biome:
+Always run the Nix formatter (treefmt) after changing any file — don't assume a file type is exempt. The one exclusion
+is `frontend/`'s code, which formats itself with Biome. Its Markdown and Nix go through treefmt like the rest:
 
 ```bash
 nix fmt

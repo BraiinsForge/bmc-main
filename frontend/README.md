@@ -1,21 +1,22 @@
 # frontend
 
 ## TOOLS
- - [pnpm](https://pnpm.io)
- - [mise](https://mise.jdx.dev)
- - [Biome](https://biomejs.dev)
- - [RSpack](https://rspack.dev)
- - [Storybook](https://storybook.js.org)
- - [Carbon Design System](https://carbondesignsystem.com)
- - [Jest](https://jestjs.io)
- - [buf](https://buf.build)
+
+- [pnpm](https://pnpm.io)
+- [mise](https://mise.jdx.dev)
+- [Biome](https://biomejs.dev)
+- [RSpack](https://rspack.dev)
+- [Storybook](https://storybook.js.org)
+- [Carbon Design System](https://carbondesignsystem.com)
+- [Jest](https://jestjs.io)
+- [buf](https://buf.build)
 
 ## Development
 
 ### `madplay`
 
-If you want to have sound playback working, `madplay` is still used in backend and does not work for you (which is very likely),
-you can use this shim script to forward the sound to `ffplay` instead
+If you want to have sound playback working, `madplay` is still used in backend and does not work for you (which is very
+likely), you can use this shim script to forward the sound to `ffplay` instead
 
 Just put in somewhere in your path and make it executable.
 
