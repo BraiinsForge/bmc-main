@@ -90,28 +90,34 @@ class View extends Component<Props> {
         if (x.selectedItem) onChange?.(x.selectedItem);
     };
     #numberFormatToString = (x: null | pb.NumberFormat): string => {
-        return pb.numberFormatToString(x) ?? 'N/A';
+        return pb.numberFormatToString(x) ?? pb.notAvailable(this.props.intl);
     };
 
-    #temperatureOptions = Array.from(pb.temperatureUnitOptions.entries()).map<ButtonSwitchItem<pb.TemperatureUnit>>(
-        ([key, Icon]) => ({
+    get #temperatureOptions(): Array<ButtonSwitchItem<pb.TemperatureUnit>> {
+        const { intl } = this.props;
+        const notAvailable = pb.notAvailable(intl);
+        return Array.from(pb.temperatureUnitOptions.entries()).map(([key, Icon]) => ({
             id: key,
-            text: pb.temperatureUnitToString(this.props.intl, key) ?? 'N/A',
+            text: pb.temperatureUnitToString(intl, key) ?? notAvailable,
             icon: Icon,
-        }),
-    );
+        }));
+    }
 
-    #unitSystemOptions = pb.unitSystemOptions.map<ButtonSwitchItem<pb.UnitSystem>>(key => ({
-        id: key,
-        text: pb.unitSystemToString(this.props.intl, key) ?? 'N/A',
-    }));
+    get #unitSystemOptions(): Array<ButtonSwitchItem<pb.UnitSystem>> {
+        const { intl } = this.props;
+        const notAvailable = pb.notAvailable(intl);
+        return pb.unitSystemOptions.map(key => ({
+            id: key,
+            text: pb.unitSystemToString(intl, key) ?? notAvailable,
+        }));
+    }
 
     #weekDayChange: DropdownProps<pb.Weekday>['onChange'] = x => {
         const { onChange } = this.props.firstWeekDay;
         if (x.selectedItem) onChange?.(x.selectedItem);
     };
     #weekDayToString = (x: null | pb.Weekday): string => {
-        return pb.weekdayToString(this.props.intl, x, true) ?? 'N/A';
+        return pb.weekdayToString(this.props.intl, x, true) ?? pb.notAvailable(this.props.intl);
     };
 
     #timezoneRenderElement = (tz: pb.Timezone): ReactElement => {
@@ -250,7 +256,7 @@ class View extends Component<Props> {
                                 direction="bottom"
                                 items={Array.from(timezone.items)}
                                 onChange={this.#timezoneChange}
-                                itemToString={pb.renderTimezone}
+                                itemToString={x => pb.renderTimezone(this.props.intl, x)}
                                 itemToElement={this.#timezoneRenderElement}
                                 selectedItem={timezone.value}
                                 invalid={!!timezone.error}

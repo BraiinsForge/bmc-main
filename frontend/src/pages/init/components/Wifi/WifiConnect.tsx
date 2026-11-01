@@ -89,8 +89,10 @@ class View extends Component<Props, State> {
         };
     }
     #renderEncryptionType = (type: Maybe<pb.EncryptionType>): string => {
-        if (!type) return 'N/A';
-        return pb.wifiEncryptionTypeToString(this.props.intl, type) || 'N/A';
+        const { intl } = this.props;
+        const notAvailable = pb.notAvailable(intl);
+        if (!type) return notAvailable;
+        return pb.wifiEncryptionTypeToString(intl, type) || notAvailable;
     };
     #netloadingEntries = Array.from({ length: 5 }, (_, i) => <WifiNetworkLine.Skeleton variant="inline" key={i} />);
 
@@ -132,7 +134,7 @@ class View extends Component<Props, State> {
         }));
     };
     #netToString = (x: Maybe<pb.WifiNetwork>): string => {
-        return pb.wifiNetworkToString(x, '') || 'N/A';
+        return pb.wifiNetworkToString(x, '') || pb.notAvailable(this.props.intl);
     };
 
     #netToElementLabel = (x: pb.WifiNetwork): ReactElement => {

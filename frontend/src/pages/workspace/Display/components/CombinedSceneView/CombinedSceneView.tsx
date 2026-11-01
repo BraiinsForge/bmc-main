@@ -90,6 +90,7 @@ interface ViewProps extends CombinedSceneViewProps {
  * the code of this.
  * */
 function View(props: ViewProps) {
+    const notAvailable = pb.notAvailable(useIntl());
     const {
         widgets,
         manifests,
@@ -133,7 +134,7 @@ function View(props: ViewProps) {
                     }
 
                     const widget = w as pb.Widget;
-                    const title = pb.widgetTitle(widget, manifests) || 'N/A';
+                    const title = pb.widgetTitle(widget, manifests) || notAvailable;
 
                     return (
                         <Widget
@@ -365,6 +366,7 @@ function Widget(props: WidgetProps) {
 
 export function CombinedSceneView(props: CombinedSceneViewProps) {
     const { widgets, manifests, onWidgetMove } = props;
+    const intl = useIntl();
 
     const sensors = useSensors(useSensor(PointerSensor));
     const [activeId, setActiveId] = useState<null | string>(null);
@@ -431,7 +433,7 @@ export function CombinedSceneView(props: CombinedSceneViewProps) {
                         id={activeWidget.id}
                         position={activeWidget.position}
                         size={activeWidget.size}
-                        title={pb.widgetTitle(activeWidget, manifests) ?? 'N/A'}
+                        title={pb.widgetTitle(activeWidget, manifests) ?? pb.notAvailable(intl)}
                         subtitle={pb.widgetDescription(activeWidget, manifests)}
                     />
                 ) : null}

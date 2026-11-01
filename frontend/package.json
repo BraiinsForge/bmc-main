@@ -37,7 +37,6 @@
         "core-js": "3.50.0",
         "d3-format": "3.1.2",
         "d3-time-format": "4.1.0",
-        "date-fns": "4.4.0",
         "dompurify": "3.4.15",
         "es-toolkit": "1.52.0",
         "invariant": "2.2.4",

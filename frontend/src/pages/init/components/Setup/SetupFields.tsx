@@ -75,6 +75,7 @@ export function LocalizationFields(props: LocalizationFieldsProps & { $: IdOf })
     const { $, timeFormat, timezone, dateFormat, numberFormat, temperatureUnits, unitSystem } = props;
     const intl = useIntl();
     const { formatMessage } = intl;
+    const notAvailable = pb.notAvailable(intl);
 
     const onTimezoneChange: ComboBoxProps<pb.Timezone>['onChange'] = x => {
         // Only update if a new item is selected, prevent clearing on ESC
@@ -92,13 +93,13 @@ export function LocalizationFields(props: LocalizationFieldsProps & { $: IdOf })
     const temperatureOptions = Array.from(pb.temperatureUnitOptions.entries()).map<ButtonSwitchItem<TemperatureUnit>>(
         ([key, Icon]) => ({
             id: key,
-            text: pb.temperatureUnitToString(intl, key) ?? 'N/A',
+            text: pb.temperatureUnitToString(intl, key) ?? notAvailable,
             icon: Icon,
         }),
     );
     const unitSystemOptions = pb.unitSystemOptions.map<ButtonSwitchItem<UnitSystem>>(key => ({
         id: key,
-        text: pb.unitSystemToString(intl, key) ?? 'N/A',
+        text: pb.unitSystemToString(intl, key) ?? notAvailable,
     }));
 
     return (
@@ -136,7 +137,7 @@ export function LocalizationFields(props: LocalizationFieldsProps & { $: IdOf })
                     direction="bottom"
                     items={Array.from(timezone.items)}
                     onChange={onTimezoneChange}
-                    itemToString={pb.renderTimezone}
+                    itemToString={x => pb.renderTimezone(intl, x)}
                     itemToElement={renderTimezone}
                     selectedItem={timezone.value}
                     invalid={!!timezone.error}
@@ -159,8 +160,8 @@ export function LocalizationFields(props: LocalizationFieldsProps & { $: IdOf })
                     items={pb.dateFormatOptions}
                     selectedItem={dateFormat.value ?? undefined}
                     onChange={onDateFormatChange}
-                    itemToString={x => pb.dateFormatToString(x) ?? 'N/A'}
-                    renderSelectedItem={x => pb.dateFormatToString(x) ?? 'N/A'}
+                    itemToString={x => pb.dateFormatToString(x) ?? notAvailable}
+                    renderSelectedItem={x => pb.dateFormatToString(x) ?? notAvailable}
                     disabled={dateFormat.disabled}
                     invalid={!!dateFormat.error}
                     invalidText={dateFormat.error}
@@ -181,8 +182,8 @@ export function LocalizationFields(props: LocalizationFieldsProps & { $: IdOf })
                     items={pb.numberFormatOptions}
                     selectedItem={numberFormat.value ?? undefined}
                     onChange={onNumberFormatChange}
-                    itemToString={x => pb.numberFormatToString(x) ?? 'N/A'}
-                    renderSelectedItem={x => pb.numberFormatToString(x) ?? 'N/A'}
+                    itemToString={x => pb.numberFormatToString(x) ?? notAvailable}
+                    renderSelectedItem={x => pb.numberFormatToString(x) ?? notAvailable}
                     disabled={numberFormat.disabled}
                     invalid={!!numberFormat.error}
                     invalidText={numberFormat.error}

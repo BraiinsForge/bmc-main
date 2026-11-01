@@ -21,7 +21,6 @@
 
 import { Component } from 'react';
 import Markdown from 'markdown-it';
-import { formatDuration } from 'date-fns';
 import { FormattedMessage, useIntl, type IntlShape } from 'react-intl';
 
 // App
@@ -49,7 +48,7 @@ import { Upgrade as IconUpgrade, ChevronDown, ChevronUp, Restart as IconRestart 
 import css from './SectionUpgrade.scss';
 import { assertUnreachable } from '@/lib/ts';
 import { getTimestamp } from '@/lib/time';
-import { formatBytes } from '@/lib/format';
+import { formatBytes, formatDuration } from '@/lib/format';
 import { PackageChanges } from './PackageChanges';
 import { UpgradeStepper, type UpgradeStepperProps } from './UpgradeStepper';
 
@@ -112,7 +111,9 @@ class View extends Component<Props, State> {
     #milis = {
         restartingTick: 1e3,
     };
-    #NA = <span className={css.placeholder} children="N/A" />;
+    get #NA(): ReactElement {
+        return <span className={css.placeholder} children={pb.notAvailable(this.props.intl)} />;
+    }
 
     readonly state = getInitialState();
 
@@ -220,6 +221,7 @@ class View extends Component<Props, State> {
         downloadSize?: Maybe<ReactNode>,
     ) => {
         const { formatMessage } = this.props.intl;
+        const notAvailable = pb.notAvailable(this.props.intl);
         type Row = [string, Maybe<ReactNode>];
         const groups: Row[][] = [
             [
@@ -245,7 +247,7 @@ class View extends Component<Props, State> {
                             {rows.map(([label, value]) => (
                                 <tr key={label}>
                                     <th scope="row" children={label} />
-                                    <td children={value ?? 'N/A'} />
+                                    <td children={value ?? notAvailable} />
                                 </tr>
                             ))}
                         </tbody>
@@ -257,7 +259,7 @@ class View extends Component<Props, State> {
         );
     };
     #renderInterval = (seconds: number): ReactNode => {
-        return formatDuration({ seconds: Math.abs(seconds) }, { zero: true, format: ['minutes', 'seconds'] });
+        return formatDuration(this.props.intl, Math.abs(seconds));
     };
     #renderUpgradeBox(): ReactNode {
         const {

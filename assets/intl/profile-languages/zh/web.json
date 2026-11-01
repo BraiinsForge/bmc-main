@@ -427,6 +427,11 @@
     "source": "Running widgets: {running} / {maximum}",
     "translation": "运行中的小组件：{running} / {maximum}"
   },
+  "8oS68aEAj9": {
+    "source": "Password",
+    "translation": "密码",
+    "description": "Login page, the label of the device's web password field"
+  },
   "9BBNEzxnNi": {
     "source": "Metric (km, kg)",
     "translation": "公制（km、kg）"
@@ -1247,6 +1252,11 @@
   "dI4IXz/8W0": {
     "source": "Failed to save NumberFormat",
     "translation": "保存数字格式失败"
+  },
+  "dOWDNQKFJ+": {
+    "source": "N/A",
+    "translation": "无",
+    "description": "Placeholder where a value is missing or cannot be named, such as a network without a name or an unknown option"
   },
   "dbxs1yxF03": {
     "source": "Select snooze limit…",

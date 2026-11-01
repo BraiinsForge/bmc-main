@@ -134,6 +134,7 @@ class View extends Component<Props, State> {
         const is12h = timeFormat === pb.TimeFormat.TIME_FORMAT_12_HOUR;
         const { isPlaying } = this.state;
         const { formatMessage } = intl;
+        const notAvailable = pb.notAvailable(intl);
 
         const [timeValue, period] = is12h
             ? (() => {
@@ -269,7 +270,7 @@ class View extends Component<Props, State> {
                                 const v = x.selectedItem;
                                 if (v != null) snoozeLimit.onChange?.(v);
                             }}
-                            itemToString={x => pb.alarmSnoozeLimitToString(intl, x) ?? 'N/A'}
+                            itemToString={x => pb.alarmSnoozeLimitToString(intl, x) ?? notAvailable}
                         />
 
                         <Dropdown<pb.SnoozeDuration>
@@ -284,7 +285,7 @@ class View extends Component<Props, State> {
                                 const v = x.selectedItem;
                                 if (v !== null) snoozeDuration.onChange?.(v);
                             }}
-                            itemToString={x => pb.alarmSnoozeDurationToString(intl, x) ?? 'N/A'}
+                            itemToString={x => pb.alarmSnoozeDurationToString(intl, x) ?? notAvailable}
                         />
                     </Fragment>
                 ) : null}

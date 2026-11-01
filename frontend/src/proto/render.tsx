@@ -24,15 +24,24 @@ import { type CarbonIconType, TemperatureCelsius, TemperatureFahrenheit } from '
 // Libs
 import type { IntlShape } from 'react-intl';
 import { assertUnreachable } from '@/lib/ts';
-import { formatDuration } from 'date-fns';
+import { formatDuration } from '@/lib/format';
 import { isEqual } from 'es-toolkit';
 
 // Proto
 import { create } from '@bufbuild/protobuf';
 import * as pb from './pb';
 
-export function renderTimezone(tz: Maybe<pb.Timezone>): string {
-    if (!tz) return 'N/A';
+export function notAvailable(intl: IntlShape): string {
+    const { formatMessage } = intl;
+    return formatMessage({
+        defaultMessage: 'N/A',
+        description:
+            'Placeholder where a value is missing or cannot be named, such as a network without a name or an unknown option',
+    });
+}
+
+export function renderTimezone(intl: IntlShape, tz: Maybe<pb.Timezone>): string {
+    if (!tz) return notAvailable(intl);
     return `UTC${tz.offset} (${tz.label})`;
 }
 
@@ -261,11 +270,9 @@ export function sceneCyclingEffectToString(intl: IntlShape, x?: null | pb.SceneC
 }
 
 export const sceneCycleDurationOptions: number[] = [10, 20, 30, 40, 50, 60, 90, 120];
-export function sceneCycleDurationToString(value: Maybe<number>): string {
-    if (value == null) return 'N/A';
-    const minutes = Math.floor(value / 60);
-    const seconds = Math.floor(value - minutes * 60);
-    return formatDuration({ minutes, seconds }, { format: ['minutes', 'seconds'] });
+export function sceneCycleDurationToString(intl: IntlShape, value: Maybe<number>): string {
+    if (value == null) return notAvailable(intl);
+    return formatDuration(intl, value);
 }
 
 /**

@@ -247,7 +247,7 @@ class View extends Component<Props, State> {
     //
 
     #wifiNetToString = (x: Maybe<pb.WifiNetwork>): string => {
-        return pb.wifiNetworkToString(x, this.#txt.other) || 'N/A';
+        return pb.wifiNetworkToString(x, this.#txt.other) || pb.notAvailable(this.props.intl);
     };
     #wifiNetToElementLabel = (x: pb.WifiNetwork): ReactElement => {
         return <WifiNetworkLine net={x} variant="inline" />;
@@ -384,7 +384,7 @@ class View extends Component<Props, State> {
                                     <SelectItem
                                         key={x}
                                         value={x}
-                                        text={pb.wifiEncryptionTypeToString(intl, x) ?? 'N/A'}
+                                        text={pb.wifiEncryptionTypeToString(intl, x) ?? pb.notAvailable(intl)}
                                     />
                                 );
                             })}
@@ -484,7 +484,7 @@ class View extends Component<Props, State> {
         const title = intl.formatMessage(
             { defaultMessage: 'Password for {ssid}' },
             {
-                ssid: <code key="ssid">{wifiCell?.ssid || 'N/A'}</code>,
+                ssid: <code key="ssid">{wifiCell?.ssid || pb.notAvailable(intl)}</code>,
             },
         );
         const handleClose = () => this.#wifiPasswordDialogToggle(null);

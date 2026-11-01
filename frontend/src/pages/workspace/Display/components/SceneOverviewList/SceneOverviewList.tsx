@@ -62,7 +62,10 @@ class View extends Component<Props> {
 
     componentWillUnmount = () => pb.abort.all(this);
 
-    #title = (scene: pb.Scene) => pb.sceneTitle(this.props.intl, scene, this.props.manifests) || 'N/A';
+    #title = (scene: pb.Scene) => {
+        const { intl, manifests } = this.props;
+        return pb.sceneTitle(intl, scene, manifests) || pb.notAvailable(intl);
+    };
 
     #renderItem = (
         props: RenderSortableListItemProps<pb.Scene>,

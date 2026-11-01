@@ -20,3 +20,4 @@
 
 export * from './bytes';
 export * from './dns';
+export * from './duration';

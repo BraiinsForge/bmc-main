@@ -91,6 +91,7 @@ class View extends Component<Props, State> {
 
     render() {
         const { data, errors } = this.state;
+        const { formatMessage } = this.props.intl;
 
         return (
             <div className={css.root} ref={this.#ref}>
@@ -106,7 +107,10 @@ class View extends Component<Props, State> {
                         <PasswordInput
                             id="login-password"
                             ref={this.#refPassword}
-                            labelText="Password"
+                            labelText={formatMessage({
+                                defaultMessage: 'Password',
+                                description: "Login page, the label of the device's web password field",
+                            })}
                             autoComplete="current-password"
                             value={data.password}
                             invalid={!!errors?.fields?.password}

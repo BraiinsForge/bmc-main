@@ -1344,8 +1344,8 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
                     items={pb.sceneCycleDurationOptions}
                     onChange={x => (x.selectedItem ? duration.onChange?.(x.selectedItem) : null)}
                     selectedItem={duration.value ?? undefined}
-                    itemToString={pb.sceneCycleDurationToString}
-                    renderSelectedItem={pb.sceneCycleDurationToString}
+                    itemToString={x => pb.sceneCycleDurationToString(intl, x)}
+                    renderSelectedItem={x => pb.sceneCycleDurationToString(intl, x)}
                 />
 
                 <Dropdown<Exclude<pb.SceneCyclingTransition, 0>>
