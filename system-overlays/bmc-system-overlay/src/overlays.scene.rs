@@ -46,8 +46,8 @@ use bmc_platform::{HardwareProfile, Product};
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::Color;
 use bmc_system_overlay::{
-    AccessPoint, DisplayShape, DownloadProgress, FrameKind, Language, OverlayViewport,
-    SettingsCaps, TouchEvent, UpgradeKind, UpgradePhase,
+    AccessPoint, DeclineReason, DisplayShape, DownloadProgress, FrameKind, Language,
+    OverlayViewport, SettingsCaps, TouchEvent, UpgradeKind, UpgradePhase,
 };
 
 scene_meta! { title: "Overlays" }
@@ -883,6 +883,9 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
         edit(&mut view);
         view
     };
+    // Worded as the tray words the reason the compositor sends.
+    let declined_reason =
+        bmc_intl::format_lazy(&intl(), &DeclineReason::UpgradeInProgress.sentence());
 
     let mut cards = vec![
         ("Resting", resting, &TRAY_RESTING),
@@ -956,13 +959,15 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
         ),
         (
             "Restart declined",
-            variant(|view| {
+            {
+                let mut view = tray_view(stage, caps);
                 view.status = Some(TrayStatus {
                     action: Action::Restart,
                     phase: Phase::Failed,
-                    reason: Some("An upgrade is in progress".to_owned()),
+                    reason: Some(declined_reason),
                 });
-            }),
+                view
+            },
             &TRAY_RESTART_DECLINED,
         ),
         (
