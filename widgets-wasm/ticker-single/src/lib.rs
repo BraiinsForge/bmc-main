@@ -37,7 +37,7 @@ use prices::reference::ReferenceOutcome;
 use prices::transition::{Transition, placeholder};
 
 /// Whether a system-snapshot change affects the current view's output. Number
-/// format drives the price text in both views; timezone, time format, and
+/// format drives the price text in every view; timezone, time format, and
 /// date format drive only the candlestick x-axis labels.
 #[cfg(any(target_arch = "wasm32", test))]
 fn system_affects_render(
@@ -289,11 +289,8 @@ mod tests {
     }
 
     #[wasm_test]
-    fn number_format_change_renders_in_both_views() {
-        for view in [
-            manifest_params::View::Sparkline,
-            manifest_params::View::Candlestick,
-        ] {
+    fn number_format_change_renders_in_every_view() {
+        for &view in manifest_params::View::ALL {
             assert!(system_affects_render(true, false, view));
         }
     }
@@ -326,19 +323,17 @@ mod tests {
             true,
             manifest_params::View::Candlestick
         ));
-        assert!(!system_affects_render(
-            false,
-            true,
-            manifest_params::View::Sparkline
-        ));
+        for view in [
+            manifest_params::View::Sparkline,
+            manifest_params::View::Price,
+        ] {
+            assert!(!system_affects_render(false, true, view));
+        }
     }
 
     #[wasm_test]
     fn no_relevant_change_requests_no_frame() {
-        for view in [
-            manifest_params::View::Sparkline,
-            manifest_params::View::Candlestick,
-        ] {
+        for &view in manifest_params::View::ALL {
             assert!(!system_affects_render(false, false, view));
         }
     }
@@ -575,6 +570,12 @@ mod wasm_glue {
                 State::Loaded { series } => {
                     let view = match params.view {
                         manifest_params::View::Sparkline => render::sparkline::series_view(
+                            series,
+                            symbol,
+                            params.period.as_manifest_value(),
+                            ws,
+                        ),
+                        manifest_params::View::Price => render::sparkline::price_view(
                             series,
                             symbol,
                             params.period.as_manifest_value(),

@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Ticker Single's sparkline and candlestick views at every design size.
+//! Ticker Single's sparkline, candlestick, and price-only views at every
+//! design size.
 
 use bmc_gallery::prelude::*;
 use bmc_wasm_sdk::{SizeVariant, WidgetSize};
@@ -97,7 +98,7 @@ fn widget_size(viewport: Viewport) -> WidgetSize {
 #[scene(default)]
 fn ticker_single(ctx: &mut SceneCtx, ui: &mut Ui) {
     let market_open = ctx.toggle("Market open", true);
-    let candlestick = ctx.radio("View", &["Sparkline", "Candlestick"], 0) == 1;
+    let view = ctx.radio("View", &["Sparkline", "Candlestick", "Price only"], 0);
     let falling = ctx.radio("Trend", &["Rising", "Falling"], 0) == 1;
     ctx.wrapping_flow(
         ui,
@@ -105,10 +106,16 @@ fn ticker_single(ctx: &mut SceneCtx, ui: &mut Ui) {
             let size = widget_size(viewport);
             titled(label, (size.width, size.height), move || {
                 let series = sample_series(market_open, falling);
-                if candlestick {
-                    candlestick::series_view(&series, "AAPL", Period::D7, Period::D7.window(), size)
-                } else {
-                    sparkline::series_view(&series, "AAPL", Period::D1.window(), size)
+                match view {
+                    1 => candlestick::series_view(
+                        &series,
+                        "AAPL",
+                        Period::D7,
+                        Period::D7.window(),
+                        size,
+                    ),
+                    2 => sparkline::price_view(&series, "AAPL", Period::D1.window(), size),
+                    _ => sparkline::series_view(&series, "AAPL", Period::D1.window(), size),
                 }
             })
         }),
