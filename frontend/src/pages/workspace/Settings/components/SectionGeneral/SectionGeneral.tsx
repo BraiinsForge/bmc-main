@@ -33,14 +33,14 @@ import {
     Button,
     ButtonSwitch,
     type ButtonSwitchItem,
+    ComboBox,
+    Dropdown,
     // CarbonFormField
 } from '@/components';
-import {
+import type {
     // Toggle,
-    Dropdown,
-    type DropdownProps,
-    ComboBox,
-    type ComboBoxProps,
+    DropdownProps,
+    ComboBoxProps,
 } from '@carbon/react';
 import { Download as IconDownload, Restart as IconRestart } from '@carbon/react/icons';
 

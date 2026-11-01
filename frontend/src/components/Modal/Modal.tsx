@@ -20,10 +20,12 @@
 
 import { Component } from 'react';
 import { createPortal } from 'react-dom';
+import { useIntl, type IntlShape } from 'react-intl';
 
 import cn from 'clsx';
 import css from './Modal.scss';
 
+// biome-ignore lint/style/noRestrictedImports: the component this wraps
 import { Modal as BaseComponent, type ModalProps as BaseProps } from '@carbon/react';
 import { PortalContext, type PortalContextValue } from '../PortalContext';
 
@@ -36,14 +38,16 @@ export interface ModalProps extends Omit<BaseProps, 'id'> {
     cancelBodyOverflowShadow?: boolean;
 }
 
-export class Modal extends Component<ModalProps> {
+type Props = ModalProps & { intl: IntlShape };
+
+class View extends Component<Props> {
     static contextType = PortalContext;
     declare context: PortalContextValue;
 
     #root: HTMLElement | ShadowRoot;
     #mount: HTMLElement;
 
-    constructor(props: ModalProps) {
+    constructor(props: Props) {
         super(props);
 
         // `carbon-components-react` don't use portal which causes z-index & overflow based issues.
@@ -76,9 +80,13 @@ export class Modal extends Component<ModalProps> {
     }
 
     render() {
-        const { portal = true, cancelContentPadding, cancelBodyOverflowShadow, ...props } = this.props;
+        const { intl, portal = true, cancelContentPadding, cancelBodyOverflowShadow, ...props } = this.props;
         const m = (
             <BaseComponent
+                closeButtonLabel={intl.formatMessage({
+                    defaultMessage: 'Close',
+                    description: "Screen-reader name of a dialog's close button",
+                })}
                 {...props}
                 className={cn(
                     css.root,
@@ -94,4 +102,9 @@ export class Modal extends Component<ModalProps> {
 
         return portal && !this.context.disablePortal ? createPortal(m, this.#mount) : m;
     }
+}
+
+export function Modal(props: ModalProps) {
+    const intl = useIntl();
+    return <View {...props} intl={intl} />;
 }

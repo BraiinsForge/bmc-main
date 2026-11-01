@@ -25,8 +25,8 @@ import { Form, getID } from '@/lib/form';
 
 // Components
 import { Layout } from '../Layout';
-import { LogoHeader, Button } from '@/components';
-import { ProgressIndicator, ProgressStep } from '@carbon/react';
+import { LogoHeader, Button, ProgressStep } from '@/components';
+import { ProgressIndicator } from '@carbon/react';
 import {
     LocalizationFields,
     type LocalizationFieldsProps,

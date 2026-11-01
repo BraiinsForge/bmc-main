@@ -26,9 +26,8 @@ import * as pb from '@/proto';
 import { store } from '@/store';
 
 import { Form, getID } from '@/lib/form';
-import { PasswordInput } from '@carbon/react';
 import { ArrowRight } from '@carbon/react/icons';
-import { Button, InlineNotificationsGroup, LogoHeader } from '@/components';
+import { Button, InlineNotificationsGroup, LogoHeader, PasswordInput } from '@/components';
 
 import css from './Login.scss';
 

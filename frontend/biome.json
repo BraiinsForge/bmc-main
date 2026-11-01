@@ -47,6 +47,39 @@
                 "noInferrableTypes": "off",
                 "noNonNullAssertion": "warn",
                 "noParameterAssign": "warn",
+                "noRestrictedImports": {
+                    "level": "error",
+                    "options": {
+                        "paths": {
+                            "@carbon/react": {
+                                "message": "`@/components` has its own component by this name; import that one, or say in a `biome-ignore` why Carbon's is wanted here.",
+                                "importNames": [
+                                    "Button",
+                                    "Checkbox",
+                                    "ComboBox",
+                                    "CopyButton",
+                                    "DataTable",
+                                    "DataTableSkeleton",
+                                    "Dropdown",
+                                    "FileUploader",
+                                    "InlineLoading",
+                                    "InlineNotification",
+                                    "Link",
+                                    "Loading",
+                                    "Modal",
+                                    "NumberInput",
+                                    "OverflowMenu",
+                                    "PasswordInput",
+                                    "ProgressStep",
+                                    "Slider",
+                                    "Tabs",
+                                    "Toggle",
+                                    "Tooltip"
+                                ]
+                            }
+                        }
+                    }
+                },
                 "noUnusedTemplateLiteral": "error",
                 "noUselessElse": "off",
                 "useAsConstAssertion": "error",

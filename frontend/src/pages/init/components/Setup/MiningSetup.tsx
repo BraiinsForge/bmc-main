@@ -27,8 +27,8 @@ import { Form, getID, type iField } from '@/lib/form';
 
 // Components
 import { Layout } from '../Layout';
-import { ButtonSwitch, FieldSet, Field, LogoHeaderMiner, Button } from '@/components';
-import { PasswordInput, ProgressIndicator, ProgressStep, TextInput } from '@carbon/react';
+import { ButtonSwitch, FieldSet, Field, LogoHeaderMiner, Button, PasswordInput, ProgressStep } from '@/components';
+import { ProgressIndicator, TextInput } from '@carbon/react';
 import {
     LocalizationFields,
     type LocalizationFieldsProps,

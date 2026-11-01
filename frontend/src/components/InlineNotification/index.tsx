@@ -19,3 +19,4 @@
 // the grant above.
 
 export * from './InlineNotification';
+export * from './words';

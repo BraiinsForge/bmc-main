@@ -28,8 +28,7 @@ import { formatAlarmTime } from '@/lib/time';
 import * as pb from '@/proto';
 
 // Components
-import { Button, ButtonGroup, DataTable, type DataTableHeader, type DataTableRow } from '@/components';
-import { Toggle } from '@carbon/react';
+import { Button, ButtonGroup, DataTable, type DataTableHeader, type DataTableRow, Toggle } from '@/components';
 import { TrashCan as IconDelete, Time as IconClock } from '@carbon/react/icons';
 
 // Styles

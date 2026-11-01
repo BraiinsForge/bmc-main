@@ -20,7 +20,9 @@
 
 import { forwardRef, type Ref, type AnchorHTMLAttributes, type ComponentType, type SyntheticEvent } from 'react';
 
-import { Button as BaseComponent, InlineLoading } from '@carbon/react';
+// biome-ignore lint/style/noRestrictedImports: the component this wraps
+import { Button as BaseComponent } from '@carbon/react';
+import { InlineLoading } from '../InlineLoading';
 import type { ButtonBaseProps } from '@carbon/react/es/components/Button/Button';
 import { ARIA } from '@/components/constants';
 import { Tooltip, type TooltipProps } from '@/components/Tooltip';

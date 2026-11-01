@@ -27,9 +27,8 @@ import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
 
 // Components
-import { ButtonSwitch, Checkbox } from '@/components';
+import { ButtonSwitch, Checkbox, Dropdown } from '@/components';
 import { Screen as IconScreen, Information as IconInfo } from '@carbon/react/icons';
-import { Dropdown } from '@carbon/react';
 
 // Styles
 import css from './shared.scss';

@@ -35,13 +35,15 @@ import {
     Field,
     FieldSet,
     Button,
+    InlineLoading,
     InlineNotification,
     InlineNotificationsGroup,
     Html,
     Overlay,
     Tick,
+    Toggle,
 } from '@/components';
-import { InlineLoading, Toggle, ToggleSkeleton } from '@carbon/react';
+import { ToggleSkeleton } from '@carbon/react';
 import { Upgrade as IconUpgrade, ChevronDown, ChevronUp, Restart as IconRestart } from '@carbon/react/icons';
 
 // Styles

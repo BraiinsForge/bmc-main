@@ -29,8 +29,13 @@ import * as pb from '@/proto';
 import { Layout } from '../Layout';
 import { DoneScene } from './DoneScene';
 import { Renew as IconReload } from '@carbon/react/icons';
-import { Button, LogoHeaderMiner, LogoHeader, WifiNetworkLine } from '@/components';
-import { Dropdown, Link, ProgressIndicator, ProgressStep, TextInput } from '@carbon/react';
+import { Button, Dropdown, LogoHeaderMiner, LogoHeader, ProgressStep, WifiNetworkLine } from '@/components';
+import {
+    // biome-ignore lint/style/noRestrictedImports: ours navigates through the router, and the Wi-Fi setup entry has none
+    Link,
+    ProgressIndicator,
+    TextInput,
+} from '@carbon/react';
 
 // Styles
 import css from './Wifi.scss';

@@ -30,18 +30,9 @@ import { handleSliderParentKeyDownCapture } from '@/lib/carbon';
 import * as pb from '@/proto';
 import { getID } from '../../const';
 
-import { CarbonFormField, Field, FieldSet, Button } from '@/components';
-import {
-    Toggle,
-    Slider,
-    // TextInput,
-    TimePicker,
-    Dropdown,
-} from '@carbon/react';
-import {
-    //Location as IconLocation,
-    Checkmark as IconCheckmark,
-} from '@carbon/react/icons';
+import { CarbonFormField, Field, FieldSet, Button, Dropdown, Slider, Toggle } from '@/components';
+import { TimePicker } from '@carbon/react';
+import { Checkmark as IconCheckmark } from '@carbon/react/icons';
 
 // Styles
 import css from './SectionDisplay.scss';

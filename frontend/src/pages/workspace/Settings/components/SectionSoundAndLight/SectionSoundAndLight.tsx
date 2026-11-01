@@ -29,8 +29,7 @@ import { getID } from '../../const';
 import * as pb from '@/proto';
 
 // Components
-import { Field, FieldSet, CarbonFormField } from '@/components';
-import { Toggle, Slider } from '@carbon/react';
+import { Field, FieldSet, CarbonFormField, Slider, Toggle } from '@/components';
 
 // Styles
 import css from './SectionSoundAndLight.scss';

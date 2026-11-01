@@ -19,11 +19,13 @@
 // the grant above.
 
 import type { ComponentProps } from 'react';
+import { useIntl } from 'react-intl';
 import copy2clipboard from 'copy-to-clipboard';
 
 import cn from 'clsx';
 import css from './CopyButton.scss';
 
+// biome-ignore lint/style/noRestrictedImports: the component this wraps
 import { CopyButton as BaseComponent } from '@carbon/react';
 
 type BaseProps = Omit<ComponentProps<typeof BaseComponent>, keyof LocalProps | 'tooltipAlignment' | 'tooltipPosition'>;
@@ -37,6 +39,7 @@ export type CopyButtonProps = BaseProps & LocalProps;
 
 export function CopyButton(props: CopyButtonProps) {
     const { value, kind, className, ...rest } = props;
+    const { formatMessage } = useIntl();
     const disabled = value == null || value === '';
 
     const handleClick = () => {
@@ -44,6 +47,14 @@ export function CopyButton(props: CopyButtonProps) {
     };
 
     const p = {
+        iconDescription: formatMessage({
+            defaultMessage: 'Copy to clipboard',
+            description: 'Tooltip and screen-reader name of a button copying a value',
+        }),
+        feedback: formatMessage({
+            defaultMessage: 'Copied!',
+            description: 'Tooltip shown briefly after a value was copied to the clipboard',
+        }),
         ...rest,
         onClick: handleClick,
         disabled,

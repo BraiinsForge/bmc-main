@@ -63,6 +63,11 @@
     "source": "{count, plural, one {+{count} Older Update} other {+{count} Older Updates}}",
     "translation": "{count, plural, one {+{count} 个更早的更新} other {+{count} 个更早的更新}}"
   },
+  "/FpZ534I3+": {
+    "source": "Invalid",
+    "translation": "无效",
+    "description": "Screen-reader state read after a progress step's label: the step needs fixing"
+  },
   "/Hem87bEbl": {
     "source": "Could not list the widgets using this account.",
     "translation": "无法列出使用此账户的小组件。"
@@ -307,6 +312,11 @@
     "source": "Factory reset",
     "translation": "恢复出厂设置"
   },
+  "55vq0z8iCU": {
+    "source": "AM or PM",
+    "translation": "AM 或 PM",
+    "description": "Screen-reader name of the select picking the half of the day for a 12-hour alarm time; its options read AM and PM"
+  },
   "56Ld4uAyYb": {
     "source": "Change the password used to access device settings.",
     "translation": "更改用于访问设备设置的密码。"
@@ -536,6 +546,11 @@
     "source": "WPA3",
     "translation": "WPA3"
   },
+  "BgR9+SyEUH": {
+    "source": "Play the sound",
+    "translation": "播放铃声",
+    "description": "Screen-reader name of the button previewing an alarm sound"
+  },
   "BnoW5VAdUi": {
     "source": "DNS Servers",
     "translation": "DNS 服务器"
@@ -604,6 +619,16 @@
     "source": "Settings",
     "translation": "设置"
   },
+  "DN7wMSWUFB": {
+    "source": "Close",
+    "translation": "关闭",
+    "description": "Screen-reader name of a dialog's close button"
+  },
+  "DNx+9Kwcx1": {
+    "source": "Failed",
+    "translation": "失败",
+    "description": "Screen-reader name of the mark replacing a busy spinner when it failed"
+  },
   "DY1jOLKpiw": {
     "source": "New firmware version available",
     "translation": "有新的固件版本可用"
@@ -612,9 +637,19 @@
     "source": "{count, plural, one {{count} package update available} other {{count} package updates available}}",
     "translation": "{count, plural, one {有 {count} 个软件包更新可用} other {有 {count} 个软件包更新可用}}"
   },
+  "E3X5QnrwOh": {
+    "source": "On",
+    "translation": "开",
+    "description": "State shown beside a switch that is turned on"
+  },
   "EGe5tCAxZi": {
     "source": "{name} was upgraded from {previous} to {version}.",
     "translation": "{name} 已从 {previous} 升级到 {version}。"
+  },
+  "EXPh3I0MA0": {
+    "source": "Copy to clipboard",
+    "translation": "复制到剪贴板",
+    "description": "Tooltip and screen-reader name of a button copying a value"
   },
   "Ev6SEFBkdw": {
     "source": "New Password",
@@ -649,6 +684,11 @@
     "source": "All {selected, plural, =1 {{selected} item} other {{selected} items}} on this page are selected. <a>Select all {available, plural, =1 {{available} item} other {{available} items}}</a>",
     "translation": "已选择本页全部 {selected, plural, =1 {{selected} 个} other {{selected} 个}}项目。<a>选择全部 {available, plural, =1 {{available} 个} other {{available} 个}}项目</a>"
   },
+  "FIBQBOJH84": {
+    "source": "Stop the sound",
+    "translation": "停止播放铃声",
+    "description": "Screen-reader name of the button previewing an alarm sound, while the sound plays"
+  },
   "Fg65lXT4B2": {
     "source": "Move cancelled, {item} is back at position {position} of {count}.",
     "translation": "已取消移动，{item} 回到第 {position} 位（共 {count} 项）。"
@@ -656,6 +696,11 @@
   "Fm3M+yFIbr": {
     "source": "Finance",
     "translation": "金融"
+  },
+  "FpILQKe49p": {
+    "source": "The value “{correctedValue}” was corrected to the nearest allowed value.",
+    "translation": "数值“{correctedValue}”已调整为最接近的允许值。",
+    "description": "Alert under a slider's number field after it moved a typed value into its range; correctedValue is the value typed, such as 150"
   },
   "GJwREVlv5b": {
     "source": "Failed to load accounts!",
@@ -684,6 +729,11 @@
   "GretYfMDAh": {
     "source": "Current Password",
     "translation": "当前密码"
+  },
+  "GsqHDUDjZP": {
+    "source": "Close",
+    "translation": "收起",
+    "description": "Screen-reader name of a dropdown's arrow button while its list is open"
   },
   "H5+7kJZSt4": {
     "source": "Wi-Fi connection: Unknown error!",
@@ -934,6 +984,16 @@
     "source": "Off",
     "translation": "关"
   },
+  "OzdDsHT/0H": {
+    "source": "Information",
+    "translation": "信息",
+    "description": "Screen-reader name of an informational notification's icon"
+  },
+  "P0vGCvFiET": {
+    "source": "Success",
+    "translation": "成功",
+    "description": "Screen-reader name of a success notification's icon"
+  },
   "P6PLpip+L0": {
     "source": "Join",
     "translation": "加入"
@@ -961,6 +1021,11 @@
   "Q6ICnmpaJn": {
     "source": "{done} downloaded",
     "translation": "已下载 {done}"
+  },
+  "QEJHc01q07": {
+    "source": "Clear selected items",
+    "translation": "清除所有选择",
+    "description": "Screen-reader name of the button emptying a multi-choice dropdown's choices"
   },
   "QMUuIJvBmO": {
     "source": "Unknown widget ({id})",
@@ -1002,6 +1067,11 @@
     "source": "Do you really want to reboot the device?",
     "translation": "确定要重启设备吗？"
   },
+  "RqyuSBzv0V": {
+    "source": "Clear selected item",
+    "translation": "清除选择",
+    "description": "Screen-reader name of the button emptying a dropdown's choice"
+  },
   "RspokqfaHp": {
     "source": "Enable sound during splash screen animation played at every startup of the Deck.",
     "translation": "Deck 每次启动播放开机动画时启用音效。"
@@ -1021,6 +1091,11 @@
   "Sadv9ep2vs": {
     "source": "No Alarms Yet",
     "translation": "尚无闹钟"
+  },
+  "SxNT+AqC/C": {
+    "source": "Show password",
+    "translation": "显示密码",
+    "description": "Tooltip and screen-reader name of the button revealing a password field's text"
   },
   "T8JZHei06V": {
     "source": "Mon",
@@ -1065,6 +1140,11 @@
   "VPtfWY4Ix4": {
     "source": "Brightness",
     "translation": "亮度"
+  },
+  "VgRqDfT2QO": {
+    "source": "Copied!",
+    "translation": "已复制！",
+    "description": "Tooltip shown briefly after a value was copied to the clipboard"
   },
   "Vuh1Db/8tr": {
     "source": "24-Hour",
@@ -1126,13 +1206,28 @@
     "source": "Picked up {item}, position {position} of {count}.",
     "translation": "已拿起 {item}，位于第 {position} 位（共 {count} 项）。"
   },
+  "YbfzLCuVxg": {
+    "source": "Warning",
+    "translation": "警告",
+    "description": "Screen-reader name of a warning notification's icon"
+  },
   "YeB6C1r2TZ": {
     "source": "Transition Effect",
     "translation": "过渡效果"
   },
+  "YtA9GokL8g": {
+    "source": "Current",
+    "translation": "当前",
+    "description": "Screen-reader state read after a progress step's label: the step is the one in progress"
+  },
   "YtxGgOZEIf": {
     "source": "Connecting…",
     "translation": "正在连接…"
+  },
+  "Z689ggbKfs": {
+    "source": "Options",
+    "translation": "更多操作",
+    "description": "Tooltip and screen-reader name of an icon button opening a menu of more actions"
   },
   "ZGZEMNAA8T": {
     "source": "{name} {version} can now be added to a scene.",
@@ -1146,9 +1241,19 @@
     "source": "SSID",
     "translation": "SSID"
   },
+  "ZeyseXFIms": {
+    "source": "Decrement number",
+    "translation": "减小数值",
+    "description": "Screen-reader name of the button lowering a number field's value by one step"
+  },
   "Zh+5A6yahu": {
     "source": "On",
     "translation": "开"
+  },
+  "ZsBpx/GnAD": {
+    "source": "Skip to main content",
+    "translation": "跳到主要内容",
+    "description": "Link shown on keyboard focus at the top of every page, jumping past the header"
   },
   "ZvTCxcMw2z": {
     "source": "{name}, item {n}",
@@ -1283,6 +1388,11 @@
     "source": "Your system version:",
     "translation": "您的系统版本："
   },
+  "eT72PiBklG": {
+    "source": "Increment number",
+    "translation": "增大数值",
+    "description": "Screen-reader name of the button raising a number field's value by one step"
+  },
   "es7ci2x2yE": {
     "source": "30 minutes",
     "translation": "30 分钟"
@@ -1351,6 +1461,11 @@
     "source": "No “Display widget” yet",
     "translation": "尚无“显示小组件”"
   },
+  "gr0jN/QAEr": {
+    "source": "Choose an item",
+    "translation": "选择一项",
+    "description": "Screen-reader name of a searchable dropdown that shows no label of its own"
+  },
   "gvpP3D9o8i": {
     "source": "The Braiins Deck will reboot to finish, and be unavailable for a few minutes.",
     "translation": "Braiins Deck 将重启以完成升级，其间几分钟内无法使用。"
@@ -1387,6 +1502,11 @@
     "source": "Dashboard",
     "translation": "仪表盘"
   },
+  "i+vR02hGqe": {
+    "source": "Done",
+    "translation": "完成",
+    "description": "Screen-reader name of the check mark replacing a busy spinner once it's done"
+  },
   "iNtUkuk4tv": {
     "source": "Unknown scene!",
     "translation": "未知场景！"
@@ -1394,6 +1514,11 @@
   "ij24tjgCOV": {
     "source": "Password is already set!",
     "translation": "密码已设置！"
+  },
+  "inf9CNNaQu": {
+    "source": "{brand} logo",
+    "translation": "{brand} 徽标",
+    "description": "Alternative text of the header's logo; brand is a product name"
   },
   "ipb90Od6xP": {
     "source": "Password Repeat",
@@ -1415,6 +1540,11 @@
     "source": "Failed to save unit system",
     "translation": "保存单位制失败"
   },
+  "jY7bwPAEDm": {
+    "source": "Error",
+    "translation": "错误",
+    "description": "Screen-reader name of an error notification's icon"
+  },
   "jdhiiiFvmK": {
     "source": "Language changed",
     "translation": "语言已更改",
@@ -1433,6 +1563,11 @@
     "source": "Are you sure you want to delete this scene?",
     "translation": "确定要删除此场景吗？"
   },
+  "jpR2/SnyTG": {
+    "source": "Close menu",
+    "translation": "收起菜单",
+    "description": "Screen-reader name of the header button hiding the side navigation"
+  },
   "jvo0vs3nF0": {
     "source": "Save",
     "translation": "保存"
@@ -1448,6 +1583,11 @@
   "kGyxuq/Uj2": {
     "source": "All days",
     "translation": "每天"
+  },
+  "kaGZGE+DfW": {
+    "source": "Open",
+    "translation": "展开",
+    "description": "Screen-reader name of a dropdown's arrow button while its list is closed"
   },
   "kgDclasOl9": {
     "source": "Night Mode Saved",
@@ -1473,6 +1613,11 @@
     "source": "Regional Settings",
     "translation": "区域设置"
   },
+  "lGsHijHnq1": {
+    "source": "Incomplete",
+    "translation": "未完成",
+    "description": "Screen-reader state read after a progress step's label: the step is still to come"
+  },
   "lxblglMBAV": {
     "source": "Wednesday",
     "translation": "星期三"
@@ -1497,9 +1642,24 @@
     "source": "Let’s make sure your alarm wakes you just right – not too loud, not too chill.",
     "translation": "让闹钟以恰到好处的方式唤醒您 – 不太吵，也不太轻。"
   },
+  "muMcgs9/sw": {
+    "source": "Complete",
+    "translation": "已完成",
+    "description": "Screen-reader state read after a progress step's label: the step is done"
+  },
+  "n/ejm+FxXU": {
+    "source": "Off",
+    "translation": "关",
+    "description": "State shown beside a switch that is turned off"
+  },
   "n2LnG7mrhM": {
     "source": "Night Mode Brightness",
     "translation": "夜间模式亮度"
+  },
+  "n46h+flCrI": {
+    "source": "Hide password",
+    "translation": "隐藏密码",
+    "description": "Tooltip and screen-reader name of the button masking a password field's text again"
   },
   "nFzA0isnPs": {
     "source": "Applying",
@@ -1609,6 +1769,11 @@
     "source": "No account bound",
     "translation": "未绑定账户"
   },
+  "qFurhxSzn+": {
+    "source": "Open menu",
+    "translation": "展开菜单",
+    "description": "Screen-reader name of the header button showing the side navigation"
+  },
   "qJIygmfSym": {
     "source": "Alarm has been added",
     "translation": "闹钟已添加"
@@ -1668,6 +1833,11 @@
   "rtKsfVHhjU": {
     "source": "The upgrade ended unexpectedly.",
     "translation": "升级意外终止。"
+  },
+  "rwamZV1tuP": {
+    "source": "Close notification",
+    "translation": "关闭通知",
+    "description": "Screen-reader name of a notification's close button"
   },
   "s30llJGEgl": {
     "source": "Failed to update widget cycling settings!",
@@ -1840,6 +2010,11 @@
   "wnqVvgY0Xz": {
     "source": "LED notifications disabled",
     "translation": "已关闭 LED 通知"
+  },
+  "wrRU+iSfP9": {
+    "source": "Loading",
+    "translation": "正在加载",
+    "description": "Screen-reader name of a busy spinner"
   },
   "wtdY6GA76K": {
     "source": "Please wait for the app to restart.",

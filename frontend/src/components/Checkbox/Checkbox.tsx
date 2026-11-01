@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+// biome-ignore lint/style/noRestrictedImports: the component this wraps
 import { Checkbox as Ch, type CheckboxProps as ChP } from '@carbon/react';
 
 import cn from 'clsx';

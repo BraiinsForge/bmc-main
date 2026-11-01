@@ -28,8 +28,17 @@ import { blockEvent } from '@/lib/react';
 import type { iField } from '@/lib/form';
 
 // Components
-import { ButtonSwitch, type ButtonSwitchItem, FieldSet, Field, Tooltip } from '@/components';
-import { ComboBox, type ComboBoxProps, Dropdown, type DropdownProps, PasswordInput } from '@carbon/react';
+import {
+    ButtonSwitch,
+    type ButtonSwitchItem,
+    ComboBox,
+    Dropdown,
+    FieldSet,
+    Field,
+    PasswordInput,
+    Tooltip,
+} from '@/components';
+import type { ComboBoxProps, DropdownProps } from '@carbon/react';
 import { Information as IconInfo } from '@carbon/react/icons';
 
 // Styles

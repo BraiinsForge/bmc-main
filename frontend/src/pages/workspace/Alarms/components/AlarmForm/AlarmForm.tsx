@@ -31,8 +31,8 @@ import AppContext, { type AppContextType } from '@/context';
 // Components
 import { SoundOption } from '../SoundOption';
 import { SoundPlayIcon } from '../SoundPlayIcon';
-import { Button, CarbonFormField } from '@/components';
-import { TextInput, Toggle, Dropdown, TimePicker, TimePickerSelect, SelectItem } from '@carbon/react';
+import { Button, CarbonFormField, Dropdown, Toggle } from '@/components';
+import { TextInput, TimePicker, TimePickerSelect, SelectItem } from '@carbon/react';
 
 // CSS
 import css from './AlarmForm.scss';
@@ -170,6 +170,11 @@ class View extends Component<Props, State> {
                             {is12h && (
                                 <TimePickerSelect
                                     id={$('time-period')}
+                                    aria-label={formatMessage({
+                                        defaultMessage: 'AM or PM',
+                                        description:
+                                            'Screen-reader name of the select picking the half of the day for a 12-hour alarm time; its options read AM and PM',
+                                    })}
                                     value={period}
                                     onChange={e => {
                                         const p = e.target.value;

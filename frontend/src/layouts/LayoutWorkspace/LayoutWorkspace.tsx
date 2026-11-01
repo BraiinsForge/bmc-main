@@ -156,6 +156,7 @@ class Base extends Component<Props, State> {
     #renderContent = (x: { isSideNavExpanded: boolean; onClickSideNavExpand(): void }): ReactNode => {
         const { isSideNavExpanded, onClickSideNavExpand } = x;
         const { children, hasPassword, capabilities, brand } = this.props;
+        const { formatMessage } = this.props.intl;
         const boserUi = boserChrome(capabilities);
         const links = brand?.links.products ?? [];
         const logo = brand?.logo.header ?? null;
@@ -166,10 +167,27 @@ class Base extends Component<Props, State> {
             <div className={cn(boserUi && css.boserLayout, boserUi && links.length > 0 && css.withLinksBar)}>
                 {boserUi && <LinksBar links={links} className={css.linksBar} />}
                 <Header aria-label={brand?.name ?? this.#txt.name}>
-                    <SkipToContent />
+                    <SkipToContent
+                        children={formatMessage({
+                            defaultMessage: 'Skip to main content',
+                            description:
+                                'Link shown on keyboard focus at the top of every page, jumping past the header',
+                        })}
+                    />
 
                     <HeaderMenuButton
-                        aria-label={isSideNavExpanded ? 'Close menu' : 'Open menu'}
+                        aria-label={
+                            isSideNavExpanded
+                                ? formatMessage({
+                                      defaultMessage: 'Close menu',
+                                      description: 'Screen-reader name of the header button hiding the side navigation',
+                                  })
+                                : formatMessage({
+                                      defaultMessage: 'Open menu',
+                                      description:
+                                          'Screen-reader name of the header button showing the side navigation',
+                                  })
+                        }
                         onClick={onClickSideNavExpand}
                         isActive={isSideNavExpanded}
                         aria-expanded={isSideNavExpanded}
@@ -180,7 +198,13 @@ class Base extends Component<Props, State> {
                             <img
                                 src={logo.src}
                                 style={logo.style}
-                                alt={`${brand.name ?? 'Braiins OS'} logo`}
+                                alt={formatMessage(
+                                    {
+                                        defaultMessage: '{brand} logo',
+                                        description: "Alternative text of the header's logo; brand is a product name",
+                                    },
+                                    { brand: brand.name ?? 'Braiins OS' },
+                                )}
                                 className={css.brandLogo}
                             />
                         </div>

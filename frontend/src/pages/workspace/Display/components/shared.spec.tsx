@@ -20,6 +20,7 @@
 
 import { afterEach, describe, expect, test } from '@rstest/core';
 import { cleanup, render } from '@testing-library/react/pure';
+import { IntlProvider } from 'react-intl';
 import { BoundDropdown } from './shared';
 
 afterEach(cleanup);
@@ -33,15 +34,17 @@ const A: Item = { id: 'a', name: 'Pool A' };
 const B: Item = { id: 'b', name: 'Pool B' };
 
 const dropdown = (value: Item | null, items: Item[] = [A, B]) => (
-    <BoundDropdown<Item>
-        id="slot"
-        labelText="Account"
-        placeholderText="— None —"
-        items={items}
-        itemToString={item => item?.name ?? ''}
-        value={value}
-        onChange={() => {}}
-    />
+    <IntlProvider locale="en">
+        <BoundDropdown<Item>
+            id="slot"
+            labelText="Account"
+            placeholderText="— None —"
+            items={items}
+            itemToString={item => item?.name ?? ''}
+            value={value}
+            onChange={() => {}}
+        />
+    </IntlProvider>
 );
 
 const toggle = () => document.body.querySelector('#slot');

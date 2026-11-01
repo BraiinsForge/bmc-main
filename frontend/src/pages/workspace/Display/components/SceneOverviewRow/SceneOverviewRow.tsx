@@ -27,9 +27,8 @@ import { getID } from '../const';
 import { selfSelect } from '@/lib/react';
 
 // Components
-import { Button, CarbonFormField } from '@/components';
+import { Button, CarbonFormField, NumberInput, Toggle } from '@/components';
 import { SceneTypeIcons, type SceneTypeIconsProps } from '../SceneTypeIcons';
-import { Toggle, NumberInput } from '@carbon/react';
 import {
     Draggable as IconDraggable,
     TrashCan as IconDelete,

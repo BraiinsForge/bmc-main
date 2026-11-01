@@ -19,12 +19,14 @@
 // the grant above.
 
 import { useId } from 'react';
+import { useIntl } from 'react-intl';
 
 import css from './InlineNotification.scss';
 import THEME from '@/styles/theme';
 import cn from 'clsx';
 
 import { ActionableNotification as BaseComponent, type ActionableNotificationProps as BaseProps } from '@carbon/react';
+import { notificationLabels } from './words';
 
 export type InlineNotificationProps = Omit<BaseProps, 'title' | 'actions'> & {
     stretch?: boolean;
@@ -40,6 +42,7 @@ export type InlineNotificationProps = Omit<BaseProps, 'title' | 'actions'> & {
 export function InlineNotification(props: InlineNotificationProps) {
     const { stretch, className, kind, theme, action, children, title, ...rest } = props;
     const childrenId = useId();
+    const { formatMessage } = useIntl();
 
     if (!children && !title) return null;
 
@@ -69,6 +72,8 @@ export function InlineNotification(props: InlineNotificationProps) {
     // so a message without a title goes in as the subtitle.
     const describedByChildren = Boolean(title) && children != null;
     const resProps = {
+        // Carbon draws an error icon when no kind is given.
+        ...notificationLabels(formatMessage, kind ?? 'error'),
         ...rest,
         children: describedByChildren ? <div id={childrenId} className={css.children} children={children} /> : null,
         'aria-describedby': describedByChildren ? childrenId : undefined,

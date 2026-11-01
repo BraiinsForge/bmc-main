@@ -24,7 +24,7 @@ import { getID } from '../../const';
 import { Form, type iField } from '@/lib/form';
 
 // Components
-import { PasswordInput } from '@carbon/react';
+import { PasswordInput } from '@/components';
 
 // CSS
 import css from './FormPasswordChange.scss';

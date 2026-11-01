@@ -24,17 +24,13 @@
 import { Fragment, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { type IntlShape, useIntl } from 'react-intl';
 import {
-    ComboBox,
     DatePicker,
     DatePickerInput,
-    NumberInput,
-    PasswordInput,
     RadioButton,
     RadioButtonGroup,
     Select,
     SelectItem,
     TextInput,
-    Toggle,
 } from '@carbon/react';
 import {
     Add as IconAdd,
@@ -48,7 +44,11 @@ import { useIsTouchDevice } from '@/lib/react';
 import { assertUnreachable, ownValue } from '@/lib/ts';
 import { Button } from '@/components/Button';
 import { CarbonFormField } from '@/components/CarbonFormField';
+import { ComboBox } from '@/components/ComboBox';
+import { NumberInput } from '@/components/NumberInput';
+import { PasswordInput } from '@/components/PasswordInput';
 import { Sortable } from '@/components/Sortable';
+import { Toggle } from '@/components/Toggle';
 import { Tooltip } from '@/components/Tooltip';
 import {
     defaultItemValue,

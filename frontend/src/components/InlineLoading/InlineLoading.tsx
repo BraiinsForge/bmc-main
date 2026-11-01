@@ -18,7 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { useIntl, type IntlShape } from 'react-intl';
+
+// biome-ignore lint/style/noRestrictedImports: the component this wraps
 import { InlineLoading as Upstream, type InlineLoadingProps as UpstreamProps } from '@carbon/react';
+import { assertUnreachable } from '@/lib/ts';
 import cn from 'clsx';
 
 export type InlineLoadingProps = {
@@ -31,8 +35,15 @@ export type InlineLoadingProps = {
 };
 
 export function InlineLoading({ status, iconDescription, description, className, style }: InlineLoadingProps) {
+    const { formatMessage } = useIntl();
     if (typeof status === 'string') {
-        return <Upstream status={status} iconDescription={iconDescription} description={description} />;
+        return (
+            <Upstream
+                status={status}
+                iconDescription={iconDescription ?? statusIconDescription(formatMessage, status)}
+                description={description}
+            />
+        );
     }
     return (
         <div aria-live="assertive" className={cn('cds--inline-loading', className)} style={style}>
@@ -40,4 +51,30 @@ export function InlineLoading({ status, iconDescription, description, className,
             <div className="cds--inline-loading__text" children={description} />
         </div>
     );
+}
+
+function statusIconDescription(
+    formatMessage: IntlShape['formatMessage'],
+    status: NonNullable<UpstreamProps['status']>,
+): string {
+    switch (status) {
+        case 'active':
+        case 'inactive':
+            return formatMessage({
+                defaultMessage: 'Loading',
+                description: 'Screen-reader name of a busy spinner',
+            });
+        case 'finished':
+            return formatMessage({
+                defaultMessage: 'Done',
+                description: "Screen-reader name of the check mark replacing a busy spinner once it's done",
+            });
+        case 'error':
+            return formatMessage({
+                defaultMessage: 'Failed',
+                description: 'Screen-reader name of the mark replacing a busy spinner when it failed',
+            });
+        default:
+            return assertUnreachable(status, 'inline loading status');
+    }
 }

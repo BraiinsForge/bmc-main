@@ -21,6 +21,7 @@
 
 import { Component, createRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useIntl, type IntlShape } from 'react-intl';
 
 import { ComposedModal, type ComposedModalProps, ModalHeader, ModalBody, ModalFooter } from '@carbon/react';
 import { PortalContext, type PortalContextValue } from '../PortalContext';
@@ -66,7 +67,9 @@ type State = {
 };
 const getInitialState = (): State => ({ clickedInside: false, clickedOutside: false });
 
-export class ModalCustom extends Component<CustomModalProps> {
+type Props = CustomModalProps & { intl: IntlShape };
+
+class View extends Component<Props> {
     static defaultProps = { portal: true };
     readonly state = getInitialState();
 
@@ -76,7 +79,7 @@ export class ModalCustom extends Component<CustomModalProps> {
     #root: HTMLElement;
     #mount: HTMLElement;
 
-    constructor(props: CustomModalProps) {
+    constructor(props: Props) {
         super(props);
 
         const envBaseElement = document.body;
@@ -107,7 +110,7 @@ export class ModalCustom extends Component<CustomModalProps> {
     componentWillUnmount() {
         this.#root.removeChild(this.#mount);
     }
-    componentDidUpdate(prevProps: CustomModalProps) {
+    componentDidUpdate(prevProps: Props) {
         if (this.props.isInnerModal && prevProps.open) document.body.classList.add('cds--body--with-modal-open');
         if (this.props.open && !prevProps.open) setTimeout(this.#maybeMoveFocusInside, 30);
     }
@@ -162,6 +165,7 @@ export class ModalCustom extends Component<CustomModalProps> {
 
     render() {
         const {
+            intl,
             id,
 
             // Header labeling
@@ -207,6 +211,10 @@ export class ModalCustom extends Component<CustomModalProps> {
             >
                 {!hideHeader && (title != null || typeof onClose === 'function') && (
                     <ModalHeader
+                        iconDescription={intl.formatMessage({
+                            defaultMessage: 'Close',
+                            description: "Screen-reader name of a dialog's close button",
+                        })}
                         className={cn(!onClose && css.hideModalCloseButton)}
                         {...this.#commonClickProps}
                         title={title}
@@ -227,4 +235,9 @@ export class ModalCustom extends Component<CustomModalProps> {
 
         return portal && !this.context.disablePortal ? createPortal(m, this.#mount) : m;
     }
+}
+
+export function ModalCustom(props: CustomModalProps) {
+    const intl = useIntl();
+    return <View {...props} intl={intl} />;
 }

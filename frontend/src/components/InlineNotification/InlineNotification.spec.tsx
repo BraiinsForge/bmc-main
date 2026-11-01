@@ -19,10 +19,17 @@
 // the grant above.
 
 import { afterEach, describe, expect, test } from '@rstest/core';
-import { cleanup, render } from '@testing-library/react/pure';
+import { cleanup, render as rtlRender } from '@testing-library/react/pure';
+import type { ReactElement, ReactNode } from 'react';
+import { IntlProvider } from 'react-intl';
 import { InlineNotification } from './InlineNotification';
 
 afterEach(cleanup);
+
+const render = (ui: ReactElement) =>
+    rtlRender(ui, {
+        wrapper: ({ children }: { children: ReactNode }) => <IntlProvider locale="en" children={children} />,
+    });
 
 describe('InlineNotification', () => {
     test('names an untitled alert by its message', () => {

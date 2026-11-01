@@ -211,7 +211,6 @@ export function UpgradeStepper(props: UpgradeStepperProps) {
                 <InlineLoading
                     className={css.finishing}
                     status="active"
-                    iconDescription="Finishing up"
                     description={formatMessage({ defaultMessage: 'Finishing up…' })}
                 />
             ) : null}

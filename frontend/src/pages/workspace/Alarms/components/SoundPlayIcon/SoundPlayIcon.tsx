@@ -18,22 +18,46 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { useIntl } from 'react-intl';
+
 import css from './SoundPlayIcon.scss';
+// biome-ignore lint/style/noRestrictedImports: Carbon's small plain ring fits around the stop icon; ours draws the logo inside
 import { Loading } from '@carbon/react';
 import { Play as IconPlay, Stop as IconStop } from '@carbon/react/icons';
 
 export interface SoundPlayIconProps {
     isPlaying: boolean;
 }
+
+/** The content of a button previewing a sound, which names the button by what a press does. */
 export function SoundPlayIcon(props: SoundPlayIconProps) {
     const { isPlaying } = props;
+    const { formatMessage } = useIntl();
 
     return isPlaying ? (
-        <div className={css.composedLoading}>
-            <Loading small active withOverlay={false} className={css.spinner} />
-            <IconStop className={css.icon} />
-        </div>
+        <>
+            <div className={css.composedLoading}>
+                <Loading small active withOverlay={false} className={css.spinner} aria-hidden />
+                <IconStop className={css.icon} />
+            </div>
+            <span
+                className="cds--visually-hidden"
+                children={formatMessage({
+                    defaultMessage: 'Stop the sound',
+                    description: 'Screen-reader name of the button previewing an alarm sound, while the sound plays',
+                })}
+            />
+        </>
     ) : (
-        <IconPlay />
+        <>
+            <IconPlay />
+            <span
+                className="cds--visually-hidden"
+                children={formatMessage({
+                    defaultMessage: 'Play the sound',
+                    description: 'Screen-reader name of the button previewing an alarm sound',
+                })}
+            />
+        </>
     );
 }

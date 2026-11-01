@@ -45,8 +45,8 @@ import { URLS } from '@/constants';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Button } from '@/components';
-import { Dropdown, OverflowMenu, MenuButton, MenuItem, Toggle, Layer } from '@carbon/react';
+import { Button, Dropdown, OverflowMenu, Toggle } from '@/components';
+import { MenuButton, MenuItem, Layer } from '@carbon/react';
 import {
     CarouselHorizontal as IconCycle,
     ChevronDown as IconChevronDown,

@@ -19,10 +19,11 @@
 // the grant above.
 
 import { Fragment, useCallback } from 'react';
+import { useIntl } from 'react-intl';
 import { toast, type ToastProps } from './sdk';
 
 // Components
-import { Html } from '@/components';
+import { Html, notificationLabels } from '@/components';
 import { ToastNotification } from '@carbon/react';
 
 // Styles
@@ -35,9 +36,11 @@ export function Toast(props: ToastProps) {
     const { id, title, message, kind } = props;
 
     const dismiss = useCallback(() => toast.dismiss(id), [id]);
+    const { formatMessage } = useIntl();
 
     return (
         <ToastNotification
+            {...notificationLabels(formatMessage, kind)}
             key={id}
             kind={kind}
             title={title}
