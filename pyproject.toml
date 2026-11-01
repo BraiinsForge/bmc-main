@@ -3,6 +3,7 @@
 # resolve each other by path. Members are listed explicitly — no auto-discovery.
 [tool.uv.workspace]
 members = [
+    "bmc-intl/sweep",
     "bmc-tui",
     "bmc-virt/harness",
     "bmc-wasm-runtime/tools",
@@ -30,6 +31,7 @@ cache_dir = ".tmp/pytest_cache"
 # importlib mode keeps the two same-named `tests` dirs from colliding.
 addopts = "--import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
 testpaths = [
+    "bmc-intl/sweep/tests",
     "bmc-tui/tests",
     "bmc-virt/harness/tests",
     "scripts/tests",
@@ -84,6 +86,9 @@ executionEnvironments = [
     { root = "scripts" },
     { root = "web-probe/tests", extraPaths = ["web-probe"], reportPrivateUsage = false },
     { root = "web-probe" },
+    { root = "bmc-intl/sweep/tests", extraPaths = ["bmc-intl/sweep", "bmc-tui", "web-probe"], reportPrivateUsage = false },
+    # bmc_tui and web_probe as the in-repo sources they are, not the untyped installs the venv holds.
+    { root = "bmc-intl/sweep", extraPaths = ["bmc-tui", "web-probe"] },
     # Run as files, so each script's own directory is on `sys.path` for its sibling imports.
     { root = "bmc-wasm-runtime/tools" },
     # Blender 4.0, the oldest the README supports, embeds Python 3.10.

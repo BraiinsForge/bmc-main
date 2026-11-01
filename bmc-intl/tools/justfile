@@ -37,6 +37,11 @@ verify *SURFACES:
 untranslated *ARGS:
     {{ INTL }} untranslated "$@"
 
+# Render every surface in `en-XA` under `.tmp/intl-sweep` for a person to judge, `--url URL` adding the web UI there.
+[positional-arguments]
+sweep *ARGS:
+    cd {{ quote(ROOT) }} && PLAYWRIGHT_BROWSERS_PATH="$(just web-probe::browsers)" {{ DEV_SHELL }}uv run python -m intl_sweep "$@"
+
 # Write the CLDR data every binary embeds: the ICU4X blob of English and root, and English's unit patterns.
 cldr-data:
     nix run {{ quote(ROOT) }}#intl-cldr-blob -- en {{ quote(BASE_BLOB) }}

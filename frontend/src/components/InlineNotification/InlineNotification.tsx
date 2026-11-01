@@ -18,6 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { useId } from 'react';
+
 import css from './InlineNotification.scss';
 import THEME from '@/styles/theme';
 import cn from 'clsx';
@@ -37,6 +39,7 @@ export type InlineNotificationProps = Omit<BaseProps, 'title' | 'actions'> & {
 
 export function InlineNotification(props: InlineNotificationProps) {
     const { stretch, className, kind, theme, action, children, title, ...rest } = props;
+    const childrenId = useId();
 
     if (!children && !title) return null;
 
@@ -64,7 +67,8 @@ export function InlineNotification(props: InlineNotificationProps) {
 
     const resProps = {
         ...rest,
-        children: children != null ? <div className={css.children} children={children} /> : null,
+        children: children != null ? <div id={childrenId} className={css.children} children={children} /> : null,
+        'aria-describedby': children != null ? childrenId : undefined,
         kind,
         lowContrast: false,
         title: title || '',

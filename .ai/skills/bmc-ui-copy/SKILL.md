@@ -112,6 +112,10 @@ ungrouped (`{millis}` with `1234` is `1234`), and so does the web for a simple a
 4. `just intl::verify` — every surface must pass. It runs in `just validate` and CI.
 5. Never write a test that asserts one of your own translations; assert the English default only. Language coverage is
    the tooling's job.
+6. Before review, `just intl::sweep [--url URL]` renders the overlays, every widget recipe and the web UI at `URL` in
+   the `en-XA` pseudo-locale, which development builds offer, under `.tmp/intl-sweep/`. A message that went through the
+   pipeline reads bracketed and accented there. Plain English is copy that did not, and so is data such as a network
+   name, which is left as it is. It starts no server: give it the URL of one already running.
 
 ## What a review looks for
 

@@ -27,34 +27,40 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from urllib.parse import SplitResult, urlsplit
 
 from playwright.sync_api import ConsoleMessage, Page, sync_playwright
+from playwright.sync_api import Error as PlaywrightError
 
-# Unset, Playwright looks in its own cache and asks for `playwright install`;
-# the browsers come from nix instead.
+# Unset, Playwright looks in its own cache and asks for `playwright install`.
+# The browsers come from nix instead.
 _BROWSERS = "PLAYWRIGHT_BROWSERS_PATH"
 
-# Each anchor's `href` as the browser resolved it, kept when it stays on the page's origin:
-# what counts as in-app is decided by the parser that navigates.
-_IN_APP_PATHS = """anchors => anchors
-    .map(anchor => new URL(anchor.href))
-    .filter(url => url.origin === location.origin)
-    .map(url => url.pathname)"""
+# Each anchor's `href` as the browser resolved it, which no Python call returns:
+# the raw attribute leaves relative links unresolved,
+# and the browser's parser is the one that navigates.
+# The URLs come back serialised by it, so splitting them cannot disagree with it.
+_RESOLVED_HREFS = "anchors => anchors.map(anchor => anchor.href)"
 
 
-def page_string(value: object) -> str:
-    """`value`, what a page script returned, as the string it was written to return."""
-    if not isinstance(value, str):
-        raise TypeError(f"a page script returned {value!r}, not a string")
-    return value
+def _same_origin(url: SplitResult, other: SplitResult) -> bool:
+    return (url.scheme, url.netloc) == (other.scheme, other.netloc)
 
 
-def page_strings(value: object) -> list[str]:
+def _strings(value: object) -> list[str]:
     """`value`, what a page script returned, as the list of strings it was written to return."""
-    if not isinstance(value, list):
+    items = cast("list[object]", value) if isinstance(value, list) else None
+    if items is None or not all(isinstance(item, str) for item in items):
         raise TypeError(f"a page script returned {value!r}, not a list of strings")
-    items = cast("list[object]", value)
-    return [page_string(item) for item in items]
+    return cast("list[str]", items)
+
+
+class Unreachable(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
+    """A page of the web UI did not load: nothing answered, or not in time."""
+
+
+class BrowsersMissing(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
+    """`PLAYWRIGHT_BROWSERS_PATH` is unset, so no browser can be launched."""
 
 
 @dataclass(frozen=True)
@@ -79,12 +85,17 @@ class Probe:
 
     def visit(self, path: str) -> None:
         """Open `path` on the origin and wait until the page stops loading."""
-        _ = self.page.goto(f"{self._origin}{path}")
+        url = f"{self._origin}{path}"
+        try:
+            _ = self.page.goto(url)
+        except PlaywrightError as error:
+            # Its first line is the failure, the rest Playwright's call log.
+            reason = error.message.splitlines()[0]
+            raise Unreachable(f"{url} did not load: {reason}") from error
         self.page.wait_for_load_state("networkidle")
 
     def path(self) -> str:
-        """The path the page is on, as the browser parsed its URL."""
-        return page_string(cast("object", self.page.evaluate("() => location.pathname")))
+        return urlsplit(self.page.url).path
 
     def shot(self, file: Path) -> Path:
         """The whole page, scrolled length included, as a PNG at `file`."""
@@ -94,24 +105,26 @@ class Probe:
 
     def links(self) -> list[str]:
         """The paths the current page links to on its own origin."""
+        here = urlsplit(self.page.url)
         anchors = self.page.locator("a[href]")
-        return page_strings(cast("object", anchors.evaluate_all(_IN_APP_PATHS)))
+        hrefs = _strings(cast("object", anchors.evaluate_all(_RESOLVED_HREFS)))
+        return [url.path for url in map(urlsplit, hrefs) if _same_origin(url, here)]
 
     def navigation_paths(self) -> list[str]:
-        """Where each anchor in the page's navigation landmarks leads on its own origin,
-        found by clicking it: one a script navigates by has no `href` to read,
-        and without one no link role either, so it is found as an anchor."""
-        start = self.path()
-        origin = page_string(cast("object", self.page.evaluate("() => location.origin")))
-        entries = self.page.get_by_role("navigation").locator("a")
+        """Where each anchor without an `href` in the page's navigation landmarks leads
+        on its own origin, found by clicking it: a script navigates by it,
+        and without an `href` it has no link role either, so it is found as an anchor.
+        One with an `href` is for `links` to read, never clicked, as it may lead off the device."""
+        start = urlsplit(self.page.url)
+        entries = self.page.get_by_role("navigation").locator("a:not([href])")
         paths: list[str] = []
         for index in range(entries.count()):
             entries.nth(index).click()
             self.page.wait_for_load_state("networkidle")
-            here = page_string(cast("object", self.page.evaluate("() => location.origin")))
-            if here == origin:
-                paths.append(self.path())
-            self.visit(start)
+            landed = urlsplit(self.page.url)
+            if _same_origin(landed, start):
+                paths.append(landed.path)
+            self.visit(start.path)
         return paths
 
     def console(self) -> list[ConsoleEntry]:
@@ -127,7 +140,7 @@ def open_probe(origin: str, *, width: int = 1280, height: int = 800) -> Generato
     `just web-probe::browsers` prints the path `PLAYWRIGHT_BROWSERS_PATH` must name.
     """
     if not os.environ.get(_BROWSERS):
-        raise RuntimeError(f"{_BROWSERS} is unset; `just web-probe::browsers` prints its value")
+        raise BrowsersMissing(f"{_BROWSERS} is unset, `just web-probe::browsers` prints its value")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
@@ -140,10 +153,9 @@ def open_probe(origin: str, *, width: int = 1280, height: int = 800) -> Generato
 def crawl(start: str, links: Callable[[str], Iterable[str]], skip: Container[str]) -> Iterator[str]:
     """Every path reachable from `start` through `links`, each once, nearest first.
 
-    `links` is asked about a path just before it is yielded, so whatever it opened
-    is still open for the caller; a path in `skip` is neither yielded nor followed.
-    Siblings come in sorted order, so two walks of the same UI visit its pages in
-    the same order.
+    `links` is asked about a path just before it is yielded, so the caller sees what it opened.
+    A path in `skip` is neither yielded nor followed.
+    Siblings come sorted, so two walks of the same UI visit its pages in the same order.
     """
     seen = {start}
     queue = deque([start])

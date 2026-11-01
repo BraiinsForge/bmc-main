@@ -20,20 +20,26 @@
 
 """Walk the device's web UI: log in, switch language, shoot every page it links to."""
 
+from contextlib import nullcontext
 from pathlib import Path
 
 import tyro
 from tyro.conf import Positional
 
-from web_probe.browser import open_probe
-from web_probe.device import current_language, log_in, offered_languages, pages, set_language
+from web_probe.browser import BrowsersMissing, Unreachable, open_probe
+from web_probe.device import (
+    LOGIN_PATH,
+    LanguageUnknown,
+    LoginRefused,
+    LoginStalled,
+    log_in,
+    offered_languages,
+    shoot_login,
+    shoot_pages,
+    speaking,
+)
 
 SHOTS = Path(".tmp/web-probe")
-
-
-def shot_name(path: str) -> str:
-    """The file a page's shot is saved as: `/display/1` as `display_1.png`, `/` as `home.png`."""
-    return f"{path.strip('/').replace('/', '_') or 'home'}.png"
 
 
 def walk(
@@ -48,8 +54,8 @@ def walk(
 
     Args:
         origin: where the web UI answers, such as `http://localhost:6070`
-        password: the device's web password; the mock's is `root`
-        language: a tag the device offers, such as `en-XA`; left out, the device's own language
+        password: the device's web password, `root` on the mock
+        language: a tag the device offers, such as `en-XA`, or left out for the device's own
         out: where the shots go, one PNG per page
     """
     with open_probe(origin) as probe:
@@ -60,18 +66,13 @@ def walk(
         else:
             print("no languages offered: the device lacks its i18n marker (/etc/bmc/i18n)")
         if language is not None and language not in offered:
-            print(f"{language} is not offered; nothing walked")
+            print(f"{language} is not offered, nothing walked")
             return 1
-        before = current_language(probe)
-        if language is not None:
-            set_language(probe, language)
-        try:
-            for path in pages(probe):
-                print(f"{path} -> {probe.shot(out / shot_name(path))}")
-        finally:
-            if before is not None and before != language:
-                set_language(probe, before)
-                print(f"language set back to {before}")
+        with nullcontext() if language is None else speaking(probe, language):
+            for path, shot in shoot_pages(probe, out):
+                print(f"{path} -> {shot}")
+            if login := shoot_login(probe, out, password):
+                print(f"{LOGIN_PATH} -> {login}")
         errors = [entry for entry in probe.console() if entry.kind == "error"]
         print(f"console errors: {len(errors)}")
         for entry in errors:
@@ -80,7 +81,12 @@ def walk(
 
 
 def main() -> None:
-    raise SystemExit(tyro.cli(walk))
+    try:
+        code = tyro.cli(walk)
+    except (BrowsersMissing, Unreachable, LoginRefused, LoginStalled, LanguageUnknown) as error:
+        print(error)
+        code = 1
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":

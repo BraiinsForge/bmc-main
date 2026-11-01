@@ -45,6 +45,7 @@ from typing import IO, Literal, NewType, Protocol, TypedDict, cast
 import msgspec
 
 from bmc_tui import console
+from bmc_tui.process import stream_lines
 from bmc_tui.stage import Abort, dry_run, require
 
 # Key-based, accept-new host key, no password — unlike the VM's sshpass path.
@@ -162,17 +163,7 @@ class _RealExec:
             raise subprocess.CalledProcessError(proc.returncode, argv, stderr=stderr)
 
     def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
-        # Merge stderr into stdout so progress and errors arrive as one ordered stream.
-        with subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
-        ) as proc:
-            stdout: IO[str] | None = proc.stdout
-            if stdout is None:
-                msg = "BUG: Popen(stdout=PIPE) produced no stdout"
-                raise RuntimeError(msg)
-            for line in stdout:
-                on_line(line.rstrip("\n"))
-        return proc.returncode
+        return stream_lines(argv, on_line)
 
 
 class BoardRelease(TypedDict):

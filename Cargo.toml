@@ -4,6 +4,8 @@ exclude = [
     # The gallery pins its own framework and lockfile so its egui
     # version stays clear of ours.
     "bmc-gallery",
+    # A Python package beside the `bmc-intl/*` crates.
+    "bmc-intl/sweep",
     "tooling",
     "widgets-wasm-examples",
 ]

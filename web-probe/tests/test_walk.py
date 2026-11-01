@@ -22,7 +22,7 @@
 
 import pytest
 
-from web_probe.__main__ import shot_name
+from web_probe.device import shot_name
 
 
 @pytest.mark.parametrize(

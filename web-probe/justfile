@@ -9,6 +9,6 @@ set positional-arguments
 browsers:
     @nix build --no-link --print-out-paths .#web-probe-browsers
 
-# Walk the web UI at ORIGIN, a shot of every page into `.tmp/web-probe`; `--language TAG` switches first.
+# Walk the web UI at ORIGIN, shooting every page into `.tmp/web-probe`, in `--language TAG` if given.
 walk ORIGIN *ARGS:
     PLAYWRIGHT_BROWSERS_PATH="$(just --justfile {{ quote(source_file()) }} browsers)" {{ NIX_DEV }} uv run python -m web_probe "$@"

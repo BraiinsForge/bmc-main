@@ -296,6 +296,8 @@
             "bmc-tui/**/*.py"
             # web-probe has its own formatter config (web-probe/pyproject.toml)
             "web-probe/**/*.py"
+            # The sweep has its own formatter config (bmc-intl/sweep/pyproject.toml)
+            "bmc-intl/sweep/**/*.py"
             # yamlfmt canonicalises folded scalars to a single line (collapsing
             # the readable multi-line `>-` form used for `workspace_lints_ignore`).
             # Skip entirely; CI YAML is stable enough to hand-format.

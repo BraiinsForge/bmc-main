@@ -451,6 +451,7 @@ in
             ../bmc-virt/harness
             ../bmc-tui
             ../web-probe
+            ../bmc-intl/sweep
           ]);
       };
     } ''

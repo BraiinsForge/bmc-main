@@ -88,7 +88,7 @@ format:
     nix run .#fmt-svg
     # The members with a ruff config of their own; `scripts/` is treefmt's,
     # and handing it to both leaves them fighting for style.
-    {{ NIX_DEV }} ruff format bmc-tui bmc-virt/harness web-probe
+    {{ NIX_DEV }} ruff format bmc-tui bmc-virt/harness web-probe bmc-intl/sweep
 
 # Stamp the `.license.tpl` GPL header onto any first-party source missing it.
 license-fix:
@@ -109,13 +109,13 @@ clippy:
     # Quiet as a whole, comments included, so stdout carries the ADF alone.
     {{ NIX_DEV }} uv run scripts/md_to_adf.py {{ FILE }} {{ ARGS }}
 
-# Lint, type-check and test the Python uv workspace (bmc-tui, harness, web-probe).
+# Lint, type-check and test the Python uv workspace (bmc-tui, harness, web-probe, the intl sweep).
 python:
     # ruff/basedpyright are nix-provided, matching the pure-nix CI; pytest
     # runs through uv. `uv sync` first so basedpyright sees the workspace .venv.
     {{ NIX_DEV }} uv sync
-    {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness web-probe scripts
-    {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness web-probe
+    {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness web-probe bmc-intl/sweep scripts
+    {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness web-probe bmc-intl/sweep
     {{ NIX_DEV }} basedpyright
     # coverage.py opens its data file without creating the directory above it,
     # and this one lives under the scratch tree, which gets cleaned out —
