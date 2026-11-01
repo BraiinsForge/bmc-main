@@ -49,6 +49,14 @@
             "description": "Only for pairs: USD in EUR-USD",
             "type": "string",
             "optional": true
+          },
+          "precision": {
+            "name": "Precision",
+            "description": "Decimal places of this row's price; leave empty to pick them automatically",
+            "type": "integer",
+            "optional": true,
+            "min": 0,
+            "max": 6
           }
         }
       },

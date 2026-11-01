@@ -410,10 +410,10 @@ fn the_shipped_ticker_list_migrator_satisfies_its_own_manifest() {
         serde_json::json!({
             "period": "1d",
             "symbols": [
-                {"base": "NVDA", "quote": null},
-                {"base": "EUR", "quote": "USD"},
-                {"base": "AAPL", "quote": null},
-                {"base": "BTC", "quote": "USD"},
+                {"base": "NVDA", "quote": null, "precision": null},
+                {"base": "EUR", "quote": "USD", "precision": null},
+                {"base": "AAPL", "quote": null, "precision": null},
+                {"base": "BTC", "quote": "USD", "precision": null},
             ],
         }),
         "slots become trimmed, deduplicated rows and the period carries over"
@@ -458,9 +458,9 @@ fn a_v0_ticker_list_reaches_the_installed_rows_through_the_shipped_migrator() {
         serde_json::json!({
             "period": "1d",
             "symbols": [
-                {"base": "BTC", "quote": "USD"},
-                {"base": "AAPL", "quote": null},
-                {"base": "EUR", "quote": "USD"},
+                {"base": "BTC", "quote": "USD", "precision": null},
+                {"base": "AAPL", "quote": null, "precision": null},
+                {"base": "EUR", "quote": "USD", "precision": null},
             ],
         }),
         "dashed pairs split, blanks and repeats drop, and the v0 period translates"

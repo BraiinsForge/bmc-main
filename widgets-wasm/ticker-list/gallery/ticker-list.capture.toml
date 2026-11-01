@@ -598,3 +598,19 @@ frames = 8
 
 [shot.knobs]
 Size = "BMM Narrow"
+
+[[shot]]
+name = "chosen-precision-full"
+scene = "bmc_gallery::ticker_list::Chosen Precision"
+frames = 8
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "chosen-precision-bmm101"
+scene = "bmc_gallery::ticker_list::Chosen Precision"
+frames = 8
+
+[shot.knobs]
+Size = "BMM"

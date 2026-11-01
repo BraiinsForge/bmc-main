@@ -57,7 +57,14 @@ fn list_stages(ctx: &mut SceneCtx, ui: &mut Ui, list: impl Fn() -> List + Copy +
                 let size = WidgetSize::from_dimensions(width, height);
                 titled(viewport.label, viewport.size, move || {
                     let list = list();
-                    render::view(&list.symbols, &list.states, &list.names, &list.stale, size)
+                    render::view(
+                        &list.symbols,
+                        &list.states,
+                        &list.names,
+                        &list.stale,
+                        &list.decimals,
+                        size,
+                    )
                 })
             }),
     );
@@ -66,6 +73,11 @@ fn list_stages(ctx: &mut SceneCtx, ui: &mut Ui, list: impl Fn() -> List + Copy +
 #[scene(default)]
 fn healthy(ctx: &mut SceneCtx, ui: &mut Ui) {
     list_stages(ctx, ui, fixtures::healthy);
+}
+
+#[scene]
+fn chosen_precision(ctx: &mut SceneCtx, ui: &mut Ui) {
+    list_stages(ctx, ui, fixtures::chosen_precision);
 }
 
 #[scene]

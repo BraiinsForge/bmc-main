@@ -771,6 +771,10 @@ mod wasm_glue {
         });
         let period_changed = prev.as_ref().is_none_or(|p| p.period != cur.period);
         let changed = symbols_changed || period_changed;
+        // A precision-only edit redraws the held prices; nothing refetches.
+        let decimals_changed = prev.as_ref().is_none_or(|p| {
+            symbols::collect_decimals(&p.symbols) != symbols::collect_decimals(&cur.symbols)
+        });
 
         if changed {
             let origins = if symbols_changed {
@@ -810,7 +814,7 @@ mod wasm_glue {
                 }
             });
         }
-        if changed {
+        if changed || decimals_changed {
             request_frame();
         }
     }
@@ -839,9 +843,20 @@ mod wasm_glue {
                 })
                 .collect()
         });
+        // In `collect_symbols` order, the order `SYMBOLS` holds.
+        let decimals = symbols::collect_decimals(&manifest_params::Params::current().symbols);
         let node = SYMBOLS.with(|sym| {
             STATES.with(|st| {
-                NAMES.with(|nm| render::view(&sym.borrow(), &st.borrow(), &nm.borrow(), &stale, ws))
+                NAMES.with(|nm| {
+                    render::view(
+                        &sym.borrow(),
+                        &st.borrow(),
+                        &nm.borrow(),
+                        &stale,
+                        &decimals,
+                        ws,
+                    )
+                })
             })
         });
         let _ = render_ui(ws.width, ws.height, node);

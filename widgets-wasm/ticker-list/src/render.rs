@@ -31,7 +31,7 @@ use crate::layout::{Band, SizeBucket, band_for, size_bucket};
 use crate::model::{RowState, TickerRow};
 use prices::chart;
 use prices::closed_market::{CLOSED_CHART_ALPHA, pause_marker};
-use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision};
+use prices::format::{MIN_PRICE, PricePrecision, change_text, display_precision};
 
 const BACKGROUND: Color = BLACK;
 const PRIMARY: Color = Color::from_rgb(0xf4, 0xf4, 0xf4);
@@ -113,6 +113,7 @@ enum Slot<'a> {
         data: &'a TickerRow,
         name: Option<&'a str>,
         stale: Option<SystemTime>,
+        decimals: Option<u32>,
     },
     Placeholder {
         symbol: &'a str,
@@ -126,6 +127,7 @@ fn slot<'a>(
     states: &'a [RowState],
     names: &'a [Option<String>],
     stale: &[Option<SystemTime>],
+    decimals: &[Option<u32>],
 ) -> Slot<'a> {
     let (Some(symbol), Some(row_state)) = (symbols.get(index), states.get(index)) else {
         return Slot::Empty;
@@ -136,6 +138,7 @@ fn slot<'a>(
             data,
             name: names.get(index).and_then(Option::as_deref),
             stale: stale.get(index).copied().flatten(),
+            decimals: decimals.get(index).copied().flatten(),
         },
         RowState::InputError { .. } => placeholder(Pending::NotFound),
         RowState::NoData {
@@ -149,8 +152,10 @@ fn slot<'a>(
     }
 }
 
-fn price_text(row_data: &TickerRow) -> String {
-    match price_precision(&row_data.symbol, row_data.price) {
+/// The formatted price: `decimals` fraction digits when the row chose them,
+/// else the shared automatic rule.
+fn price_text(row_data: &TickerRow, decimals: Option<u32>) -> String {
+    match display_precision(&row_data.symbol, row_data.price, decimals) {
         PricePrecision::Fraction(digits) => format_number!(row_data.price, digits),
         PricePrecision::BelowMin => {
             let mut out = String::from("<");
@@ -367,6 +372,7 @@ fn resolved_cells(
     data: &TickerRow,
     name: Option<&str>,
     stale: Option<SystemTime>,
+    decimals: Option<u32>,
 ) -> Cells {
     let rising = data.is_positive();
     let closed = data.is_closed_marked();
@@ -398,7 +404,7 @@ fn resolved_cells(
         price: col(
             props!(cross_align: CrossAlign::End, gap: row_style.line_gap()),
             [
-                row_style.price(price_text(data), row_style.primary()),
+                row_style.price(price_text(data, decimals), row_style.primary()),
                 row_style.change(change_text(data.change_pct), rising),
             ],
         ),
@@ -427,7 +433,12 @@ fn placeholder_cells(row_style: &impl RowStyle, symbol: &str, reason: Pending) -
 fn row_cells(row_style: &impl RowStyle, slot: Slot) -> Cells {
     match slot {
         Slot::Empty => empty_cells(row_style),
-        Slot::Resolved { data, name, stale } => resolved_cells(row_style, data, name, stale),
+        Slot::Resolved {
+            data,
+            name,
+            stale,
+            decimals,
+        } => resolved_cells(row_style, data, name, stale, decimals),
         Slot::Placeholder { symbol, reason } => placeholder_cells(row_style, symbol, reason),
     }
 }
@@ -558,12 +569,13 @@ pub fn view(
     states: &[RowState],
     names: &[Option<String>],
     stale: &[Option<SystemTime>],
+    decimals: &[Option<u32>],
     ws: WidgetSize,
 ) -> Node {
     match size_bucket(ws.width, ws.height) {
-        SizeBucket::Bmm101 => bmm101::view(symbols, states, names, stale, ws),
+        SizeBucket::Bmm101 => bmm101::view(symbols, states, names, stale, decimals, ws),
         SizeBucket::Full | SizeBucket::Large | SizeBucket::Medium | SizeBucket::Small => {
-            deck_view(symbols, states, names, stale, ws)
+            deck_view(symbols, states, names, stale, decimals, ws)
         }
     }
 }
@@ -573,6 +585,7 @@ fn deck_view(
     states: &[RowState],
     names: &[Option<String>],
     stale: &[Option<SystemTime>],
+    decimals: &[Option<u32>],
     ws: WidgetSize,
 ) -> Node {
     // Only an empty list collapses to a message. Rows that all failed keep
@@ -590,7 +603,12 @@ fn deck_view(
 
     let row_style = Deck(band);
     let rows: Vec<Cells> = (0..band.rows)
-        .map(|index| row_cells(&row_style, slot(index, symbols, states, names, stale)))
+        .map(|index| {
+            row_cells(
+                &row_style,
+                slot(index, symbols, states, names, stale, decimals),
+            )
+        })
         .collect();
     let body = if band.columns == 2 {
         // Filled left to right, so the first two symbols share the top row.
@@ -670,7 +688,14 @@ mod tests {
     }
 
     fn view_of(list: &fixtures::List, size: WidgetSize) -> Node {
-        view(&list.symbols, &list.states, &list.names, &list.stale, size)
+        view(
+            &list.symbols,
+            &list.states,
+            &list.names,
+            &list.stale,
+            &list.decimals,
+            size,
+        )
     }
 
     /// The style of the paragraph drawing `wanted`, anywhere in the tree.
@@ -695,6 +720,29 @@ mod tests {
 
     fn bmm101() -> WidgetSize {
         WidgetSize::from_dimensions(480, 320)
+    }
+
+    #[wasm_test]
+    fn a_row_with_chosen_decimals_prints_exactly_that_many() {
+        let mut list = fixtures::healthy();
+        list.decimals[0] = Some(4);
+        let [
+            RowState::Resolved { data: first },
+            RowState::Resolved { data: second },
+            ..,
+        ] = &list.states[..]
+        else {
+            panic!("BUG: the healthy list resolves its first two rows");
+        };
+        let chosen = format_number!(first.price, 4);
+        assert_ne!(chosen, price_text(first, None), "the choice must show");
+
+        let texts = texts(&view_of(&list, bmm101()));
+        assert!(texts.contains(&chosen), "{chosen:?} not in {texts:?}");
+        assert!(
+            texts.contains(&price_text(second, None)),
+            "a row without a choice keeps the automatic rule: {texts:?}"
+        );
     }
 
     #[wasm_test]
@@ -871,6 +919,7 @@ mod tests {
             &Deck(band_for(SizeVariant::Small)),
             &row_data,
             Some(NAME),
+            None,
             None,
         );
         let Node::Column(_, left) = cells.name else {
