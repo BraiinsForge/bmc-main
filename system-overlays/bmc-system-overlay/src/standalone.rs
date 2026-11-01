@@ -80,6 +80,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             resize_standalone_if_needed(
                 &egl,
                 &mut scratch,
+                &gpu_lock,
                 &mut renderer,
                 &mut target,
                 &mut client,
@@ -129,6 +130,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             frames.drop_request();
             if hide_standalone_if_mapped(
                 &egl,
+                &gpu_lock,
                 &mut renderer,
                 &mut target,
                 &mut client,
@@ -185,6 +187,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             after,
         ))?;
     }
+    let _lock = gpu_lock.lock("system_overlay_standalone_shutdown")?;
     frames.hide_and_release(&mut *overlay, &mut renderer);
     destroy_standalone_rendering(&egl, scratch, renderer, target);
     Ok(())
@@ -342,6 +345,7 @@ fn destroy_standalone_rendering(
 fn resize_standalone_if_needed(
     egl: &EglContext,
     scratch: &mut SharedRenderScratch,
+    gpu_lock: &GpuRenderLock,
     renderer: &mut FemtoVgRenderer,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
@@ -361,6 +365,7 @@ fn resize_standalone_if_needed(
     if transition.unmap_before_resize {
         hide_standalone_if_mapped(
             egl,
+            gpu_lock,
             renderer,
             target,
             client,
@@ -370,7 +375,9 @@ fn resize_standalone_if_needed(
             last_render,
         )?;
     }
-    resize_standalone_rendering(egl, scratch, renderer, target, client, overlay, new_size)?;
+    resize_standalone_rendering(
+        egl, scratch, gpu_lock, renderer, target, client, overlay, new_size,
+    )?;
     *size = new_size;
     Ok(())
 }
@@ -381,6 +388,7 @@ fn resize_standalone_if_needed(
 )]
 fn hide_standalone_if_mapped(
     egl: &EglContext,
+    gpu_lock: &GpuRenderLock,
     renderer: &mut FemtoVgRenderer,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
@@ -394,6 +402,7 @@ fn hide_standalone_if_mapped(
     }
     client.attach_null_buffer()?;
     client.roundtrip_after_hide_unmap()?;
+    let _lock = gpu_lock.lock("system_overlay_standalone_hide")?;
     target.free_for_hide(egl, client)?;
     *mapped = false;
     *last_render = None;
@@ -408,6 +417,7 @@ fn hide_standalone_if_mapped(
 fn prepare_standalone_for_render(
     egl: &EglContext,
     scratch: &mut SharedRenderScratch,
+    gpu_lock: &GpuRenderLock,
     renderer: &mut FemtoVgRenderer,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
@@ -420,7 +430,9 @@ fn prepare_standalone_for_render(
     }
     let new_size = resolved_configured_size(config_size, client.size());
     if new_size != *size {
-        resize_standalone_rendering(egl, scratch, renderer, target, client, overlay, new_size)?;
+        resize_standalone_rendering(
+            egl, scratch, gpu_lock, renderer, target, client, overlay, new_size,
+        )?;
         *size = new_size;
     }
     Ok(())
@@ -455,6 +467,7 @@ fn render_standalone_if_ready(
     prepare_standalone_for_render(
         egl,
         scratch,
+        gpu_lock,
         renderer,
         target,
         client,
@@ -472,15 +485,21 @@ fn render_standalone_if_ready(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a resize replaces the whole standalone GPU stack"
+)]
 fn resize_standalone_rendering(
     egl: &EglContext,
     scratch: &mut SharedRenderScratch,
+    gpu_lock: &GpuRenderLock,
     renderer: &mut FemtoVgRenderer,
     target: &mut OverlayRenderTarget,
     client: &mut LayerSurfaceClient,
     overlay: &mut dyn SystemOverlay,
     size: (u32, u32),
 ) -> anyhow::Result<()> {
+    let _lock = gpu_lock.lock("system_overlay_standalone_resize")?;
     let new_scratch = SharedRenderScratch::new(egl, size.0, size.1)?;
     let new_renderer = create_standalone_renderer(&new_scratch, size)?;
     // The new renderer holds none of the old one's layers, so the overlay must not expect them.
