@@ -11,9 +11,9 @@ fetched independently so one bad symbol never blanks the others.
 
 > As a user, I want a single widget that lists the prices I follow so I do not need one widget per symbol.
 
-- Up to eight rows are configured through the *Symbols* list. Each row is a *Symbol* (`AAPL`, `^GSPC`, `EUR`) and, for a
-  pair, a *Quote currency* (`USD`). The list defaults to `NVDA`, `AAPL`, `TSLA`, `MSTR`, `JPM`, `META`, `SPY` and
-  `NFLX`.
+- Up to eight rows are configured through the *Symbols* list. Each row is a *Symbol* (`AAPL`, `^GSPC`, `EUR`), for a
+  pair a *Quote currency* (`USD`), and an optional *Precision*. The list defaults to `NVDA`, `AAPL`, `TSLA`, `MSTR`,
+  `JPM`, `META`, `SPY` and `NFLX`.
 - Each row shows the symbol, the instrument's name beneath it, the current price, and a signed percentage change.
 - Rows render in list order; a row whose symbol is only whitespace is skipped, and when every row is, the widget shows
   `No symbols provided`.
@@ -49,6 +49,8 @@ fetched independently so one bad symbol never blanks the others.
 - The price is formatted with as many decimals as its magnitude warrants — none at 1000 and above, two at 1 and above,
   and progressively more for small values.
 - Currency pairs made of two fiat currencies below a rate of 1000 use five decimals, or three when quoted in JPY.
+- A row's *Precision* (0 to 6) replaces that rule for its own price with exactly that many decimals, so `EUR` / `CZK`
+  can read `24.31` while the other rows keep their automatic decimals. Changing it redraws the row without refetching.
 - Number grouping and the decimal separator follow the device localization setting.
 
 ### Choose the time period
