@@ -29,6 +29,7 @@ import { BootError } from '@/components';
 import { AppHead } from '@/components/AppHead';
 import { LocaleProvider } from '@/components/LocaleProvider';
 import '@/lib/carbonFlags';
+import '@fontsource-variable/noto-sans-sc';
 import '@/styles/carbon/carbon.global.scss';
 
 function boot(rootEl: HTMLElement): void {

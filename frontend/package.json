@@ -28,6 +28,7 @@
         "@dnd-kit/sortable": "10.0.0",
         "@dnd-kit/utilities": "3.2.2",
         "@dr.pogodin/react-helmet": "3.3.2",
+        "@fontsource-variable/noto-sans-sc": "5.3.1",
         "@formatjs/intl-locale": "5.4.1",
         "@formatjs/intl-pluralrules": "6.4.0",
         "@formatjs/intl-relativetimeformat": "12.4.0",

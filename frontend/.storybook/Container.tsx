@@ -31,6 +31,7 @@ import { HelmetProvider } from '@dr.pogodin/react-helmet';
 import '@/lib/carbonFlags';
 
 // Styles
+import '@fontsource-variable/noto-sans-sc';
 import '@/styles/carbon/carbon.global.scss';
 import './Container.global.scss';
 

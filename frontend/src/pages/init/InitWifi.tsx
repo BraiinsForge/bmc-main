@@ -32,6 +32,7 @@ import { InlineNotificationsGroup } from '@/components';
 import { DoneScene, Welcome, WifiConnect } from './components';
 
 // Styles
+import '@fontsource-variable/noto-sans-sc';
 import '@/styles/carbon/carbon.global.scss';
 import css from './Init.scss';
 

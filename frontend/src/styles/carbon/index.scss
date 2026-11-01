@@ -35,14 +35,18 @@
 );
 @use '@carbon/react/scss/utilities/convert' as *;
 
+// Braiins Sans has no Han glyphs: the bundled Noto Sans SC takes them,
+// the systems' own CJK faces only if it fails to load.
+$-cjk: "'Noto Sans SC Variable', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei'";
+
 // Forward some globally used Carbon utilities
 @forward '@carbon/react/scss/type' with (
     $font-families: (
-        'sans': string.unquote("'BraiinsSans', sans-serif, serif"),
+        'sans': string.unquote("'BraiinsSans', #{$-cjk}, sans-serif, serif"),
         'mono': string.unquote("'IBM Plex Mono', 'Menlo', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', monospace"),
-        'sans-condensed': string.unquote("'BraiinsSans_Regular', sans-serif, serif"),
-        'sans-hebrew': string.unquote("'BraiinsSans_Regular', sans-serif, serif"),
-        'serif': string.unquote("'BraiinsSans_Regular', sans-serif, serif"),
+        'sans-condensed': string.unquote("'BraiinsSans_Regular', #{$-cjk}, sans-serif, serif"),
+        'sans-hebrew': string.unquote("'BraiinsSans_Regular', #{$-cjk}, sans-serif, serif"),
+        'serif': string.unquote("'BraiinsSans_Regular', #{$-cjk}, sans-serif, serif"),
     )
 );
 @forward '@carbon/react/scss/breakpoint';
