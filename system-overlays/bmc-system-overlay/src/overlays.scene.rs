@@ -173,7 +173,7 @@ fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
 fn offline_cell(view: OfflineView, flat: bool) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
-        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
+        let intl = intl();
         render_offline(r, (w as u32, h as u32), view, &intl);
         // Still: `render_offline` is given no clock to move against.
         false
@@ -193,7 +193,7 @@ fn device_info_cell(
 ) -> CustomRenderFn {
     Box::new(move |r, interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
-        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
+        let intl = intl();
         state_key.with_borrow_mut(|stage| {
             for event in interaction.frame_events() {
                 if let Some(touch) = overlay_touch(*event) {
@@ -313,7 +313,7 @@ fn alarm_cell(
 ) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
-        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
+        let intl = intl();
         state_key.with_borrow_mut(|state| {
             render_alarm(
                 r,
@@ -370,7 +370,7 @@ fn upgrade_cell(
             height: h as u32,
             tier,
         };
-        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
+        let intl = intl();
         state_key.with_borrow_mut(|state| {
             let _ = render_upgrade(
                 r,
@@ -462,7 +462,7 @@ fn settings_tray_cell(
             height: h as u32,
             shape,
         };
-        let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
+        let intl = intl();
         state_key.with_borrow_mut(|state| {
             let _ = render_settings_tray(
                 r,

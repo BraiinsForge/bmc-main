@@ -50,7 +50,7 @@ fn stopped_widget(ctx: &mut SceneCtx, ui: &mut Ui) {
             ui,
             viewport.size,
             Box::new(|renderer, _interaction, _w, _h, _delta| {
-                let intl = bmc_intl::shared_formatter(language().unwrap_or_default());
+                let intl = intl();
                 bmc_render::tree::render_stopped_widget_banner(
                     &intl,
                     bmc_render::ui::BLACK,

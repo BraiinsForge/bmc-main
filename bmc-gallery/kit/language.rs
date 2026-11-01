@@ -24,9 +24,9 @@
 //! so a scene offers what such a device would.
 
 use std::path::Path;
-use std::sync::{LazyLock, Mutex, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
-use bmc_intl::{Language, Translations};
+use bmc_intl::{Intl, Language, Translations};
 use gallery::GlobalKey;
 
 /// The window bar's language switcher.
@@ -68,6 +68,13 @@ pub(crate) fn select(language: Language) {
 pub fn language() -> Option<Language> {
     let selected = *SELECTED.lock().unwrap_or_else(PoisonError::into_inner);
     (selected != *NO_LANGUAGES).then_some(selected)
+}
+
+/// The formatter for the language the switcher shows,
+/// the default one for a device that offers no languages.
+#[must_use]
+pub fn intl() -> Arc<Intl> {
+    bmc_intl::shared_formatter(language().unwrap_or_default())
 }
 
 #[cfg(test)]

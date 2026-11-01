@@ -32,7 +32,7 @@ pub use crate::kit::DivHeight::Auto as AutoH;
 pub use crate::kit::{
     AUTO_HEIGHT_MAX, ActionEvent, CustomRenderFn, DEVICE_HEIGHT, DEVICE_VIEWPORTS, DEVICE_WIDTH,
     DeckSceneCtx, DeckSize, DeviceViewport, DivHeight, Fired, LANGUAGE, RodioSink, WrappingFlow,
-    language, seed_image, stage_width, system_settings, titled,
+    intl, language, seed_image, stage_width, system_settings, titled,
 };
 
 pub use bmc_render::assets::*;

@@ -454,7 +454,7 @@ fn staged_tree(
         input,
         |renderer, state, delta_ms, now_unix_secs| {
             let tree = build();
-            let intl = bmc_intl::shared_formatter(super::language::language().unwrap_or_default());
+            let intl = super::language::intl();
             let mut ctx = ProcessContext {
                 interaction: &mut state.interaction,
                 modal_states: &mut state.modal_states,
