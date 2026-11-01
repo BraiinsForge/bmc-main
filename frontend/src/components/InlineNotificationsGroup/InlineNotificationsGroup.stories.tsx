@@ -94,3 +94,13 @@ InlineNotificationsGroup.argTypes = {
         control: { type: 'range', min: 1, max: 5, step: 1 },
     },
 } as ArgTypes<Args>;
+
+export const Untitled = (args: Args) => <InlineNotificationsGroup {...args} />;
+Untitled.args = {
+    kind: 'error',
+    children: 'Incorrect password',
+    hideCloseButton: true,
+    lowContrast: false,
+    $count: 3,
+} as Partial<Args>;
+Untitled.argTypes = InlineNotificationsGroup.argTypes;

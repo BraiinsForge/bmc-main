@@ -65,13 +65,17 @@ export function InlineNotification(props: InlineNotificationProps) {
             kindClass = css.info;
     }
 
+    // Carbon names the alert by its title, else by its subtitle,
+    // so a message without a title goes in as the subtitle.
+    const describedByChildren = Boolean(title) && children != null;
     const resProps = {
         ...rest,
-        children: children != null ? <div id={childrenId} className={css.children} children={children} /> : null,
-        'aria-describedby': children != null ? childrenId : undefined,
+        children: describedByChildren ? <div id={childrenId} className={css.children} children={children} /> : null,
+        'aria-describedby': describedByChildren ? childrenId : undefined,
+        subtitle: title ? undefined : children,
         kind,
         lowContrast: false,
-        title: title || '',
+        title,
         className: cn(css.root, stretch && css.stretch, kindClass, theme && THEME[theme], className),
     } as BaseProps;
 

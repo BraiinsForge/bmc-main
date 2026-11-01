@@ -25,8 +25,13 @@ import { InlineNotification } from './InlineNotification';
 afterEach(cleanup);
 
 describe('InlineNotification', () => {
-    test('describes the alert by its message', () => {
+    test('names an untitled alert by its message', () => {
         const view = render(<InlineNotification kind="error" children="Incorrect password" />);
-        expect(view.getByRole('alertdialog', { description: 'Incorrect password' })).toBeTruthy();
+        expect(view.getByRole('alertdialog', { name: 'Incorrect password' })).toBeTruthy();
+    });
+
+    test('names a titled alert by its title and describes it by its message', () => {
+        const view = render(<InlineNotification kind="error" title="Invalid file type" children="Pick a .zip" />);
+        expect(view.getByRole('alertdialog', { name: 'Invalid file type', description: 'Pick a .zip' })).toBeTruthy();
     });
 });

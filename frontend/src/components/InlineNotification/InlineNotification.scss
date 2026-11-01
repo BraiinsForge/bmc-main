@@ -41,6 +41,10 @@
     }
 
     :global {
+        .cds--actionable-notification__subtitle {
+            color: inherit;
+        }
+
         .cds--actionable-notification__close-button {
             &:focus {
                 outline-color: var(--notif-fg) !important;
