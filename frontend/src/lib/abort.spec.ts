@@ -26,6 +26,14 @@ import { cleanup, render } from '@testing-library/react/pure';
 import { abort, Aborter } from './abort';
 import { ConnectError, Code } from '@connectrpc/connect';
 
+class AbortsOnUnmount extends Component<{ onAbort: () => void }> {
+    // @ts-expect-error: Called on unmount
+    // biome-ignore lint/correctness/noUnusedPrivateClassMembers: Called in unmount
+    private abort = abort.get(this.props.onAbort);
+    componentWillUnmount = () => abort.all(this);
+    render = () => null;
+}
+
 describe('lib/abort', () => {
     describe('Aborter', () => {
         test('Has AbortController interface methods', () => {
@@ -131,15 +139,7 @@ describe('lib/abort', () => {
 
             test('React component', () => {
                 const onAbort = rstest.fn();
-                class Foo extends Component {
-                    // @ts-expect-error: Called on unmount
-                    // biome-ignore lint/correctness/noUnusedPrivateClassMembers: Called in unmount
-                    private abort = abort.get(onAbort);
-                    componentWillUnmount = () => abort.all(this);
-                    render = () => null;
-                }
-
-                const { unmount } = render(createElement(Foo));
+                const { unmount } = render(createElement(AbortsOnUnmount, { onAbort }));
                 unmount();
 
                 expect(onAbort).toHaveBeenCalledTimes(1);

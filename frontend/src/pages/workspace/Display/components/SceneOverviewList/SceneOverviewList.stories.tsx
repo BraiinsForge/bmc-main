@@ -76,31 +76,28 @@ const initialState: pb.Scene[] = [
     fullscreenScene('2', CLOCK_UID, 30, false),
 ];
 
-function buildView(scenes: pb.Scene[], lookup: pb.ManifestLookup) {
-    function View() {
-        const [s, setScenes] = useState<pb.Scene[]>(scenes);
-        return (
-            <Component
-                scenes={s}
-                manifests={lookup}
-                onMove={next => setScenes(next)}
-                onEdit={action('onEdit')}
-                onClone={action('onClone')}
-                onDelete={action('onDelete')}
-                onToggle={action('onToggle')}
-                onDurationChange={action('onDurationChange')}
-                cycleEnabled
-                cycleDefaultDuration={30}
-            />
-        );
-    }
-    return View;
+function View({ scenes, lookup }: { scenes: pb.Scene[]; lookup: pb.ManifestLookup }) {
+    const [s, setScenes] = useState<pb.Scene[]>(scenes);
+    return (
+        <Component
+            scenes={s}
+            manifests={lookup}
+            onMove={next => setScenes(next)}
+            onEdit={action('onEdit')}
+            onClone={action('onClone')}
+            onDelete={action('onDelete')}
+            onToggle={action('onToggle')}
+            onDurationChange={action('onDurationChange')}
+            cycleEnabled
+            cycleDefaultDuration={30}
+        />
+    );
 }
 
-export const SceneOverviewList = buildView(initialState, manifests);
+export const SceneOverviewList = () => <View scenes={initialState} lookup={manifests} />;
 
 const fallbackState: pb.Scene[] = [
     fullscreenScene('0', CLOCK_UID, 10, true),
     fullscreenScene('1', UNKNOWN_UID, 12, true),
 ];
-export const MissingManifestFallback = buildView(fallbackState, manifests);
+export const MissingManifestFallback = () => <View scenes={fallbackState} lookup={manifests} />;

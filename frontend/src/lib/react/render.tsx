@@ -28,5 +28,5 @@ export function toString(nodeOrString: ReactElement | string): string {
     const div = document.createElement('div');
     div.innerHTML = cleanupHtml(html);
 
-    return div.innerText;
+    return div.textContent ?? '';
 }

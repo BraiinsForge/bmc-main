@@ -68,7 +68,7 @@ const UNBOUND = pb.create(pb.AccountSchema, { id: '', name: '' });
 // `plainId` opts one out: the stand-in for a misbound slot needs an id to be selectable,
 // and rendering it like a real account is what made it read as one.
 function accountOption(icon: pb.Icon | undefined, plainId?: string) {
-    return function AccountOption(account: pb.Account) {
+    return function renderAccountOption(account: pb.Account) {
         if (!account.id || account.id === plainId) return <span children={account.name} />;
 
         return (
