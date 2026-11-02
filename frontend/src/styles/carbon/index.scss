@@ -35,9 +35,10 @@
 );
 @use '@carbon/react/scss/utilities/convert' as *;
 
-// Braiins Sans has no Han glyphs: the bundled Noto Sans SC takes them,
-// the systems' own CJK faces only if it fails to load.
-$-cjk: "'Noto Sans SC Variable', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei'";
+// Braiins Sans has no Han glyphs.
+// A system's own CJK face draws them where one matches,
+// so the bundled Noto Sans SC (last) is fetched only where none does.
+$-cjk: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'System CJK SC', 'Noto Sans SC Variable'";
 
 // Forward some globally used Carbon utilities
 @forward '@carbon/react/scss/type' with (

@@ -111,3 +111,14 @@
     text-rendering: optimizelegibility;
     -webkit-font-smoothing: subpixel-antialiased;
 }
+
+// Android's own CJK face
+// Chrome on Android reaches it through `local()` only, never by family name, and in Regular only.
+// Probed on a Pixel 9 Pro XL (stock Noto) and a Samsung SM-X510 (stock Noto and Samsung's own).
+// A single 400 face lets heavier text be drawn as synthetic bold rather than as Regular.
+@font-face {
+    font-family: 'System CJK SC';
+    src: local('NotoSansCJKsc-Regular'), local('SECCJKsc-Regular');
+    font-style: normal;
+    font-weight: 400;
+}
