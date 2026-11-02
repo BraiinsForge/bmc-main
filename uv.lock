@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "tyro", specifier = ">=0.9" }]
+requires-dist = [{ name = "tyro", specifier = ">=1.0.16" }]
 
 [[package]]
 name = "bmc-scripts"
@@ -52,7 +52,7 @@ requires-dist = [
     { name = "fonttools", specifier = ">=4.63" },
     { name = "markdown-it-py", specifier = ">=4.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
-    { name = "tyro", specifier = ">=0.9" },
+    { name = "tyro", specifier = ">=1.0.16" },
 ]
 provides-extras = ["test"]
 
@@ -69,8 +69,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "msgspec", specifier = ">=0.22" },
-    { name = "rich", specifier = ">=14" },
-    { name = "tyro", specifier = ">=0.9" },
+    { name = "rich", specifier = ">=15" },
+    { name = "tyro", specifier = ">=1.0.16" },
 ]
 
 [[package]]
@@ -88,8 +88,8 @@ dependencies = [
 requires-dist = [
     { name = "bmc-tui", editable = "bmc-tui" },
     { name = "matplotlib", specifier = ">=3.9" },
-    { name = "rich", specifier = ">=14" },
-    { name = "tyro", specifier = ">=0.9" },
+    { name = "rich", specifier = ">=15" },
+    { name = "tyro", specifier = ">=1.0.16" },
 ]
 
 [[package]]
@@ -104,7 +104,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "msgspec", specifier = ">=0.22" },
-    { name = "tyro", specifier = ">=0.9" },
+    { name = "tyro", specifier = ">=1.0.16" },
 ]
 
 [[package]]
@@ -847,16 +847,16 @@ wheels = [
 
 [[package]]
 name = "tyro"
-version = "1.0.13"
+version = "1.0.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docstring-parser" },
     { name = "typeguard" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/24/d6/7126f9e7de139632134d59b5d1972e93c610ee2cb13829e8f4f48f6613cb/tyro-1.0.13.tar.gz", hash = "sha256:731a90c9836b77fffe7c3fa0477ef2d3b6fa91252ddc0bb4d32dadd4fcc143d4", size = 489479, upload-time = "2026-04-14T18:21:52.888Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/83/4008dff806dc894fc0422017316982d3f14709046bcb0dfa720cb64501aa/tyro-1.0.16.tar.gz", hash = "sha256:edf23c9c3eecba5a2b5af152df8f34a723b689a001ff5b7311f93eff1893a636", size = 603382, upload-time = "2026-08-23T01:19:26.643Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/4f/c43a0a8f0c66fd40a1d6cc47332a5a1d1043e9b331f7070ea701b91a7598/tyro-1.0.13-py3-none-any.whl", hash = "sha256:a0bdb8462c551dd84fc00a76916ce4d37e879c84eefaf34e2165312407cc6c09", size = 185221, upload-time = "2026-04-14T18:21:54.328Z" },
+    { url = "https://files.pythonhosted.org/packages/23/d9/ea12ca0392c9eaeff7421efcc665f350dbc2ef30a113ee13c7afea21cf37/tyro-1.0.16-py3-none-any.whl", hash = "sha256:2f9087196113699647190459a12b6b4f2784dd0703c50ab1f7bf0f85a3a794ea", size = 216925, upload-time = "2026-08-23T01:19:25.168Z" },
 ]
 
 [[package]]
@@ -871,5 +871,5 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "playwright", specifier = "==1.64.1" },
-    { name = "tyro", specifier = ">=1.0" },
+    { name = "tyro", specifier = ">=1.0.16" },
 ]

@@ -26,7 +26,7 @@ dependencies = [
     # CommonMark parser behind `md_to_adf.py`; also what mdformat parses with,
     # so the converter and the formatter agree on these files.
     "markdown-it-py>=4.2",
-    "tyro>=0.9",
+    "tyro>=1.0.16",
 ]
 
 # The tests beside these scripts are the member's own, so the runner

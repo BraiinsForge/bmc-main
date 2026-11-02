@@ -209,7 +209,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10.0" },
-    { name = "tyro", specifier = ">=0.9" },
+    { name = "tyro", specifier = ">=1.0.16" },
 ]
 
 [package.metadata.requires-dev]

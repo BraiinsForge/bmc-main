@@ -5,9 +5,9 @@ description = "BMC virtual machine event daemon, test harness, and CLI"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.13"
 dependencies = [
-    "rich>=14",
+    "rich>=15",
     "matplotlib>=3.9",
-    "tyro>=0.9",
+    "tyro>=1.0.16",
     "bmc-tui",
 ]
 
