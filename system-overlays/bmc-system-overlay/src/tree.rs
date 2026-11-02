@@ -27,6 +27,8 @@
 //! replays it instead of building a new one,
 //! and the tree's static half in a renderer layer,
 //! so a frame where only dynamic content moves blits it back.
+//! When the host keeps the target such a frame paints into,
+//! it repaints only the regions that moved.
 
 use std::time::Instant;
 
@@ -36,6 +38,7 @@ use bmc_render::partition::static_layer::{
 };
 use bmc_render::partition::{StaticBytesKey, tree_static_key};
 use bmc_render::renderer::{LayerOwner, OverlayId, Renderer};
+use bmc_render::repaint::{DamageHistory, TargetContents};
 use bmc_render::tree::{Node, ProcessContext, TreeResult, WalkState, layout_and_render};
 
 use crate::overlay::{FrameKind, NextFrame, RenderOutcome, TreeFrameProfile};
@@ -136,6 +139,9 @@ pub struct TreeUi {
     walk: WalkState,
     cached: Option<CachedTree>,
     static_layer: StaticLayerCache,
+    damage: DamageHistory,
+    /// What [`Self::prepare_target`] told the host the next frame may find in its target.
+    target: TargetContents,
     warned_unkeyed: bool,
     /// The instant the last frame's animations advanced to.
     last_render: Instant,
@@ -161,6 +167,8 @@ impl TreeUi {
             walk: WalkState::default(),
             cached: None,
             static_layer: overlay_layer(),
+            damage: DamageHistory::default(),
+            target: TargetContents::Cleared,
             warned_unkeyed: false,
             last_render: now,
             #[cfg(any(test, feature = "test-support"))]
@@ -168,6 +176,44 @@ impl TreeUi {
             #[cfg(test)]
             fail_next_walk: false,
         }
+    }
+
+    /// Whether the host may keep the target the next `kind` frame at `size` paints into.
+    ///
+    /// Asked before the host clears,
+    /// which would wipe exactly the pixels a damage-tracked frame reuses.
+    /// Only a replay of the cached tree over its static layer,
+    /// with damage to scissor to, keeps them;
+    /// the next [`Self::render`] holds the frame to the answer.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "display sizes are well below f32 mantissa precision"
+    )]
+    pub fn prepare_target(&mut self, kind: FrameKind, size: (u32, u32)) -> TargetContents {
+        let replays_over_layer = crate::SURFACE_LAYERING == Layering::Layered
+            && self.replays(kind, size)
+            && self.static_layer.is_on();
+        self.target = self
+            .damage
+            .target_for(replays_over_layer, size.0 as f32, size.1 as f32);
+        self.target
+    }
+
+    /// Repaint every export buffer in full, as after a frame that kept its buffer
+    /// and painted no tree into it: none may hold the frame the damage history describes.
+    pub fn invalidate_target(&mut self) {
+        self.target = TargetContents::Cleared;
+        self.damage.owe_every_buffer();
+    }
+
+    /// Whether a `kind` frame at `size` replays the cached tree rather than building one.
+    fn replays(&self, kind: FrameKind, size: (u32, u32)) -> bool {
+        kind == FrameKind::AnimationOnly
+            && !self.walk.interaction.has_pending_events()
+            && self
+                .cached
+                .as_ref()
+                .is_some_and(|cached| cached.size == size)
     }
 
     /// Lay out and draw `frame` at `size` against `renderer`,
@@ -181,6 +227,7 @@ impl TreeUi {
     /// A [`Layering::Layered`] frame draws the static half from the layer
     /// while its key holds, and captures it again when it does not.
     /// `intl` words the labels the renderer formats itself, such as a relative time.
+    /// Over a target [`Self::prepare_target`] kept, it repaints only what moved.
     pub fn render(
         &mut self,
         frame: OverlayFrame,
@@ -215,12 +262,16 @@ impl TreeUi {
         intl: &bmc_intl::Intl,
         build: impl FnOnce() -> Node,
     ) -> anyhow::Result<TreeFrame> {
-        let replay = frame == FrameKind::AnimationOnly
-            && !self.walk.interaction.has_pending_events()
-            && self
-                .cached
-                .as_ref()
-                .is_some_and(|cached| cached.size == size);
+        let replay = self.replays(frame, size);
+        let target = std::mem::replace(&mut self.target, TargetContents::Cleared);
+        if target == TargetContents::Preserved && !(replay && layering == Layering::Layered) {
+            self.static_layer.forget();
+            self.invalidate_target();
+            anyhow::bail!(
+                "BUG: a {frame:?} {layering:?} frame at {size:?} was not the replay \
+                 its host kept the target for"
+            );
+        }
         let mut tree = match self.cached.take() {
             Some(cached) if replay => cached,
             _ => CachedTree {
@@ -233,10 +284,13 @@ impl TreeUi {
         {
             self.replayed_last_frame = false;
         }
-        let frame = match self.render_node(&mut tree, layering, !replay, delta_ms, renderer, intl) {
+        let frame = match self.render_node(
+            &mut tree, layering, target, !replay, delta_ms, renderer, intl,
+        ) {
             Ok(frame) => frame,
             Err(error) => {
                 self.static_layer.forget();
+                self.invalidate_target();
                 return Err(error);
             }
         };
@@ -248,10 +302,12 @@ impl TreeUi {
         Ok(frame)
     }
 
-    /// Drop the cached tree, so the next frame builds a new one.
+    /// Drop the cached tree, so the next frame builds a new one,
+    /// and repaint every export buffer in full, which a hide frees.
     pub fn clear(&mut self) {
         self.cached = None;
         self.static_layer.forget();
+        self.invalidate_target();
     }
 
     /// Free the static layer in `renderer` and capture again from the next frame,
@@ -343,10 +399,15 @@ impl TreeUi {
         self.static_layer.plan(renderer, frame)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the frame's tree, how it is drawn, over what target, and in which words"
+    )]
     fn render_node(
         &mut self,
         tree: &mut CachedTree,
         layering: Layering,
+        target: TargetContents,
         fresh: bool,
         delta_ms: u32,
         renderer: &mut dyn Renderer,
@@ -373,27 +434,37 @@ impl TreeUi {
         if std::mem::take(&mut self.fail_next_walk) {
             anyhow::bail!("the walk failed on purpose");
         }
-        let mut ctx = ProcessContext {
-            static_layer: self.static_layer.layer_use(plan),
-            stroke_outlines: bmc_render::tree::debug_layout_enabled(),
-            ..self.walk.next_context(delta_ms, now_unix_secs, intl)
-        };
         #[expect(
             clippy::cast_precision_loss,
             reason = "display sizes are well below f32 mantissa precision"
         )]
         let (width, height) = (tree.size.0 as f32, tree.size.1 as f32);
+        let damage = self.damage.damage_for(target, width, height);
+        let mut ctx = ProcessContext {
+            static_layer: self.static_layer.layer_use(plan),
+            damage_rects: &damage,
+            stroke_outlines: bmc_render::tree::debug_layout_enabled(),
+            ..self.walk.next_context(delta_ms, now_unix_secs, intl)
+        };
         let (result, has_active_animations) =
             layout_and_render(&tree.node, width, height, renderer, &mut timings, &mut ctx)?;
-        self.static_layer.commit(
+        let committed = self.static_layer.commit(
             renderer,
             plan,
             result.static_layer,
             AssetGeneration::Unchanging,
         );
+        let repaint = self.damage.walked(
+            committed,
+            fresh,
+            result.static_layer,
+            &result.dynamic_rects,
+            damage,
+        );
         Ok(TreeFrame {
             profile: TreeFrameProfile {
                 static_layer: result.static_layer,
+                repainted_px: whole_pixels(repaint.area(width, height)),
                 timings,
             },
             next: if has_active_animations {
@@ -447,6 +518,16 @@ impl TreeUi {
     pub fn element_bounds(&self, key: &str) -> Option<bmc_render::interaction::Rect> {
         self.walk.interaction.element_bounds(key)
     }
+}
+
+/// `area` in whole pixels, for the host's profiling.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "an area on a display surface fits usize"
+)]
+fn whole_pixels(area: f32) -> usize {
+    area.round().max(0.0) as usize
 }
 
 #[cfg(test)]

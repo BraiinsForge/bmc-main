@@ -93,6 +93,16 @@ impl FrameRepaint {
             | StaticLayer::Missed => Self::Full,
         }
     }
+
+    /// Pixels the frame repainted on a `width`×`height` target.
+    #[must_use]
+    pub fn area(&self, width: f32, height: f32) -> f32 {
+        match self {
+            Self::NoTree => 0.0,
+            Self::Full => width * height,
+            Self::Damage { blitted } => blitted.iter().map(Rect::area).sum(),
+        }
+    }
 }
 
 /// What a tree painted into rotating export buffers has to remember

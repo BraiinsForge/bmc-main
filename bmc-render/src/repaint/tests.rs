@@ -48,6 +48,16 @@ fn only_a_partial_blit_reports_a_damage_repaint() {
     }
 }
 
+#[test]
+fn a_damage_repaint_covers_only_its_blitted_rects() {
+    let blitted = vec![
+        Rect::new(0.0, 0.0, 10.0, 4.0),
+        Rect::new(20.0, 0.0, 5.0, 5.0),
+    ];
+    assert!((FrameRepaint::Damage { blitted }.area(100.0, 100.0) - 65.0).abs() < f32::EPSILON);
+    assert!((FrameRepaint::Full.area(100.0, 50.0) - 5_000.0).abs() < f32::EPSILON);
+}
+
 /// A history carrying damage from two walks, as a settled tree has.
 fn settled() -> DamageHistory {
     DamageHistory::settled(&[Rect::new(0.0, 0.0, 40.0, 40.0)])

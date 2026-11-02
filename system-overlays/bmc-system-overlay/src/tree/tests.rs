@@ -21,7 +21,9 @@
 use super::{Layering, TreeUi};
 use crate::overlay::{FrameKind, NextFrame, TouchEvent};
 use crate::test_support::TestRenderer;
+use bmc_render::partition::test_support::add_animated_draw;
 use bmc_render::renderer::test_support::ShapingRecorder;
+use bmc_render::repaint::TargetContents;
 use bmc_render::test_tracing::counting_warns;
 use bmc_render::tree::Node;
 use bmc_render::tree::StaticLayer;
@@ -775,4 +777,157 @@ fn two_trees_capture_under_their_own_keys() {
         &panel(GREY, animated_tree()),
     );
     assert_eq!(outcome, StaticLayer::Blitted);
+}
+
+/// A static panel with a spinner on a small canvas, which damages well under the cap,
+/// as the indeterminate bar spanning the surface does not.
+/// The spinner's rotation is unbounded, so its damage is the whole canvas.
+fn spinner_panel() -> Node {
+    let mut canvas = Node::Canvas {
+        props: PropsData {
+            width: 20.0,
+            height: 10.0,
+            ..PropsData::default()
+        },
+        touch_key: None,
+        draws: Vec::new(),
+    };
+    assert!(add_animated_draw(&mut canvas));
+    panel(GREY, canvas)
+}
+
+/// A tree past its capture, with a replay that caught the other buffer up on it,
+/// so its next replay may keep the target.
+fn settled(r: &mut ShapingRecorder) -> (TreeUi, Node) {
+    let mut ui = TreeUi::default();
+    let tree = spinner_panel();
+    layered(&mut ui, r, FrameKind::Fresh, SIZE, &tree);
+    layered(&mut ui, r, FrameKind::AnimationOnly, SIZE, &tree);
+    (ui, tree)
+}
+
+#[test]
+fn a_settled_replay_keeps_the_target_and_repaints_only_what_moves() {
+    let mut r = layers();
+    let (mut ui, tree) = settled(&mut r);
+    assert_eq!(
+        ui.prepare_target(FrameKind::AnimationOnly, SIZE),
+        TargetContents::Preserved
+    );
+    let repainted = ui
+        .render_after(
+            FrameKind::AnimationOnly,
+            Layering::Layered,
+            SIZE,
+            16,
+            &mut r,
+            &english(),
+            || tree.clone(),
+        )
+        .expect("BUG: render must succeed")
+        .profile
+        .repainted_px;
+    let surface = usize::try_from(SIZE.0 * SIZE.1).expect("BUG: a test surface fits usize");
+    assert!(
+        repainted < surface,
+        "the replay scissors to the spinner, got {repainted} px"
+    );
+}
+
+#[test]
+fn the_capture_owes_the_other_buffer_a_full_repaint() {
+    let mut r = layers();
+    let mut ui = TreeUi::default();
+    layered(&mut ui, &mut r, FrameKind::Fresh, SIZE, &spinner_panel());
+    assert_eq!(
+        ui.prepare_target(FrameKind::AnimationOnly, SIZE),
+        TargetContents::Cleared
+    );
+}
+
+#[test]
+fn a_fresh_frame_never_keeps_the_target() {
+    let mut r = layers();
+    let (mut ui, _) = settled(&mut r);
+    assert_eq!(
+        ui.prepare_target(FrameKind::Fresh, SIZE),
+        TargetContents::Cleared
+    );
+}
+
+#[test]
+fn every_way_a_buffer_is_lost_repaints_both_in_full() {
+    type Loss = fn(&mut TreeUi, &mut ShapingRecorder, &Node);
+    let cases: [(&str, Loss, FrameKind); 3] = [
+        (
+            "invalidated",
+            |ui, _, _| ui.invalidate_target(),
+            FrameKind::AnimationOnly,
+        ),
+        ("hidden", |ui, _, _| ui.clear(), FrameKind::Fresh),
+        (
+            "failed",
+            |ui, r, tree| {
+                ui.fail_next_walk = true;
+                let failed = ui.render_after(
+                    FrameKind::Fresh,
+                    Layering::Layered,
+                    SIZE,
+                    16,
+                    r,
+                    &english(),
+                    || tree.clone(),
+                );
+                assert!(failed.is_err());
+            },
+            FrameKind::Fresh,
+        ),
+    ];
+    for (loss, lose, first) in cases {
+        let mut r = layers();
+        let (mut ui, tree) = settled(&mut r);
+        lose(&mut ui, &mut r, &tree);
+        assert_eq!(
+            ui.damage.owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS,
+            "{loss}: the first frame's capture would hide a debt owed to only one buffer"
+        );
+        for kind in [first, FrameKind::AnimationOnly] {
+            assert_eq!(
+                ui.prepare_target(kind, SIZE),
+                TargetContents::Cleared,
+                "{loss}: a {kind:?} frame may find its buffer holding anything"
+            );
+            layered(&mut ui, &mut r, kind, SIZE, &tree);
+        }
+        assert_eq!(
+            ui.prepare_target(FrameKind::AnimationOnly, SIZE),
+            TargetContents::Preserved,
+            "{loss}: both buffers hold a full frame again"
+        );
+    }
+}
+
+/// The host kept the target for a replay, so a frame that builds instead
+/// would draw the new tree over the old one.
+#[test]
+fn a_kept_target_refuses_a_frame_that_is_not_its_replay() {
+    let mut r = layers();
+    let (mut ui, tree) = settled(&mut r);
+    ui.prepare_target(FrameKind::AnimationOnly, SIZE);
+    let refused = ui.render_after(
+        FrameKind::Fresh,
+        Layering::Layered,
+        SIZE,
+        16,
+        &mut r,
+        &english(),
+        || tree.clone(),
+    );
+    assert!(refused.is_err());
+    assert_eq!(
+        ui.prepare_target(FrameKind::AnimationOnly, SIZE),
+        TargetContents::Cleared,
+        "the refused frame left the buffer as it was, which no longer matches the history"
+    );
 }

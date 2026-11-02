@@ -502,6 +502,9 @@ pub struct RenderOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TreeFrameProfile {
     pub static_layer: bmc_render::tree::StaticLayer,
+    /// How many pixels of the surface the frame repainted; fewer than all only
+    /// when the host kept the target and the frame scissored to its damage.
+    pub repainted_px: usize,
     /// Empty unless `bmc-render`'s `frame-timings` feature is on.
     /// An overlay builds its tree on the host, so `deserialize_us` holds only what keying
     /// its static half cost, on the frame that keys it.
