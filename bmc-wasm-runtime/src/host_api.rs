@@ -41,17 +41,13 @@ use std::time::Duration;
 use serde_json::Value;
 use taffy::prelude::*;
 
-use bmc_render::interaction::InteractionState;
+use bmc_render::interaction::{CoalesceIterExt, Rect};
 use bmc_render::partition::StaticBytesKey;
 use bmc_render::partition::static_layer::{
-    AssetGeneration, FrameTree, LayerKey, MissPolicy, StaticLayerCache,
+    AssetGeneration, FrameTree, MissPolicy, StaticLayerCache,
 };
 use bmc_render::renderer::Renderer;
-use bmc_render::tree::NodeContext;
-use bmc_render::{
-    AnimationState, ModalState, ScrollState, TransitionState, TransitionStateKey,
-    interaction::{CoalesceIterExt, Rect},
-};
+use bmc_render::tree::WalkState;
 
 use bmc_ui::AudioId;
 use bmc_wasm_protocol::{
@@ -1013,8 +1009,7 @@ pub(crate) struct HostState {
 
     renderer_asset_gate: RendererAssetGate,
 
-    /// Interaction state (hit testing, pending clicks)
-    pub interaction: InteractionState,
+    pub walk: WalkState,
 
     /// Scheduler state for full WASM reruns and cached-tree animation wakes.
     pub frame_schedule: FrameScheduleState,
@@ -1025,23 +1020,8 @@ pub(crate) struct HostState {
     /// Active drag positions on interactive canvases (while finger is down)
     pub tree_drags: HashMap<String, bmc_render::tree::TouchHit>,
 
-    /// Modal dialog states (keyed by modal_id string)
-    pub modal_states: HashMap<String, ModalState>,
-
-    /// Scroll container states (keyed by scroll_key string)
-    pub scroll_states: HashMap<String, ScrollState>,
-
     /// Delta time since last frame (for animations)
     pub delta_ms: u32,
-
-    /// Running animation states, keyed by content hash.
-    pub animation_states: HashMap<u64, AnimationState>,
-
-    /// Running transition states, keyed by (canvas_index, draw_index).
-    pub transition_states: HashMap<TransitionStateKey, TransitionState>,
-
-    /// Monotonic frame counter for GC.
-    pub frame_counter: u64,
 
     /// Dynamic regions from the last two walks, in logical pixels.
     ///
@@ -1274,7 +1254,6 @@ pub(crate) struct HostState {
     /// The process-wide one for the device language the embedder hands in,
     /// so a widget costs a pointer and a frame takes no lock; widgets do not see it.
     pub(crate) host_intl: std::sync::Arc<bmc_intl::Intl>,
-    pub(crate) rel_time: bmc_render::components::RelTimeWords,
 
     /// Third channel of the same shape as `params` and `system`.
     pub credentials: VersionedSnapshotCache<CredentialView>,
@@ -1293,9 +1272,6 @@ pub(crate) struct HostState {
     /// Fuel charged per profiling section in the current frame; drained per frame.
     /// `BTreeMap` keeps the report's section order deterministic.
     pub profile_sections: BTreeMap<String, u64>,
-
-    /// Reusable Taffy layout tree (cleared each frame, keeps allocations).
-    pub taffy: TaffyTree<NodeContext>,
 
     /// Per-runtime caps for host-side resources.
     pub resource_limits: RuntimeResourceLimits,
@@ -1537,16 +1513,14 @@ impl HostState {
             #[cfg(test)]
             fail_next_walk: false,
             last_asset_restoration: None,
-            interaction: InteractionState::new(),
+            walk: WalkState {
+                taffy: TaffyTree::with_capacity(64),
+                ..WalkState::default()
+            },
             frame_schedule: FrameScheduleState::new(),
             tree_clicks: HashMap::new(),
             tree_drags: HashMap::new(),
-            modal_states: HashMap::new(),
-            scroll_states: HashMap::new(),
             delta_ms: 0,
-            animation_states: HashMap::new(),
-            transition_states: HashMap::new(),
-            frame_counter: 0,
             recent_dynamic_rects: [Vec::new(), Vec::new()],
             damage_memo: RefCell::new(None),
             last_repaint: FrameRepaint::NoTree,
@@ -1614,12 +1588,10 @@ impl HostState {
             system: VersionedSnapshotCache::new(SystemSnapshot::default()),
             network_info: NetworkInfo::default(),
             host_intl: bmc_intl::shared_formatter(bmc_intl::Language::default()),
-            rel_time: bmc_render::components::RelTimeWords::new(),
             credentials: VersionedSnapshotCache::new(CredentialView::default()),
             credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             last_timings: FrameTimings::default(),
             profile_sections: BTreeMap::new(),
-            taffy: TaffyTree::with_capacity(64),
             resource_limits,
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)
             shut_down: false,
@@ -1781,7 +1753,7 @@ impl HostState {
     /// repaint, and the previous tree shows through the gaps of the new one.
     pub(crate) fn will_replay_cached_tree(&self) -> bool {
         self.frame_schedule.is_animation_only_frame()
-            && !self.interaction.has_pending_events()
+            && !self.walk.interaction.has_pending_events()
             && self.cached_tree.is_some()
             && !self.deferred_wasm_render_due()
     }
@@ -1832,21 +1804,15 @@ impl HostState {
         fresh: bool,
         now_unix_secs: i64,
     ) -> FrameTree {
-        let host = bmc_render::partition::HostPaintState {
-            pressed_key: self.interaction.pressed_key(),
-            scroll_offsets: &self.scroll_states,
-        };
-        let key = LayerKey::new(
+        self.walk.layer_frame(
             tree_node,
-            static_bytes,
-            &host,
+            Some(static_bytes),
             (self.widget_width, self.widget_height),
             AssetGeneration::Ledger(self.renderer_assets.generation()),
+            fresh,
             now_unix_secs,
             &self.host_intl,
-        );
-        let dragging = self.interaction.get_global_scroll_delta() != 0.0;
-        FrameTree::new(tree_node, Some(key), dragging, fresh)
+        )
     }
 
     /// Name the widget `instance_id`, which also owns its static layer.
@@ -2484,6 +2450,7 @@ mod tests {
     fn a_queued_touch_stops_the_replay() {
         let mut state = state_that_would_replay();
         state
+            .walk
             .interaction
             .push_event(bmc_render::interaction::TouchEvent::Down { x: 1.0, y: 1.0 });
 

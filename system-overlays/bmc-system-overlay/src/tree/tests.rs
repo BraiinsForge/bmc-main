@@ -321,7 +321,12 @@ fn a_frame_advances_animations_by_the_time_since_the_last() {
         )
         .expect("BUG: render must succeed");
     }
-    let elapsed: Vec<u32> = ui.animation_states.values().map(|s| s.elapsed_ms).collect();
+    let elapsed: Vec<u32> = ui
+        .walk
+        .animation_states
+        .values()
+        .map(|s| s.elapsed_ms)
+        .collect();
     assert_eq!(elapsed, [100]);
 }
 

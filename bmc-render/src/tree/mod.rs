@@ -67,6 +67,7 @@ mod frame;
 mod layout;
 mod paint;
 mod walk;
+mod walk_state;
 
 // Re-export for other modules
 pub use crate::components::notification::{
@@ -87,6 +88,7 @@ pub(crate) use walk::{AnimationContext, outline_box};
 #[cfg(test)]
 pub(crate) use walk::{DynamicHalf, Outlines, stroke_inside};
 pub use walk::{EmitMode, LayoutOutline, StaticLayer, TreeResult};
+pub use walk_state::WalkState;
 
 pub use decode::{deserialize_tree, deserialize_tree_keyed};
 

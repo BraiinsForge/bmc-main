@@ -29,23 +29,18 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;
 
+use bmc_render::FrameTimings;
 use bmc_render::assets::{AssetHost, install_asset_host};
-use bmc_render::components::RelTimeWords;
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::{ActionEvent, InteractionState, TouchEvent};
 use bmc_render::renderer::prelude::*;
-use bmc_render::tree::{Node, NodeContext, TouchHit};
+use bmc_render::tree::{Node, TouchHit, WalkState};
 use bmc_render::ui::{BitmapId, MeshId, SvgId};
-use bmc_render::{
-    AnimationState, FrameTimings, ModalState, ProcessContext, ScrollState, TransitionState,
-    TransitionStateKey,
-};
 // eframe's glow, not the one femtovg links: only raw GL names cross between the
 // two, so the versions never have to agree.
 use gallery::eframe::egui::{Id, Ui};
 use gallery::eframe::glow::{self, HasContext as _};
 use gallery::{ImageInput, Pointer, SceneCtx, Stage, StageTexture};
-use taffy::TaffyTree;
 
 use super::size::{AUTO_HEIGHT_MAX, DEVICE_HEIGHT, DeckSize, DivHeight};
 
@@ -162,14 +157,9 @@ impl bmc_wasm_sdk::assets::AssetHost for FemtoVgAssetHost {
 /// The layout and interaction state one staged frame keeps between frames,
 /// keyed by stage identity so a scene's stages don't share scroll or animation
 /// positions.
+#[derive(Default)]
 struct FrameState {
-    interaction: InteractionState,
-    modal_states: HashMap<String, ModalState>,
-    scroll_states: HashMap<String, ScrollState>,
-    animation_states: HashMap<u64, AnimationState>,
-    transition_states: HashMap<TransitionStateKey, TransitionState>,
-    taffy: TaffyTree<NodeContext>,
-    frame_counter: u64,
+    walk: WalkState,
     elapsed_ms: u64,
     /// egui runs a frame in several passes when a widget asks to be laid out
     /// again, and each pass draws the stage afresh. Only the first carries time:
@@ -179,33 +169,11 @@ struct FrameState {
     /// the GPU keeps until the entry goes.
     last_seen: u64,
     drags: HashMap<String, TouchHit>,
-    rel_time: RelTimeWords,
     /// This stage's own render target, so several stages in a scene don't
     /// overwrite each other — femtovg's "screen" can only ever name one FBO.
     image: Option<Image>,
     /// `image`'s texture as egui knows it, registered once and dropped with it.
     texture: Option<gallery::eframe::egui::TextureId>,
-}
-
-impl Default for FrameState {
-    fn default() -> Self {
-        Self {
-            interaction: InteractionState::new(),
-            modal_states: HashMap::new(),
-            scroll_states: HashMap::new(),
-            animation_states: HashMap::new(),
-            transition_states: HashMap::new(),
-            taffy: TaffyTree::new(),
-            frame_counter: 0,
-            elapsed_ms: 0,
-            last_frame: None,
-            last_seen: 0,
-            drags: HashMap::new(),
-            rel_time: RelTimeWords::new(),
-            image: None,
-            texture: None,
-        }
-    }
 }
 
 /// Build the renderer and wire both asset hosts to it, once per session.
@@ -313,7 +281,7 @@ fn draw_frame(
         // Cleared transparent, so the stage shows through what the widget does
         // not cover — the base the device's composited overlays get too.
         renderer.begin_frame_to_image(image.id, alloc[0], alloc[1], 1.0);
-        state.interaction.begin_frame();
+        state.walk.interaction.begin_frame();
 
         state.elapsed_ms = state.elapsed_ms.saturating_add(u64::from(delta_ms));
         let now_unix_secs = i64::try_from(state.elapsed_ms / 1_000).unwrap_or(i64::MAX);
@@ -324,7 +292,7 @@ fn draw_frame(
         // animation states key off this, and reusing a number replays the last
         // layout over the new one.
         if !repeat {
-            state.frame_counter += 1;
+            state.walk.frame_counter += 1;
         }
         content
     });
@@ -455,24 +423,7 @@ fn staged_tree(
         |renderer, state, delta_ms, now_unix_secs| {
             let tree = build();
             let intl = super::language::intl();
-            let mut ctx = ProcessContext {
-                interaction: &mut state.interaction,
-                modal_states: &mut state.modal_states,
-                scroll_states: &mut state.scroll_states,
-                animation_states: &mut state.animation_states,
-                transition_states: &mut state.transition_states,
-                taffy: &mut state.taffy,
-                frame_counter: state.frame_counter,
-                delta_ms,
-                now_unix_secs,
-                intl: &intl,
-                rel_time: &state.rel_time,
-                emit: bmc_render::tree::EmitMode::All,
-                static_layer: bmc_render::tree::LayerUse::Ignore,
-                layout_outlines: false,
-                stroke_outlines: false,
-                damage_rects: &[],
-            };
+            let mut ctx = state.walk.context(delta_ms, now_unix_secs, &intl);
             let mut timings = FrameTimings::default();
             match bmc_render::layout_and_render(
                 &tree,
@@ -508,7 +459,13 @@ fn staged_custom(
 ) -> Fired {
     deck_stage(ctx, ui, size, input, |renderer, state, delta_ms, _now| {
         let (width, height) = (size.width() as f32, size.layout_height());
-        let animating = render(renderer, &mut state.interaction, width, height, delta_ms);
+        let animating = render(
+            renderer,
+            &mut state.walk.interaction,
+            width,
+            height,
+            delta_ms,
+        );
         ((width, height), animating)
     })
 }
@@ -577,7 +534,7 @@ fn deck_stage(
             });
         }
         let fired = Fired {
-            actions: std::mem::take(&mut state.interaction.action_log),
+            actions: std::mem::take(&mut state.walk.interaction.action_log),
             drags: state
                 .drags
                 .iter()
@@ -656,7 +613,7 @@ fn deck_stage(
                 return;
             };
             for pointer in pointers {
-                state.interaction.push_event(match pointer {
+                state.walk.interaction.push_event(match pointer {
                     Pointer::Down { x, y } => TouchEvent::Down { x, y },
                     Pointer::Move { x, y } => TouchEvent::Move { x, y },
                     Pointer::Up { .. } => TouchEvent::Up,

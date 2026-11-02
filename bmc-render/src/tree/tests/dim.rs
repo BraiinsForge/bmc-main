@@ -55,7 +55,7 @@ fn a_dimmed_subtree_paints_at_its_brightness_and_its_siblings_do_not() {
         ],
     );
     let mut renderer = KeyRecordingRenderer::default();
-    render_once(&mut SlotState::default(), &mut renderer, &tree);
+    render_once(&mut WalkState::default(), &mut renderer, &tree);
     assert_close(brightness_of(&renderer, SHADED), 0.5);
     assert_close(brightness_of(&renderer, LIT), 1.0);
 }
@@ -73,7 +73,7 @@ fn nested_dims_multiply_and_unwind() {
         ),
     );
     let mut renderer = KeyRecordingRenderer::default();
-    render_once(&mut SlotState::default(), &mut renderer, &tree);
+    render_once(&mut WalkState::default(), &mut renderer, &tree);
     assert_close(brightness_of(&renderer, LIT), 0.5);
     assert_close(brightness_of(&renderer, SHADED), 0.25);
     assert_close(renderer.brightness(), 1.0);
@@ -99,7 +99,7 @@ fn a_dimmed_node_lays_out_as_its_child() {
             vec![swatch(SHADED, PropsData::default()), child],
         );
         let mut renderer = KeyRecordingRenderer::default();
-        render_once(&mut SlotState::default(), &mut renderer, &tree);
+        render_once(&mut WalkState::default(), &mut renderer, &tree);
         renderer
             .fills
             .iter()

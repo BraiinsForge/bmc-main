@@ -1273,7 +1273,7 @@ impl WasmWidgetRuntime {
             delta_ms,
             fuel_dead = self.fuel_dead,
             cached_tree = state.cached_tree.is_some(),
-            interaction_pending = state.interaction.has_pending_events(),
+            interaction_pending = state.walk.interaction.has_pending_events(),
             animation_only_candidate = state.frame_schedule.is_animation_only_frame(),
             deferred_wasm_render_at_ms = state.frame_schedule.deferred_wasm_render_at_ms,
             monotonic_ms = state.monotonic_ms,
@@ -1282,7 +1282,7 @@ impl WasmWidgetRuntime {
 
         if let Some(error) = &state.renderer_asset_failure {
             tracing::error!(instance_id = %state.instance_id, %error, "widget renderer assets failed");
-            state.interaction.begin_frame();
+            state.walk.interaction.begin_frame();
             state.begin_render_frame();
             Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
             return Ok(RenderStatus::Dead);
@@ -1291,7 +1291,7 @@ impl WasmWidgetRuntime {
         // Dead widget — show overlay on every frame.
         // Use `reset_fuel_state()` to revive (e.g. from a testbed button).
         if self.fuel_dead {
-            state.interaction.begin_frame();
+            state.walk.interaction.begin_frame();
             state.begin_render_frame();
             Self::render_stopped_cached_tree(state, delta_ms, target);
             let background =
@@ -1309,7 +1309,7 @@ impl WasmWidgetRuntime {
             state.frame_schedule.deferred_wasm_render_at_ms = None;
         }
 
-        state.interaction.begin_frame();
+        state.walk.interaction.begin_frame();
         state.begin_render_frame();
         state.delta_ms = delta_ms;
 
@@ -1493,8 +1493,6 @@ impl WasmWidgetRuntime {
         else {
             return true;
         };
-        let frame_counter = state.frame_counter;
-        state.frame_counter += 1;
         let now_unix_secs = state.system_time.timestamp();
         let mut timings = FrameTimings::default();
 
@@ -1513,22 +1511,13 @@ impl WasmWidgetRuntime {
             TargetContents::Cleared => Vec::new(),
         };
         let mut ctx = bmc_render::ProcessContext {
-            interaction: &mut state.interaction,
-            modal_states: &mut state.modal_states,
-            scroll_states: &mut state.scroll_states,
-            animation_states: &mut state.animation_states,
-            transition_states: &mut state.transition_states,
-            taffy: &mut state.taffy,
-            frame_counter,
-            delta_ms,
-            now_unix_secs,
-            intl: &state.host_intl,
-            rel_time: &state.rel_time,
-            emit: bmc_render::tree::EmitMode::All,
             static_layer: state.static_layer.layer_use(plan),
             damage_rects: &damage,
             layout_outlines: state.layout_outlines.is_some(),
             stroke_outlines: bmc_render::tree::debug_layout_enabled(),
+            ..state
+                .walk
+                .next_context(delta_ms, now_unix_secs, &state.host_intl)
         };
         let mut resolver = RendererAssetRestorer::new(
             state.instance_id.as_str(),
@@ -1567,7 +1556,7 @@ impl WasmWidgetRuntime {
                 state.painted_in_full();
                 state.keep_walk(&result.dynamic_rects, result.layout_outlines);
                 let layer = result.static_layer;
-                state.last_repaint = FrameRepaint::of_walk(result.static_layer, damage);
+                state.last_repaint = FrameRepaint::of_walk(layer, damage);
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
                 // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
@@ -2302,7 +2291,7 @@ impl WasmWidgetRuntime {
 
     /// Push a touch event to be processed next frame.
     pub fn push_touch_event(&mut self, event: bmc_render::interaction::TouchEvent) {
-        self.store.data_mut().interaction.push_event(event);
+        self.store.data_mut().walk.interaction.push_event(event);
     }
 
     /// The SDK version the widget was compiled with (major, minor, patch).
@@ -2323,13 +2312,13 @@ impl WasmWidgetRuntime {
     /// a render pass (hit regions are rebuilt each frame).
     #[must_use]
     pub fn element_bounds(&self, id: &str) -> Option<bmc_render::interaction::Rect> {
-        self.store.data().interaction.element_bounds(id)
+        self.store.data().walk.interaction.element_bounds(id)
     }
 
     /// Return all registered hit region element IDs (sorted).
     #[must_use]
     pub fn element_ids(&self) -> Vec<&str> {
-        self.store.data().interaction.element_ids()
+        self.store.data().walk.interaction.element_ids()
     }
 
     /// Hit test against registered UI regions.
@@ -2338,7 +2327,7 @@ impl WasmWidgetRuntime {
     /// a render pass (hit regions are rebuilt each frame).
     #[must_use]
     pub fn hit_test(&self, x: f32, y: f32) -> Option<String> {
-        self.store.data().interaction.hit_test(x, y)
+        self.store.data().walk.interaction.hit_test(x, y)
     }
 
     /// Whether a deferred render is pending (widget called `request_frame_after`
@@ -2404,7 +2393,7 @@ impl WasmWidgetRuntime {
     #[doc(hidden)]
     #[must_use]
     pub fn frame_counter_for_test(&self) -> u64 {
-        self.store.data().frame_counter
+        self.store.data().walk.frame_counter
     }
 
     #[doc(hidden)]
@@ -3095,18 +3084,22 @@ mod tests {
             height: 100.0,
             static_bytes: bytes,
         });
-        for fail in [false, true] {
+        let replay = |runtime: &mut WasmWidgetRuntime,
+                      renderer: &mut bmc_render::renderer::test_support::ShapingRecorder,
+                      fail| {
             runtime.store.data_mut().fail_next_walk = fail;
             assert!(runtime.replay_cached_tree_for_test(
-                renderer_ptr(&mut renderer),
+                renderer_ptr(renderer),
                 16,
                 crate::TargetContents::Cleared
             ));
-            assert!(
-                !renderer.static_layer_owners().is_empty(),
-                "the first replay captures the layer"
-            );
-        }
+        };
+        replay(&mut runtime, &mut renderer, false);
+        assert!(
+            !renderer.static_layer_owners().is_empty(),
+            "the first replay captures the layer"
+        );
+        replay(&mut runtime, &mut renderer, true);
         let state = runtime.store.data_mut();
         let frame = state.layer_frame(&panel(), bytes, false, state.system_time.timestamp());
         assert!(matches!(

@@ -100,7 +100,7 @@ fn a_modal_body_scrolls_on_a_capture_frame() {
     use crate::interaction::TouchEvent;
 
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     // Let the modal's entrance animation settle, so its body is on screen
     // and the drag below can land in it.
@@ -132,7 +132,7 @@ fn a_modal_body_scrolls_on_a_capture_frame() {
 /// static node inside the modal while the modal itself keeps painting.
 #[test]
 fn an_open_modal_emits_its_static_body_on_a_layer_reusing_frame() {
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let mut renderer = KeyRecordingRenderer::default();
     let tree = modal_tree_with_body_text("are you sure?");
 
@@ -169,7 +169,7 @@ fn an_open_modal_emits_its_static_body_on_a_layer_reusing_frame() {
 #[test]
 fn an_open_modal_damages_the_whole_surface() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     let result = render_once(&mut state, &mut renderer, &modal_tree(true));
 
@@ -186,7 +186,7 @@ fn an_open_modal_damages_the_whole_surface() {
 #[test]
 fn a_closed_modal_damages_nothing() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     let result = render_once(&mut state, &mut renderer, &modal_tree(false));
 
@@ -220,7 +220,7 @@ fn modal_tree_with_footer() -> Node {
 #[test]
 fn outlines_cover_the_modal_frame_once_per_capture_frame() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     // Let the modal's entrance animation settle, so its frame is on screen.
     for _ in 0..40 {
         capture_once(&mut state, &mut renderer, &modal_tree_with_footer());

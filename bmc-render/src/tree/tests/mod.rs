@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use super::WalkState;
 use super::layout::{ButtonContext, split_min_content_words};
 use super::*;
 use crate::FrameTimings;
@@ -419,51 +420,17 @@ impl RenderOffscreen for KeyRecordingRenderer {
     }
 }
 
-struct SlotState {
-    interaction: InteractionState,
-    modal_states: HashMap<String, crate::ModalState>,
-    scroll_states: HashMap<String, crate::ScrollState>,
-    animation_states: HashMap<u64, crate::AnimationState>,
-    transition_states: HashMap<crate::TransitionStateKey, crate::TransitionState>,
-    taffy: TaffyTree<super::NodeContext>,
-}
-
-impl Default for SlotState {
-    fn default() -> Self {
-        Self {
-            interaction: InteractionState::new(),
-            modal_states: HashMap::new(),
-            scroll_states: HashMap::new(),
-            animation_states: HashMap::new(),
-            transition_states: HashMap::new(),
-            taffy: TaffyTree::new(),
-        }
-    }
-}
-
 fn render_with(
-    state: &mut SlotState,
+    state: &mut WalkState,
     renderer: &mut KeyRecordingRenderer,
     tree: &Node,
     static_layer: LayerUse<'_>,
 ) -> super::TreeResult {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let mut ctx = ProcessContext {
-        interaction: &mut state.interaction,
-        modal_states: &mut state.modal_states,
-        scroll_states: &mut state.scroll_states,
-        animation_states: &mut state.animation_states,
-        transition_states: &mut state.transition_states,
-        taffy: &mut state.taffy,
         frame_counter: 1,
-        delta_ms: 16,
-        now_unix_secs: 0,
-        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-        rel_time: &crate::components::RelTimeWords::new(),
-        emit: super::EmitMode::All,
         static_layer,
-        layout_outlines: false,
-        stroke_outlines: false,
-        damage_rects: &[],
+        ..state.context(16, 0, &intl)
     };
     let mut timings = FrameTimings::default();
     layout_and_render(tree, 200.0, 200.0, renderer, &mut timings, &mut ctx)
@@ -473,28 +440,18 @@ fn render_with(
 
 /// The cached-frame pass: dynamic draws only, scissored to `damage`.
 fn render_dynamic_pass(
-    state: &mut SlotState,
+    state: &mut WalkState,
     renderer: &mut KeyRecordingRenderer,
     tree: &Node,
     damage: &[crate::interaction::Rect],
 ) {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let mut ctx = ProcessContext {
-        interaction: &mut state.interaction,
-        modal_states: &mut state.modal_states,
-        scroll_states: &mut state.scroll_states,
-        animation_states: &mut state.animation_states,
-        transition_states: &mut state.transition_states,
-        taffy: &mut state.taffy,
         frame_counter: 3,
-        delta_ms: 16,
-        now_unix_secs: 0,
-        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-        rel_time: &crate::components::RelTimeWords::new(),
         emit: super::EmitMode::DynamicOnly,
         static_layer: LayerUse::Reuse(&TEST_OWNER),
-        layout_outlines: false,
-        stroke_outlines: false,
         damage_rects: damage,
+        ..state.context(16, 0, &intl)
     };
     let mut timings = FrameTimings::default();
     layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
@@ -504,28 +461,16 @@ fn render_dynamic_pass(
 /// One walk in `emit` with no layer of its own:
 /// a capture frame's two halves, run singly so a test can read them apart.
 fn render_pass(
-    state: &mut SlotState,
+    state: &mut WalkState,
     renderer: &mut KeyRecordingRenderer,
     tree: &Node,
     emit: super::EmitMode,
 ) {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let mut ctx = ProcessContext {
-        interaction: &mut state.interaction,
-        modal_states: &mut state.modal_states,
-        scroll_states: &mut state.scroll_states,
-        animation_states: &mut state.animation_states,
-        transition_states: &mut state.transition_states,
-        taffy: &mut state.taffy,
         frame_counter: 1,
-        delta_ms: 16,
-        now_unix_secs: 0,
-        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-        rel_time: &crate::components::RelTimeWords::new(),
         emit,
-        static_layer: LayerUse::Ignore,
-        layout_outlines: false,
-        stroke_outlines: false,
-        damage_rects: &[],
+        ..state.context(16, 0, &intl)
     };
     let mut timings = FrameTimings::default();
     layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
@@ -533,27 +478,14 @@ fn render_pass(
 }
 
 fn render_once(
-    state: &mut SlotState,
+    state: &mut WalkState,
     renderer: &mut KeyRecordingRenderer,
     tree: &Node,
 ) -> super::TreeResult {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let mut ctx = ProcessContext {
-        interaction: &mut state.interaction,
-        modal_states: &mut state.modal_states,
-        scroll_states: &mut state.scroll_states,
-        animation_states: &mut state.animation_states,
-        transition_states: &mut state.transition_states,
-        taffy: &mut state.taffy,
         frame_counter: 1,
-        delta_ms: 16,
-        now_unix_secs: 0,
-        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-        rel_time: &crate::components::RelTimeWords::new(),
-        emit: super::EmitMode::All,
-        static_layer: LayerUse::Ignore,
-        layout_outlines: false,
-        stroke_outlines: false,
-        damage_rects: &[],
+        ..state.context(16, 0, &intl)
     };
     let mut timings = FrameTimings::default();
     let (result, _) = layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
@@ -571,7 +503,7 @@ fn assert_close(actual: f32, expected: f32) {
 /// `render_once` with the static layer live, so the frame splits into
 /// a capture pass and a dynamic pass — every scrolling frame's shape.
 fn capture_once(
-    state: &mut SlotState,
+    state: &mut WalkState,
     renderer: &mut KeyRecordingRenderer,
     tree: &Node,
 ) -> super::TreeResult {
@@ -581,29 +513,19 @@ fn capture_once(
 /// [`capture_once`], reporting each laid-out box when `layout_outlines` asks
 /// and stroking it into the frame when `stroke_outlines` does.
 fn capture_collecting(
-    state: &mut SlotState,
+    state: &mut WalkState,
     renderer: &mut KeyRecordingRenderer,
     tree: &Node,
     layout_outlines: bool,
     stroke_outlines: bool,
 ) -> super::TreeResult {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let mut ctx = ProcessContext {
-        interaction: &mut state.interaction,
-        modal_states: &mut state.modal_states,
-        scroll_states: &mut state.scroll_states,
-        animation_states: &mut state.animation_states,
-        transition_states: &mut state.transition_states,
-        taffy: &mut state.taffy,
         frame_counter: 1,
-        delta_ms: 16,
-        now_unix_secs: 0,
-        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-        rel_time: &crate::components::RelTimeWords::new(),
-        emit: super::EmitMode::All,
         static_layer: LayerUse::Capture(&TEST_OWNER),
         layout_outlines,
         stroke_outlines,
-        damage_rects: &[],
+        ..state.context(16, 0, &intl)
     };
     let mut timings = FrameTimings::default();
     let (result, _) = layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)

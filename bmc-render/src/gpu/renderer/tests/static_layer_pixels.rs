@@ -22,20 +22,16 @@
 //! that captures, reuses or misses it has to match a full paint pixel for pixel,
 //! over the transparent base overlays draw on as much as the opaque one widgets do.
 
-use std::collections::HashMap;
-
 use super::{FemtoVgRenderer, RenderTargetProbe};
 use crate::FrameTimings;
-use crate::interaction::{InteractionState, Rect};
+use crate::interaction::Rect;
 use crate::renderer::prelude::*;
 use crate::renderer::{FrameBackground, FrameClear, LayerOwner};
 use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 use crate::tree::{
-    AnimationDef, Draw, EmitMode, LayerUse, Node, ProcessContext, StaticLayer, TreeResult,
-    layout_and_render,
+    AnimationDef, Draw, LayerUse, Node, ProcessContext, StaticLayer, TreeResult, layout_and_render,
 };
 use bmc_ui::{AnimProperty, Color, ColorSpace, Easing, Fill, LoopMode, PropsData, TextStyle};
-use taffy::prelude::TaffyTree;
 
 const W: u32 = 96;
 const H: u32 = 64;
@@ -136,23 +132,13 @@ enum Target {
 }
 
 struct Slot {
-    interaction: InteractionState,
-    modal_states: HashMap<String, crate::ModalState>,
-    scroll_states: HashMap<String, crate::ScrollState>,
-    animation_states: HashMap<u64, crate::AnimationState>,
-    transition_states: HashMap<crate::TransitionStateKey, crate::TransitionState>,
-    taffy: TaffyTree<crate::tree::NodeContext>,
+    walk: crate::tree::WalkState,
 }
 
 impl Slot {
     fn new() -> Self {
         Self {
-            interaction: InteractionState::new(),
-            modal_states: HashMap::new(),
-            scroll_states: HashMap::new(),
-            animation_states: HashMap::new(),
-            transition_states: HashMap::new(),
-            taffy: TaffyTree::new(),
+            walk: crate::tree::WalkState::default(),
         }
     }
 
@@ -164,23 +150,12 @@ impl Slot {
         static_layer: LayerUse<'_>,
         damage_rects: &[Rect],
     ) -> TreeResult {
+        let intl = bmc_intl::formatter(bmc_intl::Language::default());
         let mut ctx = ProcessContext {
-            interaction: &mut self.interaction,
-            modal_states: &mut self.modal_states,
-            scroll_states: &mut self.scroll_states,
-            animation_states: &mut self.animation_states,
-            transition_states: &mut self.transition_states,
-            taffy: &mut self.taffy,
             frame_counter,
-            delta_ms: 16,
-            now_unix_secs: 0,
-            intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-            rel_time: &crate::components::RelTimeWords::new(),
-            emit: EmitMode::All,
-            static_layer,
-            layout_outlines: false,
-            stroke_outlines: false,
             damage_rects,
+            static_layer,
+            ..self.walk.context(16, 0, &intl)
         };
         let (result, _) = layout_and_render(
             tree,

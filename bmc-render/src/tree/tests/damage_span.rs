@@ -60,7 +60,7 @@ fn translated_centred_dot() -> Node {
 /// region that one moved is still stale in it.
 fn assert_dynamic_draws_land_inside_span(older: &Node, newer: &Node) {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     let older = render_once(&mut state, &mut renderer, older);
     let newest = render_once(&mut state, &mut renderer, newer);
@@ -123,7 +123,7 @@ fn draws_far_apart_in_one_canvas_report_a_rect_each() {
         draws: vec![sliding_square(2.0, 2.0), sliding_square(88.0, 88.0)],
     };
     let mut renderer = KeyRecordingRenderer::default();
-    let result = render_once(&mut SlotState::default(), &mut renderer, &tree);
+    let result = render_once(&mut WalkState::default(), &mut renderer, &tree);
 
     let sizes: Vec<_> = result
         .dynamic_rects
@@ -154,26 +154,15 @@ fn a_translated_centred_draw_lands_inside_the_two_walk_damage_span() {
 #[test]
 fn a_failed_layer_blit_lays_the_frame_base_before_the_walk() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let damage = [crate::interaction::Rect::new(0.0, 0.0, 30.0, 30.0)];
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let mut ctx = ProcessContext {
-        interaction: &mut state.interaction,
-        modal_states: &mut state.modal_states,
-        scroll_states: &mut state.scroll_states,
-        animation_states: &mut state.animation_states,
-        transition_states: &mut state.transition_states,
-        taffy: &mut state.taffy,
         frame_counter: 1,
-        delta_ms: 16,
-        now_unix_secs: 0,
-        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-        rel_time: &crate::components::RelTimeWords::new(),
-        emit: super::EmitMode::All,
         // Nothing was captured under this key, so the layer blit fails.
         static_layer: LayerUse::Reuse(&super::TEST_OWNER),
-        layout_outlines: false,
-        stroke_outlines: false,
         damage_rects: &damage,
+        ..state.context(16, 0, &intl)
     };
     let mut timings = FrameTimings::default();
     let (result, _) = layout_and_render(
@@ -212,24 +201,13 @@ fn walk_with_layer_and_damage(
     if captured {
         renderer.captured.push(super::TEST_OWNER.clone());
     }
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let mut ctx = ProcessContext {
-        interaction: &mut state.interaction,
-        modal_states: &mut state.modal_states,
-        scroll_states: &mut state.scroll_states,
-        animation_states: &mut state.animation_states,
-        transition_states: &mut state.transition_states,
-        taffy: &mut state.taffy,
         frame_counter: 1,
-        delta_ms: 16,
-        now_unix_secs: 0,
-        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-        rel_time: &crate::components::RelTimeWords::new(),
-        emit: super::EmitMode::All,
         static_layer,
-        layout_outlines: false,
-        stroke_outlines: false,
         damage_rects: damage,
+        ..state.context(16, 0, &intl)
     };
     let mut timings = FrameTimings::default();
     let (result, _) = layout_and_render(

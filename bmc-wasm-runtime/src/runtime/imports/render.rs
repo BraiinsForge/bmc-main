@@ -182,7 +182,7 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
                 super::require_renderer_gpu_access(state)?;
                 let clicked = draw_button(
                     renderer,
-                    &mut state.interaction,
+                    &mut state.walk.interaction,
                     &key,
                     &label,
                     x as f32,
@@ -260,30 +260,18 @@ fn submit_tree(
         let plan = state.static_layer.plan(renderer, frame);
         state.last_asset_restoration = None;
         let delta_ms = state.delta_ms;
-        let frame_counter = state.frame_counter;
-        state.frame_counter += 1;
         let mut timings = FrameTimings::default();
         #[cfg(feature = "frame-timings")]
         {
             timings.deserialize_us = deserialize_us;
         }
         let mut ctx = bmc_render::ProcessContext {
-            interaction: &mut state.interaction,
-            modal_states: &mut state.modal_states,
-            scroll_states: &mut state.scroll_states,
-            animation_states: &mut state.animation_states,
-            transition_states: &mut state.transition_states,
-            taffy: &mut state.taffy,
-            frame_counter,
-            delta_ms,
-            now_unix_secs,
-            intl: &state.host_intl,
-            rel_time: &state.rel_time,
-            emit: bmc_render::tree::EmitMode::All,
             static_layer: state.static_layer.layer_use(plan),
             layout_outlines: state.layout_outlines.is_some(),
             stroke_outlines: bmc_render::tree::debug_layout_enabled(),
-            damage_rects: &[],
+            ..state
+                .walk
+                .next_context(delta_ms, now_unix_secs, &state.host_intl)
         };
         let mut resolver = RendererAssetRestorer::new(
             state.instance_id.as_str(),
@@ -612,17 +600,16 @@ mod tests {
         use bmc_render::interaction::TouchEvent;
         let (mut renderer, mut state) = (ShapingRecorder::default(), state());
         state
+            .walk
             .interaction
             .push_event(TouchEvent::Down { x: 10.0, y: 10.0 });
-        state.interaction.begin_frame();
+        state.walk.interaction.begin_frame();
         state
+            .walk
             .interaction
             .push_event(TouchEvent::Move { x: 10.0, y: 14.0 });
-        state.interaction.begin_frame();
-        assert!(
-            state.interaction.get_global_scroll_delta() != 0.0,
-            "the move must register as a drag"
-        );
+        state.walk.interaction.begin_frame();
+        assert!(state.walk.dragging(), "the move must register as a drag");
         let captured = plan(&mut renderer, &mut state, tree, OTHER_BYTES);
         state.static_layer.commit(
             &mut renderer,

@@ -93,7 +93,7 @@ fn painted_static_rect(renderer: &KeyRecordingRenderer) -> bool {
 #[test]
 fn a_static_node_over_a_dynamic_one_paints_with_the_dynamic_half() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     render_pass(
         &mut state,
@@ -126,7 +126,7 @@ fn a_static_node_over_a_dynamic_one_paints_with_the_dynamic_half() {
 #[test]
 fn a_static_node_beside_a_dynamic_one_stays_in_the_layer() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     render_pass(
         &mut state,
@@ -190,7 +190,7 @@ fn a_bordered_or_nine_patch_container_over_a_dynamic_one_damages_its_box() {
         );
 
         let mut renderer = KeyRecordingRenderer::default();
-        let mut state = SlotState::default();
+        let mut state = WalkState::default();
         let result = render_once(&mut state, &mut renderer, &tree);
 
         assert!(
@@ -233,7 +233,7 @@ fn a_container_over_a_dynamic_one_paints_and_damages_its_background_above() {
     };
 
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     render_pass(
         &mut state,
         &mut renderer,
@@ -246,7 +246,7 @@ fn a_container_over_a_dynamic_one_paints_and_damages_its_background_above() {
     );
 
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let result = render_once(&mut state, &mut renderer, &tree);
     let fill = panel_fill(&renderer).expect("BUG: the single walk paints the panel");
     assert!(
@@ -262,7 +262,7 @@ fn a_container_over_a_dynamic_one_paints_and_damages_its_background_above() {
 #[test]
 fn a_static_node_over_a_dynamic_one_reports_damage() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     let result = render_once(&mut state, &mut renderer, &static_over_dynamic());
 
@@ -309,11 +309,11 @@ fn dynamic_over_static() -> Node {
 #[test]
 fn a_capture_frame_bands_its_dynamic_pass_like_a_single_walk() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let single_walk = render_once(&mut state, &mut renderer, &dynamic_over_static());
 
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let captured = capture_once(&mut state, &mut renderer, &dynamic_over_static());
 
     let dial_draws = renderer
@@ -340,7 +340,7 @@ fn a_capture_frame_bands_its_dynamic_pass_like_a_single_walk() {
 #[test]
 fn a_static_node_over_a_dynamic_one_after_a_scroll_container_paints_above() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let over_footer = PropsData {
         inset_top: 50.0,
         inset_left: 0.0,
@@ -381,7 +381,7 @@ fn a_static_node_over_a_dynamic_one_after_a_scroll_container_paints_above() {
 #[test]
 fn a_static_node_over_one_already_above_paints_above_too() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let pinned = |top: f32| PropsData {
         inset_top: top,
         inset_left: 0.0,
@@ -420,7 +420,7 @@ fn a_static_node_over_one_already_above_paints_above_too() {
 #[test]
 fn a_capture_with_every_static_node_above_reports_an_empty_layer() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     let result = capture_once(&mut state, &mut renderer, &static_over_dynamic());
 
@@ -433,7 +433,7 @@ fn a_capture_with_every_static_node_above_reports_an_empty_layer() {
 #[test]
 fn a_capture_holding_the_dial_reports_a_layer_in_use() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     let result = capture_once(&mut state, &mut renderer, &dynamic_over_static());
 
@@ -448,7 +448,7 @@ fn a_capture_holding_the_dial_reports_a_layer_in_use() {
 #[test]
 fn a_static_node_beside_a_scrolled_out_dynamic_one_stays_in_the_layer() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let viewport = PropsData {
         height: 50.0,
         ..PropsData::default()

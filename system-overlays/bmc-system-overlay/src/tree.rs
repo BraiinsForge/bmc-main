@@ -28,21 +28,15 @@
 //! and the tree's static half in a renderer layer,
 //! so a frame where only dynamic content moves blits it back.
 
-use std::collections::HashMap;
 use std::time::Instant;
 
-use bmc_render::components::RelTimeWords;
-use bmc_render::interaction::InteractionState;
+use bmc_render::FrameTimings;
 use bmc_render::partition::static_layer::{
-    AssetGeneration, FrameTree, LayerKey, LayerPlan, MissPolicy, StaticLayerCache,
+    AssetGeneration, LayerPlan, MissPolicy, StaticLayerCache,
 };
-use bmc_render::partition::{HostPaintState, StaticBytesKey, tree_static_key};
+use bmc_render::partition::{StaticBytesKey, tree_static_key};
 use bmc_render::renderer::{LayerOwner, OverlayId, Renderer};
-use bmc_render::tree::{Node, NodeContext, ProcessContext, TreeResult, layout_and_render};
-use bmc_render::{
-    AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
-};
-use taffy::prelude::TaffyTree;
+use bmc_render::tree::{Node, ProcessContext, TreeResult, WalkState, layout_and_render};
 
 use crate::overlay::{FrameKind, NextFrame, RenderOutcome, TreeFrameProfile};
 
@@ -139,15 +133,8 @@ impl TreeFrame {
 /// Holds the layout/animation/interaction context for rendering a `Node`.
 #[expect(missing_debug_implementations)]
 pub struct TreeUi {
-    interaction: InteractionState,
-    modal_states: HashMap<String, ModalState>,
-    scroll_states: HashMap<String, ScrollState>,
-    animation_states: HashMap<u64, AnimationState>,
-    transition_states: HashMap<TransitionStateKey, TransitionState>,
-    taffy: TaffyTree<NodeContext>,
-    frame_counter: u64,
+    walk: WalkState,
     cached: Option<CachedTree>,
-    rel_time: RelTimeWords,
     static_layer: StaticLayerCache,
     warned_unkeyed: bool,
     /// The instant the last frame's animations advanced to.
@@ -171,15 +158,8 @@ impl TreeUi {
     #[must_use]
     pub fn new(now: Instant) -> Self {
         Self {
-            interaction: InteractionState::new(),
-            modal_states: HashMap::new(),
-            scroll_states: HashMap::new(),
-            animation_states: HashMap::new(),
-            transition_states: HashMap::new(),
-            taffy: TaffyTree::new(),
-            frame_counter: 0,
+            walk: WalkState::default(),
             cached: None,
-            rel_time: RelTimeWords::new(),
             static_layer: overlay_layer(),
             warned_unkeyed: false,
             last_render: now,
@@ -236,7 +216,7 @@ impl TreeUi {
         build: impl FnOnce() -> Node,
     ) -> anyhow::Result<TreeFrame> {
         let replay = frame == FrameKind::AnimationOnly
-            && !self.interaction.has_pending_events()
+            && !self.walk.interaction.has_pending_events()
             && self
                 .cached
                 .as_ref()
@@ -351,23 +331,15 @@ impl TreeUi {
                 bytes
             }
         };
-        let host = HostPaintState {
-            pressed_key: self.interaction.pressed_key(),
-            scroll_offsets: &self.scroll_states,
-        };
-        let key = bytes.map(|bytes| {
-            LayerKey::new(
-                &tree.node,
-                bytes,
-                &host,
-                tree.size,
-                AssetGeneration::Unchanging,
-                now_unix_secs,
-                intl,
-            )
-        });
-        let dragging = self.interaction.get_global_scroll_delta() != 0.0;
-        let frame = FrameTree::new(&tree.node, key, dragging, fresh);
+        let frame = self.walk.layer_frame(
+            &tree.node,
+            bytes,
+            tree.size,
+            AssetGeneration::Unchanging,
+            fresh,
+            now_unix_secs,
+            intl,
+        );
         self.static_layer.plan(renderer, frame)
     }
 
@@ -381,9 +353,7 @@ impl TreeUi {
         intl: &bmc_intl::Intl,
     ) -> anyhow::Result<TreeFrame> {
         // Processes the queued touches, so the pressed key below is the one this frame paints.
-        self.interaction.begin_frame();
-        let frame_counter = self.frame_counter;
-        self.frame_counter = self.frame_counter.wrapping_add(1);
+        self.walk.interaction.begin_frame();
         let mut timings = FrameTimings::default();
         // Host-side and not capture-replayed, so the real wall clock
         // is correct for any RelativeTimeLive the system overlay renders.
@@ -404,22 +374,9 @@ impl TreeUi {
             anyhow::bail!("the walk failed on purpose");
         }
         let mut ctx = ProcessContext {
-            interaction: &mut self.interaction,
-            modal_states: &mut self.modal_states,
-            scroll_states: &mut self.scroll_states,
-            animation_states: &mut self.animation_states,
-            transition_states: &mut self.transition_states,
-            taffy: &mut self.taffy,
-            frame_counter,
-            delta_ms,
-            now_unix_secs,
-            intl,
-            rel_time: &self.rel_time,
-            emit: bmc_render::tree::EmitMode::All,
             static_layer: self.static_layer.layer_use(plan),
-            layout_outlines: false,
             stroke_outlines: bmc_render::tree::debug_layout_enabled(),
-            damage_rects: &[],
+            ..self.walk.next_context(delta_ms, now_unix_secs, intl)
         };
         #[expect(
             clippy::cast_precision_loss,
@@ -469,26 +426,26 @@ impl TreeUi {
             crate::overlay::TouchEvent::Up { .. } => IE::Up,
             crate::overlay::TouchEvent::Cancel => IE::Cancel,
         };
-        self.interaction.push_event(mapped);
+        self.walk.interaction.push_event(mapped);
     }
 
     /// Cancel the active touch without discarding the last rendered hit regions.
     pub fn cancel_touch(&mut self) {
-        self.interaction.cancel_touch();
+        self.walk.interaction.cancel_touch();
     }
 
     /// Whether an element with `key` is currently pressed (one-frame latency,
     /// matching the WASM host). Backs the hold-to-confirm buttons.
     #[must_use]
     pub fn is_pressed(&self, key: &str) -> bool {
-        self.interaction.is_pressed(key)
+        self.walk.interaction.is_pressed(key)
     }
 
     /// Where the last render laid out the element with `key`, if it drew one.
     #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn element_bounds(&self, key: &str) -> Option<bmc_render::interaction::Rect> {
-        self.interaction.element_bounds(key)
+        self.walk.interaction.element_bounds(key)
     }
 }
 

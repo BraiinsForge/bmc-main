@@ -20,24 +20,12 @@
 
 use super::*;
 
-fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, owner: &LayerOwner) {
+fn capture_frame(state: &mut WalkState, renderer: &mut KeyRecordingRenderer, owner: &LayerOwner) {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let mut ctx = ProcessContext {
-        interaction: &mut state.interaction,
-        modal_states: &mut state.modal_states,
-        scroll_states: &mut state.scroll_states,
-        animation_states: &mut state.animation_states,
-        transition_states: &mut state.transition_states,
-        taffy: &mut state.taffy,
         frame_counter: 1,
-        delta_ms: 16,
-        now_unix_secs: 0,
-        intl: &bmc_intl::formatter(bmc_intl::Language::default()),
-        rel_time: &crate::components::RelTimeWords::new(),
-        emit: super::EmitMode::All,
         static_layer: LayerUse::Capture(owner),
-        layout_outlines: false,
-        stroke_outlines: false,
-        damage_rects: &[],
+        ..state.context(16, 0, &intl)
     };
     let tree = Node::Column(PropsData::default(), vec![Node::Spacer { flex: 1.0 }]);
     let mut timings = FrameTimings::default();
@@ -79,7 +67,7 @@ fn a_capture_frame_applies_a_scroll_drag_once() {
     use crate::interaction::TouchEvent;
 
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     // First frame registers the scroll region the drag hit-tests against.
     capture_once(&mut state, &mut renderer, &scrolling_tree());
@@ -135,7 +123,7 @@ fn skeleton_beside_animation() -> Node {
 #[test]
 fn a_skeleton_paints_once_on_a_capture_frame() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     capture_once(&mut state, &mut renderer, &skeleton_beside_animation());
 
@@ -176,7 +164,7 @@ fn static_and_dynamic_mesh() -> Node {
 fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
     let dynamic_mesh = MeshId::from_wire(2).expect("BUG: fixture mesh ID must be non-zero");
     let tree = static_and_dynamic_mesh();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
     let mut renderer = KeyRecordingRenderer::default();
     let dynamic_slot = |renderer: &KeyRecordingRenderer| {
         renderer
@@ -222,7 +210,7 @@ fn a_dynamic_mesh_keeps_its_atlas_slot_across_capture_and_reuse_frames() {
 #[test]
 fn each_slot_captures_under_its_own_key() {
     let mut renderer = KeyRecordingRenderer::default();
-    let (mut a, mut b) = (SlotState::default(), SlotState::default());
+    let (mut a, mut b) = (WalkState::default(), WalkState::default());
 
     for (slot, key) in [(0, "widget-a"), (1, "widget-b"), (0, "widget-a")] {
         renderer.calls.clear();
@@ -249,7 +237,7 @@ fn each_slot_captures_under_its_own_key() {
 #[test]
 fn a_scroll_container_is_outlined_and_clips_what_it_holds() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     let result = capture_collecting(&mut state, &mut renderer, &scrolling_tree(), true, false);
 
@@ -278,7 +266,7 @@ fn a_scroll_container_is_outlined_and_clips_what_it_holds() {
 #[test]
 fn a_capture_frame_strokes_its_outlines_over_the_layer() {
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     capture_collecting(&mut state, &mut renderer, &scrolling_tree(), false, true);
 
@@ -334,7 +322,7 @@ fn a_nested_scroll_clips_what_it_holds_to_both_viewports() {
         ],
     };
     let mut renderer = KeyRecordingRenderer::default();
-    let mut state = SlotState::default();
+    let mut state = WalkState::default();
 
     let result = capture_collecting(&mut state, &mut renderer, &tree, true, false);
 
@@ -356,7 +344,7 @@ fn a_capture_that_loses_its_layer_paints_as_a_plain_frame() {
     let tree = static_and_dynamic_mesh();
     let mut plain = KeyRecordingRenderer::default();
     render_with(
-        &mut SlotState::default(),
+        &mut WalkState::default(),
         &mut plain,
         &tree,
         LayerUse::Ignore,
@@ -367,7 +355,7 @@ fn a_capture_that_loses_its_layer_paints_as_a_plain_frame() {
     };
 
     let result = render_with(
-        &mut SlotState::default(),
+        &mut WalkState::default(),
         &mut renderer,
         &tree,
         LayerUse::Capture(&super::TEST_OWNER),
