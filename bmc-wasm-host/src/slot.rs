@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use bmc_render::FrameTimings;
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::{FrameBackground, FrameClear};
+use bmc_render::renderer::FrameBackground;
 use bmc_render::renderer::{RenderAssets, Renderer};
 use bmc_wasm_runtime::{
     DiskCache, LedEffect, LedRequest, LedScope, NetworkInfo, NextAlarm as RuntimeNextAlarm,
@@ -45,6 +45,7 @@ const _: () = assert!(
     bmc_widget::egl::EXPORT_BUFFER_SLOTS == bmc_wasm_runtime::EXPORT_BUFFERS,
     "bmc-widget rotates a different number of export buffers than bmc-wasm-runtime assumes"
 );
+use bmc_widget::egl::ExportContents;
 use bmc_widget::surface::{
     DeckWidgetSurfaceClient, InitialState, ReleasedBuffer, WidgetEvent, WidgetSurface,
 };
@@ -1601,11 +1602,6 @@ impl HostRenderProfiling {
 }
 
 /// Point the renderer at the slot's current export buffer and start its frame.
-///
-/// Painting straight into the exported buffer is what removes the staging copy;
-/// the buffer carries a stencil attachment for femtovg's fills. femtovg renders
-/// bottom-up to a framebuffer, so the compositor flips these buffers via its
-/// scanout transform.
 fn bind_export_target_for_frame(
     shared: &SharedHost,
     buffers: &mut bmc_widget::egl::DoubleBufferState,
@@ -1614,48 +1610,24 @@ fn bind_export_target_for_frame(
     height: u32,
     contents: TargetContents,
 ) -> anyhow::Result<()> {
-    let preserve = matches!(contents, TargetContents::Preserved);
-    // Seed a freshly allocated buffer from its sibling before anything paints
-    // into it. A `Prepared` slot keeps only the buffer on screen, so waking
-    // re-allocates the other with undefined pixels, and a damage-scissored
-    // frame leaves everything it does not repaint showing them.
-    let (fbo, seed) = {
-        let (export, seed) = buffers.ensure_current_seeded(&shared.egl)?;
-        (export.fbo, seed)
-    };
-    if let Some(src) = seed {
-        shared
-            .scratch
-            .seed_export_buffer(&shared.egl, src, fbo, width, height);
-    }
-    let export = buffers
-        .current_ref()
-        .expect("BUG: ensure_current succeeded, so current_ref must return Some");
-
-    // Both clears on the way in have to be skipped for a damage-tracked frame:
-    // they would wipe the regions it deliberately keeps from an earlier frame.
-    anyhow::ensure!(
-        shared.scratch.retarget_to(
-            &shared.egl,
-            export.texture(),
-            export.stencil_rb().expect(
-                "BUG: the wasm host allocates its export buffers with Attachment::Stencil, \
-                 which femtovg's fills require",
-            ),
-            width,
-            height,
-            !preserve,
-        ),
-        "frame framebuffer incomplete after retargeting to the export buffer"
-    );
-
+    shared.scratch.bind_export_buffer(
+        &shared.egl,
+        buffers,
+        width,
+        height,
+        match contents {
+            TargetContents::Preserved => ExportContents::Preserved,
+            TargetContents::Cleared => ExportContents::Cleared,
+        },
+    )?;
     let renderer = unsafe { &mut *ptr.as_ptr() };
-    let clear = if preserve {
-        FrameClear::Keep
-    } else {
-        FrameClear::Clear
-    };
-    renderer.begin_frame_with_clear(width, height, 1.0, FrameBackground::OpaqueBlack, clear);
+    renderer.begin_frame_with_clear(
+        width,
+        height,
+        1.0,
+        FrameBackground::OpaqueBlack,
+        contents.frame_clear(),
+    );
     Ok(())
 }
 

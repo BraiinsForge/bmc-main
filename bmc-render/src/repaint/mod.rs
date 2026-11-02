@@ -29,6 +29,7 @@ use std::cell::RefCell;
 
 use crate::interaction::{CoalesceIterExt, Rect};
 use crate::partition::static_layer::LayerCommit;
+use crate::renderer::FrameClear;
 use crate::tree::StaticLayer;
 
 /// Frames that must reach every buffer, rather than only the one they paint,
@@ -51,6 +52,18 @@ pub enum TargetContents {
     /// The caller cleared the target, or handed over one whose contents are
     /// undefined — nothing outside this frame's own drawing survives.
     Cleared,
+}
+
+impl TargetContents {
+    /// How the renderer starts a frame over a target holding this:
+    /// clearing would wipe the regions a damage-tracked frame deliberately keeps.
+    #[must_use]
+    pub fn frame_clear(self) -> FrameClear {
+        match self {
+            Self::Preserved => FrameClear::Keep,
+            Self::Cleared => FrameClear::Clear,
+        }
+    }
 }
 
 /// How a frame repainted its target.

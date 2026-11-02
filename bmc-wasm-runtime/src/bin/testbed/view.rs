@@ -30,10 +30,10 @@
 //! holds the same fields whether the core is here or on a worker.
 
 use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::renderer::FrameBackground;
 use bmc_render::renderer::prelude::*;
-use bmc_render::renderer::{FrameBackground, FrameClear};
 use bmc_wasm_runtime::platform_catalog::DisplayShape;
-use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, TargetContents, WasmWidgetRuntime};
+use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, WasmWidgetRuntime};
 
 mod fence;
 mod protocol;
@@ -883,16 +883,12 @@ impl ViewCore {
             .as_ref()
             .expect("BUG: checked above")
             .next_frame_target(self.width, self.height);
-        let clear = match contents {
-            TargetContents::Preserved => FrameClear::Keep,
-            TargetContents::Cleared => FrameClear::Clear,
-        };
         self.renderer.begin_frame_with_clear(
             self.width,
             self.height,
             1.0,
             FrameBackground::OpaqueBlack,
-            clear,
+            contents.frame_clear(),
         );
         let outcome = self
             .runtime

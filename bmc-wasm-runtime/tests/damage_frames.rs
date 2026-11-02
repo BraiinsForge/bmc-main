@@ -30,8 +30,8 @@
 use std::f32::consts::PI;
 
 use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::renderer::FrameBackground;
 use bmc_render::renderer::prelude::*;
-use bmc_render::renderer::{FrameBackground, FrameClear};
 use bmc_ui::{
     AnimProperty, ArcCap, ArcSegments, Color, Draw, Easing, LoopMode, PropsData, canvas, encode,
 };
@@ -254,16 +254,12 @@ impl Painter {
     }
 
     fn paint(&mut self, contents: TargetContents) {
-        let clear = match contents {
-            TargetContents::Preserved => FrameClear::Keep,
-            TargetContents::Cleared => FrameClear::Clear,
-        };
         self.renderer.begin_frame_with_clear(
             u32::from(W),
             u32::from(H),
             1.0,
             FrameBackground::OpaqueBlack,
-            clear,
+            contents.frame_clear(),
         );
         let status = self
             .runtime

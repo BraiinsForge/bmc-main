@@ -92,6 +92,15 @@ pub enum Attachment {
     None,
 }
 
+/// What a frame bound to an export buffer finds in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportContents {
+    /// The frame it last held, for a frame that repaints only its damage.
+    Preserved,
+    /// Nothing: the bind clears it.
+    Cleared,
+}
+
 /// Pixel format used for DMA-BUF export buffers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -1722,15 +1731,66 @@ impl SharedRenderScratch {
         self.staging.fbo_id()
     }
 
+    /// Point the shared frame FBO at `buffers`' current export buffer, so
+    /// femtovg paints straight into it instead of into the staging pair.
+    ///
+    /// femtovg renders bottom-up to a framebuffer,
+    /// so the compositor flips these buffers via its scanout transform.
+    ///
+    /// Only an [`ExportContents::Preserved`] buffer is seeded when freshly allocated:
+    /// any other is cleared.
+    /// Fails, leaving the staging pair attached, so nothing paints into the buffer,
+    /// when it cannot be allocated, carries no stencil, or leaves the framebuffer incomplete.
+    pub fn bind_export_buffer(
+        &self,
+        ctx: &EglContext,
+        buffers: &mut DoubleBufferState,
+        w: u32,
+        h: u32,
+        contents: ExportContents,
+    ) -> Result<()> {
+        let bound = self.retarget_to_export(ctx, buffers, w, h, contents);
+        if bound.is_err() {
+            // The frame FBO may point at a buffer since freed, or one it cannot paint into.
+            self.attach(ctx, self.staging.texture(), self.staging_stencil);
+        }
+        bound
+    }
+
+    fn retarget_to_export(
+        &self,
+        ctx: &EglContext,
+        buffers: &mut DoubleBufferState,
+        w: u32,
+        h: u32,
+        contents: ExportContents,
+    ) -> Result<()> {
+        let preserve = match contents {
+            ExportContents::Preserved => true,
+            ExportContents::Cleared => false,
+        };
+        let (export, seed) = buffers.ensure_current_seeded(ctx)?;
+        let stencil = export
+            .stencil_rb()
+            .context("export buffer allocated without the stencil femtovg's fills need")?;
+        if preserve && let Some(src) = seed {
+            self.seed_export_buffer(ctx, src, export.fbo, w, h);
+        }
+        anyhow::ensure!(
+            self.retarget_to(ctx, export.texture(), stencil, w, h, !preserve),
+            "frame framebuffer incomplete after retargeting to the export buffer"
+        );
+        Ok(())
+    }
+
     /// Point the shared frame FBO at `texture`/`stencil` instead of the staging
     /// pair, so femtovg paints straight into a caller's buffer.
     ///
     /// femtovg holds this FBO's *id* as its screen target and rebinds it on
     /// every flush, so retargeting has to move the attachments rather than the
-    /// framebuffer. Returns `false` if the result is not framebuffer-complete,
-    /// which leaves the caller to fall back rather than paint into nothing.
+    /// framebuffer. Returns `false` if the result is not framebuffer-complete.
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
-    pub fn retarget_to(
+    fn retarget_to(
         &self,
         ctx: &EglContext,
         texture: glow::Texture,
@@ -1743,7 +1803,6 @@ impl SharedRenderScratch {
         self.attach(ctx, texture, stencil);
         unsafe {
             if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
-                self.attach(ctx, self.staging.texture(), self.staging_stencil);
                 return false;
             }
             gl.viewport(0, 0, w as i32, h as i32);
@@ -1792,7 +1851,7 @@ impl SharedRenderScratch {
     /// only the one on screen, so waking re-allocates the other with undefined
     /// pixels — and a damage-scissored frame paints only the regions that moved,
     /// leaving the rest of the surface whatever the driver handed back.
-    pub fn seed_export_buffer(
+    fn seed_export_buffer(
         &self,
         ctx: &EglContext,
         src: glow::Texture,
@@ -1879,8 +1938,8 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Attachment, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch,
-        SlotReleaseState, TwoSlotBufferCache, UvSampling, WidgetExportBuffer,
+        Attachment, DoubleBufferState, EglContext, ExportContents, ExportFormat,
+        SharedRenderScratch, SlotReleaseState, TwoSlotBufferCache, UvSampling, WidgetExportBuffer,
         shared_scratch_uv_scale,
     };
     use drm_fourcc::DrmFourcc;
@@ -2142,6 +2201,81 @@ mod tests {
 
         slot_a.destroy_all(&ctx);
         slot_b.destroy_all(&ctx);
+        scratch.destroy(&ctx);
+    }
+
+    /// A frame that keeps a freshly allocated buffer finds its sibling's frame there;
+    /// one that does not finds it cleared.
+    #[test]
+    #[ignore = "EglContext::new() opens /dev/dri/renderD128; the CI sandbox surfaceless EGL has no DRM render node"]
+    fn a_buffer_without_a_stencil_is_refused() {
+        let ctx = EglContext::new().expect("BUG: EGL context creation should succeed in test env");
+        let scratch = SharedRenderScratch::new(&ctx, 64, 64)
+            .expect("BUG: SharedRenderScratch should allocate");
+        for attachment in [Attachment::None, Attachment::Depth] {
+            let mut buffers = DoubleBufferState::new(64, 64, attachment);
+            let refusal = scratch
+                .bind_export_buffer(&ctx, &mut buffers, 64, 64, ExportContents::Cleared)
+                .expect_err("femtovg cannot fill into a buffer without a stencil");
+            assert!(
+                format!("{refusal:#}").contains("stencil"),
+                "{attachment:?} was refused for another reason: {refusal:#}"
+            );
+            buffers.destroy_all(&ctx);
+        }
+        scratch.destroy(&ctx);
+    }
+
+    #[test]
+    #[ignore = "EglContext::new() opens /dev/dri/renderD128; the CI sandbox surfaceless EGL has no DRM render node"]
+    fn a_kept_fresh_buffer_is_seeded_from_its_sibling() {
+        use glow::HasContext;
+
+        let ctx = EglContext::new().expect("BUG: EGL context creation should succeed in test env");
+        let scratch = SharedRenderScratch::new(&ctx, 64, 64)
+            .expect("BUG: SharedRenderScratch should allocate");
+        let centre = |buffers: &DoubleBufferState| -> [u8; 4] {
+            let fbo = buffers
+                .current_ref()
+                .expect("BUG: the buffer was bound")
+                .fbo;
+            let mut px = [0_u8; 4];
+            unsafe {
+                ctx.gl().bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                ctx.gl().read_pixels(
+                    32,
+                    32,
+                    1,
+                    1,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelPackData::Slice(Some(&mut px)),
+                );
+            }
+            px
+        };
+
+        for (contents, expected) in [
+            (ExportContents::Preserved, [255, 0, 0, 255]),
+            (ExportContents::Cleared, [0, 0, 0, 255]),
+        ] {
+            let mut buffers = DoubleBufferState::new(64, 64, Attachment::Stencil);
+            scratch
+                .bind_export_buffer(&ctx, &mut buffers, 64, 64, ExportContents::Cleared)
+                .expect("BUG: the first buffer should bind");
+            unsafe {
+                ctx.gl().clear_color(1.0, 0.0, 0.0, 1.0);
+                ctx.gl().clear(glow::COLOR_BUFFER_BIT);
+            }
+            buffers
+                .export_and_swap()
+                .expect("BUG: the first buffer exports");
+            scratch
+                .bind_export_buffer(&ctx, &mut buffers, 64, 64, contents)
+                .expect("BUG: the second buffer should bind");
+            assert_eq!(centre(&buffers), expected, "{contents:?}");
+            buffers.destroy_all(&ctx);
+        }
         scratch.destroy(&ctx);
     }
 }
