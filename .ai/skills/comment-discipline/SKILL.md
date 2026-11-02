@@ -51,8 +51,8 @@ If a competent reader gets it from the code alone, cut it. When unsure, cut.
 - **Stage plans in code.** Deferred work, "next we'll…", "later X consumes this", TODO-without-an-issue — these live in
   the plan file that is already in the repo, not scattered through the source. Ditto any callout about future changes or
   downstream consumers.
-- **Reason about the call graph.** "called by X", "Y uses this", "for the Z path" — who reaches the code is not the
-  comment's job. Explain the code's own behaviour and choices.
+- **Reason about the call graph.** "called by X", "Y uses this", "for the Z path" — who reaches the code, or what the
+  caller does around it, is not the comment's job. Explain the code's own behaviour and choices.
 
 ## Workarounds cite a specific, checkable cause
 
@@ -96,9 +96,10 @@ These machine tells are obnoxious and unwelcome:
   Never sacrifice skimmability for balance; this is the second layer.
 
 - **No dangling function word — check the last word of every wrapped line.** A line must not *end* on a word that leads
-  the phrase opening the next line: an article (`a`, `the`), a preposition (`to`, `of`, `for`, `as`, `in`, `by`), a
-  conjunction (`and`, `or`, `so`), or a determiner/quantifier (`no`, `this`, `its`). Break *before* that word so it
-  leads the next line with its noun, and never split a noun phrase (`no widget hook`, `the Deck`) across the break.
+  the phrase opening the next line: an article (e.g. `a`, `the`), a preposition (e.g. `to`, `of`, `for`, `as`, `in`,
+  `by`, `from`, `into`, `with`, `on`, `at`), a conjunction (e.g. `and`, `or`, `so`), or a determiner/quantifier (e.g.
+  `no`, `this`, `its`). The lists are examples, not the whole set. Break *before* that word so it leads the next line
+  with its noun, and never split a noun phrase (`no widget hook`, `the Deck`) across the break.
 
   ```text
   don't:  /// … unversioned, since it changes rarely and no
@@ -108,8 +109,15 @@ These machine tells are obnoxious and unwelcome:
 
 ## The pass
 
-Whenever you finish a change, before a commit, or through a review: reread every comment in the diff and ask — does the
-code already say this? is it trivial? is it terse? is it a plan note or a who-calls-this note that belongs elsewhere?
-does a workaround cite its cause? does it flow like prose — and does every wrapped line end on a real word, not a
-stranded `the`/`a`/`to`/`and`/`no`? Delete or tighten each one that fails. A change that adds code should usually delete
-more comment than it adds.
+Whenever you finish a change, before every commit — a `--fixup` or `amend!` included — and through a review:
+
+1. **List every comment the diff adds or touches**, with its `file:line`. A moved, re-indented or renamed comment counts
+   as new: carried-over text gets judged like text you just wrote.
+2. **Give each one a verdict** — keep, tighten or cut — against *all* of the questions: does the code already say this?
+   is it trivial? is it terse? is it a plan note, or one about the caller or who reaches the code? does a workaround
+   cite its cause? does it flow like prose, with every wrapped line ending on a real word? Checking one question across
+   the diff is not a pass.
+3. **Recheck a doc that moved onto another item** — a sentence about the old caller may now describe the new one.
+4. **Apply the changes, then run the pass again after any later edit**, a lint fix or a reviewer's note included.
+
+A change that adds code should usually delete more comment than it adds.
