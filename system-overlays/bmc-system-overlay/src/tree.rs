@@ -44,7 +44,7 @@ use bmc_render::{
 };
 use taffy::prelude::TaffyTree;
 
-use crate::overlay::{FrameKind, NextFrame, RenderOutcome};
+use crate::overlay::{FrameKind, NextFrame, RenderOutcome, TreeFrameProfile};
 
 /// Whether a frame may draw its tree's static half from the layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,12 +93,25 @@ fn overlay_layer() -> StaticLayerCache {
     StaticLayerCache::new(LayerOwner::Overlay(OverlayId::next()), MissPolicy::Release)
 }
 
-/// A rendered frame: its interaction read-back and what it asks of the schedule.
+/// A rendered frame: its interaction read-back, how it drew its tree,
+/// and what it asks of the schedule.
 #[derive(Debug)]
 pub struct TreeFrame {
     pub result: TreeResult,
-    pub outcome: RenderOutcome,
-    pub static_layer: bmc_render::tree::StaticLayer,
+    pub profile: TreeFrameProfile,
+    next: NextFrame,
+    host_frame_delay_ms: Option<u32>,
+}
+
+impl TreeFrame {
+    /// What the frame asks of the schedule, with its profile for the host.
+    pub fn outcome(&self) -> RenderOutcome {
+        RenderOutcome {
+            next: self.next,
+            host_frame_delay_ms: self.host_frame_delay_ms,
+            tree: Some(self.profile),
+        }
+    }
 }
 
 /// Holds the layout/animation/interaction context for rendering a `Node`.
@@ -373,18 +386,18 @@ impl TreeUi {
             result.static_layer,
             AssetGeneration::Unchanging,
         );
-        let outcome = RenderOutcome {
+        Ok(TreeFrame {
+            profile: TreeFrameProfile {
+                static_layer: result.static_layer,
+                timings,
+            },
             next: if has_active_animations {
                 NextFrame::Replay
             } else {
                 NextFrame::Idle
             },
             host_frame_delay_ms: result.next_frame_delay_ms,
-        };
-        Ok(TreeFrame {
-            static_layer: result.static_layer,
             result,
-            outcome,
         })
     }
 
@@ -683,7 +696,7 @@ mod tests {
         let mut builds = 0;
         frame(&mut ui, FrameKind::Fresh, (100, 20), &mut builds);
         let replayed = frame(&mut ui, FrameKind::AnimationOnly, (100, 20), &mut builds);
-        assert_eq!(replayed.outcome.next, NextFrame::Replay);
+        assert_eq!(replayed.outcome().next, NextFrame::Replay);
     }
 
     #[test]
@@ -700,7 +713,7 @@ mod tests {
                 slider_tree,
             )
             .expect("BUG: render must succeed");
-        assert_eq!(frame.outcome.next, NextFrame::Idle);
+        assert_eq!(frame.outcome().next, NextFrame::Idle);
     }
 
     const SIZE: (u32, u32) = (100, 20);
@@ -755,7 +768,50 @@ mod tests {
             || tree.clone(),
         )
         .expect("BUG: render must succeed")
+        .profile
         .static_layer
+    }
+
+    #[cfg(feature = "frame-timings")]
+    #[test]
+    fn only_the_frame_that_keys_the_tree_reports_its_cost() {
+        let mut ui = TreeUi::default();
+        let mut r = layers();
+        // Enough labels that encoding and decoding the tree takes well over a microsecond.
+        let labels = (0..200).map(|i| {
+            bmc_render::ui::text(format!("label {i}"), bmc_render::ui::TextStyle::default())
+        });
+        let tree = Node::Column(
+            PropsData {
+                background: GREY,
+                ..PropsData::default()
+            },
+            labels.collect(),
+        );
+        let mut key_us = |kind| {
+            ui.render(
+                kind,
+                Layering::Layered,
+                SIZE,
+                16,
+                &mut r,
+                &english(),
+                || tree.clone(),
+            )
+            .expect("BUG: render must succeed")
+            .profile
+            .timings
+            .deserialize_us
+        };
+        assert!(
+            key_us(FrameKind::Fresh) > 0,
+            "the fresh frame keys the tree"
+        );
+        assert_eq!(
+            key_us(FrameKind::AnimationOnly),
+            0,
+            "a replay reuses the key the tree was given"
+        );
     }
 
     #[test]
@@ -783,6 +839,7 @@ mod tests {
                 || panel(GREY, animated_tree()),
             )
             .expect("BUG: render must succeed")
+            .profile
             .static_layer;
         assert_eq!(outcome, StaticLayer::Unused);
         assert!(r.static_layer_owners().is_empty());

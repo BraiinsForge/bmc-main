@@ -217,7 +217,7 @@ pub fn render_upgrade(
         .tree
         .render(kind, layering, size, delta_ms, renderer, intl, build)
     {
-        Ok(tree_frame) => tree_frame.outcome,
+        Ok(tree_frame) => tree_frame.outcome(),
         Err(err) => {
             tracing::error!("upgrade tree render failed: {err}");
             RenderOutcome::default()

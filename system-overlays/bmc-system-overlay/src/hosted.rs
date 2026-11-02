@@ -52,6 +52,8 @@ const UNMAP_FENCE_TIMEOUT: Duration = Duration::from_millis(150);
 )]
 pub struct HostedOverlay {
     overlay: Box<dyn SystemOverlay>,
+    /// The layer-shell namespace, naming the overlay in logs.
+    namespace: String,
     client: LayerSurfaceClient,
     target: OverlayRenderTarget,
     config_size: (u32, u32),
@@ -85,6 +87,7 @@ impl HostedOverlay {
     pub fn connect(mut overlay: Box<dyn SystemOverlay>, egl: &EglContext) -> anyhow::Result<Self> {
         let config = overlay.layer_config();
         let config_size = config.size;
+        let namespace = config.namespace.clone();
         let mut client = LayerSurfaceClient::connect(
             &config,
             crate::surface::ProtocolOptIns::from_overlay(overlay.as_ref()),
@@ -102,6 +105,7 @@ impl HostedOverlay {
         }
         Ok(Self {
             overlay,
+            namespace,
             client,
             target,
             config_size,
@@ -122,6 +126,11 @@ impl HostedOverlay {
     #[must_use]
     pub fn connection_fd(&self) -> RawFd {
         self.client.connection_fd()
+    }
+
+    #[must_use]
+    pub fn namespace(&self) -> &str {
+        &self.namespace
     }
 
     #[must_use]

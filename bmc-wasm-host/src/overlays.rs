@@ -260,6 +260,23 @@ pub fn render_hosted_overlay(
     // would replay the delay this frame just paid.
     overlay.mark_rendered(now, Instant::now(), outcome);
     #[cfg(feature = "profiling")]
+    if let Some(tree) = outcome.tree {
+        tracing::info!(target: bmc_render::profile::TARGET,
+            overlay = overlay.namespace(),
+            frame = ?frame,
+            static_layer = ?tree.static_layer,
+            static_key_us = tree.timings.deserialize_us,
+            layout_us = tree.timings.layout_us,
+            taffy_build_us = tree.timings.taffy_build_us,
+            taffy_compute_us = tree.timings.taffy_compute_us,
+            gpu_capture_us = tree.timings.gpu_capture_us,
+            gpu_blit_us = tree.timings.gpu_blit_us,
+            gpu_dynamic_us = tree.timings.gpu_dynamic_us,
+            render_us = tree.timings.render_us,
+            frame_us = frame_start.elapsed().as_micros(),
+            "system overlay tree frame");
+    }
+    #[cfg(feature = "profiling")]
     if let Some(offset) = layer_offset {
         tracing::info!(target: bmc_render::profile::TARGET, offset_y = offset,
             frame_us = frame_start.elapsed().as_micros(),

@@ -1181,7 +1181,7 @@ pub fn render_settings_tray(
         night_mode_tapped: result.clicks.contains_key(ui::NIGHT_MODE_KEY),
         close_tapped: result.clicks.contains_key(ui::CLOSE_KEY),
         pressed_changed: pressed_after != pressed_derived,
-        outcome: tree_frame.outcome,
+        outcome: tree_frame.outcome(),
     }
 }
 

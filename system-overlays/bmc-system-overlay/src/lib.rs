@@ -41,8 +41,8 @@ pub use overlay::{
     AccessPoint, AlarmEvent, AlarmRequest, DeclineReason, DeviceState, DownloadProgress, FrameKind,
     InputRegion, LayerConfig, LocalizationRequest, NextFrame, OverlayViewport, PlatformCaps,
     RenderOutcome, RestartDeclined, SURFACE_LAYERING, ScreenEdge, SettingsCaps, SettingsRequest,
-    SetupStep, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase, UpgradeSnapshot,
-    UpgradeState, UpgradeUpdate, begin_surface_frame,
+    SetupStep, SystemOverlay, TickOutcome, TouchEvent, TreeFrameProfile, UpgradeKind, UpgradePhase,
+    UpgradeSnapshot, UpgradeState, UpgradeUpdate, begin_surface_frame,
 };
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;

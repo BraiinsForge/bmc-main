@@ -494,6 +494,18 @@ pub struct RenderOutcome {
     pub next: NextFrame,
     /// Next boundary of a host-rendered time node, whatever `next` asks for.
     pub host_frame_delay_ms: Option<u32>,
+    /// How the frame drew its tree, `None` for an overlay that draws without one.
+    pub tree: Option<TreeFrameProfile>,
+}
+
+/// How a frame drew its tree, for the host's profiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreeFrameProfile {
+    pub static_layer: bmc_render::tree::StaticLayer,
+    /// Empty unless `bmc-render`'s `frame-timings` feature is on.
+    /// An overlay builds its tree on the host, so `deserialize_us` holds only what keying
+    /// its static half cost, on the frame that keys it.
+    pub timings: bmc_render::FrameTimings,
 }
 
 /// The frames an overlay's last render asked for,
@@ -1610,6 +1622,7 @@ mod tests {
             RenderOutcome {
                 next: NextFrame::Rebuild,
                 host_frame_delay_ms: Some(10),
+                tree: None,
             },
         );
         assert_eq!(
@@ -1629,6 +1642,7 @@ mod tests {
             RenderOutcome {
                 next: NextFrame::Replay,
                 host_frame_delay_ms: Some(1_000),
+                tree: None,
             },
         );
         assert_eq!(schedule.deadline(), Some(t0 + ms(33)));

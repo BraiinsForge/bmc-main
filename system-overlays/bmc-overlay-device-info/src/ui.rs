@@ -1670,7 +1670,7 @@ pub fn render_device_info(
         .render(kind, layering, size, delta_ms, r, intl, build)
     {
         Ok(tree_frame) => DeviceInfoFrame {
-            outcome: tree_frame.outcome,
+            outcome: tree_frame.outcome(),
             picked: tree_frame
                 .result
                 .clicks

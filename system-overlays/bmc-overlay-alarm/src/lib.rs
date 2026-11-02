@@ -409,7 +409,7 @@ pub fn render_alarm(
     RenderAlarmOutput {
         stop: clicks.contains_key(STOP_ALARM_KEY),
         snooze: clicks.contains_key(SNOOZE_ALARM_KEY),
-        outcome: tree_frame.outcome,
+        outcome: tree_frame.outcome(),
     }
 }
 
