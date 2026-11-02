@@ -26,9 +26,11 @@ use bmc_grpc::web::{
 use bmc_intl::{Language, TextDirection, Translations};
 use buffa_types::google::protobuf::Empty;
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
-use tracing::warn;
+use tokio::sync::RwLock;
+use tracing::{error, warn};
 
 use super::shared::invalid_field;
+use crate::config::ConfigHandle;
 
 pub(crate) struct LanguageService;
 
@@ -92,6 +94,24 @@ pub(crate) fn offered_language(
 ) -> Result<Language, ConnectError> {
     crate::i18n::offered(translations, tag)
         .ok_or_else(|| invalid_field("language", "not a language this device offers"))
+}
+
+/// Save the device language `tag` names, as the device's own picker does.
+pub(crate) async fn save_language(
+    config_handle: &RwLock<ConfigHandle>,
+    tag: &str,
+) -> Result<(), ConnectError> {
+    let language = offered_language(&Translations::shared(), tag)?;
+    config_handle
+        .write()
+        .await
+        .save_language(language)
+        .await
+        .map_err(|e| {
+            error!("Failed to save language, error {e}");
+            ConnectError::internal("Failed to save language")
+        })?;
+    Ok(())
 }
 
 /// Left out, with a warning, when the pack's flag cannot be read.

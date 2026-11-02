@@ -18,20 +18,29 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The languages over gRPC: the list reachable before anyone logs in, the setting behind a session,
-//! and both absent without the i18n marker.
+//! The languages over gRPC: the list reachable before anyone logs in,
+//! the setting behind a session or, while the setup pages are served, through the setup
+//! without one, and all of it absent without the i18n marker.
 
 use std::sync::Arc;
 
-use bmc_grpc::web::{ConfigurationServiceClient, LanguageServiceClient, SetLanguageRequest};
+use bmc_grpc::web::{
+    ConfigurationServiceClient, InitialSetupServiceClient, LanguageServiceClient,
+    SetLanguageRequest,
+};
+use bmc_net::NetworkManager as _;
+use bmc_net::mock::MockNetworkManager;
 use bmc_platform::{HardwareProfile, Product};
 use buffa_types::google::protobuf::Empty;
 use connectrpc::{ErrorCode, Router};
 
 use super::super::{gated, language::LanguageService, needs_i18n};
-use super::boser_managed::{I18N_MARKER, production_router, with_session};
+use super::boser_managed::{
+    I18N_MARKER, StubBmcManager, production_router, production_router_with_manager, with_session,
+};
 use super::{grpc, grpc_web, transport};
 use crate::i18n::I18nMarker;
+use crate::manager::BmcState;
 use crate::test_support::StubSessionManager;
 
 /// A gated router serving the language list, with the marker in `dir` when `set`.
@@ -170,6 +179,77 @@ async fn without_the_marker_the_settings_name_no_language_and_none_is_set() {
     assert_eq!(error.code, ErrorCode::Unimplemented);
 }
 
+#[tokio::test]
+async fn while_the_setup_pages_are_served_the_setup_sets_the_language_without_a_session() {
+    for state in [
+        BmcState::FactoryDefault,
+        BmcState::SetupPending,
+        BmcState::WifiReconfiguration,
+    ] {
+        let (dir, router) =
+            production_router_with_manager(Product::Bmc100, manager_in(state).await).await;
+        std::fs::write(dir.path().join(I18N_MARKER), "").expect("BUG: a writable tempdir");
+
+        InitialSetupServiceClient::new(transport(router.clone()), grpc())
+            .set_language(set_language("en-US"))
+            .await
+            .unwrap_or_else(|error| panic!("BUG: {state}: refused without a session: {error:?}"));
+        let settings = ConfigurationServiceClient::new(transport(with_session(router)), grpc())
+            .get_general_settings_data(Empty::default())
+            .await
+            .expect("BUG: the settings are read")
+            .into_owned();
+        assert_eq!(settings.language.as_deref(), Some("en-US"), "{state}");
+    }
+}
+
+#[tokio::test]
+async fn an_operational_device_sets_no_language_through_the_setup() {
+    let (dir, router) =
+        production_router_with_manager(Product::Bmc100, manager_in(BmcState::Operational).await)
+            .await;
+    std::fs::write(dir.path().join(I18N_MARKER), "").expect("BUG: a writable tempdir");
+
+    let error = InitialSetupServiceClient::new(transport(router), grpc())
+        .set_language(set_language("en-US"))
+        .await
+        .expect_err("an operational device has Settings for its language");
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
+}
+
+#[tokio::test]
+async fn without_the_marker_the_setup_sets_no_language() {
+    let (_dir, router) =
+        production_router_with_manager(Product::Bmc100, manager_in(BmcState::FactoryDefault).await)
+            .await;
+
+    let error = InitialSetupServiceClient::new(transport(router), grpc())
+        .set_language(set_language("en-US"))
+        .await
+        .expect_err("no marker, no setting");
+    assert_eq!(error.code, ErrorCode::Unimplemented);
+}
+
+async fn manager_in(state: BmcState) -> StubBmcManager {
+    let network = match state {
+        BmcState::FactoryDefault => MockNetworkManager::with_provisioning(true, true),
+        BmcState::SetupPending => MockNetworkManager::with_provisioning(false, true),
+        BmcState::Operational => MockNetworkManager::with_provisioning(false, false),
+        BmcState::WifiReconfiguration => {
+            let network = MockNetworkManager::with_provisioning(false, false);
+            network
+                .provisioning()
+                .mark_wifi_reconfig()
+                .await
+                .expect("BUG: the mock flag is set in memory");
+            network
+        }
+        BmcState::Unsupported => unreachable!("BUG: the mock always has a setup flow"),
+    };
+    assert_eq!(network.provisioning().device_state().await, state);
+    StubBmcManager::with_network(network)
+}
+
 fn set_language(tag: &str) -> SetLanguageRequest {
     SetLanguageRequest {
         language: tag.to_owned(),
@@ -182,6 +262,7 @@ fn the_marker_gates_the_language_list_and_setting_alone() {
         "/braiins.bmc.web.LanguageService/ListLanguages",
         "/braiins.bmc.web.LanguageService/GetWebCatalog",
         "/braiins.bmc.web.ConfigurationService/SetLanguage",
+        "/braiins.bmc.web.InitialSetupService/SetLanguage",
     ];
     for path in gated_procedures {
         assert!(needs_i18n(path), "{path}");

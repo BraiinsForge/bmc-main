@@ -51,7 +51,7 @@ use tracing::{error, warn};
 
 use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
 use super::initial_setup::{try_from_date_time, try_from_time_format};
-use super::language::{listed_tag, offered_language};
+use super::language::{listed_tag, save_language};
 use super::network::bad_request;
 use super::shared::{
     invalid_field, naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format,
@@ -500,16 +500,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         _ctx: RequestContext,
         request: ServiceRequest<'_, SetLanguageRequest>,
     ) -> ServiceResult<Empty> {
-        let language = offered_language(&Translations::shared(), request.language)?;
-
-        self.system_manager
-            .set_language(language)
-            .await
-            .map_err(|e| {
-                error!("Failed to save language, error {e}");
-                ConnectError::internal("Failed to save language")
-            })?;
-
+        save_language(&self.config_handle, request.language).await?;
         Response::ok(Empty::default())
     }
 

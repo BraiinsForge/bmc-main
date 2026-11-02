@@ -584,8 +584,17 @@ fn service_method_paths(router: &Router, service_name: &str) -> Vec<String> {
 pub(super) const I18N_MARKER: &str = "i18n";
 
 pub(super) async fn production_router(product: Product) -> (tempfile::TempDir, axum::Router) {
+    production_router_with_manager(product, StubBmcManager::default()).await
+}
+
+/// The production router for `product` over `manager`,
+/// so a test can pick its setup state.
+pub(super) async fn production_router_with_manager(
+    product: Product,
+    manager: StubBmcManager,
+) -> (tempfile::TempDir, axum::Router) {
     let (tempdir, app) = production_app(
-        Arc::new(StubBmcManager::default()),
+        Arc::new(manager),
         Arc::new(RecordingCompositor::with_hardware_capabilities(
             capabilities(product),
         )),

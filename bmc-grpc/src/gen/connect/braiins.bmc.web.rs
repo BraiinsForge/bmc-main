@@ -8263,6 +8263,12 @@ pub const INITIAL_SETUP_SERVICE_SETUP_DEVICE_SPEC: ::connectrpc::Spec = ::connec
         ::connectrpc::StreamType::Unary,
     )
     .with_idempotency_level(::connectrpc::IdempotencyLevel::Unknown);
+/// Static [`Spec`](::connectrpc::Spec) for the `SetLanguage` RPC, as seen by the server; the generated client passes it with [`origin`](::connectrpc::Spec::origin) `Client` (compare across sides with [`Spec::same_method`](::connectrpc::Spec::same_method)).
+pub const INITIAL_SETUP_SERVICE_SET_LANGUAGE_SPEC: ::connectrpc::Spec = ::connectrpc::Spec::server(
+        "/braiins.bmc.web.InitialSetupService/SetLanguage",
+        ::connectrpc::StreamType::Unary,
+    )
+    .with_idempotency_level(::connectrpc::IdempotencyLevel::Unknown);
 /// Server trait for InitialSetupService.
 ///
 /// # Implementing handlers
@@ -8412,6 +8418,30 @@ pub trait InitialSetupService: Send + Sync + 'static {
         request: ::connectrpc::ServiceRequest<
             '_,
             crate::proto::braiins::bmc::web::SettingsRequest,
+        >,
+    ) -> impl ::std::future::Future<
+        Output = ::connectrpc::ServiceResult<
+            impl ::connectrpc::Encodable<
+                ::buffa_types::google::protobuf::Empty,
+            > + Send + use<'a, Self>,
+        >,
+    > + Send;
+    /// The same device language `ConfigurationService.SetLanguage` sets, with no session,
+    /// while the device serves its setup pages: factory default, device setup and Wi-Fi reconfiguration.
+    ///
+    /// `'a` lets the response body borrow from `&self` (e.g. server-resident state).
+    ///
+    /// `request` is borrowed from the request body and is valid for the
+    /// duration of the call; message fields are read directly on it
+    /// (zero-copy). The response cannot borrow from `request` — use
+    /// `.to_owned_message()` (or copy the specific fields) for anything
+    /// returned, stored, or moved into `tokio::spawn`.
+    fn set_language<'a>(
+        &'a self,
+        ctx: ::connectrpc::RequestContext,
+        request: ::connectrpc::ServiceRequest<
+            '_,
+            crate::proto::braiins::bmc::web::SetLanguageRequest,
         >,
     ) -> impl ::std::future::Future<
         Output = ::connectrpc::ServiceResult<
@@ -8591,6 +8621,33 @@ impl<S: InitialSetupService> InitialSetupServiceExt for S {
                 },
             )
             .with_spec(INITIAL_SETUP_SERVICE_SETUP_DEVICE_SPEC)
+            .route_view(
+                INITIAL_SETUP_SERVICE_SERVICE_NAME,
+                "SetLanguage",
+                {
+                    let svc = ::std::sync::Arc::clone(&self);
+                    ::connectrpc::view_handler_fn(move |
+                        ctx,
+                        req: ::buffa::view::OwnedView<
+                            crate::proto::braiins::bmc::web::__buffa::view::SetLanguageRequestView<
+                                'static,
+                            >,
+                        >,
+                        format|
+                    {
+                        let svc = ::std::sync::Arc::clone(&svc);
+                        async move {
+                            let sreq = ::connectrpc::ServiceRequest::<
+                                crate::proto::braiins::bmc::web::SetLanguageRequest,
+                            >::from_parts(req.reborrow(), req.bytes());
+                            svc.set_language(ctx, sreq)
+                                .await?
+                                .encode::<::buffa_types::google::protobuf::Empty>(format)
+                        }
+                    })
+                },
+            )
+            .with_spec(INITIAL_SETUP_SERVICE_SET_LANGUAGE_SPEC)
     }
 }
 /// Type-inference marker used by [`Router::add_service`](::connectrpc::Router::add_service).
@@ -8675,6 +8732,12 @@ impl<T: InitialSetupService> ::connectrpc::Dispatcher for InitialSetupServiceSer
                 Some(
                     ::connectrpc::dispatcher::codegen::MethodDescriptor::unary(false)
                         .with_spec(INITIAL_SETUP_SERVICE_SETUP_DEVICE_SPEC),
+                )
+            }
+            "SetLanguage" => {
+                Some(
+                    ::connectrpc::dispatcher::codegen::MethodDescriptor::unary(false)
+                        .with_spec(INITIAL_SETUP_SERVICE_SET_LANGUAGE_SPEC),
                 )
             }
             _ => None,
@@ -8793,6 +8856,26 @@ impl<T: InitialSetupService> ::connectrpc::Dispatcher for InitialSetupServiceSer
                         crate::proto::braiins::bmc::web::SettingsRequest,
                     >::from_parts(&req, &body);
                     svc.setup_device(ctx, req)
+                        .await?
+                        .encode::<::buffa_types::google::protobuf::Empty>(format)
+                })
+            }
+            "SetLanguage" => {
+                let svc = ::std::sync::Arc::clone(&self.inner);
+                Box::pin(async move {
+                    let body = ::connectrpc::dispatcher::codegen::request_proto_bytes::<
+                        crate::proto::braiins::bmc::web::SetLanguageRequest,
+                    >(request.encoded()?, format)?;
+                    let req: crate::proto::braiins::bmc::web::__buffa::view::SetLanguageRequestView<
+                        '_,
+                    > = ::connectrpc::dispatcher::codegen::decode_borrowed_request_view(
+                        &body,
+                        ctx.decode_options(),
+                    )?;
+                    let req = ::connectrpc::ServiceRequest::<
+                        crate::proto::braiins::bmc::web::SetLanguageRequest,
+                    >::from_parts(&req, &body);
+                    svc.set_language(ctx, req)
                         .await?
                         .encode::<::buffa_types::google::protobuf::Empty>(format)
                 })
@@ -9134,6 +9217,47 @@ where
                 &self.transport,
                 &self.config,
                 INITIAL_SETUP_SERVICE_SETUP_DEVICE_SPEC
+                    .with_origin(::connectrpc::SpecOrigin::Client),
+                request,
+                options,
+            )
+            .await
+    }
+    /// Call the SetLanguage RPC. Sends a request to /braiins.bmc.web.InitialSetupService/SetLanguage.
+    pub async fn set_language(
+        &self,
+        request: crate::proto::braiins::bmc::web::SetLanguageRequest,
+    ) -> Result<
+        ::connectrpc::client::UnaryResponse<
+            ::buffa::view::OwnedView<
+                ::buffa_types::google::protobuf::__buffa::view::EmptyView<'static>,
+            >,
+        >,
+        ::connectrpc::ConnectError,
+    > {
+        self.set_language_with_options(
+                request,
+                ::connectrpc::client::CallOptions::default(),
+            )
+            .await
+    }
+    /// Call the SetLanguage RPC with explicit per-call options. Options override [`ClientConfig`](::connectrpc::client::ClientConfig) defaults.
+    pub async fn set_language_with_options(
+        &self,
+        request: crate::proto::braiins::bmc::web::SetLanguageRequest,
+        options: ::connectrpc::client::CallOptions,
+    ) -> Result<
+        ::connectrpc::client::UnaryResponse<
+            ::buffa::view::OwnedView<
+                ::buffa_types::google::protobuf::__buffa::view::EmptyView<'static>,
+            >,
+        >,
+        ::connectrpc::ConnectError,
+    > {
+        ::connectrpc::client::call_unary(
+                &self.transport,
+                &self.config,
+                INITIAL_SETUP_SERVICE_SET_LANGUAGE_SPEC
                     .with_origin(::connectrpc::SpecOrigin::Client),
                 request,
                 options,

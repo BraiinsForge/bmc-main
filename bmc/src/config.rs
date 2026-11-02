@@ -562,6 +562,15 @@ fn english_for(date_format: DateFormat) -> Language {
     }
 }
 
+/// What [`ConfigHandle::save_language`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanguageSave {
+    /// Written, and announced by the save's notification.
+    Saved,
+    /// Nothing written or announced: the language was already the device's.
+    AlreadyInEffect,
+}
+
 #[derive(Clone, Debug)]
 #[expect(clippy::struct_excessive_bools)]
 pub struct ConfigHandle {
@@ -792,6 +801,16 @@ impl ConfigHandle {
     pub fn set_language(&mut self, language: Language) {
         self.config.set_language(language);
         self.localization_dirty = true;
+    }
+
+    /// Save `language` as the device language, unless it already is.
+    pub async fn save_language(&mut self, language: Language) -> Result<LanguageSave> {
+        if self.localization_config().language() == language {
+            return Ok(LanguageSave::AlreadyInEffect);
+        }
+        self.set_language(language);
+        self.save().await?;
+        Ok(LanguageSave::Saved)
     }
 
     pub fn set_first_day_of_week(&mut self, day: WeekDay) {

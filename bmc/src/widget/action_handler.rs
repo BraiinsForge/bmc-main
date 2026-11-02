@@ -34,6 +34,7 @@ use crate::compositor::{
     ActiveScene, Compositor, DeclineReason, LedRequestStatusEvent, SettingUpdate, SettingsCommand,
     WidgetAction,
 };
+use crate::config::LanguageSave;
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::BmcManager;
 use crate::sound::{SoundController, Sounds};
@@ -251,13 +252,14 @@ async fn dispatch_settings_command<T, U>(
         SettingsCommand::SetLanguage(tag) => {
             let translations = bmc_intl::Translations::shared();
             let changed = if let Some(language) = crate::i18n::offered(&translations, &tag) {
-                system_manager
-                    .set_language(language)
-                    .await
-                    .unwrap_or_else(|e| {
+                match system_manager.set_language(language).await {
+                    Ok(LanguageSave::Saved) => true,
+                    Ok(LanguageSave::AlreadyInEffect) => false,
+                    Err(e) => {
                         warn!("overlay set_language failed: {e:#}");
                         false
-                    })
+                    }
+                }
             } else {
                 warn!(
                     tag,

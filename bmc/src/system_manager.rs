@@ -586,16 +586,16 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         self.night_mode_controller.toggle().await
     }
 
-    /// Save `language` as the device language; `false`, saving nothing, when it is already in effect.
-    /// The save's notification is what announces a change.
-    pub(crate) async fn set_language(&self, language: bmc_intl::Language) -> anyhow::Result<bool> {
-        let mut config = self.config_handle.write().await;
-        if config.localization_config().language() == language {
-            return Ok(false);
-        }
-        config.set_language(language);
-        config.save().await?;
-        Ok(true)
+    /// See [`ConfigHandle::save_language`].
+    pub(crate) async fn set_language(
+        &self,
+        language: bmc_intl::Language,
+    ) -> anyhow::Result<crate::config::LanguageSave> {
+        self.config_handle
+            .write()
+            .await
+            .save_language(language)
+            .await
     }
 
     pub(crate) async fn language(&self) -> bmc_intl::Language {

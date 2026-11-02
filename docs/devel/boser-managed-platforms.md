@@ -71,7 +71,7 @@ Every mutating web gRPC service has an explicit managed-product owner:
 | `AccountManagementService` | `UpsertAccount`, `RemoveAccount`                                                                                                                                                  | BMC application                      | manage widget account bindings and secrets                                   |
 | `AlarmService`             | `AddAlarm`, `SetAlarm`, `DeleteAlarm`, `SetAlarmEnabled`                                                                                                                          | BMC application                      | manage alarm state                                                           |
 | `ConfigurationService`     | all `Set*`, `ShowSecondsInStatusBar`, `PlaySound`                                                                                                                                 | BMC application                      | manage display, sound, localization, telemetry, and presentation preferences |
-| `InitialSetupService`      | `SetWifi`, `SkipWifi`, `SetupDevice`                                                                                                                                              | BMC application setup and recovery   | retain provisioning checks                                                   |
+| `InitialSetupService`      | `SetWifi`, `SkipWifi`, `SetupDevice`, `SetLanguage`                                                                                                                               | BMC application setup and recovery   | retain provisioning checks                                                   |
 | `LedTestService`           | `SetEffect`, `SetBrightness`, `Disable`, `Enable`                                                                                                                                 | BMC application                      | control presentation hardware                                                |
 | `NetworkService`           | `SetNetworkConfig`, `SetWifi`                                                                                                                                                     | Boser                                | reject in the access gate after authentication                               |
 | `SceneManagementService`   | `AddFullscreenScene`, `AddCombinedScene`, `UpdateScene`, `MoveScene`, `CloneScene`, `RemoveScene`, `PreviewScene`, `AddWidget`, `UpdateWidget`, `RemoveWidget`, `SetSceneCycling` | BMC application                      | manage scenes, widgets, and presentation state                               |
@@ -88,7 +88,8 @@ remains restricted to `SetupPending` and can set network, timezone, password, an
 preferences directly. On mining products, it also writes the pool seed Boser consumes on first boot, applies the
 hostname with the network settings, advances provisioning, and only then starts `boser` and `bosminer`. Consequently,
 `boser_managed` must not suppress any initial-setup operation: the BMC application owns and configures the entire system
-until setup completes. Factory-default Wi-Fi setup remains available as well.
+until setup completes. Factory-default Wi-Fi setup remains available as well. `SetLanguage` saves the device language in
+`FactoryDefault`, `SetupPending` and `WifiReconfiguration`, so the setup pages can switch it before any session exists.
 
 The service also accepts Wi-Fi changes in a persisted `WifiReconfiguration` state. The native settings command is the
 fresh transition into that state outside failure recovery and remains owned by the BMC application on every platform

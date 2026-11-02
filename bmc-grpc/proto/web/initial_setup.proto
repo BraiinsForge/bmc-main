@@ -25,6 +25,7 @@ package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/wrappers.proto";
+import "web/configuration.proto";
 import "web/network.proto";
 import "web/shared.proto";
 
@@ -68,4 +69,7 @@ service InitialSetupService {
   rpc ScanWifi(google.protobuf.Empty) returns (ScanWifiResponse);
   rpc GetSettingsData(google.protobuf.Empty) returns (SettingsDataResponse);
   rpc SetupDevice(SettingsRequest) returns (google.protobuf.Empty);
+  // The same device language `ConfigurationService.SetLanguage` sets, with no session,
+  // while the device serves its setup pages: factory default, device setup and Wi-Fi reconfiguration.
+  rpc SetLanguage(braiins.bmc.web.SetLanguageRequest) returns (google.protobuf.Empty);
 }

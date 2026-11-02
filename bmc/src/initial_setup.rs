@@ -104,6 +104,10 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         }
     }
 
+    pub(crate) fn config_handle(&self) -> Arc<RwLock<ConfigHandle>> {
+        self.config_handle.clone()
+    }
+
     pub(crate) fn connect_to_wifi(
         &self,
         config: WifiNetworkConfig,

@@ -126,7 +126,11 @@ fn needs_i18n(path: &str) -> bool {
         split_procedure(path),
         Some(
             (web::LANGUAGE_SERVICE_SERVICE_NAME, _)
-                | (web::CONFIGURATION_SERVICE_SERVICE_NAME, "SetLanguage")
+                | (
+                    web::CONFIGURATION_SERVICE_SERVICE_NAME
+                        | web::INITIAL_SETUP_SERVICE_SERVICE_NAME,
+                    "SetLanguage"
+                )
         )
     )
 }

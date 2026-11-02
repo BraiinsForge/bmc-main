@@ -19,7 +19,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use super::language::save_language;
 use super::system::into_grpc_timezone;
+use crate::config::ConfigHandle;
 use crate::initial_setup::{DeviceSetupError, WifiSetupError};
 use crate::web::grpc::network::{
     bad_request, into_network_config, parse_network_config, scan_wifi_response,
@@ -34,8 +36,8 @@ use crate::{
 use bmc_grpc::google::rpc::bad_request::FieldViolation;
 use bmc_grpc::web::{
     DateFormat, InitialSetupService as GrpcInitialSetupService, NumberFormat, PoolConfig,
-    ScanWifiResponse, SetWifiRequest, SettingsDataResponse, SettingsRequest, TemperatureUnit,
-    TimeFormat, UnitSystem,
+    ScanWifiResponse, SetLanguageRequest, SetWifiRequest, SettingsDataResponse, SettingsRequest,
+    TemperatureUnit, TimeFormat, UnitSystem,
 };
 use bmc_platform::HardwareProfile;
 use buffa::EnumValue;
@@ -48,6 +50,7 @@ use bmc_shared_utils::temperature::TemperatureUnit as ConfigTemperatureUnit;
 use bmc_shared_utils::unit_system::UnitSystem as ConfigUnitSystem;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{str::FromStr, sync::Arc};
+use tokio::sync::RwLock;
 use tracing::warn;
 
 #[derive(Clone)]
@@ -57,6 +60,7 @@ where
 {
     manager: Arc<T>,
     product_setup: Arc<dyn ProductSetup>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
 }
 
 impl<T> InitialSetupService<T>
@@ -70,6 +74,7 @@ where
         let mining_supported = HardwareProfile::for_product(manager.platform().product())
             .capabilities()
             .mining_supported;
+        let config_handle = initial_setup.config_handle();
         let product_setup: Arc<dyn ProductSetup> = if mining_supported {
             Arc::new(MinerSetup::new(initial_setup))
         } else {
@@ -78,6 +83,7 @@ where
         Self {
             manager,
             product_setup,
+            config_handle,
         }
     }
 
@@ -111,6 +117,25 @@ where
             )));
         }
         Ok(current_state)
+    }
+
+    async fn check_language_precondition(&self) -> Result<(), ConnectError> {
+        let current_state = self
+            .manager
+            .network_manager()
+            .provisioning()
+            .device_state()
+            .await;
+        match current_state {
+            BmcState::FactoryDefault | BmcState::SetupPending | BmcState::WifiReconfiguration => {
+                Ok(())
+            }
+            BmcState::Operational | BmcState::Unsupported => {
+                Err(ConnectError::failed_precondition(format!(
+                    "Function is only available when the device is in 'factory default', 'device setup' or 'wifi reconfiguration' state. Current state is '{current_state}'.",
+                )))
+            }
+        }
     }
 }
 
@@ -218,6 +243,16 @@ where
             .setup_device(request.to_owned_message())
             .await?;
 
+        Response::ok(Empty::default())
+    }
+
+    async fn set_language(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetLanguageRequest>,
+    ) -> ServiceResult<Empty> {
+        self.check_language_precondition().await?;
+        save_language(&self.config_handle, request.language).await?;
         Response::ok(Empty::default())
     }
 }
