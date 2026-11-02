@@ -137,15 +137,14 @@ mod tests {
             .map(|info| (info.tag, info.native_name))
             .collect();
         let named = |tag: &str, name: &str| (tag.to_owned(), name.to_owned());
-        let mut expected = vec![
-            named("en-GB", "English (UK)"),
-            named("en-US", "English (US)"),
-        ];
-        if cfg!(debug_assertions) {
-            expected.push(named("en-XA", "en-XA"));
-        }
-        expected.push(named("zh", "简体中文"));
-        assert_eq!(listed, expected);
+        assert_eq!(
+            listed,
+            [
+                named("en-GB", "English (UK)"),
+                named("en-US", "English (US)"),
+                named("zh", "简体中文"),
+            ]
+        );
     }
 
     #[test]

@@ -21,12 +21,8 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-/// The firmware's packs, and the pseudo-locale a development build offers beside them.
-const LANGUAGES: &str = if cfg!(debug_assertions) {
-    "✓ languages: en-GB, en-US, en-XA, zh"
-} else {
-    "✓ languages: en-GB, en-US, zh"
-};
+/// The built-in Englishes and the firmware's own packs.
+const LANGUAGES: &str = "✓ languages: en-GB, en-US, zh";
 
 /// `bmc-languages check ROOTS`, the firmware's own packs being the roots a device reads.
 fn check(roots: &[&Path]) -> Output {

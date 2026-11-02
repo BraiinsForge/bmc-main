@@ -36,8 +36,11 @@ use crate::translator::{ByLanguage, read_entries};
 /// The firmware's own language packs, one `<key>/` directory per language.
 pub const PROFILE_PACKS: &str = "assets/intl/profile-languages";
 
-/// The pseudo-locale's translator files, which `intl extract` writes whole.
-pub const PSEUDO_FILES: &str = "assets/intl/pseudo";
+/// The pseudo-locale's pack, whose translator files `intl extract` writes whole.
+fn pseudo_pack(repo: &Path) -> PathBuf {
+    repo.join(bmc_intl_pseudo::PACK_ROOT)
+        .join(Language::EN_XA.tag())
+}
 
 /// A crate that depends on one of these can declare host copy:
 /// `format_message!` through the formatter, `message_descriptor!` through the lazy-message crate.
@@ -229,7 +232,7 @@ fn surface(name: SurfaceName, repo: &Path) -> Result<Surface, String> {
             sources: host_sources(&workspace_packages(repo)?),
             packs: repo.join(PROFILE_PACKS),
             file_name: "system.json",
-            pseudo: repo.join(PSEUDO_FILES),
+            pseudo: pseudo_pack(repo),
             ignore: Vec::new(),
         },
         SurfaceName::Web => Surface {
@@ -241,7 +244,7 @@ fn surface(name: SurfaceName, repo: &Path) -> Result<Surface, String> {
             ],
             packs: repo.join(PROFILE_PACKS),
             file_name: "web.json",
-            pseudo: repo.join(PSEUDO_FILES),
+            pseudo: pseudo_pack(repo),
             // A spec's messages are fixtures, not copy.
             ignore: vec!["**/*.d.ts".to_owned(), "**/*.spec.{ts,tsx}".to_owned()],
         },

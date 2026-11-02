@@ -12,7 +12,6 @@ include = ["../../assets/intl/pseudo-locale.json"]
 workspace = true
 
 [dependencies]
-bmc-shared-utils = { workspace = true, features = ["language"] }
 formatjs_icu_messageformat.workspace = true
 formatjs_icu_messageformat_parser.workspace = true
 serde = { workspace = true, features = ["derive"] }

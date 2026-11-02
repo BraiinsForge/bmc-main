@@ -27,7 +27,7 @@ describe('intlFor', () => {
         rstest.restoreAllMocks();
     });
 
-    test.each(['en', 'en-GB', 'en-US'])('%s speaks the source without reading it as missing', tag => {
+    test.each(['en', 'en-GB', 'en-US', 'en-XA'])('%s speaks the source without reading it as missing', tag => {
         const error = rstest.spyOn(console, 'error').mockImplementation(() => {});
 
         const saved = intlFor({ tag }).formatMessage({ id: 'save', defaultMessage: 'Save' });

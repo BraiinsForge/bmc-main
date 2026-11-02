@@ -89,16 +89,10 @@ impl Intl {
     }
 
     /// By this language's time formatters, or English's where its data lacks one.
-    /// The pseudo-locale accents them without brackets, as they mostly stand inside a message.
     fn timed(&self, word: impl Fn(&TimeFormats) -> Option<String>) -> String {
-        let words = word(&self.time)
+        word(&self.time)
             .or_else(|| word(&TimeFormats::english()))
-            .expect("BUG: the base data carries every time formatter the markers binary builds");
-        #[cfg(debug_assertions)]
-        if self.language == Language::EN_XA {
-            return crate::pseudo::accent(&words);
-        }
-        words
+            .expect("BUG: the base data carries every time formatter the markers binary builds")
     }
 
     #[must_use]

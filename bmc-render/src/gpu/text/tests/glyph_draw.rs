@@ -851,7 +851,7 @@ fn every_pseudo_locale_letter_shapes_to_a_glyph_in_either_family() {
         let mut buffer = Buffer::new(&mut font_system, Metrics::new(20.0, 20.0));
         buffer.set_text(
             &mut font_system,
-            bmc_intl::pseudo::letters(),
+            bmc_intl_pseudo::letters(),
             &named(family, false),
             Shaping::Advanced,
             None,

@@ -171,7 +171,13 @@ def _walk_web(url: str, password: str) -> str:
             raise Abort("no languages offered, the device lacks its i18n marker (/etc/bmc/i18n)")
 
         if LANGUAGE not in offered:
-            raise Abort(f"{LANGUAGE} is not offered, as a release build never offers it")
+            msg = (
+                f"{LANGUAGE} is not offered, the device lacks its pack. Install it with"
+                " `nix run .#deck -- deploy --device <ip> --packages language-en-xa`,"
+                " then restart bmc (`/etc/init.d/bmc-compositor restart`), which reads packs only"
+                " as it starts. On the mock, `just fe::serve` loads it."
+            )
+            raise Abort(msg)
 
         with speaking(probe, LANGUAGE):
             shots = [shot for _, shot in shoot_pages(probe, out)]

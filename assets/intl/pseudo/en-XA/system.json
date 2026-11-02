@@ -121,7 +121,7 @@
   },
   "FS/TsScuu+": {
     "source": "in {hours, plural, one {{hours} hour} other {{hours} hours}} {minutes, plural, one {{minutes} minute} other {{minutes} minutes}}",
-    "translation": "[īƞ {hours,plural,one{{hours} ħǿǿŭŭř} other{{hours} ħǿǿŭŭřş}} {minutes,plural,one{{minutes} ḿīƞŭŭŧḗḗ} other{{minutes} ḿīƞŭŭŧḗḗş}}]",
+    "translation": "[īƞ {hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}} {minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}}]",
     "description": "Relative time label for a moment ahead, hours and minutes spelled out; both are whole numbers"
   },
   "FcloNeoS34": {
@@ -161,7 +161,7 @@
   },
   "JkfoKLzFy/": {
     "source": "{hours, plural, one {{hours} hour} other {{hours} hours}} {minutes, plural, one {{minutes} minute} other {{minutes} minutes}} ago",
-    "translation": "[{hours,plural,one{{hours} ħǿǿŭŭř} other{{hours} ħǿǿŭŭřş}} {minutes,plural,one{{minutes} ḿīƞŭŭŧḗḗ} other{{minutes} ḿīƞŭŭŧḗḗş}} ȧȧɠǿǿ]",
+    "translation": "[{hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}} {minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}} ȧȧɠǿǿ]",
     "description": "Relative time label for a moment behind, hours and minutes spelled out; both are whole numbers"
   },
   "LmOJe5rX2r": {
@@ -241,7 +241,7 @@
   },
   "XoQtZlfRZz": {
     "source": "in {minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
-    "translation": "[īƞ {minutes,plural,one{{minutes} ḿīƞŭŭŧḗḗ} other{{minutes} ḿīƞŭŭŧḗḗş}} {seconds,plural,one{{seconds} şḗḗƈǿǿƞḓ} other{{seconds} şḗḗƈǿǿƞḓş}}]",
+    "translation": "[īƞ {minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}} {seconds, plural, one {{seconds} şḗḗƈǿǿƞḓ} other {{seconds} şḗḗƈǿǿƞḓş}}]",
     "description": "Relative time label for a moment ahead, minutes and seconds spelled out; both are whole numbers"
   },
   "YBaDTp75gI": {
@@ -291,7 +291,7 @@
   },
   "cQU31w4qIV": {
     "source": "in {days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}}",
-    "translation": "[īƞ {days,plural,one{{days} ḓȧȧẏ} other{{days} ḓȧȧẏş}} {hours,plural,one{{hours} ħǿǿŭŭř} other{{hours} ħǿǿŭŭřş}}]",
+    "translation": "[īƞ {days, plural, one {{days} ḓȧȧẏ} other {{days} ḓȧȧẏş}} {hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}}]",
     "description": "Relative time label for a moment ahead, days and hours spelled out; both are whole numbers"
   },
   "d9K8NSW9TS": {
@@ -306,7 +306,7 @@
   },
   "dnBRMZe2Go": {
     "source": "hold {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
-    "translation": "[ħǿǿŀḓ {seconds,plural,one{{seconds} şḗḗƈǿǿƞḓ} other{{seconds} şḗḗƈǿǿƞḓş}}]",
+    "translation": "[ħǿǿŀḓ {seconds, plural, one {{seconds} şḗḗƈǿǿƞḓ} other {{seconds} şḗḗƈǿǿƞḓş}}]",
     "description": "Settings tray, under a hold-to-confirm button: how long to hold it; seconds is a whole number"
   },
   "f+3IQb8cxo": {
@@ -326,7 +326,7 @@
   },
   "gap8mTi9PY": {
     "source": "{days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}} ago",
-    "translation": "[{days,plural,one{{days} ḓȧȧẏ} other{{days} ḓȧȧẏş}} {hours,plural,one{{hours} ħǿǿŭŭř} other{{hours} ħǿǿŭŭřş}} ȧȧɠǿǿ]",
+    "translation": "[{days, plural, one {{days} ḓȧȧẏ} other {{days} ḓȧȧẏş}} {hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}} ȧȧɠǿǿ]",
     "description": "Relative time label for a moment behind, days and hours spelled out; both are whole numbers"
   },
   "hIhRaewzgO": {
@@ -436,7 +436,7 @@
   },
   "wYMNAQyCIN": {
     "source": "{minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}} ago",
-    "translation": "[{minutes,plural,one{{minutes} ḿīƞŭŭŧḗḗ} other{{minutes} ḿīƞŭŭŧḗḗş}} {seconds,plural,one{{seconds} şḗḗƈǿǿƞḓ} other{{seconds} şḗḗƈǿǿƞḓş}} ȧȧɠǿǿ]",
+    "translation": "[{minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}} {seconds, plural, one {{seconds} şḗḗƈǿǿƞḓ} other {{seconds} şḗḗƈǿǿƞḓş}} ȧȧɠǿǿ]",
     "description": "Relative time label for a moment behind, minutes and seconds spelled out; both are whole numbers"
   },
   "xCLk12kuRj": {

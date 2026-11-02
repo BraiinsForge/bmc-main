@@ -34,8 +34,10 @@ pub const LANGUAGE: GlobalKey<Language> = GlobalKey::new("Language");
 
 static OFFERED: LazyLock<Vec<Language>> = LazyLock::new(|| {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let (translations, report) =
-        Translations::load(&[root.join("../assets/intl/profile-languages")]);
+    let (translations, report) = Translations::load(&[
+        root.join("../assets/intl/profile-languages"),
+        root.join("..").join(bmc_intl_pseudo::PACK_ROOT),
+    ]);
     if !report.is_clean() {
         tracing::warn!("{report}");
     }
@@ -51,7 +53,7 @@ static SELECTED: Mutex<Language> = Mutex::new(Language::EN_GB);
 pub(crate) static NO_LANGUAGES: LazyLock<Language> =
     LazyLock::new(|| Language::parse("und").expect("BUG: `und` is a tag"));
 
-/// Every language the switcher offers: the profile's packs, loaded on first use.
+/// Every language the switcher offers: the profile's packs and the pseudo-locale's, loaded on first use.
 pub(crate) fn offered() -> &'static [Language] {
     &OFFERED
 }

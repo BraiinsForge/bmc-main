@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 bmc-intl-message.workspace = true
-bmc-intl-pseudo.workspace = true
 bmc-intl-units.workspace = true
 bmc-shared-utils = { workspace = true, features = ["language"] }
 bmc-ui.workspace = true
@@ -34,4 +33,5 @@ serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+bmc-intl-pseudo.workspace = true
 tempfile.workspace = true

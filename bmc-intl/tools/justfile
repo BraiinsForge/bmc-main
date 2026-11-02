@@ -8,6 +8,7 @@ ROOT := source_directory() / "../.."
 BASE_BLOB := ROOT / "assets/intl/cldr-base.postcard"
 BASE_UNITS := ROOT / "assets/intl/units-base.postcard"
 PROFILE_PACKS := ROOT / "assets/intl/profile-languages"
+PSEUDO_PACK := ROOT / "assets/intl/pseudo/en-XA"
 ES_MX_FIXTURE := ROOT / "bmc-intl/core/fixtures/es-MX/cldr.postcard"
 
 # The dev shell entered by the flake's own path, so a recipe runs from wherever it was called.
@@ -17,7 +18,7 @@ DEV_SHELL := if env("IN_NIX_SHELL", "") == "" { "nix develop " + quote(ROOT) + "
 CARGO := DEV_SHELL + "cargo run --quiet --manifest-path " + quote(ROOT / "Cargo.toml") + " --package"
 INTL := CARGO + " bmc-intl-tools --"
 
-# Extract messages and sync every profile pack's translator file by id.
+# Extract messages, sync every profile pack's translator file by id and respell the pseudo-locale's.
 [no-cd]
 [positional-arguments]
 extract *SURFACES:
@@ -42,10 +43,11 @@ untranslated *ARGS:
 sweep *ARGS:
     cd {{ quote(ROOT) }} && PLAYWRIGHT_BROWSERS_PATH="$(just web-probe::browsers)" {{ DEV_SHELL }}uv run python -m intl_sweep "$@"
 
-# Write the CLDR data every binary embeds: the ICU4X blob of English and root, and English's unit patterns.
+# Write the CLDR data every binary embeds, English's and root's, and the pseudo-locale pack's copy of it.
 cldr-data:
     nix run {{ quote(ROOT) }}#intl-cldr-blob -- en {{ quote(BASE_BLOB) }}
     {{ INTL }} cldr-units en {{ quote(BASE_UNITS) }}
+    cp {{ quote(BASE_BLOB) }} {{ quote(PSEUDO_PACK / "cldr.postcard") }}
 
 # Write the `es-MX` blob `bmc-intl`'s tests read a three-step chain through.
 fixture-data:

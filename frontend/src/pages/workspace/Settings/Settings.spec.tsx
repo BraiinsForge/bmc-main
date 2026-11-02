@@ -21,7 +21,7 @@
 import { afterEach, describe, test, expect, rstest } from '@rstest/core';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react/pure';
 import { MemoryRouter } from 'react-router';
-import { IntlProvider } from 'react-intl';
+import { type IntlShape, RawIntlProvider } from 'react-intl';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
 import { ConnectError, Code } from '@connectrpc/connect';
 
@@ -33,6 +33,8 @@ import { deckCapabilities, deckSystemWire } from '@/pages/workspace/Display/capa
 import { Toaster } from '@/lib/toast';
 import AppContext, { getAppContextDefault } from '@/context';
 import type { ServiceMocks } from '@/lib/proto';
+import { intlFor } from '@/lib/intl';
+import { pseudoIntl } from '@/mocks/intl';
 
 // Committing an upgrade goes through the confirm-modal context; answer it per test.
 // A spy so tests can assert how many times the confirmation was actually asked.
@@ -146,23 +148,23 @@ function installMocks(startUpgrade: StartUpgradeMock): void {
 }
 
 // `page: false` leaves the page but keeps this Toaster; a remounted one shows no toast.
-function pageTree(hash: string, page = true) {
+function pageTree(hash: string, page = true, intl: IntlShape = intlFor({ tag: 'en' })) {
     return (
         <HelmetProvider>
-            <IntlProvider locale="en">
+            <RawIntlProvider value={intl}>
                 <AppContext.Provider value={appContext}>
                     <MemoryRouter initialEntries={[`/${hash}`]}>
                         {page && <Settings />}
                         <Toaster />
                     </MemoryRouter>
                 </AppContext.Provider>
-            </IntlProvider>
+            </RawIntlProvider>
         </HelmetProvider>
     );
 }
 
-function renderPage(hash = '#updates') {
-    return render(pageTree(hash));
+function renderPage(hash = '#updates', intl?: IntlShape) {
+    return render(pageTree(hash, true, intl));
 }
 
 const startButton = (): HTMLElement => screen.getByRole('button', { name: /Download & Upgrade/i });
@@ -347,6 +349,19 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
         const row = (label: string) => screen.getByText(label).closest('tr') as HTMLTableRowElement;
         expect(row('Your packages version:').textContent).toContain('2026.09.18-39e9db98-26.10');
         expect(row('Latest packages version:').textContent).toContain('N/A');
+    });
+
+    test("words a missing packages version in the page's language", async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () => packageOffer(null),
+        });
+
+        renderPage('#updates', pseudoIntl);
+        await advance(300);
+
+        expect(screen.getByText('[Ƞ/Ȧ]')).toBeTruthy();
     });
 
     // Two N/A rows would read as a fault rather than an absence.

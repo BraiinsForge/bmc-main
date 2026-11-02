@@ -24,6 +24,8 @@ use formatjs_icu_messageformat::Locale;
 
 use super::*;
 
+mod pseudo;
+
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The firmware's own packs: Chinese, with its CLDR data and no translations yet.
@@ -31,13 +33,16 @@ fn profile() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/intl/profile-languages")
 }
 
-/// What [`Translations::languages`] lists over `packs`: the built-in Englishes,
-/// the pseudo-locale in a development build alone, then the packs.
+/// The pseudo-locale's pack root, which a device carries only when installed by name.
+fn pseudo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(bmc_intl_pseudo::PACK_ROOT)
+}
+
+/// What [`Translations::languages`] lists over `packs`: the built-in Englishes, then the packs.
 fn offered(packs: &[Language]) -> Vec<Language> {
     let mut languages = vec![Language::EN_GB, Language::EN_US];
-    if cfg!(debug_assertions) {
-        languages.push(Language::EN_XA);
-    }
     languages.extend_from_slice(packs);
     languages
 }
@@ -131,26 +136,38 @@ fn a_message_speaks_english_with_no_pack() {
 }
 
 #[test]
-fn the_pseudo_locale_is_offered_by_a_development_build_alone() {
-    let (translations, _) = Translations::load(&[]);
+fn the_pseudo_locale_is_offered_where_its_pack_is() {
     assert_eq!(
+        Translations::load(&[profile()]).0.languages(),
+        offered(&[Language::ZH])
+    );
+    let (translations, report) = Translations::load(&[profile(), pseudo_root()]).0.load_all();
+    assert!(report.is_clean(), "{report}");
+    assert!(
         translations.languages().contains(&Language::EN_XA),
-        cfg!(debug_assertions)
+        "{report}"
+    );
+}
+
+#[test]
+fn the_pseudo_locales_cldr_data_is_englishs() {
+    let pseudo = std::fs::read(pseudo_root().join("en-XA").join("cldr.postcard"))
+        .expect("BUG: the pseudo-locale's pack carries CLDR data");
+    assert!(
+        pseudo == base_blob(),
+        "`just intl::cldr-data` writes the pseudo-locale's copy of the base blob"
     );
 }
 
 /// The pseudo-locale's extracted entries for `file`, by id: its source, then its translation.
-#[cfg(debug_assertions)]
 fn pseudo_entries(file: &str) -> BTreeMap<String, (String, String)> {
     #[derive(serde::Deserialize)]
     struct Entry {
         source: String,
         translation: String,
     }
-    let text = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/intl/pseudo").join(file),
-    )
-    .expect("BUG: `intl extract` writes the pseudo-locale's catalogs");
+    let text = std::fs::read_to_string(pseudo_root().join("en-XA").join(file))
+        .expect("BUG: `intl extract` writes the pseudo-locale's catalogs");
     serde_json::from_str::<BTreeMap<String, Entry>>(&text)
         .expect("BUG: a translator file")
         .into_iter()
@@ -158,7 +175,6 @@ fn pseudo_entries(file: &str) -> BTreeMap<String, (String, String)> {
         .collect()
 }
 
-#[cfg(debug_assertions)]
 #[test]
 fn the_pseudo_locale_speaks_an_extracted_message_from_its_catalog() {
     let entries = pseudo_entries("system.json");
@@ -166,7 +182,9 @@ fn the_pseudo_locale_speaks_an_extracted_message_from_its_catalog() {
         .iter()
         .find(|(_, (source, _))| !source.contains(['{', '<', '\'']))
         .expect("BUG: the host extracts a message that takes no values");
-    let intl = Translations::load(&[]).0.formatter(Language::EN_XA);
+    let intl = Translations::load(&[pseudo_root()])
+        .0
+        .formatter(Language::EN_XA);
     // A default unlike the message's English, so only the catalog can answer the translation.
     assert_eq!(
         intl.format_message_to_string_or_default_ref(
@@ -177,10 +195,11 @@ fn the_pseudo_locale_speaks_an_extracted_message_from_its_catalog() {
     );
 }
 
-#[cfg(debug_assertions)]
 #[test]
 fn a_message_the_extraction_missed_speaks_plain_english_in_the_pseudo_locale() {
-    let intl = Translations::load(&[]).0.formatter(Language::EN_XA);
+    let intl = Translations::load(&[pseudo_root()])
+        .0
+        .formatter(Language::EN_XA);
     assert_eq!(
         intl.format_message_to_string_or_default_ref(
             MessageDescriptorRef::new("never-extracted", "Tap here"),
@@ -190,26 +209,29 @@ fn a_message_the_extraction_missed_speaks_plain_english_in_the_pseudo_locale() {
     );
 }
 
-#[cfg(debug_assertions)]
 #[test]
 fn the_pseudo_locale_serves_its_extracted_web_catalog() {
-    let web = Translations::load(&[])
+    let web = Translations::load(&[pseudo_root()])
         .0
         .web(Language::EN_XA)
-        .expect("BUG: a development build serves the pseudo-locale's web catalog");
+        .expect("BUG: the pseudo-locale's pack serves its web catalog");
     let entries = pseudo_entries("web.json");
     assert_eq!(web.len(), entries.len());
-    let (id, (_, translation)) = entries.iter().next().expect("BUG: the web extracts messages");
+    let (id, (_, translation)) = entries
+        .iter()
+        .next()
+        .expect("BUG: the web extracts messages");
     assert_eq!(web.get(id), Some(translation));
 }
 
-#[cfg(debug_assertions)]
 #[test]
-fn the_pseudo_locale_accents_relative_times_without_brackets() {
-    let intl = Translations::load(&[]).0.formatter(Language::EN_XA);
+fn the_pseudo_locale_words_relative_times_as_english_does() {
+    let intl = Translations::load(&[pseudo_root()])
+        .0
+        .formatter(Language::EN_XA);
     assert_eq!(
         intl.relative_time(5, TimeUnit::Hour, TimeWidth::Long, Direction::Past),
-        "5 ħǿǿŭŭřş ȧȧɠǿǿ"
+        "5 hours ago"
     );
 }
 

@@ -20,9 +20,9 @@
 
 //! Language packs read from directories at run time.
 //!
-//! A root holds `<lang>/` directories, each with:
-//! the translator files `system.json`, `web.json` and `widgets/<uid>.json`;
-//! the ICU4X blob `cldr.postcard` and the unit patterns `units.postcard`;
+//! A root holds `<lang>/` directories. Each must bring the ICU4X blob `cldr.postcard`,
+//! and may bring: the translator files `system.json`, `web.json` and `widgets/<uid>.json`;
+//! the unit patterns `units.postcard`, without which unit counts read as English writes them;
 //! the language's own name in `info.json`; and its flag as `flag.svg` and compiled as `flag.bin`.
 //!
 //! A later root overrides an earlier one per entry.
@@ -456,17 +456,8 @@ fn read_units(path: &Path, report: &mut LoadReport) -> Option<units::Loaded> {
 
 /// `id → translation`; `None` when there is no such file or it is not an object.
 fn read_translations(path: &Path, report: &mut LoadReport) -> Option<Messages> {
-    decode_translations(&read_text(path, report)?, path, report)
-}
-
-/// `id → translation` of a translator file's `text`, read from `path`,
-/// or `None` when it is not an object.
-pub(crate) fn decode_translations(
-    text: &str,
-    path: &Path,
-    report: &mut LoadReport,
-) -> Option<Messages> {
-    let entries: serde_json::Map<String, serde_json::Value> = serde_json::from_str(text)
+    let text = read_text(path, report)?;
+    let entries: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text)
         .map_err(|error| report.skip(path, format_args!("not a JSON object: {error}")))
         .ok()?;
     Some(

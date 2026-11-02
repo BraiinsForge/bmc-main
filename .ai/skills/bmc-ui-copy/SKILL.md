@@ -104,7 +104,9 @@ ungrouped (`{millis}` with `1234` is `1234`), and so does the web for a simple a
    Chinese, never `zh-Hans`; the load report names the spelling when it skips another), its CLDR data from
    `just intl::pack-data <dir>`, and empty translator files. A regional pack (`zh-SG`) holds every entry, as `extract`
    writes it, but fills only what differs from its parent (`zh`): a `null` there shows the parent's text. Its CLDR data,
-   unit patterns, name and flags are its own.
+   unit patterns, name and flags are its own. `extract` also writes the `en-XA` pseudo-locale's pack in
+   `assets/intl/pseudo/en-XA/` whole, every entry respelled. Its CLDR data is English's, which `just intl::cldr-data`
+   copies in.
 3. Fill the `null`s. Reuse the terms the files already use; leave product names as they are; match the register of
    neighbouring entries. One you cannot fill stays `null` and fails nothing: it shows the parent pack's text, if any,
    else the English. `just intl::untranslated` lists every one that reaches English, and the merge request's
@@ -113,9 +115,12 @@ ungrouped (`{millis}` with `1234` is `1234`), and so does the web for a simple a
 5. Never write a test that asserts one of your own translations; assert the English default only. Language coverage is
    the tooling's job.
 6. Before review, `just intl::sweep [--url URL]` renders the overlays, every widget recipe and the web UI at `URL` in
-   the `en-XA` pseudo-locale, which development builds offer, under `.tmp/intl-sweep/`. A message that went through the
-   pipeline reads bracketed and accented there. Plain English is copy that did not, and so is data such as a network
-   name, which is left as it is. It starts no server: give it the URL of one already running.
+   the `en-XA` pseudo-locale, whose pack the gallery and `just fe::serve` load and a device gets from
+   `deck deploy --packages language-en-xa`, under `.tmp/intl-sweep/`. `just intl::extract` respells its catalogs from
+   the extraction. A message that went through the pipeline reads bracketed and accented there. Plain English is copy
+   that did not, except for two things en-XA leaves as they are: data such as a network name, and what CLDR formats,
+   such as a number, a unit or a relative time (`5 hours ago`). It starts no server: give it the URL of one already
+   running.
 
 ## What a review looks for
 

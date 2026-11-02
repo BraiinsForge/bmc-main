@@ -39,10 +39,11 @@ you might prefer `nix-cargo-deploy.sh`.
 It builds Nix flake packages and copies their entire closures to the device's `/nix/store` using `nix copy`, then
 installs them into the bmc profile via one `bmc-nix-cli` call. The device must already be initialized with `deck init`.
 
-With no `--packages`, it deploys `core` plus every widget (discovered from the nix-owned `category` metadata). Pass
-`--packages` with bare names (e.g. `core widget-image`) that expand to `.#deck-packages.*`, or fully-qualified flake
-URIs (anything with `#`, e.g. `.#armv7-nixpkgs.strace`) used as-is. Index packages (exposed under `deck-packages`) are
-auto-detected and their `.pkg` output is built; raw nixpkgs derivations (e.g. `armv7-nixpkgs`) are built directly.
+With no `--packages`, it deploys `core`, `bmc-nix-cli` and every widget (discovered from the nix-owned `category`
+metadata). Pass `--packages` with bare names (e.g. `core widget-image`) that expand to `.#deck-packages.*`, or
+fully-qualified flake URIs (anything with `#`, e.g. `.#armv7-nixpkgs.strace`) used as-is. Index packages (exposed under
+`deck-packages`) are auto-detected and their `.pkg` output is built; raw nixpkgs derivations (e.g. `armv7-nixpkgs`) are
+built directly.
 
 ```sh
 # core plus every widget

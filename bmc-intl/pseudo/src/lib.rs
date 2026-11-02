@@ -22,17 +22,16 @@
 //! a message's literals accented and the whole bracketed, its arguments as they were.
 //! The table is formatjs's own, read from the descriptor the samples also live in.
 
+use std::ops::Range;
 use std::sync::LazyLock;
 
-use bmc_shared_utils::language::Language;
 use formatjs_icu_messageformat::Options;
 use formatjs_icu_messageformat_parser::MessageFormatElement;
-use formatjs_icu_messageformat_parser::parser::Parser;
-use formatjs_icu_messageformat_parser::printer::print_ast;
+use formatjs_icu_messageformat_parser::parser::{Parser, ParserOptions};
 use serde::Deserialize;
 
-/// The pseudo-locale this crate respells English for.
-pub const LANGUAGE: Language = Language::EN_XA;
+/// Where the pseudo-locale's pack lives, relative to the repository root.
+pub const PACK_ROOT: &str = "assets/intl/pseudo";
 
 #[derive(Deserialize)]
 struct Descriptor {
@@ -62,44 +61,57 @@ pub fn letters() -> &'static str {
     &DESCRIPTOR.letters
 }
 
-/// `text` with each ASCII letter from the accent table and the doubled vowels twice,
-/// for words no message carries, such as CLDR's relative times.
-#[must_use]
-pub fn accent(text: &str) -> String {
-    let mut spelled = String::with_capacity(text.len() * 2);
-    for character in text.chars() {
-        let index = match character {
-            'A'..='Z' => usize::from(character as u8 - b'A'),
-            'a'..='z' => 26 + usize::from(character as u8 - b'a'),
-            _ => {
-                spelled.push(character);
-                continue;
-            }
-        };
-        let letter = LETTERS[index];
-        spelled.push(letter);
-        if DESCRIPTOR.doubled.contains(character) {
-            spelled.push(letter);
+/// `character` from the accent table, a doubled vowel twice; anything but an ASCII letter as it is.
+fn push_accented(character: char, spelled: &mut String) {
+    let index = match character {
+        'A'..='Z' => usize::from(character as u8 - b'A'),
+        'a'..='z' => 26 + usize::from(character as u8 - b'a'),
+        _ => {
+            spelled.push(character);
+            return;
         }
+    };
+    let letter = LETTERS[index];
+    spelled.push(letter);
+    if DESCRIPTOR.doubled.contains(character) {
+        spelled.push(letter);
     }
-    spelled
 }
 
-fn accent_literals(elements: &mut [MessageFormatElement]) {
+/// Where each literal of `source` lies, in characters, a branch's
+/// and a tag's included. None when `source` does not parse.
+fn literal_spans(source: &str) -> Option<Vec<Range<usize>>> {
+    let options = ParserOptions {
+        capture_location: true,
+        ..Options::default_parser_options()
+    };
+    let elements = Parser::new(source, options).parse().ok()?;
+    let mut spans = Vec::new();
+    collect_literal_spans(&elements, &mut spans);
+    Some(spans)
+}
+
+fn collect_literal_spans(elements: &[MessageFormatElement], spans: &mut Vec<Range<usize>>) {
     for element in elements {
         match element {
-            MessageFormatElement::Literal(literal) => literal.value = accent(&literal.value),
+            MessageFormatElement::Literal(literal) => {
+                let location = literal
+                    .location
+                    .as_ref()
+                    .expect("BUG: a parse that captures locations locates every literal");
+                spans.push(location.start.offset..location.end.offset);
+            }
             MessageFormatElement::Plural(plural) => {
-                for option in plural.options.values_mut() {
-                    accent_literals(&mut option.value);
+                for option in plural.options.values() {
+                    collect_literal_spans(&option.value, spans);
                 }
             }
             MessageFormatElement::Select(select) => {
-                for option in select.options.values_mut() {
-                    accent_literals(&mut option.value);
+                for option in select.options.values() {
+                    collect_literal_spans(&option.value, spans);
                 }
             }
-            MessageFormatElement::Tag(tag) => accent_literals(&mut tag.children),
+            MessageFormatElement::Tag(tag) => collect_literal_spans(&tag.children, spans),
             MessageFormatElement::Argument(_)
             | MessageFormatElement::Number(_)
             | MessageFormatElement::Date(_)
@@ -111,16 +123,27 @@ fn accent_literals(elements: &mut [MessageFormatElement]) {
 
 /// `source`, an English pattern, as the pseudo-locale speaks it, still a pattern.
 /// One that does not parse is handed back, for formatting to refuse as it would have.
+///
+/// Its literals' letters are accented where they stand, the rest kept as written:
+/// printing the parsed message back would lean on formatjs's printer,
+/// which escapes a lone `'` between two arguments so that the second is read as text.
 #[must_use]
 pub fn respell(source: &str) -> String {
-    let Ok(mut elements) = Parser::new(source, Options::default_parser_options()).parse() else {
+    let Some(spans) = literal_spans(source) else {
         return source.to_owned();
     };
-    accent_literals(&mut elements);
     let [open, close] = &DESCRIPTOR.brackets;
-    elements.insert(0, MessageFormatElement::literal(open.clone()));
-    elements.push(MessageFormatElement::literal(close.clone()));
-    print_ast(&elements)
+    let mut spoken = String::with_capacity(open.len() + source.len() * 2 + close.len());
+    spoken.push_str(open);
+    for (index, character) in source.chars().enumerate() {
+        if spans.iter().any(|span| span.contains(&index)) {
+            push_accented(character, &mut spoken);
+        } else {
+            spoken.push(character);
+        }
+    }
+    spoken.push_str(close);
+    spoken
 }
 
 #[cfg(test)]
@@ -128,24 +151,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn accenting_leaves_everything_but_ascii_letters() {
-        assert_eq!(accent("5 h ago, Ẇī-"), "5 ħ ȧȧɠǿǿ, Ẇī-");
-        assert_eq!(accent(""), "");
+    fn respelling_accents_nothing_but_ascii_letters() {
+        assert_eq!(respell("5 h ago, Ẇī-"), "[5 ħ ȧȧɠǿǿ, Ẇī-]");
+        assert_eq!(respell(""), "[]");
     }
 
     #[test]
-    fn a_respelled_message_keeps_its_arguments_and_branches() {
-        let respelled = respell("{count, plural, one {{count} widget} other {{count} widgets}}");
-        Parser::new(&respelled, Options::default_parser_options())
-            .parse()
-            .expect("BUG: a respelled message is still a pattern");
-        for kept in ["plural", "one", "other", "{count}"] {
-            assert!(respelled.contains(kept), "{kept} is not in {respelled}");
-        }
+    fn every_branch_of_a_plural_is_respelled_and_its_syntax_kept() {
+        assert_eq!(
+            respell("{count, plural, one {{count} widget} other {{count} widgets}}"),
+            "[{count, plural, one {{count} ẇīḓɠḗḗŧ} other {{count} ẇīḓɠḗḗŧş}}]"
+        );
+    }
+
+    #[test]
+    fn every_branch_of_a_select_is_respelled_and_its_syntax_kept() {
+        assert_eq!(
+            respell("{who, select, me {You} other {Someone}} joined"),
+            "[{who, select, me {Ẏǿǿŭŭ} other {Şǿǿḿḗḗǿǿƞḗḗ}} ĵǿǿīƞḗḗḓ]"
+        );
+    }
+
+    #[test]
+    fn a_quote_between_arguments_stays_a_literal_quote() {
+        assert_eq!(respell("{n}''{x}"), "[{n}''{x}]");
     }
 
     #[test]
     fn a_source_that_is_not_a_pattern_is_handed_back() {
         assert_eq!(respell("{unclosed"), "{unclosed");
+    }
+
+    #[test]
+    fn letters_after_wide_characters_are_respelled_where_they_stand() {
+        assert_eq!(
+            respell("Čas {time} – <b>ňak</b> ok"),
+            "[Čȧȧş {time} – <b>ňȧȧķ</b> ǿǿķ]",
+            "spans counted in bytes would land the accents off these letters"
+        );
     }
 }

@@ -21,6 +21,7 @@
 import { describe, test, expect } from '@rstest/core';
 import { createIntl } from 'react-intl';
 
+import { intlFor } from '@/lib/intl';
 import { formatDuration } from './duration';
 
 const en = createIntl({ locale: 'en' });
@@ -45,5 +46,9 @@ describe('formatDuration', () => {
 
     test("words the units in the locale's own language", () => {
         expect(formatDuration(createIntl({ locale: 'zh' }), 90)).toBe('1分钟30秒钟');
+    });
+
+    test('words the pseudo-locale as English does, its units being data', () => {
+        expect(formatDuration(intlFor({ tag: 'en-XA' }), 90)).toBe('1 minute, 30 seconds');
     });
 });

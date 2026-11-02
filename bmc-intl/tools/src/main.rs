@@ -86,7 +86,8 @@ enum Command {
     /// new messages get `"translation": null`, removed ones go;
     /// `source` and `description` are refreshed.
     ///
-    /// Never writes a translation.
+    /// Never writes a translation into a translator's file.
+    /// en-XA's files under `assets/intl/pseudo/` are written whole, every entry respelled.
     /// A language is added by adding an empty `<key>/system.json` or `<key>/web.json`
     /// under `assets/intl/profile-languages/`.
     Extract(Surfaces),

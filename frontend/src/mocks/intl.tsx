@@ -20,6 +20,9 @@
 
 import { createIntl, type IntlShape } from 'react-intl';
 
+import { intlFor } from '@/lib/intl';
+import pseudoCatalog from '../../../assets/intl/pseudo/en-XA/web.json';
+
 const noop = () => {};
 
 /// react-intl's own shape rather than a stub, so a spec sees what the app does:
@@ -27,3 +30,10 @@ const noop = () => {};
 // Carrying no messages leaves every lookup on its `defaultMessage`,
 // and the silenced handlers keep that fallback from warning on each one.
 export const fakeIntlProp: IntlShape = createIntl({ onWarn: noop, onError: noop, locale: 'en', messages: {} });
+
+/// The pseudo-locale with the catalog extraction generates for it,
+/// so copy that bypassed `formatMessage` still reads as plain English.
+export const pseudoIntl: IntlShape = intlFor({
+    tag: 'en-XA',
+    messages: Object.fromEntries(Object.entries(pseudoCatalog).map(([id, { translation }]) => [id, translation])),
+});

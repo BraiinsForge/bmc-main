@@ -49,6 +49,7 @@ bmc-svg-compiler = { path = "../bmc-wasm-runtime/svg-compiler" }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 
 [dev-dependencies]
+bmc-intl-pseudo.workspace = true
 # Damage tests compile real SVG icons, as widgets ship them.
 bmc-svg-compiler = { path = "../bmc-wasm-runtime/svg-compiler" }
 rqrr.workspace = true

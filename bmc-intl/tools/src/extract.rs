@@ -24,6 +24,8 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use bmc_shared_utils::language::Language;
+
 use crate::surface::{self, Surface, SurfaceName};
 use crate::{console, formatjs, translator};
 
@@ -57,7 +59,7 @@ pub fn extract_surface(surface: &Surface, id_pattern: &str) -> Result<(), String
     let languages: Vec<String> = files
         .iter()
         .map(|file| surface::language_of(file))
-        .chain([bmc_intl_pseudo::LANGUAGE.tag()])
+        .chain([Language::EN_XA.tag()])
         .map(|language| console::lit(&language))
         .collect();
     let synced = format!("translator files synced: {}", languages.join(", "));

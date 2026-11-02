@@ -61,7 +61,7 @@
   },
   "/BsylLdsrR": {
     "source": "{count, plural, one {+{count} Older Update} other {+{count} Older Updates}}",
-    "translation": "[{count,plural,one{+{count} Ǿŀḓḗḗř Ŭƥḓȧȧŧḗḗ} other{+{count} Ǿŀḓḗḗř Ŭƥḓȧȧŧḗḗş}}]"
+    "translation": "[{count, plural, one {+{count} Ǿŀḓḗḗř Ŭƥḓȧȧŧḗḗ} other {+{count} Ǿŀḓḗḗř Ŭƥḓȧȧŧḗḗş}}]"
   },
   "/Hem87bEbl": {
     "source": "Could not list the widgets using this account.",
@@ -610,7 +610,7 @@
   },
   "DuOxNPp/me": {
     "source": "{count, plural, one {{count} package update available} other {{count} package updates available}}",
-    "translation": "[{count,plural,one{{count} ƥȧȧƈķȧȧɠḗḗ ŭŭƥḓȧȧŧḗḗ ȧȧṽȧȧīŀȧȧƀŀḗḗ} other{{count} ƥȧȧƈķȧȧɠḗḗ ŭŭƥḓȧȧŧḗḗş ȧȧṽȧȧīŀȧȧƀŀḗḗ}}]"
+    "translation": "[{count, plural, one {{count} ƥȧȧƈķȧȧɠḗḗ ŭŭƥḓȧȧŧḗḗ ȧȧṽȧȧīŀȧȧƀŀḗḗ} other {{count} ƥȧȧƈķȧȧɠḗḗ ŭŭƥḓȧȧŧḗḗş ȧȧṽȧȧīŀȧȧƀŀḗḗ}}]"
   },
   "EGe5tCAxZi": {
     "source": "{name} was upgraded from {previous} to {version}.",
@@ -642,7 +642,7 @@
   },
   "FFZ6+pC8NU": {
     "source": "All {selected, plural, =1 {{selected} item} other {{selected} items}} on this page are selected. <a>Select all {available, plural, =1 {{available} item} other {{available} items}}</a>",
-    "translation": "[Ȧŀŀ {selected,plural,other{{selected} īŧḗḗḿş} =1{{selected} īŧḗḗḿ}} ǿǿƞ ŧħīş ƥȧȧɠḗḗ ȧȧřḗḗ şḗḗŀḗḗƈŧḗḗḓ. <a>Şḗḗŀḗḗƈŧ ȧȧŀŀ {available,plural,other{{available} īŧḗḗḿş} =1{{available} īŧḗḗḿ}}</a>]"
+    "translation": "[Ȧŀŀ {selected, plural, =1 {{selected} īŧḗḗḿ} other {{selected} īŧḗḗḿş}} ǿǿƞ ŧħīş ƥȧȧɠḗḗ ȧȧřḗḗ şḗḗŀḗḗƈŧḗḗḓ. <a>Şḗḗŀḗḗƈŧ ȧȧŀŀ {available, plural, =1 {{available} īŧḗḗḿ} other {{available} īŧḗḗḿş}}</a>]"
   },
   "Fg65lXT4B2": {
     "source": "Move cancelled, {item} is back at position {position} of {count}.",
@@ -755,7 +755,7 @@
   },
   "JM1RKrlz+4": {
     "source": "{selected, plural, =1 {{selected} item} other {{selected} items}} selected",
-    "translation": "[{selected,plural,other{{selected} īŧḗḗḿş} =1{{selected} īŧḗḗḿ}} şḗḗŀḗḗƈŧḗḗḓ]"
+    "translation": "[{selected, plural, =1 {{selected} īŧḗḗḿ} other {{selected} īŧḗḗḿş}} şḗḗŀḗḗƈŧḗḗḓ]"
   },
   "JXdbo8Vnlw": {
     "source": "Done",
@@ -1610,7 +1610,7 @@
   },
   "qTmm9R1dAe": {
     "source": "All {selected, plural, =1 {{selected} item} other {{selected} items}} available items are selected",
-    "translation": "[Ȧŀŀ {selected,plural,other{{selected} īŧḗḗḿş} =1{{selected} īŧḗḗḿ}} ȧȧṽȧȧīŀȧȧƀŀḗḗ īŧḗḗḿş ȧȧřḗḗ şḗḗŀḗḗƈŧḗḗḓ]"
+    "translation": "[Ȧŀŀ {selected, plural, =1 {{selected} īŧḗḗḿ} other {{selected} īŧḗḗḿş}} ȧȧṽȧȧīŀȧȧƀŀḗḗ īŧḗḗḿş ȧȧřḗḗ şḗḗŀḗḗƈŧḗḗḓ]"
   },
   "qlTe+eC7Ec": {
     "source": "new",
@@ -1730,7 +1730,7 @@
   },
   "u2EPPJoCNT": {
     "source": "Deleting {name} will unbind it from <b>{count, plural, one {{count} widget} other {{count} widgets}}</b>, which will stop using it.",
-    "translation": "[Ḓḗḗŀḗḗŧīƞɠ {name} ẇīŀŀ ŭŭƞƀīƞḓ īŧ ƒřǿǿḿ <b>{count,plural,one{{count} ẇīḓɠḗḗŧ} other{{count} ẇīḓɠḗḗŧş}}</b>, ẇħīƈħ ẇīŀŀ şŧǿǿƥ ŭŭşīƞɠ īŧ.]"
+    "translation": "[Ḓḗḗŀḗḗŧīƞɠ {name} ẇīŀŀ ŭŭƞƀīƞḓ īŧ ƒřǿǿḿ <b>{count, plural, one {{count} ẇīḓɠḗḗŧ} other {{count} ẇīḓɠḗḗŧş}}</b>, ẇħīƈħ ẇīŀŀ şŧǿǿƥ ŭŭşīƞɠ īŧ.]"
   },
   "uJV0wUU6rg": {
     "source": "IP Address",

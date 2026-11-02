@@ -37,7 +37,7 @@
 , bmcVersion ? null
 }:
 let
-  inherit (bmc.lib) mkWidgetPackage;
+  inherit (bmc.lib) mkPackage mkWidgetPackage;
   inherit (bmc) crates;
   inherit (deps) widgetRuntimeDeps frontend;
   lib = armv7Pkgs.lib;
@@ -101,6 +101,20 @@ wasmWidgetPackages // {
     widgets = wasmWidgetPackages;
   };
   bos-avahi = import ./pkgs/bos-avahi { inherit bmc armv7Pkgs; };
+  # The en-XA pseudo-locale's language pack, for `just intl::sweep`.
+  # `bmc-packages` publishes only the packages it names and leaves this one out,
+  # so it reaches a device only when installed by name.
+  language-en-xa = {
+    pkg = mkPackage {
+      name = "language-en-xa";
+      out = [{ src = ../assets/intl/pseudo; dest = "languages"; }];
+    };
+    version = "0.1.0";
+    category = "language";
+    description = "The en-XA pseudo-locale, for finding copy the translations miss";
+    upgrade_strategy = null;
+    install_strategy = null;
+  };
   bmc-nix-cli = {
     pkg = profile.buildCrate crates.bmc-nix-cli { features = [ "release-log-debug" ]; };
     version = "0.1.0";

@@ -888,7 +888,6 @@ dependencies = [
 name = "bmc-intl-pseudo"
 version = "0.1.0"
 dependencies = [
- "bmc-shared-utils",
  "formatjs_icu_messageformat",
  "formatjs_icu_messageformat_parser",
  "serde",
@@ -1324,6 +1323,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-intl",
+ "bmc-intl-pseudo",
  "bmc-render-macros",
  "bmc-svg-compiler",
  "bmc-ui",

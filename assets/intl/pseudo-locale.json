@@ -22,11 +22,26 @@
       "spoken": "[3 ẇīḓɠḗḗŧş ŀǿǿȧȧḓḗḗḓ]"
     },
     {
+      "source": "{who, select, me {You} other {Someone}} joined",
+      "values": {
+        "who": "me"
+      },
+      "spoken": "[Ẏǿǿŭŭ ĵǿǿīƞḗḗḓ]"
+    },
+    {
       "source": "It''s {state}",
       "values": {
         "state": "on"
       },
       "spoken": "[Īŧ'ş on]"
+    },
+    {
+      "source": "{a}''{b}",
+      "values": {
+        "a": 1,
+        "b": 2
+      },
+      "spoken": "[1'2]"
     },
     {
       "source": "Ẇī-Fi 5 GHz",
