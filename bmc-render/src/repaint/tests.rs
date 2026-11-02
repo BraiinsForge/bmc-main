@@ -20,7 +20,7 @@
 
 use super::{DamageHistory, EXPORT_BUFFERS, FrameRepaint, TargetContents, damage_rects};
 use crate::interaction::Rect;
-use crate::partition::static_layer::LayerCommit;
+use crate::partition::static_layer::{AssetGeneration, FrameTree, LayerCommit, LayerPlan};
 use crate::tree::StaticLayer;
 
 /// Only a blit under some regions leaves the rest of the target alone;
@@ -253,5 +253,108 @@ fn the_cap_is_measured_on_the_merged_area_not_the_double_count() {
         merged,
         [region.into()],
         "a tree under the cap must not be pushed over it by its own history"
+    );
+}
+
+/// A key for a layer the [`layered`] tree plans with.
+fn key() -> crate::partition::static_layer::LayerKey {
+    crate::partition::static_layer::LayerKey {
+        size: (1280, 480),
+        static_hash: crate::partition::StaticHash(1),
+        layout: crate::partition::LayoutKey(0),
+        assets: AssetGeneration::Unchanging,
+    }
+}
+
+fn layered() -> super::LayeredTree {
+    use crate::partition::static_layer::{MissPolicy, StaticLayerCache};
+    use crate::renderer::{LayerOwner, OverlayId};
+    let mut layered = super::LayeredTree::new(StaticLayerCache::new(
+        LayerOwner::Overlay(OverlayId::next()),
+        MissPolicy::Release,
+    ));
+    *layered.damage_mut() = settled();
+    layered
+}
+
+/// A walk that failed may have left its target half painted,
+/// so no buffer holds what the history describes.
+#[test]
+fn a_failed_walk_owes_every_buffer() {
+    let mut layered = layered();
+    layered.fail();
+    assert_eq!(layered.damage().owed_full_repaints(), EXPORT_BUFFERS);
+}
+
+/// A miss stops the layer, and a frame painting without one repaints in full.
+#[test]
+fn a_stopped_layer_keeps_no_target() {
+    let mut renderer = crate::renderer::test_support::ShapingRecorder::default();
+    let mut layered = layered();
+    assert_eq!(
+        layered.target_for(true, 1280.0, 480.0),
+        TargetContents::Preserved,
+        "the fixture must be one a layered replay would keep"
+    );
+    layered.static_layer_mut().commit(
+        &mut renderer,
+        LayerPlan::Capture(key()),
+        StaticLayer::Missed,
+        AssetGeneration::Unchanging,
+    );
+    assert_eq!(
+        layered.target_for(true, 1280.0, 480.0),
+        TargetContents::Cleared
+    );
+}
+
+/// The damage a frame scissors to and how it repainted come from the one plan.
+#[test]
+fn a_finished_frame_reports_the_damage_it_was_planned_with() {
+    let mut renderer =
+        crate::renderer::test_support::ShapingRecorder::new(1280.0, 480.0).with_static_layers();
+    let mut layered = layered();
+    let moved = Rect::new(0.0, 0.0, 40.0, 40.0);
+    let tree = || FrameTree {
+        key: Some(key()),
+        has_static_content: true,
+        scrolling: false,
+        fresh: false,
+    };
+    // A capture, then a full repaint that catches the other buffer up on it.
+    for (target, walked) in [
+        (
+            TargetContents::Cleared,
+            StaticLayer::Captured { empty: false },
+        ),
+        (TargetContents::Cleared, StaticLayer::Blitted),
+    ] {
+        let frame = layered.begin(&mut renderer, tree(), target, 1280.0, 480.0);
+        let _ = layered.finish(
+            &mut renderer,
+            frame,
+            walked,
+            &[moved],
+            AssetGeneration::Unchanging,
+        );
+    }
+    let frame = layered.begin(
+        &mut renderer,
+        tree(),
+        TargetContents::Preserved,
+        1280.0,
+        480.0,
+    );
+    assert_eq!(frame.damage(), [moved]);
+    let repaint = layered.finish(
+        &mut renderer,
+        frame,
+        StaticLayer::Blitted,
+        &[moved],
+        AssetGeneration::Unchanging,
+    );
+    assert!(
+        matches!(&repaint, FrameRepaint::Damage { blitted } if blitted == &[moved]),
+        "got {repaint:?}"
     );
 }

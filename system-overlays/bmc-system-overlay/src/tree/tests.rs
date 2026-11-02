@@ -888,7 +888,7 @@ fn every_way_a_buffer_is_lost_repaints_both_in_full() {
         let (mut ui, tree) = settled(&mut r);
         lose(&mut ui, &mut r, &tree);
         assert_eq!(
-            ui.damage.owed_full_repaints(),
+            ui.layered.damage().owed_full_repaints(),
             bmc_render::repaint::EXPORT_BUFFERS,
             "{loss}: the first frame's capture would hide a debt owed to only one buffer"
         );

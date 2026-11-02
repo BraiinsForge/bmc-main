@@ -32,8 +32,9 @@ use bmc_ui::Color;
 use wasmi::{Caller, Linker};
 
 use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
-use bmc_render::partition::static_layer::{AssetGeneration, LayerPlan};
+use bmc_render::partition::static_layer::AssetGeneration;
 use bmc_render::renderer::Renderer;
+use bmc_render::repaint::LayeredFrame;
 use bmc_render::tree;
 use bmc_render::{FrameTimings, layout_and_render_with_asset_resolver};
 
@@ -257,7 +258,10 @@ fn submit_tree(
             u32::try_from(deserialize_started.elapsed().as_micros()).unwrap_or(u32::MAX);
         let now_unix_secs = state.system_time.timestamp();
         let frame = state.layer_frame(&tree_node, static_bytes, true, now_unix_secs);
-        let plan = state.static_layer.plan(renderer, frame);
+        // A guest frame paints over a cleared target, so it scissors to no damage.
+        let planned = state
+            .layered
+            .begin(renderer, frame, crate::TargetContents::Cleared, w, h);
         state.last_asset_restoration = None;
         let delta_ms = state.delta_ms;
         let mut timings = FrameTimings::default();
@@ -266,7 +270,7 @@ fn submit_tree(
             timings.deserialize_us = deserialize_us;
         }
         let mut ctx = bmc_render::ProcessContext {
-            static_layer: state.static_layer.layer_use(plan),
+            static_layer: state.layered.layer_use(&planned),
             layout_outlines: state.layout_outlines.is_some(),
             stroke_outlines: bmc_render::tree::debug_layout_enabled(),
             ..state
@@ -293,7 +297,7 @@ fn submit_tree(
             Ok(observation) => state.last_asset_restoration = observation,
             Err(error) => {
                 state.renderer_asset_failure = Some(error);
-                state.static_layer.forget();
+                state.layered.fail();
                 return;
             }
         }
@@ -306,7 +310,7 @@ fn submit_tree(
                     w,
                     h,
                     static_bytes,
-                    plan,
+                    planned,
                     timings,
                     has_active,
                 },
@@ -314,7 +318,7 @@ fn submit_tree(
             ),
             Err(error) => {
                 tracing::error!("tree processing failed: {error}");
-                state.static_layer.forget();
+                state.layered.fail();
             }
         }
     })
@@ -326,7 +330,7 @@ struct SubmittedFrame {
     w: f32,
     h: f32,
     static_bytes: bmc_render::partition::StaticBytesKey,
-    plan: LayerPlan,
+    planned: LayeredFrame,
     timings: bmc_render::FrameTimings,
     has_active: bool,
 }
@@ -353,17 +357,12 @@ fn commit_submitted_frame(
     });
     state.guest_tree = crate::host_api::GuestTree::Committed;
     let walked_assets = AssetGeneration::Ledger(state.renderer_assets.generation());
-    let committed =
-        state
-            .static_layer
-            .commit(renderer, frame.plan, result.static_layer, walked_assets);
-    // A guest frame paints over a cleared target, so it hands the walk no damage.
-    state.last_repaint = state.damage.walked(
-        committed,
-        true,
+    state.last_repaint = state.layered.finish(
+        renderer,
+        frame.planned,
         result.static_layer,
         &result.dynamic_rects,
-        Vec::new(),
+        walked_assets,
     );
     state.keep_outlines(result.layout_outlines);
 }
@@ -414,6 +413,7 @@ mod tests {
     use bmc_render::partition::StaticBytesKey;
     use bmc_render::partition::static_layer::{AssetGeneration, LayerPlan};
     use bmc_render::renderer::test_support::ShapingRecorder;
+    use bmc_render::repaint::LayeredFrame;
     use bmc_render::tree::{Node, StaticLayer, TreeResult};
     use bmc_ui::{Color, PropsData};
 
@@ -446,9 +446,15 @@ mod tests {
         state: &mut HostState,
         tree: &Node,
         bytes: StaticBytesKey,
-    ) -> LayerPlan {
+    ) -> LayeredFrame {
         let frame = state.layer_frame(tree, bytes, true, 0);
-        state.static_layer.plan(renderer, frame)
+        state.layered.begin(
+            renderer,
+            frame,
+            crate::TargetContents::Cleared,
+            100.0,
+            100.0,
+        )
     }
 
     /// Commit a guest frame of `panel()` keyed as `bytes`, whose walk did `layer`.
@@ -462,13 +468,13 @@ mod tests {
         commit_plan(renderer, state, bytes, plan, layer);
     }
 
-    /// Commit a guest frame of `panel()` keyed as `bytes` and planned as `plan`,
+    /// Commit a guest frame of `panel()` keyed as `bytes` and planned as `planned`,
     /// whose walk did `layer`.
     fn commit_plan(
         renderer: &mut ShapingRecorder,
         state: &mut HostState,
         bytes: StaticBytesKey,
-        plan: LayerPlan,
+        planned: LayeredFrame,
         layer: StaticLayer,
     ) {
         commit_submitted_frame(
@@ -479,7 +485,7 @@ mod tests {
                 w: 100.0,
                 h: 100.0,
                 static_bytes: bytes,
-                plan,
+                planned,
                 timings: bmc_render::FrameTimings::default(),
                 has_active: true,
             },
@@ -513,7 +519,7 @@ mod tests {
             StaticLayer::Captured { empty: false },
         );
         assert!(matches!(
-            plan(&mut renderer, &mut state, &panel(), OTHER_BYTES),
+            plan(&mut renderer, &mut state, &panel(), OTHER_BYTES).plan(),
             LayerPlan::Reuse(_)
         ));
     }
@@ -539,12 +545,12 @@ mod tests {
             StaticLayer::Captured { empty: false },
         );
         assert_eq!(
-            state.damage.owed_full_repaints(),
+            state.layered.damage().owed_full_repaints(),
             bmc_render::repaint::EXPORT_BUFFERS - 1
         );
         commit(&mut renderer, &mut state, OTHER_BYTES, StaticLayer::Blitted);
         assert_eq!(
-            state.damage.owed_full_repaints(),
+            state.layered.damage().owed_full_repaints(),
             bmc_render::repaint::EXPORT_BUFFERS - 2
         );
     }
@@ -560,7 +566,7 @@ mod tests {
         );
         commit(&mut renderer, &mut state, OTHER_BYTES, StaticLayer::Missed);
         assert_eq!(
-            state.damage.owed_full_repaints(),
+            state.layered.damage().owed_full_repaints(),
             bmc_render::repaint::EXPORT_BUFFERS - 2,
             "a miss repaints its buffer in full and keeps the static half"
         );
@@ -575,9 +581,9 @@ mod tests {
             OTHER_BYTES,
             StaticLayer::Captured { empty: false },
         );
-        state.damage = bmc_render::repaint::DamageHistory::default();
+        *state.layered.damage_mut() = bmc_render::repaint::DamageHistory::default();
         let reuse = plan(&mut renderer, &mut state, &panel(), OTHER_BYTES);
-        assert!(matches!(reuse, LayerPlan::Reuse(_)));
+        assert!(matches!(reuse.plan(), LayerPlan::Reuse(_)));
         // As when the layer was stale against the frame's background, so the walk captured it.
         commit_plan(
             &mut renderer,
@@ -587,7 +593,7 @@ mod tests {
             StaticLayer::Captured { empty: false },
         );
         assert_eq!(
-            state.damage.owed_full_repaints(),
+            state.layered.damage().owed_full_repaints(),
             bmc_render::repaint::EXPORT_BUFFERS - 1,
             "the other buffers still show the static half the walk replaced"
         );
@@ -609,14 +615,16 @@ mod tests {
         state.walk.interaction.begin_frame();
         assert!(state.walk.dragging(), "the move must register as a drag");
         let captured = plan(&mut renderer, &mut state, tree, OTHER_BYTES);
-        state.static_layer.commit(
+        let walked_assets = AssetGeneration::Ledger(state.renderer_assets.generation());
+        state.layered.finish(
             &mut renderer,
             captured,
             StaticLayer::Captured { empty: false },
-            AssetGeneration::Ledger(state.renderer_assets.generation()),
+            &[],
+            walked_assets,
         );
         matches!(
-            plan(&mut renderer, &mut state, tree, OTHER_BYTES),
+            plan(&mut renderer, &mut state, tree, OTHER_BYTES).plan(),
             LayerPlan::Reuse(_)
         )
     }

@@ -33,12 +33,10 @@
 use std::time::Instant;
 
 use bmc_render::FrameTimings;
-use bmc_render::partition::static_layer::{
-    AssetGeneration, LayerPlan, MissPolicy, StaticLayerCache,
-};
+use bmc_render::partition::static_layer::{AssetGeneration, MissPolicy, StaticLayerCache};
 use bmc_render::partition::{StaticBytesKey, tree_static_key};
 use bmc_render::renderer::{LayerOwner, OverlayId, Renderer};
-use bmc_render::repaint::{DamageHistory, TargetContents};
+use bmc_render::repaint::{LayeredFrame, LayeredTree, TargetContents};
 use bmc_render::tree::{Node, ProcessContext, TreeResult, WalkState, layout_and_render};
 
 use crate::overlay::{FrameKind, NextFrame, RenderOutcome, TreeFrameProfile};
@@ -138,8 +136,7 @@ impl TreeFrame {
 pub struct TreeUi {
     walk: WalkState,
     cached: Option<CachedTree>,
-    static_layer: StaticLayerCache,
-    damage: DamageHistory,
+    layered: LayeredTree,
     /// What [`Self::prepare_target`] told the host the next frame may find in its target.
     target: TargetContents,
     warned_unkeyed: bool,
@@ -166,8 +163,7 @@ impl TreeUi {
         Self {
             walk: WalkState::default(),
             cached: None,
-            static_layer: overlay_layer(),
-            damage: DamageHistory::default(),
+            layered: LayeredTree::new(overlay_layer()),
             target: TargetContents::Cleared,
             warned_unkeyed: false,
             last_render: now,
@@ -190,12 +186,10 @@ impl TreeUi {
         reason = "display sizes are well below f32 mantissa precision"
     )]
     pub fn prepare_target(&mut self, kind: FrameKind, size: (u32, u32)) -> TargetContents {
-        let replays_over_layer = crate::SURFACE_LAYERING == Layering::Layered
-            && self.replays(kind, size)
-            && self.static_layer.is_on();
+        let replays = crate::SURFACE_LAYERING == Layering::Layered && self.replays(kind, size);
         self.target = self
-            .damage
-            .target_for(replays_over_layer, size.0 as f32, size.1 as f32);
+            .layered
+            .target_for(replays, size.0 as f32, size.1 as f32);
         self.target
     }
 
@@ -203,7 +197,14 @@ impl TreeUi {
     /// into its buffer: none may hold the frame the damage history describes.
     pub fn invalidate_target(&mut self) {
         self.target = TargetContents::Cleared;
-        self.damage.owe_every_buffer();
+        self.layered.owe_every_buffer();
+    }
+
+    /// Count on the layer no more and repaint every buffer in full,
+    /// after a frame that may have left its target half painted.
+    fn fail(&mut self) {
+        self.target = TargetContents::Cleared;
+        self.layered.fail();
     }
 
     /// Whether a `kind` frame at `size` replays the cached tree rather than building one.
@@ -265,8 +266,7 @@ impl TreeUi {
         let replay = self.replays(frame, size);
         let target = std::mem::replace(&mut self.target, TargetContents::Cleared);
         if target == TargetContents::Preserved && !(replay && layering == Layering::Layered) {
-            self.static_layer.forget();
-            self.invalidate_target();
+            self.fail();
             anyhow::bail!(
                 "BUG: a {frame:?} {layering:?} frame at {size:?} was not the replay \
                  its host kept the target for"
@@ -289,8 +289,7 @@ impl TreeUi {
         ) {
             Ok(frame) => frame,
             Err(error) => {
-                self.static_layer.forget();
-                self.invalidate_target();
+                self.fail();
                 return Err(error);
             }
         };
@@ -303,11 +302,10 @@ impl TreeUi {
     }
 
     /// Drop the cached tree, so the next frame builds a new one,
-    /// and repaint every export buffer in full, which a hide frees.
+    /// count on the layer no more, and repaint every export buffer in full, which a hide frees.
     pub fn clear(&mut self) {
         self.cached = None;
-        self.static_layer.forget();
-        self.invalidate_target();
+        self.fail();
     }
 
     /// Free the static layer in `renderer` and capture again from the next frame,
@@ -315,14 +313,14 @@ impl TreeUi {
     /// Call it once the surface is hidden, before a renderer is replaced,
     /// and at teardown, with the renderer's GL context current.
     pub fn release(&mut self, renderer: &mut dyn Renderer) {
-        self.static_layer.release(renderer);
+        self.layered.release(renderer);
     }
 
     /// Whose static layer this tree's is in the renderer.
     #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn static_layer_owner(&self) -> &LayerOwner {
-        self.static_layer.owner()
+        self.layered.static_layer().owner()
     }
 
     /// Whether the last [`Self::render`] replayed the cached tree and drew it.
@@ -360,23 +358,25 @@ impl TreeUi {
         key
     }
 
-    /// What this frame does with the layer, keying the tree on its first layered frame.
+    /// What this frame does with the layer over a target holding `target`,
+    /// keying the tree on its first layered frame.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the tree, the frame's layering, freshness, clock and wording, and the renderer"
+        reason = "the tree, the frame's layering, target, freshness, clock and wording, and the renderer"
     )]
     fn plan_layer(
         &mut self,
         renderer: &mut dyn Renderer,
         tree: &mut CachedTree,
         layering: Layering,
+        target: TargetContents,
         fresh: bool,
         now_unix_secs: i64,
         intl: &bmc_intl::Intl,
         timings: &mut FrameTimings,
-    ) -> LayerPlan {
+    ) -> LayeredFrame {
         if layering == Layering::Unlayered {
-            return LayerPlan::Ignore;
+            return LayeredTree::begin_unlayered(fresh);
         }
         let bytes = match tree.key {
             TreeKey::Keyed(bytes) => Some(bytes),
@@ -396,7 +396,12 @@ impl TreeUi {
             now_unix_secs,
             intl,
         );
-        self.static_layer.plan(renderer, frame)
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "display sizes are well below f32 mantissa precision"
+        )]
+        let (width, height) = (tree.size.0 as f32, tree.size.1 as f32);
+        self.layered.begin(renderer, frame, target, width, height)
     }
 
     #[expect(
@@ -421,10 +426,11 @@ impl TreeUi {
         let now_unix_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs().cast_signed());
-        let plan = self.plan_layer(
+        let frame = self.plan_layer(
             renderer,
             tree,
             layering,
+            target,
             fresh,
             now_unix_secs,
             intl,
@@ -439,27 +445,20 @@ impl TreeUi {
             reason = "display sizes are well below f32 mantissa precision"
         )]
         let (width, height) = (tree.size.0 as f32, tree.size.1 as f32);
-        let damage = self.damage.damage_for(target, width, height);
         let mut ctx = ProcessContext {
-            static_layer: self.static_layer.layer_use(plan),
-            damage_rects: &damage,
+            static_layer: self.layered.layer_use(&frame),
+            damage_rects: frame.damage(),
             stroke_outlines: bmc_render::tree::debug_layout_enabled(),
             ..self.walk.next_context(delta_ms, now_unix_secs, intl)
         };
         let (result, has_active_animations) =
             layout_and_render(&tree.node, width, height, renderer, &mut timings, &mut ctx)?;
-        let committed = self.static_layer.commit(
+        let repaint = self.layered.finish(
             renderer,
-            plan,
-            result.static_layer,
-            AssetGeneration::Unchanging,
-        );
-        let repaint = self.damage.walked(
-            committed,
-            fresh,
+            frame,
             result.static_layer,
             &result.dynamic_rects,
-            damage,
+            AssetGeneration::Unchanging,
         );
         Ok(TreeFrame {
             profile: TreeFrameProfile {

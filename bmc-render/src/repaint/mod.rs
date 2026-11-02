@@ -28,9 +28,11 @@
 use std::cell::RefCell;
 
 use crate::interaction::{CoalesceIterExt, Rect};
-use crate::partition::static_layer::LayerCommit;
+use crate::partition::static_layer::{
+    AssetGeneration, FrameTree, LayerCommit, LayerPlan, StaticLayerCache,
+};
 use crate::renderer::{FrameBackground, FrameClear, Renderer};
-use crate::tree::StaticLayer;
+use crate::tree::{LayerUse, StaticLayer};
 
 /// Frames that must reach every buffer, rather than only the one they paint,
 /// repeat this many times. The hosts own the real count
@@ -192,7 +194,7 @@ impl DamageHistory {
     /// kept only for a frame that `replays_over_layer`, the cached tree over its static layer,
     /// with damage to scissor to.
     #[must_use]
-    pub fn target_for(&self, replays_over_layer: bool, width: f32, height: f32) -> TargetContents {
+    fn target_for(&self, replays_over_layer: bool, width: f32, height: f32) -> TargetContents {
         if replays_over_layer && !self.frame_damage(width, height).is_empty() {
             TargetContents::Preserved
         } else {
@@ -203,7 +205,7 @@ impl DamageHistory {
     /// The damage a frame over `target` scissors to:
     /// none over a cleared one, which the frame repaints in full.
     #[must_use]
-    pub fn damage_for(&self, target: TargetContents, width: f32, height: f32) -> Vec<Rect> {
+    fn damage_for(&self, target: TargetContents, width: f32, height: f32) -> Vec<Rect> {
         match target {
             TargetContents::Preserved => self.frame_damage(width, height),
             TargetContents::Cleared => Vec::new(),
@@ -216,7 +218,7 @@ impl DamageHistory {
     /// A frame whose static half may differ from what the other buffers hold
     /// owes them a full repaint: one that drew the layer anew,
     /// or a `fresh` tree painted without one.
-    pub fn walked(
+    fn walked(
         &mut self,
         committed: LayerCommit,
         fresh: bool,
@@ -250,9 +252,7 @@ impl DamageHistory {
         self.stale_buffers = self.stale_buffers.saturating_sub(1);
     }
 
-    /// Owe every buffer a full repaint, as a target whose buffers
-    /// hold nothing this history describes leaves them.
-    pub fn owe_every_buffer(&mut self) {
+    fn owe_every_buffer(&mut self) {
         self.stale_buffers = EXPORT_BUFFERS;
     }
 
@@ -260,6 +260,151 @@ impl DamageHistory {
     #[must_use]
     pub fn owed_full_repaints(&self) -> usize {
         self.stale_buffers
+    }
+}
+
+/// A tree's static layer together with the damage history of the buffers it paints into,
+/// so every host plans, scissors and commits a frame by the same rules.
+///
+/// The walk itself stays with the host, which brings its own context to it.
+#[derive(Debug)]
+pub struct LayeredTree {
+    static_layer: StaticLayerCache,
+    damage: DamageHistory,
+}
+
+/// What one frame does with its tree's layer, and the damage it scissors to.
+#[derive(Debug)]
+pub struct LayeredFrame {
+    plan: LayerPlan,
+    fresh: bool,
+    damage: Vec<Rect>,
+}
+
+impl LayeredFrame {
+    /// The regions the walk repaints over a kept target; empty to repaint everything.
+    #[must_use]
+    pub fn damage(&self) -> &[Rect] {
+        &self.damage
+    }
+
+    #[must_use]
+    pub fn plan(&self) -> &LayerPlan {
+        &self.plan
+    }
+}
+
+impl LayeredTree {
+    #[must_use]
+    pub fn new(static_layer: StaticLayerCache) -> Self {
+        Self {
+            static_layer,
+            damage: DamageHistory::default(),
+        }
+    }
+
+    /// What the next frame may find in its target:
+    /// kept only for one that `replays` the cached tree over the layer, with damage to scissor to.
+    #[must_use]
+    pub fn target_for(&self, replays: bool, width: f32, height: f32) -> TargetContents {
+        self.damage
+            .target_for(replays && self.static_layer.is_on(), width, height)
+    }
+
+    /// Plan `tree`'s frame over a target holding `target`.
+    pub fn begin(
+        &mut self,
+        renderer: &mut dyn Renderer,
+        tree: FrameTree,
+        target: TargetContents,
+        width: f32,
+        height: f32,
+    ) -> LayeredFrame {
+        let fresh = tree.fresh;
+        LayeredFrame {
+            plan: self.static_layer.plan(renderer, tree),
+            fresh,
+            damage: self.damage.damage_for(target, width, height),
+        }
+    }
+
+    /// Plan a frame that paints the tree in full and leaves the layer alone.
+    #[must_use]
+    pub fn begin_unlayered(fresh: bool) -> LayeredFrame {
+        LayeredFrame {
+            plan: LayerPlan::Ignore,
+            fresh,
+            damage: Vec::new(),
+        }
+    }
+
+    /// What the walk of `frame` is asked to do with the layer.
+    #[must_use]
+    pub fn layer_use(&self, frame: &LayeredFrame) -> LayerUse<'_> {
+        self.static_layer.layer_use(frame.plan)
+    }
+
+    /// Account for the walk of `frame`, which did `static_layer` with the layer
+    /// and moved `dynamic_rects`, and say how it repainted its target.
+    ///
+    /// `walked_assets` is the asset generation after the walk,
+    /// as [`StaticLayerCache::commit`] takes it.
+    pub fn finish(
+        &mut self,
+        renderer: &mut dyn Renderer,
+        frame: LayeredFrame,
+        static_layer: StaticLayer,
+        dynamic_rects: &[Rect],
+        walked_assets: AssetGeneration,
+    ) -> FrameRepaint {
+        let committed = self
+            .static_layer
+            .commit(renderer, frame.plan, static_layer, walked_assets);
+        self.damage.walked(
+            committed,
+            frame.fresh,
+            static_layer,
+            dynamic_rects,
+            frame.damage,
+        )
+    }
+
+    /// Account for a frame whose walk failed partway through its target:
+    /// count on the layer no more, and repaint every buffer in full.
+    pub fn fail(&mut self) {
+        self.static_layer.forget();
+        self.damage.owe_every_buffer();
+    }
+
+    /// Repaint every buffer in full, for a target whose buffers
+    /// hold nothing the damage history describes.
+    pub fn owe_every_buffer(&mut self) {
+        self.damage.owe_every_buffer();
+    }
+
+    /// Free the layer in `renderer`, as [`StaticLayerCache::release`] does.
+    pub fn release(&mut self, renderer: &mut dyn Renderer) {
+        self.static_layer.release(renderer);
+    }
+
+    #[must_use]
+    pub fn static_layer(&self) -> &StaticLayerCache {
+        &self.static_layer
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn static_layer_mut(&mut self) -> &mut StaticLayerCache {
+        &mut self.static_layer
+    }
+
+    #[must_use]
+    pub fn damage(&self) -> &DamageHistory {
+        &self.damage
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn damage_mut(&mut self) -> &mut DamageHistory {
+        &mut self.damage
     }
 }
 

@@ -1480,13 +1480,11 @@ impl WasmWidgetRuntime {
         // may show though the tree is unchanged, and with a `RelTime` label that changed width
         // and resized the static content around it.
         // The recapture is also the draw a suspended asset is restored on.
-        let frame = state.layer_frame(tree_node, static_bytes, false, now_unix_secs);
-        let plan = state.static_layer.plan(renderer, frame);
-
-        let damage = state.damage.damage_for(target, width, height);
+        let tree = state.layer_frame(tree_node, static_bytes, false, now_unix_secs);
+        let frame = state.layered.begin(renderer, tree, target, width, height);
         let mut ctx = bmc_render::ProcessContext {
-            static_layer: state.static_layer.layer_use(plan),
-            damage_rects: &damage,
+            static_layer: state.layered.layer_use(&frame),
+            damage_rects: frame.damage(),
             layout_outlines: state.layout_outlines.is_some(),
             stroke_outlines: bmc_render::tree::debug_layout_enabled(),
             ..state
@@ -1513,7 +1511,7 @@ impl WasmWidgetRuntime {
             Ok(observation) => state.last_asset_restoration = observation,
             Err(error) => {
                 state.renderer_asset_failure = Some(error);
-                state.static_layer.forget();
+                state.layered.fail();
                 return false;
             }
         }
@@ -1527,16 +1525,12 @@ impl WasmWidgetRuntime {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
                 let walked_assets = AssetGeneration::Ledger(state.renderer_assets.generation());
-                let committed =
-                    state
-                        .static_layer
-                        .commit(renderer, plan, result.static_layer, walked_assets);
-                state.last_repaint = state.damage.walked(
-                    committed,
-                    false,
+                state.last_repaint = state.layered.finish(
+                    renderer,
+                    frame,
                     result.static_layer,
                     &result.dynamic_rects,
-                    damage,
+                    walked_assets,
                 );
                 state.keep_outlines(result.layout_outlines);
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
@@ -1550,7 +1544,7 @@ impl WasmWidgetRuntime {
             }
             Err(e) => {
                 tracing::error!("cached tree render failed: {e}");
-                state.static_layer.forget();
+                state.layered.fail();
                 true
             }
         }
@@ -1853,7 +1847,7 @@ impl WasmWidgetRuntime {
             // the same thread, and single-threaded wasmi dispatch keeps the
             // borrow unique for its duration.
             let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
-            state.static_layer.release(renderer);
+            state.layered.release(renderer);
         });
     }
 
@@ -1863,7 +1857,7 @@ impl WasmWidgetRuntime {
     /// describes the target they replaced. Scissoring to it would paint the
     /// moving regions onto an undefined buffer and leave the rest black.
     pub fn invalidate_export_buffers(&mut self) {
-        self.store.data_mut().damage.owe_every_buffer();
+        self.store.data_mut().layered.owe_every_buffer();
     }
 
     /// Deliver queued hooks with renderer access for suspension and guest imports.
@@ -2139,11 +2133,11 @@ impl WasmWidgetRuntime {
     )]
     pub fn next_frame_target(&self, width: u32, height: u32) -> TargetContents {
         let state = self.store.data();
-        let replays_over_layer =
-            !self.fuel_dead && state.will_replay_cached_tree() && state.static_layer.is_on();
-        state
-            .damage
-            .target_for(replays_over_layer, width as f32, height as f32)
+        state.layered.target_for(
+            !self.fuel_dead && state.will_replay_cached_tree(),
+            width as f32,
+            height as f32,
+        )
     }
 
     /// Per-component timing breakdown from the last rendered frame.
@@ -2182,7 +2176,9 @@ impl WasmWidgetRuntime {
         let state = self.store.data();
         match state.last_repaint {
             FrameRepaint::NoTree => None,
-            FrameRepaint::Full | FrameRepaint::Damage { .. } => Some(state.damage.newest()),
+            FrameRepaint::Full | FrameRepaint::Damage { .. } => {
+                Some(state.layered.damage().newest())
+            }
         }
     }
 
@@ -2354,7 +2350,7 @@ impl WasmWidgetRuntime {
     #[doc(hidden)]
     #[must_use]
     pub fn static_layer_owner_for_test(&self) -> bmc_render::renderer::LayerOwner {
-        self.store.data().static_layer.owner().clone()
+        self.store.data().layered.static_layer().owner().clone()
     }
 
     #[doc(hidden)]
@@ -2941,7 +2937,7 @@ mod tests {
             height: 40.0,
             static_bytes: bmc_render::partition::StaticBytesKey(0),
         });
-        state.damage =
+        *state.layered.damage_mut() =
             bmc_render::repaint::DamageHistory::settled(&[Rect::new(0.0, 0.0, 40.0, 40.0)]);
         assert!(
             runtime.next_frame_target(480, 480) == crate::TargetContents::Preserved,
@@ -3069,9 +3065,14 @@ mod tests {
         );
         replay(&mut runtime, &mut renderer, true);
         let state = runtime.store.data_mut();
+        assert_eq!(
+            state.layered.damage().owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS,
+            "a walk that failed may have left its target half painted"
+        );
         let frame = state.layer_frame(&panel(), bytes, false, state.system_time.timestamp());
         assert!(matches!(
-            state.static_layer.plan(&mut renderer, frame),
+            state.layered.static_layer_mut().plan(&mut renderer, frame),
             bmc_render::partition::static_layer::LayerPlan::Capture(_)
         ));
     }
@@ -3102,7 +3103,8 @@ mod tests {
             16,
             crate::TargetContents::Cleared
         ));
-        runtime.store.data_mut().damage = bmc_render::repaint::DamageHistory::settled(&[]);
+        *runtime.store.data_mut().layered.damage_mut() =
+            bmc_render::repaint::DamageHistory::settled(&[]);
 
         renderer.invalidate_static_layer(&runtime.static_layer_owner_for_test());
         assert!(runtime.replay_cached_tree_for_test(
@@ -3110,7 +3112,10 @@ mod tests {
             16,
             crate::TargetContents::Cleared
         ));
-        assert_eq!(runtime.store.data().damage.owed_full_repaints(), 0);
+        assert_eq!(
+            runtime.store.data().layered.damage().owed_full_repaints(),
+            0
+        );
     }
 
     /// A replay planned to reuse its layer, whose walk captured it again
@@ -3139,7 +3144,8 @@ mod tests {
             16,
             crate::TargetContents::Cleared
         ));
-        runtime.store.data_mut().damage = bmc_render::repaint::DamageHistory::default();
+        *runtime.store.data_mut().layered.damage_mut() =
+            bmc_render::repaint::DamageHistory::default();
 
         renderer.begin_frame_with_clear(
             100,
@@ -3154,7 +3160,7 @@ mod tests {
             crate::TargetContents::Cleared
         ));
         assert_eq!(
-            runtime.store.data().damage.owed_full_repaints(),
+            runtime.store.data().layered.damage().owed_full_repaints(),
             bmc_render::repaint::EXPORT_BUFFERS - 1,
             "the other buffers still show the layer captured over the old background"
         );
@@ -3189,7 +3195,7 @@ mod tests {
 
         let moved = Rect::new(10.0, 10.0, 10.0, 10.0);
         let state = runtime.store.data_mut();
-        state.damage = bmc_render::repaint::DamageHistory::settled(&[moved]);
+        *state.layered.damage_mut() = bmc_render::repaint::DamageHistory::settled(&[moved]);
         assert!(runtime.replay_cached_tree_for_test(
             renderer_ptr(&mut renderer),
             16,
@@ -3254,7 +3260,7 @@ mod tests {
             if frame == 0 {
                 let moved = Rect::new(10.0, 10.0, 10.0, 10.0);
                 let state = runtime.store.data_mut();
-                state.damage = bmc_render::repaint::DamageHistory::settled(&[moved]);
+                *state.layered.damage_mut() = bmc_render::repaint::DamageHistory::settled(&[moved]);
             }
             let moving = runtime
                 .last_dynamic_rects()

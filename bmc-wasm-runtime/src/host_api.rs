@@ -47,7 +47,7 @@ use bmc_render::partition::static_layer::{
     AssetGeneration, FrameTree, MissPolicy, StaticLayerCache,
 };
 use bmc_render::renderer::Renderer;
-use bmc_render::repaint::{DamageHistory, FrameRepaint};
+use bmc_render::repaint::{FrameRepaint, LayeredTree};
 use bmc_render::tree::WalkState;
 
 use bmc_ui::AudioId;
@@ -1024,9 +1024,6 @@ pub(crate) struct HostState {
     /// Delta time since last frame (for animations)
     pub delta_ms: u32,
 
-    /// The regions the last walks moved and the export buffers owed a full repaint.
-    pub damage: DamageHistory,
-
     /// How the last frame repainted its target.
     pub last_repaint: FrameRepaint,
 
@@ -1035,8 +1032,9 @@ pub(crate) struct HostState {
     /// Shared, so a report taken every tick only counts a reference.
     pub layout_outlines: Option<Arc<[bmc_render::tree::LayoutOutline]>>,
 
-    /// The widget's static layer in the renderer, under its instance id.
-    pub static_layer: StaticLayerCache,
+    /// The widget's static layer in the renderer, under its instance id,
+    /// and the damage history of the export buffers it paints into.
+    pub layered: LayeredTree,
 
     /// The last committed tree, which animation-only frames replay.
     pub cached_tree: Option<CachedTree>,
@@ -1486,7 +1484,7 @@ impl HostState {
         let (image_decode_tx, image_decode_rx) = mpsc::channel();
         let instance_id = synthetic_instance_id();
         Self {
-            static_layer: widget_static_layer(&instance_id),
+            layered: LayeredTree::new(widget_static_layer(&instance_id)),
             renderer_ptr: None,
             renderer_gpu_access: None,
             renderer_gpu_access_failure: None,
@@ -1504,7 +1502,6 @@ impl HostState {
             tree_clicks: HashMap::new(),
             tree_drags: HashMap::new(),
             delta_ms: 0,
-            damage: DamageHistory::default(),
             last_repaint: FrameRepaint::NoTree,
             layout_outlines: None,
             cached_tree: None,
@@ -1754,10 +1751,10 @@ impl HostState {
     /// Name the widget `instance_id`, which also owns its static layer.
     pub(crate) fn set_instance_id(&mut self, instance_id: String) {
         assert!(
-            !self.static_layer.may_hold_layer(),
+            !self.layered.static_layer().may_hold_layer(),
             "BUG: renaming a widget after a capture orphans its layer in the renderer"
         );
-        self.static_layer = widget_static_layer(&instance_id);
+        self.layered = LayeredTree::new(widget_static_layer(&instance_id));
         self.instance_id = InstanceId(instance_id);
     }
 }
@@ -2074,7 +2071,7 @@ mod tests {
             scrolling: false,
             fresh: true,
         };
-        let plan = state.static_layer.plan(&mut layers, tree);
+        let plan = state.layered.static_layer_mut().plan(&mut layers, tree);
         (state, layers, plan)
     }
 
@@ -2086,8 +2083,8 @@ mod tests {
         use bmc_render::tree::StaticLayer;
 
         let (mut state, mut layers, plan) = planned_capture();
-        assert!(layers.begin_static_layer(state.static_layer.owner(), 100, 20));
-        state.static_layer.commit(
+        assert!(layers.begin_static_layer(state.layered.static_layer().owner(), 100, 20));
+        state.layered.static_layer_mut().commit(
             &mut layers,
             plan,
             StaticLayer::Captured { empty: false },
@@ -2101,7 +2098,7 @@ mod tests {
     fn renaming_a_widget_after_a_failed_walk_is_a_bug() {
         let (mut state, _layers, _) = planned_capture();
         // The walk began the capture and failed before its commit.
-        state.static_layer.forget();
+        state.layered.fail();
         state.set_instance_id("renamed".to_owned());
     }
 
@@ -2191,7 +2188,7 @@ mod tests {
             chrono::Local::now().fixed_offset(),
             FetchAgent::default(),
         );
-        state.damage = DamageHistory::settled(&[Rect::new(0.0, 0.0, 40.0, 40.0)]);
+        *state.layered.damage_mut() = DamageHistory::settled(&[Rect::new(0.0, 0.0, 40.0, 40.0)]);
         state
     }
 
@@ -2225,7 +2222,13 @@ mod tests {
             .push_event(bmc_render::interaction::TouchEvent::Down { x: 1.0, y: 1.0 });
 
         assert!(!state.will_replay_cached_tree());
-        assert!(!state.damage.frame_damage(1280.0, 480.0).is_empty());
+        assert!(
+            !state
+                .layered
+                .damage()
+                .frame_damage(1280.0, 480.0)
+                .is_empty()
+        );
     }
 
     /// `request_frame_after` elapsing runs the guest — every widget with a
