@@ -32,7 +32,7 @@ use bmc_ui::Color;
 use wasmi::{Caller, Linker};
 
 use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
-use bmc_render::partition::static_layer::{AssetGeneration, LayerCommit, LayerPlan};
+use bmc_render::partition::static_layer::{AssetGeneration, LayerPlan};
 use bmc_render::renderer::Renderer;
 use bmc_render::tree;
 use bmc_render::{FrameTimings, layout_and_render_with_asset_resolver};
@@ -357,17 +357,15 @@ fn commit_submitted_frame(
         state
             .static_layer
             .commit(renderer, frame.plan, result.static_layer, walked_assets);
-    // This frame painted the buffer it holds in full. One that reused its layer, blitted or
-    // missed, kept its static half. Any other may have changed it, and every other buffer
-    // keeps showing the old one until it repaints in full too.
-    match committed {
-        LayerCommit::Reused | LayerCommit::Missed => state.painted_in_full(),
-        LayerCommit::Rewritten | LayerCommit::Unlayered => {
-            state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
-        }
-    }
-    state.keep_walk(&result.dynamic_rects, result.layout_outlines);
-    state.last_repaint = crate::host_api::FrameRepaint::Full;
+    // A guest frame paints over a cleared target, so it hands the walk no damage.
+    state.last_repaint = state.damage.walked(
+        committed,
+        true,
+        result.static_layer,
+        &result.dynamic_rects,
+        Vec::new(),
+    );
+    state.keep_outlines(result.layout_outlines);
 }
 
 fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
@@ -525,7 +523,7 @@ mod tests {
         let (mut renderer, mut state) = (ShapingRecorder::default(), state());
         commit_empty_capture(&mut renderer, &mut state);
         assert!(
-            matches!(state.last_repaint, crate::host_api::FrameRepaint::Full),
+            matches!(state.last_repaint, bmc_render::repaint::FrameRepaint::Full),
             "got {:?}",
             state.last_repaint
         );
@@ -541,13 +539,13 @@ mod tests {
             StaticLayer::Captured { empty: false },
         );
         assert_eq!(
-            state.stale_export_buffers,
-            crate::host_api::EXPORT_BUFFERS - 1
+            state.damage.owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS - 1
         );
         commit(&mut renderer, &mut state, OTHER_BYTES, StaticLayer::Blitted);
         assert_eq!(
-            state.stale_export_buffers,
-            crate::host_api::EXPORT_BUFFERS - 2
+            state.damage.owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS - 2
         );
     }
 
@@ -562,8 +560,8 @@ mod tests {
         );
         commit(&mut renderer, &mut state, OTHER_BYTES, StaticLayer::Missed);
         assert_eq!(
-            state.stale_export_buffers,
-            crate::host_api::EXPORT_BUFFERS - 2,
+            state.damage.owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS - 2,
             "a miss repaints its buffer in full and keeps the static half"
         );
     }
@@ -577,7 +575,7 @@ mod tests {
             OTHER_BYTES,
             StaticLayer::Captured { empty: false },
         );
-        state.stale_export_buffers = 0;
+        state.damage = bmc_render::repaint::DamageHistory::default();
         let reuse = plan(&mut renderer, &mut state, &panel(), OTHER_BYTES);
         assert!(matches!(reuse, LayerPlan::Reuse(_)));
         // As when the layer was stale against the frame's background, so the walk captured it.
@@ -589,8 +587,8 @@ mod tests {
             StaticLayer::Captured { empty: false },
         );
         assert_eq!(
-            state.stale_export_buffers,
-            crate::host_api::EXPORT_BUFFERS - 1,
+            state.damage.owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS - 1,
             "the other buffers still show the static half the walk replaced"
         );
     }

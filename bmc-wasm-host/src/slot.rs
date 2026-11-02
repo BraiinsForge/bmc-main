@@ -997,7 +997,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
                 target_width,
                 target_height,
                 |shared| {
-                    let contents = target_contents(runtime, target_width, target_height);
+                    let contents = runtime.next_frame_target(target_width, target_height);
                     bind_export_target_for_frame(
                         shared,
                         &mut egl_target.buffers,
@@ -1597,27 +1597,6 @@ impl HostRenderProfiling {
         _started: HostRenderPhaseStart,
         _context: HostRenderFrameContext,
     ) {
-    }
-}
-
-/// What the upcoming frame will find in its target.
-///
-/// One answer drives both the clear and the runtime's damage decision: derive
-/// them separately and a frame could keep its pixels while repainting all of
-/// them, or scissor to the damage over a target that was just wiped.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "surface dimensions are well under f32 precision"
-)]
-fn target_contents(
-    runtime: &bmc_wasm_runtime::WasmWidgetRuntime,
-    width: u32,
-    height: u32,
-) -> TargetContents {
-    if runtime.next_frame_preserves_target(width as f32, height as f32) {
-        TargetContents::Preserved
-    } else {
-        TargetContents::Cleared
     }
 }
 

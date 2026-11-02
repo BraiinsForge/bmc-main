@@ -1112,8 +1112,8 @@ impl<B> Default for TwoSlotBufferCache<B> {
 ///
 /// The compositor samples one while the widget paints the other, so a frame
 /// that must reach every buffer — seeding a fresh one, repainting after a
-/// wake — repeats this many times. `bmc_wasm_runtime`'s `EXPORT_BUFFERS`
-/// mirrors it for its damage bookkeeping; `bmc-wasm-host` asserts the two agree.
+/// wake — repeats this many times. `bmc_render::repaint::EXPORT_BUFFERS`
+/// mirrors it for its damage bookkeeping; the hosts assert the two agree.
 pub const EXPORT_BUFFER_SLOTS: usize = 2;
 
 pub struct DoubleBufferState {

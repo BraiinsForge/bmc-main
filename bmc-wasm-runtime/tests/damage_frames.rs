@@ -297,15 +297,10 @@ fn assert_damage_tracking_matches_full_repaints(trees: &[Vec<u8>; 2]) {
         let buffer = frame % 2;
         tracked.target.attach(gl.as_ref(), buffer);
         let asked_for = tracked.runtime.wants_next_frame();
-        let keeps_target = tracked
+        let contents = tracked
             .runtime
-            .next_frame_preserves_target(f32::from(W), f32::from(H));
-        frames.push((asked_for, keeps_target));
-        let contents = if keeps_target {
-            TargetContents::Preserved
-        } else {
-            TargetContents::Cleared
-        };
+            .next_frame_target(u32::from(W), u32::from(H));
+        frames.push((asked_for, contents == TargetContents::Preserved));
         tracked.paint(contents);
 
         let expected = reference.target.read(gl.as_ref());

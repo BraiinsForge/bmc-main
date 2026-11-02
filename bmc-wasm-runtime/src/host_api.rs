@@ -29,7 +29,6 @@
 use chrono::{DateTime, FixedOffset};
 #[cfg(feature = "audio")]
 use std::cell::OnceCell;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
@@ -43,12 +42,12 @@ use std::time::Duration;
 use serde_json::Value;
 use taffy::prelude::*;
 
-use bmc_render::interaction::{CoalesceIterExt, Rect};
 use bmc_render::partition::StaticBytesKey;
 use bmc_render::partition::static_layer::{
     AssetGeneration, FrameTree, MissPolicy, StaticLayerCache,
 };
 use bmc_render::renderer::Renderer;
+use bmc_render::repaint::{DamageHistory, FrameRepaint};
 use bmc_render::tree::WalkState;
 
 use bmc_ui::AudioId;
@@ -1025,16 +1024,8 @@ pub(crate) struct HostState {
     /// Delta time since last frame (for animations)
     pub delta_ms: u32,
 
-    /// Dynamic regions from the last two walks, in logical pixels.
-    ///
-    /// Two, because the export buffers rotate: the buffer being drawn into was
-    /// last painted two frames ago, so anything that moved in *either* of the
-    /// intervening frames still has to be repainted or a stale pixel survives.
-    pub recent_dynamic_rects: [Vec<Rect>; 2],
-
-    /// [`Self::frame_damage`]'s last answer and the inputs it came from:
-    /// the host asks twice a frame, and merging the rects costs more than comparing them.
-    damage_memo: RefCell<Option<DamageMemo>>,
+    /// The regions the last walks moved and the export buffers owed a full repaint.
+    pub damage: DamageHistory,
 
     /// How the last frame repainted its target.
     pub last_repaint: FrameRepaint,
@@ -1046,17 +1037,6 @@ pub(crate) struct HostState {
 
     /// The widget's static layer in the renderer, under its instance id.
     pub static_layer: StaticLayerCache,
-
-    /// How many upcoming frames must repaint in full because the export buffer
-    /// they will paint does not hold what the frame before it showed.
-    ///
-    /// A frame paints one buffer, so changed static content reaches only that
-    /// one while the next frame scissors to damage — and the two alternate on
-    /// screen, flickering the change in and out at the display rate.
-    ///
-    /// Waking sets the full count rather than one: a dormant slot has no render
-    /// target, so every buffer is newly allocated and holds nothing.
-    pub stale_export_buffers: usize,
 
     /// The last committed tree, which animation-only frames replay.
     pub cached_tree: Option<CachedTree>,
@@ -1524,11 +1504,9 @@ impl HostState {
             tree_clicks: HashMap::new(),
             tree_drags: HashMap::new(),
             delta_ms: 0,
-            recent_dynamic_rects: [Vec::new(), Vec::new()],
-            damage_memo: RefCell::new(None),
+            damage: DamageHistory::default(),
             last_repaint: FrameRepaint::NoTree,
             layout_outlines: None,
-            stale_export_buffers: 0,
             cached_tree: None,
             guest_tree: GuestTree::Pending,
             system_time,
@@ -1717,41 +1695,7 @@ impl HostState {
     }
 }
 
-/// Export buffers the host rotates through per slot.
-///
-/// Frames that must reach every buffer, rather than only the one they paint,
-/// repeat this many times. The host owns the real count
-/// (`bmc_widget::egl::EXPORT_BUFFER_SLOTS`) and asserts the two agree at
-/// compile time; this crate cannot see it to check for itself.
-pub const EXPORT_BUFFERS: usize = 2;
-
 impl HostState {
-    /// Damage for the frame about to render, or empty to repaint everything.
-    ///
-    /// Reads [`Self::stale_export_buffers`] first: a frame catching a buffer up
-    /// on content it never received is painting exactly what the dynamic
-    /// regions leave out.
-    pub(crate) fn frame_damage(&self, width: f32, height: f32) -> Vec<Rect> {
-        if self.stale_export_buffers > 0 {
-            return Vec::new();
-        }
-        let size = (width.to_bits(), height.to_bits());
-        let mut memo = self.damage_memo.borrow_mut();
-        if let Some(memo) = memo.as_ref()
-            && memo.size == size
-            && memo.recent == self.recent_dynamic_rects
-        {
-            return memo.damage.clone();
-        }
-        let damage = damage_rects(&self.recent_dynamic_rects, width, height);
-        *memo = Some(DamageMemo {
-            size,
-            recent: self.recent_dynamic_rects.clone(),
-            damage: damage.clone(),
-        });
-        damage
-    }
-
     /// Whether the next frame replays the cached tree instead of running the
     /// guest.
     ///
@@ -1777,27 +1721,11 @@ impl HostState {
             .is_some_and(|deadline_ms| self.monotonic_ms >= deadline_ms)
     }
 
-    /// Keep what a walk reported for later frames and the host.
-    ///
-    /// Its regions become the newest of the damage history,
-    /// a pair because it has to span the buffer rotation.
-    pub(crate) fn keep_walk(
-        &mut self,
-        dynamic_rects: &[Rect],
-        outlines: Vec<bmc_render::tree::LayoutOutline>,
-    ) {
-        self.recent_dynamic_rects.swap(0, 1);
-        let newest = &mut self.recent_dynamic_rects[0];
-        newest.clear();
-        newest.extend_from_slice(dynamic_rects);
+    /// Keep the boxes a walk laid out, while a host outlines them.
+    pub(crate) fn keep_outlines(&mut self, outlines: Vec<bmc_render::tree::LayoutOutline>) {
         if let Some(kept) = &mut self.layout_outlines {
             *kept = outlines.into();
         }
-    }
-
-    /// Account for a frame that repainted its whole target.
-    pub(crate) fn painted_in_full(&mut self) {
-        self.stale_export_buffers = self.stale_export_buffers.saturating_sub(1);
     }
 
     /// What the static layer cache needs to know about `tree_node`, a tree of this widget
@@ -1845,86 +1773,6 @@ fn widget_static_layer(instance_id: &str) -> StaticLayerCache {
     )
 }
 
-/// How a frame repainted its target.
-#[derive(Debug, Clone)]
-pub enum FrameRepaint {
-    /// No tree was painted this frame;
-    /// the target holds whatever was laid down before it.
-    NoTree,
-    /// The tree was painted over the whole target.
-    Full,
-    /// The static layer was blitted back only under `blitted`,
-    /// and the dynamic draws painted over the rest an earlier frame left.
-    Damage { blitted: Vec<Rect> },
-}
-
-impl FrameRepaint {
-    /// How a walk handed `damage` repainted, from what it did with its static layer:
-    /// only a blit under the damage leaves the rest of the target alone.
-    /// Relies on `render_tree` blitting under the damage whenever there is any.
-    pub(crate) fn of_walk(static_layer: bmc_render::tree::StaticLayer, damage: Vec<Rect>) -> Self {
-        use bmc_render::tree::StaticLayer;
-        match static_layer {
-            StaticLayer::Blitted if !damage.is_empty() => Self::Damage { blitted: damage },
-            StaticLayer::Unused
-            | StaticLayer::Captured { .. }
-            | StaticLayer::Blitted
-            | StaticLayer::Missed => Self::Full,
-        }
-    }
-}
-
-/// A [`HostState::frame_damage`] answer with the surface size, as bits,
-/// and the two walks' rects it was worked out from.
-struct DamageMemo {
-    size: (u32, u32),
-    recent: [Vec<Rect>; 2],
-    damage: Vec<Rect>,
-}
-
-/// How much larger than the two rects apart a merged damage rect may be.
-///
-/// The blit paints each rect separately, so merging only pays while the union
-/// covers no more than the pair does.
-const DAMAGE_MERGE_TOLERANCE: f32 = 1.0;
-
-/// Damage covering the last two frames, or empty to repaint everything.
-///
-/// Empty when the regions cover more of the surface than `BMC_DAMAGE_MAX_PCT`
-/// (default 60): past that the bookkeeping and extra draw calls cost more than
-/// the pixels they save.
-pub fn damage_rects(recent: &[Vec<Rect>; 2], width: f32, height: f32) -> Vec<Rect> {
-    let surface = width * height;
-    if surface <= 0.0 || recent.iter().all(Vec::is_empty) {
-        return Vec::new();
-    }
-    let rects = recent
-        .iter()
-        .flatten()
-        .copied()
-        .coalesce_within(DAMAGE_MERGE_TOLERANCE);
-    // Rectangles that cross survive coalescing,
-    // so their shared area counts twice, just as the per-rect blit paints it.
-    let covered: f32 = rects.iter().map(|Rect { w, h, .. }| w * h).sum();
-    if covered / surface > damage_max_fraction() {
-        return Vec::new();
-    }
-    rects
-}
-
-/// Share of the surface above which damage tracking is abandoned.
-fn damage_max_fraction() -> f32 {
-    static MAX: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *MAX.get_or_init(|| {
-        std::env::var("BMC_DAMAGE_MAX_PCT")
-            .ok()
-            .and_then(|v| v.parse::<f32>().ok())
-            .filter(|pct| (0.0..=100.0).contains(pct))
-            .unwrap_or(60.0)
-            / 100.0
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::OpenOptions;
@@ -1932,43 +1780,15 @@ mod tests {
     use super::{
         CancelDisposition, CompletedFetch, DecodedImage, DelayedFetch, FetchCompletionContext,
         FetchRequestKey, FetchState, FrameScheduleState, HermeticRun, HostState,
-        MAX_FETCH_URL_BYTES, RendererAssetGate, damage_rects,
+        MAX_FETCH_URL_BYTES, RendererAssetGate,
     };
     use bmc_render::interaction::Rect;
+    use bmc_render::repaint::DamageHistory;
     use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
     use crate::image_decode_lock::ImageDecodePermit;
     use crate::runtime::FetchAgent;
     use crate::runtime_limits::RuntimeResourceLimits;
-
-    /// Only a blit under some regions leaves the rest of the target alone;
-    /// a whole-layer blit, a capture or a miss repaints all of it, whatever damage it was handed.
-    #[test]
-    fn only_a_partial_blit_reports_a_damage_repaint() {
-        use bmc_render::tree::StaticLayer;
-        let region = Rect::new(1.0, 2.0, 3.0, 4.0);
-        let partial = super::FrameRepaint::of_walk(StaticLayer::Blitted, vec![region]);
-        assert!(
-            matches!(&partial, super::FrameRepaint::Damage { blitted } if blitted.len() == 1),
-            "got {partial:?}"
-        );
-        let whole_blit = super::FrameRepaint::of_walk(StaticLayer::Blitted, Vec::new());
-        assert!(
-            matches!(whole_blit, super::FrameRepaint::Full),
-            "got {whole_blit:?}"
-        );
-        for whole in [
-            StaticLayer::Captured { empty: false },
-            StaticLayer::Missed,
-            StaticLayer::Unused,
-        ] {
-            let repaint = super::FrameRepaint::of_walk(whole, vec![region]);
-            assert!(
-                matches!(repaint, super::FrameRepaint::Full),
-                "got {repaint:?}"
-            );
-        }
-    }
 
     #[test]
     fn decoded_image_holds_permit_while_rgba_is_consumed() {
@@ -2364,20 +2184,6 @@ mod tests {
         );
     }
 
-    /// Asked twice a frame, the damage is worked out once,
-    /// but a walk that moves the rects must not be answered from the last frame.
-    #[test]
-    fn frame_damage_follows_the_rects_it_comes_from() {
-        let mut state = state_with_damage();
-        assert_eq!(
-            state.frame_damage(1280.0, 480.0),
-            state.frame_damage(1280.0, 480.0)
-        );
-        let moved = Rect::new(600.0, 200.0, 40.0, 40.0);
-        state.recent_dynamic_rects = [vec![moved], vec![moved]];
-        assert_eq!(state.frame_damage(1280.0, 480.0), [moved]);
-    }
-
     /// A state carrying damage from two walks, as a settled widget has.
     fn state_with_damage() -> HostState {
         let mut state = HostState::new(
@@ -2385,67 +2191,8 @@ mod tests {
             chrono::Local::now().fixed_offset(),
             FetchAgent::default(),
         );
-        state.recent_dynamic_rects = [
-            vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
-            vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
-        ];
+        state.damage = DamageHistory::settled(&[Rect::new(0.0, 0.0, 40.0, 40.0)]);
         state
-    }
-
-    #[test]
-    fn a_settled_widget_scissors_to_its_damage() {
-        let state = state_with_damage();
-        assert!(!state.frame_damage(1280.0, 480.0).is_empty());
-    }
-
-    /// The pair spans the buffer rotation: this frame paints into the buffer the
-    /// frame *before* last drew, so covering only the newest walk leaves what
-    /// that one moved unrepainted — a trail behind anything moving.
-    #[test]
-    fn the_damage_span_covers_both_walks() {
-        let newest = Rect::new(0.0, 0.0, 20.0, 20.0);
-        let previous = Rect::new(60.0, 60.0, 20.0, 20.0);
-
-        let damage = super::damage_rects(&[vec![newest], vec![previous]], 200.0, 200.0);
-
-        for stale in [newest, previous] {
-            assert!(
-                damage.iter().any(|d| d.x <= stale.x
-                    && d.y <= stale.y
-                    && d.right() >= stale.right()
-                    && d.bottom() >= stale.bottom()),
-                "{stale:?} is left out of the damage span {damage:?}"
-            );
-        }
-    }
-
-    /// Waking allocates every export buffer afresh, while the damage history
-    /// survives dormancy describing a target that no longer exists. Scissoring
-    /// to it leaves the static half black.
-    #[test]
-    fn every_buffer_repaints_in_full_after_waking() {
-        let mut state = state_with_damage();
-        state.stale_export_buffers = super::EXPORT_BUFFERS;
-
-        for buffer in 0..super::EXPORT_BUFFERS {
-            assert!(
-                state.frame_damage(1280.0, 480.0).is_empty(),
-                "buffer {buffer} has never been painted, so nothing may be preserved"
-            );
-            state.painted_in_full();
-        }
-
-        assert!(
-            !state.frame_damage(1280.0, 480.0).is_empty(),
-            "every buffer holds a full frame now, so damage tracking resumes"
-        );
-    }
-
-    #[test]
-    fn painting_in_full_while_nothing_is_owed_stays_settled() {
-        let mut state = state_with_damage();
-        state.painted_in_full();
-        assert_eq!(state.stale_export_buffers, 0);
     }
 
     /// A state on the cadence of an animating widget with a cached tree, which
@@ -2478,7 +2225,7 @@ mod tests {
             .push_event(bmc_render::interaction::TouchEvent::Down { x: 1.0, y: 1.0 });
 
         assert!(!state.will_replay_cached_tree());
-        assert!(!state.frame_damage(1280.0, 480.0).is_empty());
+        assert!(!state.damage.frame_damage(1280.0, 480.0).is_empty());
     }
 
     /// `request_frame_after` elapsing runs the guest — every widget with a
@@ -2674,56 +2421,6 @@ mod tests {
         s.host_frame_delay_ms = Some(1_000);
         s.has_active_animations = true;
         assert_eq!(s.effective_delay_ms(0), Some(33));
-    }
-
-    #[test]
-    fn overlapping_damage_from_two_walks_merges_into_one_rect() {
-        // What the clock produces: a hand's rect from each walk, a couple of
-        // pixels apart, plus a separate region elsewhere on the surface.
-        let recent = [
-            vec![
-                Rect::new(100.0, 100.0, 200.0, 200.0),
-                Rect::new(0.0, 0.0, 10.0, 10.0),
-            ],
-            vec![Rect::new(102.0, 100.0, 200.0, 200.0)],
-        ];
-        let mut rects = damage_rects(&recent, 1280.0, 480.0);
-        rects.sort_by(|a, b| a.x.total_cmp(&b.x));
-        let corners: Vec<(f32, f32, f32, f32)> = rects.into_iter().map(Into::into).collect();
-        assert_eq!(
-            corners,
-            [(0.0, 0.0, 10.0, 10.0), (100.0, 100.0, 202.0, 200.0)],
-            "the two hand rects merge; the disjoint one is left alone"
-        );
-    }
-
-    #[test]
-    fn rects_overlapping_at_a_corner_stay_apart() {
-        // A 10x10 overlap, under a bounding box twice the pair's area.
-        let upper_left = Rect::new(400.0, 40.0, 210.0, 210.0);
-        let lower_right = Rect::new(600.0, 240.0, 200.0, 200.0);
-        let recent = [vec![upper_left, lower_right], Vec::new()];
-        let mut rects = damage_rects(&recent, 1280.0, 480.0);
-        rects.sort_by(|a, b| a.x.total_cmp(&b.x));
-        let corners: Vec<(f32, f32, f32, f32)> = rects.into_iter().map(Into::into).collect();
-        assert_eq!(corners, [upper_left.into(), lower_right.into()]);
-    }
-
-    #[test]
-    fn the_cap_is_measured_on_the_merged_area_not_the_double_count() {
-        // Two walks of the same 35%-of-surface region: 70% counted separately,
-        // 35% once merged — the difference decides whether tracking survives.
-        let region = Rect::new(0.0, 0.0, 1280.0 * 0.35, 480.0);
-        let recent = [vec![region], vec![region]];
-        let merged: Vec<(f32, f32, f32, f32)> = damage_rects(&recent, 1280.0, 480.0)
-            .into_iter()
-            .map(Into::into)
-            .collect();
-        assert_eq!(
-            merged,
-            [region.into()],
-            "a widget under the cap must not be pushed over it by its own history"
-        );
     }
 
     #[test]

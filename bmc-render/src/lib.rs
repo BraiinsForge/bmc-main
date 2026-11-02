@@ -59,6 +59,7 @@ pub mod proc_mem;
 #[cfg(any(feature = "profiling", test))]
 pub mod profile;
 pub mod renderer;
+pub mod repaint;
 pub mod tree;
 
 /// Maximum image size, in RGBA pixels, the host will decode.

@@ -33,15 +33,16 @@ use bmc_wasm_protocol::{ON_TIMER_EXPORT, PROTOCOL_VERSION, SDK_INIT_EXPORT, vers
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
-use bmc_render::partition::static_layer::{AssetGeneration, LayerCommit};
+use bmc_render::partition::static_layer::AssetGeneration;
 use bmc_render::renderer::{AssetSuspendResult, AssetTagState, Renderer};
+use bmc_render::repaint::FrameRepaint;
+pub use bmc_render::repaint::TargetContents;
 use bmc_render::tree;
 use bmc_render::tree::TouchHit;
 use bmc_render::{FrameTimings, RendererAssetResolver, layout_and_render_with_asset_resolver};
 
 use crate::host_api::{
-    CachedTree, FixtureEvent, FrameRepaint, GuestTree, HermeticRun, HostState, Lifecycle,
-    namespaced_tag,
+    CachedTree, FixtureEvent, GuestTree, HermeticRun, HostState, Lifecycle, namespaced_tag,
 };
 use crate::network::NetworkInfo;
 use crate::renderer_assets::{
@@ -208,27 +209,6 @@ impl InterceptedReply {
 /// `Send`, so a host can build the config on one thread
 /// and construct the runtime on another; the runtime stays where it is built.
 pub type FetchInterceptor = Box<dyn Fn(&str, &str) -> Option<InterceptedReply> + Send>;
-
-/// Whether the render target still holds the previous frame's pixels when
-/// [`WasmWidgetRuntime::render`] is called.
-///
-/// A damage-tracked frame repaints only the regions that moved,
-/// which is correct only if the rest of the target is still there.
-/// The runtime cannot see the target — the caller owns it, clears it,
-/// rotates it — so the caller has to say. Answering [`Self::Cleared`]
-/// is always safe: the frame repaints everything and costs a full pass.
-///
-/// [`WasmWidgetRuntime::next_frame_preserves_target`] answers whether the
-/// runtime *could* use a preserved target, so a caller that keeps its target
-/// conditionally can drive both this and its own clear from the one call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TargetContents {
-    /// The caller left the previous frame in place (`FrameClear::Keep`).
-    Preserved,
-    /// The caller cleared the target, or handed over one whose contents are
-    /// undefined — nothing outside this frame's own drawing survives.
-    Cleared,
-}
 
 /// A callback invoked when a fetch response is delivered.
 /// Called with `(method_and_url, status, headers, body)`.
@@ -1503,13 +1483,7 @@ impl WasmWidgetRuntime {
         let frame = state.layer_frame(tree_node, static_bytes, false, now_unix_secs);
         let plan = state.static_layer.plan(renderer, frame);
 
-        // Scissoring to the moving regions leaves the rest of the target as
-        // the last frame left it, so a caller that cleared gets no damage and
-        // repaints in full.
-        let damage = match target {
-            TargetContents::Preserved => state.frame_damage(width, height),
-            TargetContents::Cleared => Vec::new(),
-        };
+        let damage = state.damage.damage_for(target, width, height);
         let mut ctx = bmc_render::ProcessContext {
             static_layer: state.static_layer.layer_use(plan),
             damage_rects: &damage,
@@ -1552,11 +1526,19 @@ impl WasmWidgetRuntime {
         match render_result {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
-                // One more buffer has been painted in full, if any was owed.
-                state.painted_in_full();
-                state.keep_walk(&result.dynamic_rects, result.layout_outlines);
-                let layer = result.static_layer;
-                state.last_repaint = FrameRepaint::of_walk(layer, damage);
+                let walked_assets = AssetGeneration::Ledger(state.renderer_assets.generation());
+                let committed =
+                    state
+                        .static_layer
+                        .commit(renderer, plan, result.static_layer, walked_assets);
+                state.last_repaint = state.damage.walked(
+                    committed,
+                    false,
+                    result.static_layer,
+                    &result.dynamic_rects,
+                    damage,
+                );
+                state.keep_outlines(result.layout_outlines);
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
                 // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
@@ -1564,24 +1546,6 @@ impl WasmWidgetRuntime {
                 state.frame_schedule.has_active_animations = has_active;
                 state.frame_schedule.interaction_pending = had_interaction;
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
-                let walked_assets = AssetGeneration::Ledger(state.renderer_assets.generation());
-                let committed = state
-                    .static_layer
-                    .commit(renderer, plan, layer, walked_assets);
-                match committed {
-                    // The recapture reached the buffer this frame painted,
-                    // and no other. Every remaining buffer still holds the
-                    // old static half, and scissoring the next frame to
-                    // damage would leave it there. The guest path marks the
-                    // same debt when its static half changes.
-                    LayerCommit::Rewritten => {
-                        state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
-                    }
-                    // A miss paints the tree in full over a cleared target,
-                    // and the static half it planned to reuse is unchanged,
-                    // so it pays off this buffer as a blit does.
-                    LayerCommit::Reused | LayerCommit::Missed | LayerCommit::Unlayered => {}
-                }
                 true
             }
             Err(e) => {
@@ -1899,7 +1863,7 @@ impl WasmWidgetRuntime {
     /// describes the target they replaced. Scissoring to it would paint the
     /// moving regions onto an undefined buffer and leave the rest black.
     pub fn invalidate_export_buffers(&mut self) {
-        self.store.data_mut().stale_export_buffers = crate::host_api::EXPORT_BUFFERS;
+        self.store.data_mut().damage.owe_every_buffer();
     }
 
     /// Deliver queued hooks with renderer access for suspension and guest imports.
@@ -2156,8 +2120,8 @@ impl WasmWidgetRuntime {
         }
     }
 
-    /// Whether the next frame will repaint only its damaged regions, leaving
-    /// the rest of the target as it is.
+    /// What the next frame may find in its target: kept when it will repaint
+    /// only its damaged regions, leaving the rest of the target as it is.
     ///
     /// The host has to know before it clears: the clear happens on the way in,
     /// and it would wipe exactly the pixels a damage-tracked frame reuses.
@@ -2169,12 +2133,17 @@ impl WasmWidgetRuntime {
     /// A dead widget never preserves: its overlay's scrim is not damage,
     /// so each preserved frame would dim the last good frame once more.
     #[must_use]
-    pub fn next_frame_preserves_target(&self, width: f32, height: f32) -> bool {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "surface dimensions are well under f32 precision"
+    )]
+    pub fn next_frame_target(&self, width: u32, height: u32) -> TargetContents {
         let state = self.store.data();
-        !self.fuel_dead
-            && state.will_replay_cached_tree()
-            && state.static_layer.is_on()
-            && !state.frame_damage(width, height).is_empty()
+        let replays_over_layer =
+            !self.fuel_dead && state.will_replay_cached_tree() && state.static_layer.is_on();
+        state
+            .damage
+            .target_for(replays_over_layer, width as f32, height as f32)
     }
 
     /// Per-component timing breakdown from the last rendered frame.
@@ -2213,9 +2182,7 @@ impl WasmWidgetRuntime {
         let state = self.store.data();
         match state.last_repaint {
             FrameRepaint::NoTree => None,
-            FrameRepaint::Full | FrameRepaint::Damage { .. } => {
-                Some(&state.recent_dynamic_rects[0])
-            }
+            FrameRepaint::Full | FrameRepaint::Damage { .. } => Some(state.damage.newest()),
         }
     }
 
@@ -2974,18 +2941,19 @@ mod tests {
             height: 40.0,
             static_bytes: bmc_render::partition::StaticBytesKey(0),
         });
-        state.recent_dynamic_rects = [
-            vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
-            vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
-        ];
+        state.damage =
+            bmc_render::repaint::DamageHistory::settled(&[Rect::new(0.0, 0.0, 40.0, 40.0)]);
         assert!(
-            runtime.next_frame_preserves_target(480.0, 480.0),
+            runtime.next_frame_target(480, 480) == crate::TargetContents::Preserved,
             "the fixture must be one a live widget would preserve"
         );
 
         runtime.fuel_dead = true;
 
-        assert!(!runtime.next_frame_preserves_target(480.0, 480.0));
+        assert_eq!(
+            runtime.next_frame_target(480, 480),
+            crate::TargetContents::Cleared
+        );
     }
 
     #[test]
@@ -3042,7 +3010,7 @@ mod tests {
     #[test]
     fn a_frame_painting_no_tree_reports_none() {
         let mut runtime = minimal_runtime();
-        runtime.store.data_mut().last_repaint = crate::host_api::FrameRepaint::Damage {
+        runtime.store.data_mut().last_repaint = bmc_render::repaint::FrameRepaint::Damage {
             blitted: vec![Rect::new(0.0, 0.0, 1.0, 1.0)],
         };
         let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(480.0, 480.0);
@@ -3055,7 +3023,7 @@ mod tests {
         assert!(
             matches!(
                 runtime.last_repaint(),
-                crate::host_api::FrameRepaint::NoTree
+                bmc_render::repaint::FrameRepaint::NoTree
             ),
             "got {:?}",
             runtime.last_repaint()
@@ -3134,7 +3102,7 @@ mod tests {
             16,
             crate::TargetContents::Cleared
         ));
-        runtime.store.data_mut().stale_export_buffers = 0;
+        runtime.store.data_mut().damage = bmc_render::repaint::DamageHistory::settled(&[]);
 
         renderer.invalidate_static_layer(&runtime.static_layer_owner_for_test());
         assert!(runtime.replay_cached_tree_for_test(
@@ -3142,7 +3110,7 @@ mod tests {
             16,
             crate::TargetContents::Cleared
         ));
-        assert_eq!(runtime.store.data().stale_export_buffers, 0);
+        assert_eq!(runtime.store.data().damage.owed_full_repaints(), 0);
     }
 
     /// A replay planned to reuse its layer, whose walk captured it again
@@ -3171,7 +3139,7 @@ mod tests {
             16,
             crate::TargetContents::Cleared
         ));
-        runtime.store.data_mut().stale_export_buffers = 0;
+        runtime.store.data_mut().damage = bmc_render::repaint::DamageHistory::default();
 
         renderer.begin_frame_with_clear(
             100,
@@ -3186,8 +3154,8 @@ mod tests {
             crate::TargetContents::Cleared
         ));
         assert_eq!(
-            runtime.store.data().stale_export_buffers,
-            crate::host_api::EXPORT_BUFFERS - 1,
+            runtime.store.data().damage.owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS - 1,
             "the other buffers still show the layer captured over the old background"
         );
     }
@@ -3221,15 +3189,14 @@ mod tests {
 
         let moved = Rect::new(10.0, 10.0, 10.0, 10.0);
         let state = runtime.store.data_mut();
-        state.stale_export_buffers = 0;
-        state.recent_dynamic_rects = [vec![moved], vec![moved]];
+        state.damage = bmc_render::repaint::DamageHistory::settled(&[moved]);
         assert!(runtime.replay_cached_tree_for_test(
             renderer_ptr(&mut renderer),
             16,
             crate::TargetContents::Preserved
         ));
 
-        let crate::host_api::FrameRepaint::Damage { blitted } = runtime.last_repaint() else {
+        let bmc_render::repaint::FrameRepaint::Damage { blitted } = runtime.last_repaint() else {
             panic!(
                 "BUG: a preserved target with damage must blit under it, got {:?}",
                 runtime.last_repaint()
@@ -3287,8 +3254,7 @@ mod tests {
             if frame == 0 {
                 let moved = Rect::new(10.0, 10.0, 10.0, 10.0);
                 let state = runtime.store.data_mut();
-                state.stale_export_buffers = 0;
-                state.recent_dynamic_rects = [vec![moved], vec![moved]];
+                state.damage = bmc_render::repaint::DamageHistory::settled(&[moved]);
             }
             let moving = runtime
                 .last_dynamic_rects()

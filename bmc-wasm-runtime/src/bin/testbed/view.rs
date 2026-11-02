@@ -777,23 +777,6 @@ impl DeviceView {
     }
 }
 
-/// What the frame about to be drawn will find in its target.
-///
-/// The same question the device host asks, and the answer has to drive both the
-/// clear and the runtime's damage decision: split them and a frame either keeps
-/// pixels it then repaints, or scissors over a target that was just wiped.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "view dimensions are well under f32 precision"
-)]
-fn target_contents(runtime: &WasmWidgetRuntime, width: u32, height: u32) -> TargetContents {
-    if runtime.next_frame_preserves_target(width as f32, height as f32) {
-        TargetContents::Preserved
-    } else {
-        TargetContents::Cleared
-    }
-}
-
 impl ViewCore {
     /// Advance one tick: drain LED requests and pending I/O,
     /// then render if the widget's own scheduler asks for it.
@@ -895,11 +878,11 @@ impl ViewCore {
         // Rotate first: the runtime's answer below is about the target this
         // frame will paint into, not the one the last frame left behind.
         targets.rotate(gl);
-        let contents = target_contents(
-            self.runtime.as_ref().expect("BUG: checked above"),
-            self.width,
-            self.height,
-        );
+        let contents = self
+            .runtime
+            .as_ref()
+            .expect("BUG: checked above")
+            .next_frame_target(self.width, self.height);
         let clear = match contents {
             TargetContents::Preserved => FrameClear::Keep,
             TargetContents::Cleared => FrameClear::Clear,
