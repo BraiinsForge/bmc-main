@@ -20,7 +20,7 @@
 
 import { afterEach, describe, expect, rstest, test } from '@rstest/core';
 
-import { bootLocale, intlFor } from '@/lib/intl';
+import { intlFor } from '@/lib/intl';
 
 describe('intlFor', () => {
     afterEach(() => {
@@ -42,23 +42,5 @@ describe('intlFor', () => {
         intlFor({ tag: 'zh', messages: {} }).formatMessage({ id: 'save', defaultMessage: 'Save' });
 
         expect(error).toHaveBeenCalled();
-    });
-});
-
-describe('bootLocale', () => {
-    afterEach(() => {
-        Reflect.deleteProperty(window, 'LANGUAGE');
-    });
-
-    test('a language without a tag boots in English', () => {
-        Object.assign(window, { LANGUAGE: { messages: { save: 'Uložit' } } });
-
-        expect(bootLocale()).toBeNull();
-    });
-
-    test('a catalog that is not an object is left out, the language kept', () => {
-        Object.assign(window, { LANGUAGE: { tag: 'cs', messages: 'Uložit' } });
-
-        expect(bootLocale()).toEqual({ tag: 'cs', messages: undefined });
     });
 });

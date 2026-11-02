@@ -178,25 +178,25 @@ describe('store.speak', () => {
     });
 });
 
-describe('store.speakBootLanguage', () => {
+describe('store.boot', () => {
     afterEach(async () => {
         mocks.clear();
         await backToEnglish();
-        Reflect.deleteProperty(window, 'LANGUAGE');
     });
 
     test('the language the page came with is spoken at once, catalog included', () => {
-        Object.assign(window, { LANGUAGE: { tag: 'cs', messages: { save: 'Uložit' } } });
+        const language = { tag: 'cs', messages: { save: 'Uložit' } };
+        Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n: true, language } });
 
-        store.speakBootLanguage();
+        store.boot();
 
-        expect(store.locale).toEqual({ tag: 'cs', messages: { save: 'Uložit' } });
+        expect(store.locale).toEqual(language);
     });
 
     test('a page that came without a language stays in English', () => {
-        Object.assign(window, { LANGUAGE: null });
+        Object.assign(window, { SYSTEM: deckSystemWire() });
 
-        store.speakBootLanguage();
+        store.boot();
 
         expect(store.locale.tag).toBe('en');
     });

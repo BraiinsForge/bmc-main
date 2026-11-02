@@ -20,13 +20,22 @@
 
 import { isPlainObject } from 'es-toolkit';
 
-// BMC serves `/system.js`, a script assigning `window.SYSTEM` with the platform's `HardwareCapabilities`.
+import type { Locale } from '@/lib/intl';
+
+// BMC serves `/system.js`, a script assigning `window.SYSTEM`:
+// the platform's `HardwareCapabilities` and, with the languages, the one the web boots in.
 // BMC always generates the file, so a missing or malformed global is a fault, never a plain Deck.
 
 export interface System {
     capabilities: Capabilities;
     /** Whether the device offers its languages; a device without them sends no `i18n` at all. */
     i18n: boolean;
+    /**
+     * The language the device boots the web in, with its catalog.
+     * `null` boots in English: a device without its languages sends none,
+     * and neither does one whose setting it no longer offers.
+     */
+    language: null | Locale;
 }
 export interface Capabilities {
     combinedScenesSupported: boolean;
@@ -71,12 +80,25 @@ function parseCapabilities(caps: unknown): Capabilities {
     };
 }
 
-export function parseSystem(raw: unknown): System {
-    if (!isPlainObject(raw)) throw new Error('system.js: `window.SYSTEM` is not set');
-    return { capabilities: parseCapabilities(raw.capabilities), i18n: raw.i18n === true };
+/**
+ * A language without a tag boots in English;
+ * a catalog that is not an object is left out, the language kept.
+ */
+function parseLanguage(raw: unknown): null | Locale {
+    if (!isPlainObject(raw) || typeof raw.tag !== 'string' || raw.tag === '') return null;
+    return { tag: raw.tag, messages: isPlainObject(raw.messages) ? (raw.messages as Locale['messages']) : undefined };
 }
 
-/** Reads the global the blocking `system.js` script in index.html assigns before the bundle runs. */
+export function parseSystem(raw: unknown): System {
+    if (!isPlainObject(raw)) throw new Error('system.js: `window.SYSTEM` is not set');
+    return {
+        capabilities: parseCapabilities(raw.capabilities),
+        i18n: raw.i18n === true,
+        language: parseLanguage(raw.language),
+    };
+}
+
+/** Reads the global the deferred `system.js` script in index.html assigns before the bundle runs. */
 export function readSystem(): System {
     return parseSystem((window as { SYSTEM?: unknown }).SYSTEM);
 }

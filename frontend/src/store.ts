@@ -24,7 +24,7 @@ import * as pb from '@/proto';
 import { URLS } from '@/constants';
 import { boserChrome, loginOwned } from '@/lib/capabilities';
 import { readBrand, type Brand } from '@/lib/brand';
-import { bootLocale, intlFor, type Locale, SOURCE_LOCALE } from '@/lib/intl';
+import { intlFor, type Locale, SOURCE_LOCALE } from '@/lib/intl';
 import { readSystem, type Capabilities } from '@/lib/system';
 
 export type Listener<R> = (store: Store) => R;
@@ -174,12 +174,6 @@ class Store {
         return true;
     };
 
-    /** Speak the language the device boots the web in; it came with the page, so nothing waits on a request. */
-    speakBootLanguage = (): void => {
-        const locale = bootLocale();
-        if (locale) this.#setState('locale', locale);
-    };
-
     /** The `IntlShape` of the current locale, for text formatted outside the React tree. */
     intl = (): IntlShape => intlFor(this.#state.locale);
 
@@ -199,10 +193,14 @@ class Store {
         this.#setState('brand', brand);
     };
 
-    /** Reads what the whole UI is keyed on; throws when the device cannot be described. */
+    /**
+     * Reads what the whole UI is keyed on, the language it speaks included;
+     * throws when the device cannot be described.
+     */
     boot = (): void => {
-        const { capabilities: caps, i18n } = readSystem();
+        const { capabilities: caps, i18n, language } = readSystem();
         this.#setState('i18n', i18n);
+        if (language) this.#setState('locale', language);
         this.setHardwareCapabilities(caps);
         // system.js carries the brand script only where boser manages the device.
         this.setBrand(boserChrome(caps) ? readBrand() : null);

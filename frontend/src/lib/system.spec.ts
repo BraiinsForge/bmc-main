@@ -40,11 +40,32 @@ describe('parseSystem', () => {
                 productName: 'Braiins Deck',
             },
             i18n: false,
+            language: null,
         });
     });
 
     test('offers the languages only when the device says so', () => {
         expect(parseSystem({ ...bmc100, i18n: true }).i18n).toBe(true);
+    });
+
+    test('boots in the language the device sends, catalog included', () => {
+        const language = { tag: 'cs', messages: { save: 'Uložit' } };
+
+        expect(parseSystem({ ...bmc100, i18n: true, language }).language).toEqual(language);
+    });
+
+    test('a language without a tag boots in English', () => {
+        expect(parseSystem({ ...bmc100, language: { messages: { save: 'Uložit' } } }).language).toBeNull();
+    });
+
+    test('a language with an empty tag boots in English', () => {
+        expect(parseSystem({ ...bmc100, language: { tag: '', messages: { save: 'Uložit' } } }).language).toBeNull();
+    });
+
+    test('a catalog that is not an object is left out, the language kept', () => {
+        const language = { tag: 'cs', messages: 'Uložit' };
+
+        expect(parseSystem({ ...bmc100, language }).language).toEqual({ tag: 'cs', messages: undefined });
     });
 
     test('derives combined scenes from the slot grid', () => {

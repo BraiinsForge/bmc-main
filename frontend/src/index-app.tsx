@@ -36,9 +36,8 @@ function boot(rootEl: HTMLElement): void {
     const root = createRoot(rootEl);
     let tree: ReactNode;
     try {
-        store.boot();
         // Before the first render, so the page never starts in another language.
-        store.speakBootLanguage();
+        store.boot();
         tree = (
             <>
                 <AppHead />

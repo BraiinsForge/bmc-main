@@ -18,7 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { isPlainObject } from 'es-toolkit';
 import { createIntl, createIntlCache, type IntlConfig, type IntlShape } from 'react-intl';
 
 /** The language every message's source is written in. */
@@ -46,16 +45,4 @@ const cache = createIntlCache();
 export function intlFor({ tag, messages }: Locale): IntlShape {
     const defaultLocale = isEnglish(tag) ? tag : SOURCE_LOCALE;
     return createIntl({ locale: tag, defaultLocale, messages }, cache);
-}
-
-/**
- * The language the device boots the web in, with its catalog,
- * from the `/language.js` it serves. `null` boots in English:
- * a device without its languages sends it, and so does one
- * whose setting it no longer offers.
- */
-export function bootLocale(): Locale | null {
-    const raw = (window as { LANGUAGE?: unknown }).LANGUAGE;
-    if (!isPlainObject(raw) || typeof raw.tag !== 'string') return null;
-    return { tag: raw.tag, messages: isPlainObject(raw.messages) ? (raw.messages as Locale['messages']) : undefined };
 }

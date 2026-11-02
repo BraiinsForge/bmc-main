@@ -84,12 +84,23 @@ pub(crate) struct HttpServer<T: BmcManager> {
     device_config: Arc<RwLock<ConfigHandle>>,
 }
 
+#[derive(Clone)]
+struct SystemScriptState {
+    capabilities: HardwareCapabilities,
+    boser: Option<BoserProxy>,
+    i18n: I18nMarker,
+    device_config: Arc<RwLock<ConfigHandle>>,
+}
+
 #[derive(Serialize)]
 struct SystemInfo {
     capabilities: HardwareCapabilities,
     /// Written only with the [`I18nMarker`], so without it `system.js` is what it was before the languages.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     i18n: bool,
+    /// Absent without the [`I18nMarker`] and once the setting is no longer offered: the web boots in English.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<BootLanguage>,
 }
 
 /// The language the web boots in, with its catalog,
@@ -293,7 +304,6 @@ impl<T: BmcManager> HttpServer<T> {
     const SUPPORT_ARCHIVE: &str = "/api/get_support_archive";
     const WIDGET_ICON: &str = "/widgets/{uid}/icon";
     const SYSTEM_SCRIPT: &str = "/system.js";
-    const LANGUAGE_SCRIPT: &str = "/language.js";
 
     pub(crate) fn new(
         config: ServerConfig,
@@ -327,7 +337,6 @@ impl<T: BmcManager> HttpServer<T> {
         let boser = self.config.boser.map(BoserProxy::new);
         let router = Router::new()
             .merge(self.system_router(boser.clone()))
-            .merge(self.language_router())
             .merge(self.static_file_router(boser.clone()))
             .merge(self.general_api_router())
             .merge(self.widget_icon_router());
@@ -436,46 +445,37 @@ impl<T: BmcManager> HttpServer<T> {
     fn system_router(&self, boser: Option<BoserProxy>) -> Router {
         Router::new()
             .route(Self::SYSTEM_SCRIPT, get(Self::handle_system))
-            .with_state((self.hardware_capabilities, boser, self.i18n()))
-    }
-
-    fn language_router(&self) -> Router {
-        Router::new()
-            .route(Self::LANGUAGE_SCRIPT, get(Self::handle_language))
-            .with_state((self.i18n(), self.device_config.clone()))
+            .with_state(SystemScriptState {
+                capabilities: self.hardware_capabilities,
+                boser,
+                i18n: self.i18n(),
+                device_config: self.device_config.clone(),
+            })
     }
 
     fn i18n(&self) -> I18nMarker {
         I18nMarker::new(self.config.i18n_marker.clone())
     }
 
-    /// `window.LANGUAGE`: `null` without the [`I18nMarker`]
-    /// or once the setting is no longer offered.
-    async fn handle_language(
-        State((i18n, device_config)): State<(I18nMarker, Arc<RwLock<ConfigHandle>>)>,
+    async fn handle_system(
+        State(SystemScriptState {
+            capabilities,
+            boser,
+            i18n,
+            device_config,
+        }): State<SystemScriptState>,
     ) -> impl IntoResponse {
-        let boot = if i18n.is_set() {
+        let i18n = i18n.is_set();
+        let language = if i18n {
             let language = device_config.read().await.localization_config().language();
             boot_language(&Translations::shared(), language)
         } else {
             None
         };
-        let json = serde_json::to_string(&boot).expect("BUG: a tag and strings serialize to JSON");
-        (
-            [
-                (CONTENT_TYPE, "text/javascript; charset=utf-8"),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            format!("window.LANGUAGE = {json};\n"),
-        )
-    }
-
-    async fn handle_system(
-        State((caps, boser, i18n)): State<(HardwareCapabilities, Option<BoserProxy>, I18nMarker)>,
-    ) -> impl IntoResponse {
         let json = serde_json::to_string(&SystemInfo {
-            capabilities: caps,
-            i18n: i18n.is_set(),
+            capabilities,
+            i18n,
+            language,
         })
         .expect("BUG: hardware capabilities contain only JSON-serializable values");
         let mut script = format!("window.SYSTEM = {json};\n");
@@ -2043,26 +2043,36 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn the_language_script_names_the_device_language_only_with_the_marker() {
+        async fn the_system_script_names_the_languages_only_with_the_marker() {
+            async fn system(router: &Router) -> serde_json::Value {
+                let (_, _, body) = send(router, request("GET", "/system.js", "")).await;
+                let script = String::from_utf8(body).expect("BUG: the script is UTF-8");
+                let json = script
+                    .strip_prefix("window.SYSTEM = ")
+                    .and_then(|rest| rest.strip_suffix(";\n"))
+                    .expect("BUG: the script assigns the global");
+                serde_json::from_str(json).expect("BUG: valid JSON")
+            }
+
             let (server, www) =
                 server_for(bmc_platform::Product::Bmc100, None, StubManager::default()).await;
             let router = server.routes();
 
-            let (status, headers, body) = send(&router, request("GET", "/language.js", "")).await;
-            assert_eq!(status, StatusCode::OK);
-            assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+            let (_, _, before) = send(&router, request("GET", "/system.js", "")).await;
+            let capabilities = serde_json::to_string(&server.hardware_capabilities)
+                .expect("BUG: capabilities serialize to JSON");
             assert_eq!(
-                body, b"window.LANGUAGE = null;\n",
-                "English, as before the languages"
+                String::from_utf8(before).expect("BUG: the script is UTF-8"),
+                format!("window.SYSTEM = {{\"capabilities\":{capabilities}}};\n"),
+                "without the marker, as before the languages"
             );
 
             std::fs::write(www.path().join("i18n"), "").expect("BUG: write the marker");
-            let (_, _, body) = send(&router, request("GET", "/language.js", "")).await;
+            let fresh = system(&router).await;
+            assert_eq!(fresh["i18n"], serde_json::Value::Bool(true));
             assert_eq!(
-                body,
-                indoc::indoc! {br#"
-                    window.LANGUAGE = {"tag":"en-GB"};
-                "#},
+                fresh["language"],
+                serde_json::json!({ "tag": "en-GB" }),
                 "a fresh device's setting"
             );
 
@@ -2071,39 +2081,11 @@ mod tests {
                 .write()
                 .await
                 .set_language(Language::EN_US);
-            let (_, _, body) = send(&router, request("GET", "/language.js", "")).await;
             assert_eq!(
-                body,
-                indoc::indoc! {br#"
-                    window.LANGUAGE = {"tag":"en-US"};
-                "#},
+                system(&router).await["language"],
+                serde_json::json!({ "tag": "en-US" }),
                 "the setting at request time"
             );
-        }
-
-        #[tokio::test]
-        async fn the_system_script_names_the_languages_only_with_the_marker() {
-            async fn i18n(router: &Router) -> serde_json::Value {
-                let (_, _, body) = send(router, request("GET", "/system.js", "")).await;
-                let script = String::from_utf8(body).expect("BUG: the script is UTF-8");
-                let json = script
-                    .strip_prefix("window.SYSTEM = ")
-                    .and_then(|rest| rest.strip_suffix(";\n"))
-                    .expect("BUG: the script assigns the global");
-                serde_json::from_str::<serde_json::Value>(json).expect("BUG: valid JSON")["i18n"]
-                    .clone()
-            }
-
-            let (server, www) =
-                server_for(bmc_platform::Product::Bmc100, None, StubManager::default()).await;
-            let router = server.routes();
-            assert_eq!(
-                i18n(&router).await,
-                serde_json::Value::Null,
-                "absent, as before the languages"
-            );
-            std::fs::write(www.path().join("i18n"), "").expect("BUG: write the marker");
-            assert_eq!(i18n(&router).await, serde_json::Value::Bool(true));
         }
 
         #[tokio::test]
