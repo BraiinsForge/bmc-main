@@ -80,9 +80,10 @@ fn compose_fence() -> bool {
     *FENCE.get_or_init(|| matches!(std::env::var("BMC_COMPOSE_FENCE").as_deref(), Ok("1")))
 }
 
-/// Scanout transform for widget buffers, whose rows run bottom-up because the
-/// wasm host paints straight into the exported buffer instead of blitting
-/// through a staging surface.
+/// Scanout transform for buffers whose rows run bottom-up,
+/// because their client paints straight into the exported buffer
+/// instead of blitting through a staging surface:
+/// the wasm host's widgets and the system overlays.
 ///
 /// `zwp_linux_buffer_params_v1::Flags::YInvert` is the obvious signal, and it is
 /// unusable: smithay's `render_texture_from_to` (`gles/mod.rs:2716`, unchanged
@@ -100,12 +101,41 @@ fn compose_fence() -> bool {
 /// ⚠ Applied to every widget surface, so it assumes all of them submit
 /// bottom-up buffers — true of anything painting straight into its export
 /// buffer, false of one blitting through a staging surface, which gets its Y
-/// flip from that blit's own UVs. Telling them apart needs an orientation
-/// signal that reaches here, and none does: `create_buffer_from_dmabuf` sends
-/// `Flags::empty()`, and `YInvert` — the one the protocol offers — is the
-/// broken flag above. **Verified on hardware for the wasm path only.**
-fn widget_transform(profile: DisplayTransform) -> Transform {
+/// flip from that blit's own UVs. No client says which it does:
+/// `create_buffer_from_dmabuf` sends `Flags::empty()`, and `YInvert` — the one
+/// the protocol offers — is the broken flag above. Layer surfaces go by their
+/// buffer type instead (see [`RowOrder`]). **Verified on hardware for the wasm
+/// widget path only, not yet for the system overlays.**
+fn bottom_up_transform(profile: DisplayTransform) -> Transform {
     with_row_flip(scanout_transform(profile))
+}
+
+/// Which way a layer surface's buffer rows run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowOrder {
+    TopDown,
+    BottomUp,
+}
+
+impl RowOrder {
+    /// Every DMA-BUF layer client in this repo paints straight into its buffer
+    /// through a GL framebuffer, which writes the bottom row first;
+    /// one presenting through an EGL window surface would arrive top-down and show inverted.
+    /// An SHM client writes rows top-down, as `layer-shell-test-client` does.
+    fn of(buffer: &WlBuffer) -> Self {
+        if get_dmabuf(buffer).is_ok() {
+            Self::BottomUp
+        } else {
+            Self::TopDown
+        }
+    }
+
+    fn scanout_transform(self, profile: DisplayTransform) -> Transform {
+        match self {
+            Self::TopDown => scanout_transform(profile),
+            Self::BottomUp => bottom_up_transform(profile),
+        }
+    }
 }
 
 /// `transform` with the source's rows mirrored — the same rotation, sampling
@@ -378,6 +408,7 @@ fn blit_texture_on_frame(
     output_w: i32,
     output_h: i32,
     transform: DisplayTransform,
+    rows: RowOrder,
     alpha: f32,
     label: &str,
 ) {
@@ -394,7 +425,7 @@ fn blit_texture_on_frame(
         dst,
         &[texture_damage_rect(dst)],
         &[],
-        scanout_transform(transform),
+        rows.scanout_transform(transform),
         alpha,
         None,
         &[],
@@ -868,7 +899,7 @@ impl SceneRenderer {
                 (f64::from(tex_size.w), f64::from(tex_size.h)),
             );
             let damage = texture_damage_rect(*dst);
-            let transform = widget_transform(self.scanout_transform);
+            let transform = bottom_up_transform(self.scanout_transform);
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
@@ -899,6 +930,7 @@ impl SceneRenderer {
                 output_w,
                 output_h,
                 self.scanout_transform,
+                RowOrder::of(buffer),
                 1.0,
                 "layer surface",
             );
@@ -1221,7 +1253,7 @@ fn collect_scene_widgets(
 mod tests {
     use super::{premultiply_alpha, texture_damage_rect, uncovered_output_regions};
     use crate::compositor::scene_renderer::{
-        place_widget, scanout_transform, touch_to_logical, widget_transform, with_row_flip,
+        bottom_up_transform, place_widget, scanout_transform, touch_to_logical, with_row_flip,
     };
     use bmc_platform::{DisplayTransform, TouchTransform};
     use smithay::utils::{Physical, Rectangle, Transform};
@@ -1253,17 +1285,17 @@ mod tests {
     }
 
     #[test]
-    fn widget_transform_row_flips_each_profile_scanout() {
+    fn bottom_up_transform_row_flips_each_profile_scanout() {
         assert_eq!(
-            widget_transform(DisplayTransform::Deg0),
+            bottom_up_transform(DisplayTransform::Deg0),
             Transform::Flipped180,
         );
         assert_eq!(
-            widget_transform(DisplayTransform::Deg90),
+            bottom_up_transform(DisplayTransform::Deg90),
             Transform::Flipped90
         );
         assert_eq!(
-            widget_transform(DisplayTransform::Deg270),
+            bottom_up_transform(DisplayTransform::Deg270),
             Transform::Flipped270,
         );
     }
@@ -1294,13 +1326,13 @@ mod tests {
     /// The row flip must not disturb the quarter-turn the panel needs: an angle
     /// off by 90° lands the surface sideways, off by 180° upside down.
     #[test]
-    fn widget_transform_mirrors_without_changing_the_quarter_turn() {
+    fn bottom_up_transform_mirrors_without_changing_the_quarter_turn() {
         for profile in [
             DisplayTransform::Deg0,
             DisplayTransform::Deg90,
             DisplayTransform::Deg270,
         ] {
-            let widget = widget_transform(profile);
+            let widget = bottom_up_transform(profile);
             assert!(
                 widget.flipped(),
                 "{profile:?} must submit a mirrored transform, got {widget:?}",

@@ -1122,7 +1122,7 @@ impl<B> Default for TwoSlotBufferCache<B> {
 /// The compositor samples one while the widget paints the other, so a frame
 /// that must reach every buffer — seeding a fresh one, repainting after a
 /// wake — repeats this many times. `bmc_render::repaint::EXPORT_BUFFERS`
-/// mirrors it for its damage bookkeeping; the hosts assert the two agree.
+/// mirrors it for its damage bookkeeping; `bmc-system-overlay` asserts the two agree.
 pub const EXPORT_BUFFER_SLOTS: usize = 2;
 
 pub struct DoubleBufferState {
@@ -1423,12 +1423,9 @@ impl Drop for DoubleBufferedEglState {
     }
 }
 
-/// Resources for the Y-flip blit pass used by femtovg-rendering widgets.
-///
-/// femtovg renders Y-flipped when targeting an FBO; this program samples a
-/// staging texture with flipped V and writes to a caller-supplied destination
-/// FBO. Lives in [`SharedRenderScratch`] alongside the staging texture so the
-/// host can share one program + VBO across all slots.
+/// Resources for the blit pass that seeds a freshly allocated export buffer
+/// from its sibling. Lives in [`SharedRenderScratch`] so the host can share one
+/// program + VBO across all slots.
 struct BlitResources {
     program: glow::Program,
     vbo: glow::Buffer,
@@ -1580,15 +1577,6 @@ struct UvSampling {
 }
 
 impl UvSampling {
-    /// Sample a femtovg-rendered region, keeping the quad's Y-flip. `scale`
-    /// narrows the sample to the active slot's corner of the staging texture.
-    fn femtovg_region(scale: (f32, f32)) -> Self {
-        Self {
-            scale,
-            offset: (0.0, 0.0),
-        }
-    }
-
     /// Sample an already-upright texture whole, undoing the quad's Y-flip.
     fn upright_whole() -> Self {
         Self {
@@ -1598,37 +1586,26 @@ impl UvSampling {
     }
 }
 
-#[must_use]
-fn shared_scratch_uv_scale(max_width: u32, max_height: u32, w: u32, h: u32) -> (f32, f32) {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "pixel dimensions converted to normalized GL texture coordinates"
-    )]
-    (w as f32 / max_width as f32, h as f32 / max_height as f32)
-}
-
 /// Per-render-thread scratch resources for femtovg-rendering widgets.
 ///
-/// femtovg renders into an FBO Y-flipped and needs an 8-bit stencil for its
-/// painting algorithms; this scratch holds:
+/// femtovg needs an 8-bit stencil for its painting algorithms and holds one
+/// framebuffer id as its screen target; this scratch holds:
 ///
 /// - a staging [`WidgetExportBuffer`] (color texture + stencil RBO + FBO),
-///   sized to a caller-chosen maximum that bounds all consumers, and
-/// - a blit program that copies the staging color texture to a destination
-///   FBO with flipped V.
+///   whose FBO is that screen target and whose pair a frame paints into
+///   unless [`Self::bind_export_buffer`] points it at an export buffer, and
+/// - a blit program that seeds a freshly allocated export buffer.
 ///
 /// Construct once per render thread against a shared [`EglContext`]; in the
 /// standalone-widget process there is one of each. In the multi-widget host
 /// (BDK-469 Stage 5) the host owns one `SharedRenderScratch` and one
 /// `EglContext`; each slot owns its own [`DoubleBufferState`] and reuses the
-/// shared scratch every frame. Smaller widgets set viewport to their own
-/// dimensions on [`Self::begin_frame`] and the blit reads `(0,0,w,h)` of the
-/// staging texture; sizing the staging to the display maximum is the caller's
-/// responsibility.
+/// shared scratch every frame. Smaller targets set viewport to their own
+/// dimensions on [`Self::begin_frame`]; sizing the staging to the display
+/// maximum is the caller's responsibility.
 ///
-/// Single-threaded: callers must serialize their `begin_frame` →
-/// `blit_to` cycles. Two slots cannot render concurrently against the same
-/// scratch.
+/// Single-threaded: callers must serialize their frames. Two slots cannot
+/// render concurrently against the same scratch.
 ///
 /// Release via [`Self::destroy`] while the [`EglContext`] is current on this
 /// thread — GL deletion requires a current context.
@@ -1835,15 +1812,6 @@ impl SharedRenderScratch {
         }
     }
 
-    /// Blit the staging color texture into `dest_fbo` with Y-flip, viewport
-    /// `(0, 0, w, h)`. Call after femtovg's `flush()` and before swapping the
-    /// destination buffer out for export.
-    pub fn blit_to(&self, ctx: &EglContext, dest_fbo: glow::Framebuffer, w: u32, h: u32) {
-        let uv_scale = shared_scratch_uv_scale(self.staging.width, self.staging.height, w, h);
-        let sampling = UvSampling::femtovg_region(uv_scale);
-        self.blit_texture_scaled(ctx, self.staging.texture(), sampling, dest_fbo, w, h);
-    }
-
     /// Copy `src` wholesale into `dest_fbo`, both being the same size.
     ///
     /// Seeds a freshly allocated export buffer from its sibling. A `Prepared`
@@ -1940,7 +1908,6 @@ mod tests {
     use super::{
         Attachment, DoubleBufferState, EglContext, ExportContents, ExportFormat,
         SharedRenderScratch, SlotReleaseState, TwoSlotBufferCache, UvSampling, WidgetExportBuffer,
-        shared_scratch_uv_scale,
     };
     use drm_fourcc::DrmFourcc;
 
@@ -2012,24 +1979,12 @@ mod tests {
     }
 
     #[test]
-    fn shared_scratch_uv_scale_samples_only_active_slot_region() {
-        assert_eq!(shared_scratch_uv_scale(1280, 480, 640, 240), (0.5, 0.5));
-        assert_eq!(shared_scratch_uv_scale(1280, 480, 1280, 480), (1.0, 1.0));
-    }
-
-    #[test]
     fn upright_sampling_undoes_the_blit_quad_y_flip() {
         // The quad pairs its bottom vertices with v = 1 and its top with v = 0,
         // the flip femtovg's FBO output needs. Seeding copies a sibling export
         // buffer, which is already upright, so it has to come back out flat.
         let (quad_bottom_v, quad_top_v) = (1.0_f32, 0.0_f32);
         let sample = |s: UvSampling, v: f32| v * s.scale.1 + s.offset.1;
-
-        let femtovg = UvSampling::femtovg_region((1.0, 1.0));
-        assert_eq!(
-            (sample(femtovg, quad_bottom_v), sample(femtovg, quad_top_v)),
-            (1.0, 0.0)
-        );
 
         let upright = UvSampling::upright_whole();
         assert_eq!(
@@ -2100,52 +2055,35 @@ mod tests {
         let mut slot_a = DoubleBufferState::new(320, 240, Attachment::Stencil);
         let mut slot_b = DoubleBufferState::new(480, 480, Attachment::Stencil);
 
-        // Each slot allocates its own export buffer against the shared ctx;
-        // their FBOs are distinct GL names.
-        let fbo_a_id;
-        let fbo_b_id;
-        let fbo_a_handle;
-        let fbo_b_handle;
-        {
-            let buf_a = slot_a
-                .ensure_current(&ctx)
-                .expect("BUG: slot A export buffer should allocate");
-            fbo_a_id = buf_a.fbo_id();
-            fbo_a_handle = buf_a.fbo;
-        }
-        {
-            let buf_b = slot_b
-                .ensure_current(&ctx)
-                .expect("BUG: slot B export buffer should allocate");
-            fbo_b_id = buf_b.fbo_id();
-            fbo_b_handle = buf_b.fbo;
-        }
-        assert_ne!(fbo_a_id, fbo_b_id, "slot FBOs must be distinct GL names");
-
-        // Render slot A: clear staging to red, blit to slot A's export FBO.
-        // The clear values used here override the default clear set by
-        // `begin_frame`; the order is intentional.
-        let _ = scratch.begin_frame(&ctx, 320, 240);
+        // Each slot paints through the shared frame framebuffer into its own
+        // export buffer: red into slot A, green into slot B.
+        scratch
+            .bind_export_buffer(&ctx, &mut slot_a, 320, 240, ExportContents::Cleared)
+            .expect("BUG: slot A export buffer should bind");
         unsafe {
             ctx.gl().clear_color(1.0, 0.0, 0.0, 1.0);
             ctx.gl().clear(glow::COLOR_BUFFER_BIT);
         }
-        scratch.blit_to(&ctx, fbo_a_handle, 320, 240);
-
-        // Render slot B: clear staging to green, blit to slot B's export FBO.
-        let _ = scratch.begin_frame(&ctx, 480, 480);
+        scratch
+            .bind_export_buffer(&ctx, &mut slot_b, 480, 480, ExportContents::Cleared)
+            .expect("BUG: slot B export buffer should bind");
         unsafe {
             ctx.gl().clear_color(0.0, 1.0, 0.0, 1.0);
             ctx.gl().clear(glow::COLOR_BUFFER_BIT);
         }
-        scratch.blit_to(&ctx, fbo_b_handle, 480, 480);
+        let fbo_a_handle = slot_a.current_ref().expect("BUG: slot A was bound").fbo;
+        let fbo_b_handle = slot_b.current_ref().expect("BUG: slot B was bound").fbo;
+        assert_ne!(
+            fbo_a_handle, fbo_b_handle,
+            "slot FBOs must be distinct GL names"
+        );
 
         unsafe {
             let err = ctx.gl().get_error();
             assert_eq!(
                 err,
                 glow::NO_ERROR,
-                "GL error after cross-slot blit: 0x{err:x}"
+                "GL error after cross-slot frames: 0x{err:x}"
             );
         }
 
@@ -2191,7 +2129,7 @@ mod tests {
             px_b[1] > 250 && px_b[0] < 5,
             "slot B centre pixel should be green, got {px_b:?}"
         );
-        assert_ne!(px_a, px_b, "cross-slot blits must produce distinct pixels");
+        assert_ne!(px_a, px_b, "cross-slot frames must produce distinct pixels");
 
         // Each slot exports its own DMA-BUF independently.
         let (info_a, _) = slot_a.export_and_swap().expect("BUG: slot A export");

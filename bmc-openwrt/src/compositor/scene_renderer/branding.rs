@@ -27,7 +27,7 @@ use smithay::backend::renderer::{
     gles::{GlesFrame, GlesRenderer, GlesTexture},
 };
 
-use super::{OverlayTexture, blit_texture_on_frame};
+use super::{OverlayTexture, RowOrder, blit_texture_on_frame};
 use crate::compositor::render::DrmOutput;
 
 // Embedded so there is no runtime file dependency.
@@ -222,6 +222,7 @@ impl BrandingOverlay {
                 output_w,
                 output_h,
                 transform,
+                RowOrder::TopDown,
                 scene.alpha,
                 "branding logo",
             );
@@ -239,6 +240,7 @@ impl BrandingOverlay {
                     output_w,
                     output_h,
                     transform,
+                    RowOrder::TopDown,
                     scene.alpha,
                     scene.caption.label(),
                 );

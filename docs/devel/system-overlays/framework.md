@@ -76,7 +76,7 @@ Each driver keeps a small frame schedule per overlay, so a tree that animates is
 - **Replay.** `TreeUi` keeps the last tree it rendered and its size. An animation-only frame replays it without calling
   `build`; a fresh frame, a size change or pending touches build a new one. Renderer animations, transitions and
   indeterminate progress bars therefore keep moving while the overlay's state stands still. A replay still lays the tree
-  out and paints it in full.
+  out, but repaints only what moved when the driver kept its buffer (see below).
 - **What a frame asks for.** `render` returns a `RenderOutcome`: a `NextFrame` (`Idle`, `Replay` or `Rebuild`) and the
   next boundary of a time node. `TreeUi` reports `Replay` while anything in the tree moves and `Idle` otherwise. The
   clicks and drags a frame hit-tests come back from that same `render`, so an overlay whose handling of them changes
@@ -137,8 +137,8 @@ schedule counts, in the wake and in the render gate alike.
 
 A hidden overlay must not hold a full-screen buffer. Hiding is a two-step commit: attach a NULL buffer (which unmaps the
 surface) and free the export DMA-BUFs. `OverlayRenderTarget::free_for_hide` (`src/gpu.rs`) tears down the GBM/GL buffers
-and the cached `wl_buffer`s but keeps the target reusable — a later `ensure_current` reallocates lazily. This is
-distinct from `destroy`, which is terminal and called only at shutdown.
+and the cached `wl_buffer`s but keeps the target reusable — a later `paint` reallocates lazily. This is distinct from
+`destroy`, which is terminal and called only at shutdown.
 
 The ordering in `hide` is load-bearing: the NULL attach is flushed *before* the exported buffers are destroyed, so the
 compositor observes the unmap first. After a NULL-buffer unmap, layer-shell state is reset, so before the next real
@@ -165,6 +165,20 @@ a GL fence before handing a buffer to the compositor. Overlays fit the existing 
 `OverlayRenderTarget` is a double-buffered DMA-BUF target with `wl_buffer.release` tracking: it pairs two
 lazily-allocated export buffers with a cache of minted `wl_buffer`s so a compositor release frees the matching slot for
 reuse. It exports `ExportFormat::Alpha` (transparent overlays composite over the live scene), with depth disabled.
+
+Both drivers paint a frame through `OverlayRenderTarget::paint`, which paints straight into the current export buffer,
+bound through the same `SharedRenderScratch::bind_export_buffer` widget slots use, rather than into a scratch that is
+then copied over. Its steps are `paint_surface_frame`, which the GL checks drive too. Before it clears, it asks the
+overlay's `TreeUi` through `prepare_target` whether the frame may keep the buffer: only a replay over a static layer it
+holds or is about to capture, with the regions of the last two walks under the `BMC_DAMAGE_MAX_PCT` cap, does. Two
+walks, because the buffer a frame paints was last painted two frames before. Such a frame blits the static layer back
+and repaints only those regions. A static change owes the other buffer a full repaint, and a hide or a render error owes
+both. A frame the overlay draws no tree into owes both too, and a kept one is cleared after all. A freshly allocated
+buffer the frame keeps is seeded from its sibling. The bookkeeping is `bmc_render::repaint`'s `DamageHistory`, shared
+with the WASM runtime.
+
+femtovg writes a framebuffer bottom row first, so these buffers arrive upside down; the compositor row-flips every
+DMA-BUF layer buffer and leaves SHM ones, which clients write top-down, as they are.
 
 ## Compositor-positioned reveal animation
 

@@ -25,7 +25,6 @@ use std::time::{Duration, Instant};
 use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_intl::{Intl, Localized};
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::prelude::*;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
@@ -547,14 +546,15 @@ fn render_frame(
     frame: FrameKind,
 ) -> anyhow::Result<RenderOutcome> {
     let lock = gpu_lock.lock("system_overlay_standalone")?;
-    target.ensure_current(egl)?;
-    // begin_frame binds the staging FBO and sets the viewport, returning its id.
-    // The renderer was constructed against that id, so the returned value is unused.
-    let _staging = scratch.begin_frame(egl, size.0, size.1);
-    crate::begin_surface_frame(renderer, size);
-    let outcome = overlay.render(renderer, client.viewport(size), intl, frame);
-    renderer.flush();
-    scratch.blit_to(egl, target.current_fbo(), size.0, size.1);
+    let outcome = target.paint(
+        egl,
+        scratch,
+        renderer,
+        overlay,
+        client.viewport(size),
+        intl,
+        frame,
+    )?;
     wait_for_gpu(egl);
     drop(lock);
     let (dmabuf, slot) = target.export_and_swap()?;

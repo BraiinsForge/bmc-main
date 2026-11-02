@@ -99,6 +99,8 @@ pub struct ShapingRecorder {
     pub rects: Vec<DrawnRect>,
     pub rounded_rects: Vec<DrawnRect>,
     pub strokes: Vec<DrawnRect>,
+    /// How many times a frame was cleared after it began.
+    pub clears: usize,
     font_system: cosmic_text::FontSystem,
     layouts: ParagraphLayoutCache,
     svgs: TagReservations<SvgId, ()>,
@@ -130,6 +132,7 @@ impl ShapingRecorder {
             rects: Vec::new(),
             rounded_rects: Vec::new(),
             strokes: Vec::new(),
+            clears: 0,
             font_system: build_font_system(Fonts::shared()),
             layouts: ParagraphLayoutCache::new(),
             svgs: TagReservations::new(SVG_RESERVED_MIN),
@@ -228,7 +231,9 @@ impl RenderFrame for ShapingRecorder {
         self.background = background;
     }
 
-    fn clear_frame(&mut self) {}
+    fn clear_frame(&mut self) {
+        self.clears += 1;
+    }
 
     fn flush(&mut self) {}
 

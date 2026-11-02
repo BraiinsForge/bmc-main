@@ -118,11 +118,6 @@ impl SharedHost {
         ))
     }
 
-    /// Blit the staging color attachment into `dest_fbo` at `(w, h)`.
-    pub fn blit_staging_to(&self, dest_fbo: glow::Framebuffer, w: u32, h: u32) {
-        self.scratch.blit_to(&self.egl, dest_fbo, w, h);
-    }
-
     /// Submit pending GL commands and wait for GPU completion before handing
     /// exported buffers to the compositor.
     pub fn flush_and_wait_gl(&self) {

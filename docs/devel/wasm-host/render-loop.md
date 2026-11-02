@@ -134,18 +134,20 @@ Only `request_frame()`/`request_frame_after()` from the guest enters the runtime
 When a slot is eligible, `WidgetSlot::render` does the GPU work:
 
 01. Clear the surface dirty flag.
-02. Ensure the slot has a current export buffer in its double-buffer state.
-03. Bind the shared scratch staging FBO for this slot's size.
-04. Normalize GL state before handing control to the runtime renderer.
-05. Begin a femtovg frame on the shared renderer.
-06. Call `runtime.with_renderer(..., |rt| rt.render(delta_ms))`.
+02. Normalize GL state before handing control to the runtime renderer.
+03. Ask the runtime what the frame may find in its export buffer (`next_frame_target`): kept when it only replays damage
+    over its static layer, cleared otherwise.
+04. Point the shared frame FBO at the slot's current export buffer (`SharedRenderScratch::bind_export_buffer`),
+    allocating it if needed. A freshly allocated buffer the frame keeps is seeded from its sibling; one it doesn't keep
+    is cleared.
+05. Begin a femtovg frame on the shared renderer, cleared unless the buffer is kept (`TargetContents::begin_frame`).
+06. Call `runtime.with_renderer(..., |rt| rt.render(delta_ms, contents))`.
 07. Flush femtovg.
-08. Blit from shared scratch into the slot's current export FBO.
-09. Finish GL work.
-10. Export the current buffer metadata and swap to the next buffer slot.
-11. Submit the matching cached `wl_buffer` to the compositor.
-12. Flush the Wayland connection.
-13. Schedule the next runtime frame if the guest requested one.
+08. Finish GL work.
+09. Export the current buffer metadata and swap to the next buffer slot.
+10. Submit the matching cached `wl_buffer` to the compositor.
+11. Flush the Wayland connection.
+12. Schedule the next runtime frame if the guest requested one.
 
 The host calls `runtime.set_time(...)` immediately before rendering. `delta_ms` is derived from the slot's previous
 render timestamp, and the slot also exposes a monotonic millisecond clock to the runtime.

@@ -19,7 +19,7 @@
 // the grant above.
 
 use super::{Layering, TreeUi};
-use crate::overlay::{FrameKind, NextFrame, TouchEvent};
+use crate::overlay::{FrameKind, NextFrame, RenderOutcome, TouchEvent};
 use crate::test_support::TestRenderer;
 use bmc_render::partition::test_support::add_animated_draw;
 use bmc_render::renderer::test_support::ShapingRecorder;
@@ -929,5 +929,89 @@ fn a_kept_target_refuses_a_frame_that_is_not_its_replay() {
         ui.prepare_target(FrameKind::AnimationOnly, SIZE),
         TargetContents::Cleared,
         "the refused frame left the buffer as it was, which no longer matches the history"
+    );
+}
+
+/// Paint a `kind` frame of `ui` the way a host does, drawing no tree,
+/// and say what its target was found to hold.
+fn paint_no_tree(ui: &mut TreeUi, r: &mut ShapingRecorder, kind: FrameKind) -> TargetContents {
+    let mut found = None;
+    let _ = crate::paint_surface_frame(
+        ui,
+        |ui| Some(ui),
+        r,
+        SIZE,
+        kind,
+        |contents| {
+            found = Some(contents);
+            Ok(())
+        },
+        |_, _| RenderOutcome::default(),
+    )
+    .expect("BUG: a recorded frame always binds");
+    found.expect("BUG: paint_surface_frame binds every frame")
+}
+
+/// The kept buffer still shows the frame before last, so the host clears it after all,
+/// and neither buffer holds what the damage history describes.
+#[test]
+fn a_kept_frame_that_draws_no_tree_is_cleared_and_repaints_both_buffers() {
+    let mut r = layers();
+    let (mut ui, _) = settled(&mut r);
+    assert_eq!(
+        paint_no_tree(&mut ui, &mut r, FrameKind::AnimationOnly),
+        TargetContents::Preserved,
+        "the fixture must be a frame the host keeps the buffer for"
+    );
+    assert_eq!(r.clears, 1);
+    assert_eq!(
+        ui.prepare_target(FrameKind::AnimationOnly, SIZE),
+        TargetContents::Cleared
+    );
+}
+
+/// The buffer a frame failed to bind may hold anything by the time a later frame gets it.
+#[test]
+fn a_frame_that_fails_to_bind_repaints_both_buffers() {
+    let mut r = layers();
+    let (mut ui, _) = settled(&mut r);
+    let painted = crate::paint_surface_frame(
+        &mut ui,
+        |ui| Some(ui),
+        &mut r,
+        SIZE,
+        FrameKind::AnimationOnly,
+        |contents| {
+            assert_eq!(
+                contents,
+                TargetContents::Preserved,
+                "the fixture must be a frame the host keeps the buffer for"
+            );
+            anyhow::bail!("the export buffer could not be allocated")
+        },
+        |_, _| panic!("a frame that failed to bind draws nothing"),
+    );
+    assert!(painted.is_err());
+    assert_eq!(
+        ui.prepare_target(FrameKind::AnimationOnly, SIZE),
+        TargetContents::Cleared
+    );
+}
+
+/// A cleared buffer the overlay drew no tree into is exported all the same,
+/// so it no longer holds the frame the damage history says it does.
+#[test]
+fn a_cleared_frame_that_draws_no_tree_repaints_both_buffers() {
+    let mut r = layers();
+    let (mut ui, _) = settled(&mut r);
+    assert_eq!(
+        paint_no_tree(&mut ui, &mut r, FrameKind::Fresh),
+        TargetContents::Cleared
+    );
+    assert_eq!(r.clears, 0, "a cleared frame needs no second clear");
+    assert_eq!(
+        ui.prepare_target(FrameKind::AnimationOnly, SIZE),
+        TargetContents::Cleared,
+        "the replay that follows must not trust its buffer"
     );
 }

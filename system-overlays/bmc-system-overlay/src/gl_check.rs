@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::prelude::*;
+use bmc_render::repaint::TargetContents;
 use bmc_render::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
 
 use bmc_render::tree::StaticLayer;
@@ -91,7 +92,7 @@ impl GlRun<'_> {
             layering: self.layering,
             now: self.now(),
         };
-        begin_surface_frame(self.renderer, self.size);
+        begin_surface_frame(self.renderer, self.size, TargetContents::Cleared);
         let outcome = draw(self.renderer, frame);
         self.renderer.flush();
         let tree = outcome.tree.expect("BUG: a tree overlay reports its tree");

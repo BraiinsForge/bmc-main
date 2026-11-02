@@ -23,12 +23,18 @@
 //! render target wrapping `bmc_widget`'s export-buffer machinery with the
 //! `wl_buffer.release` bookkeeping the compositor drives.
 
+use bmc_intl::Intl;
+use bmc_render::renderer::Renderer;
+use bmc_render::repaint::TargetContents;
 use bmc_widget::egl::{
-    Attachment, DmaBufInfo, DoubleBufferState, EglContext, ExportFormat, TwoSlotBufferCache,
+    Attachment, DmaBufInfo, DoubleBufferState, EglContext, ExportContents, ExportFormat,
+    SharedRenderScratch, TwoSlotBufferCache,
 };
 use bmc_widget::surface::ReleasedBuffer;
 use glow::HasContext as _;
 use wayland_client::protocol::wl_buffer;
+
+use crate::{FrameKind, OverlayViewport, RenderOutcome, SystemOverlay, paint_surface_frame};
 
 /// Stall the CPU until the GPU has finished the submitted commands, so the
 /// exported DMA-BUF is safe to hand to the compositor. Uses an EGL fence;
@@ -45,6 +51,23 @@ pub fn wait_for_gpu(egl: &EglContext) {
     }
 }
 
+/// The damage history counts how many frames must repaint in full after a buffer goes stale,
+/// and cannot see how many buffers there are. This crate sees both, so a host that started
+/// triple-buffering fails to compile here rather than flickering a stale buffer back on screen.
+const _: () = assert!(
+    bmc_widget::egl::EXPORT_BUFFER_SLOTS == bmc_render::repaint::EXPORT_BUFFERS,
+    "bmc-widget rotates a different number of export buffers than bmc-render's damage history spans"
+);
+
+/// What the export buffer a frame binds holds, as the damage history decided.
+#[must_use]
+pub fn export_contents(contents: TargetContents) -> ExportContents {
+    match contents {
+        TargetContents::Preserved => ExportContents::Preserved,
+        TargetContents::Cleared => ExportContents::Cleared,
+    }
+}
+
 /// Double-buffered DMA-BUF render target with `wl_buffer.release` tracking.
 ///
 /// Pairs [`DoubleBufferState`] (two lazily-allocated export buffers) with a
@@ -58,9 +81,8 @@ pub struct OverlayRenderTarget {
 
 impl OverlayRenderTarget {
     /// Create an empty render target at `w`×`h`. Export buffers are allocated
-    /// lazily on the first [`Self::ensure_current`]. The `_egl` argument is
-    /// accepted to match the host factory; allocation is lazy inside
-    /// `ensure_current`.
+    /// lazily on the first [`Self::paint`]. The `_egl` argument is
+    /// accepted to match the host factory.
     pub fn new(_egl: &EglContext, w: u32, h: u32) -> anyhow::Result<Self> {
         Ok(Self {
             buffers: DoubleBufferState::new_with_format(
@@ -73,20 +95,33 @@ impl OverlayRenderTarget {
         })
     }
 
-    /// Ensure the current back-buffer slot is allocated and ready to render to.
-    pub fn ensure_current(&mut self, egl: &EglContext) -> anyhow::Result<()> {
-        self.buffers.ensure_current(egl)?;
-        Ok(())
-    }
-
-    /// GL framebuffer of the current back buffer. Must be called after
-    /// [`Self::ensure_current`].
-    #[must_use]
-    pub fn current_fbo(&self) -> glow::Framebuffer {
-        self.buffers
-            .current_ref()
-            .expect("BUG: current_fbo called before ensure_current succeeded")
-            .fbo
+    /// Paint a `kind` frame of `overlay` into the current export buffer,
+    /// through `scratch`'s frame framebuffer, as [`paint_surface_frame`] does.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the GPU stack the frame paints through, the overlay and what it is drawn as"
+    )]
+    pub fn paint(
+        &mut self,
+        egl: &EglContext,
+        scratch: &SharedRenderScratch,
+        renderer: &mut dyn Renderer,
+        overlay: &mut dyn SystemOverlay,
+        viewport: OverlayViewport,
+        intl: &Intl,
+        kind: FrameKind,
+    ) -> anyhow::Result<RenderOutcome> {
+        let (w, h) = self.size();
+        let buffers = &mut self.buffers;
+        paint_surface_frame(
+            overlay,
+            <dyn SystemOverlay>::tree_ui,
+            renderer,
+            (w, h),
+            kind,
+            |contents| scratch.bind_export_buffer(egl, buffers, w, h, export_contents(contents)),
+            |overlay, renderer| overlay.render(renderer, viewport, intl, kind),
+        )
     }
 
     /// Export the current buffer as DMA-BUF and swap to the other slot.
@@ -156,7 +191,7 @@ impl OverlayRenderTarget {
     }
 
     /// Free the GBM/GL export buffers and cached `wl_buffer`s for a hide, but
-    /// keep the target reusable: a later `ensure_current` reallocates lazily.
+    /// keep the target reusable: a later `paint` reallocates lazily.
     pub fn free_for_hide(
         &mut self,
         egl: &EglContext,

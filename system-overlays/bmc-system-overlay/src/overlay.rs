@@ -23,21 +23,59 @@ use std::time::{Duration, Instant};
 use bmc_intl::{Intl, Localized};
 use bmc_platform::DisplayShape;
 use bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS;
-use bmc_render::renderer::{FrameBackground, FrameClear, Renderer};
+use bmc_render::renderer::{FrameBackground, Renderer};
+use bmc_render::repaint::TargetContents;
 use bmc_shared_utils::language::Language;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
 
-/// Begin a frame on an overlay's surface the way every host does before
-/// [`SystemOverlay::render`]: cleared in full, which [`SURFACE_LAYERING`] relies on.
-pub fn begin_surface_frame(renderer: &mut dyn Renderer, (width, height): (u32, u32)) {
-    renderer.begin_frame_with_clear(
-        width,
-        height,
-        1.0,
-        FrameBackground::TransparentBlack,
-        FrameClear::Clear,
-    );
+/// Begin a frame on an overlay's surface over a buffer holding `contents`, the way every host
+/// does before [`SystemOverlay::render`]: cleared in full unless the frame keeps it,
+/// which [`SURFACE_LAYERING`] relies on.
+pub fn begin_surface_frame(
+    renderer: &mut dyn Renderer,
+    size: (u32, u32),
+    contents: TargetContents,
+) {
+    contents.begin_frame(renderer, size, FrameBackground::TransparentBlack);
+}
+
+/// Paint a `kind` frame of `subject` at `size`: ask its tree whether the frame keeps its buffer,
+/// have `bind` point the frame at a buffer holding that, begin the surface frame, `draw`, and flush.
+///
+/// A frame that failed to bind or drew no tree leaves its buffer holding nothing
+/// the tree's damage history describes, so every buffer repaints in full next;
+/// a kept one that drew no tree is cleared after all, as a frame nobody kept would have been.
+pub fn paint_surface_frame<S: ?Sized>(
+    subject: &mut S,
+    tree_of: impl for<'a> Fn(&'a mut S) -> Option<&'a mut crate::TreeUi>,
+    renderer: &mut dyn Renderer,
+    size: (u32, u32),
+    kind: FrameKind,
+    bind: impl FnOnce(TargetContents) -> anyhow::Result<()>,
+    draw: impl FnOnce(&mut S, &mut dyn Renderer) -> RenderOutcome,
+) -> anyhow::Result<RenderOutcome> {
+    let contents = tree_of(subject).map_or(TargetContents::Cleared, |tree| {
+        tree.prepare_target(kind, size)
+    });
+    if let Err(error) = bind(contents) {
+        if let Some(tree) = tree_of(subject) {
+            tree.invalidate_target();
+        }
+        return Err(error);
+    }
+    begin_surface_frame(renderer, size, contents);
+    let outcome = draw(subject, renderer);
+    if outcome.tree.is_none() {
+        if contents == TargetContents::Preserved {
+            renderer.clear_frame();
+        }
+        if let Some(tree) = tree_of(subject) {
+            tree.invalidate_target();
+        }
+    }
+    renderer.flush();
+    Ok(outcome)
 }
 
 /// How an overlay's tree draws on a surface begun with [`begin_surface_frame`].
@@ -790,6 +828,10 @@ pub trait SystemOverlay {
 
     /// The tree the overlay draws, if it draws through one,
     /// which the hide and release defaults below look after.
+    ///
+    /// The host also asks it whether a frame may keep its buffer, so an overlay that returns one
+    /// must render through that same tree, with the host's [`FrameKind`] and surface size:
+    /// a frame that doesn't is refused, and drawn as a cleared one.
     fn tree_ui(&mut self) -> Option<&mut crate::TreeUi> {
         None
     }

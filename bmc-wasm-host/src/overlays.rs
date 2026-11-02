@@ -22,6 +22,7 @@ use std::ptr::NonNull;
 use std::time::Instant;
 
 use bmc_render::renderer::Renderer;
+use bmc_render::repaint::TargetContents;
 use bmc_system_overlay::{HostedOverlay, SystemOverlay, begin_surface_frame};
 use bmc_widget::egl::EglContext;
 
@@ -131,7 +132,7 @@ pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
 
 /// Pay each overlay's one-time renderer setup (SVG icon decode/upload, glyph
 /// atlas) at startup so the first screen-edge reveal does not stall mid-swipe.
-/// Mirrors `render_hosted_overlay`'s GL setup but draws into the host scratch
+/// Draws into the host scratch rather than an export buffer,
 /// and exports nothing — no overlay buffer is allocated or mapped.
 pub fn prewarm_hosted_overlay(
     overlay: &mut HostedOverlay,
@@ -158,7 +159,7 @@ pub fn prewarm_hosted_overlay(
             // runs before the event loop, one overlay at a time, so no other `&mut
             // dyn Renderer` to this renderer is live.
             let renderer = unsafe { &mut *ptr.as_ptr() };
-            begin_surface_frame(renderer, (w, h));
+            begin_surface_frame(renderer, (w, h), TargetContents::Cleared);
             overlay.prewarm(renderer, viewport);
             renderer.flush();
             Ok(())
@@ -203,12 +204,6 @@ pub fn render_hosted_overlay(
     })?;
     let viewport = overlay.viewport();
     let size = viewport.size();
-    anyhow::ensure!(
-        shared.scratch.supports_size(size.0, size.1),
-        "host scratch FBO {:?} cannot render resized overlay {:?}",
-        shared.scratch.max_size(),
-        size,
-    );
     #[expect(
         clippy::cast_possible_truncation,
         reason = "layer-shell margins are integer pixels"
@@ -228,21 +223,16 @@ pub fn render_hosted_overlay(
     let frame = overlay.frame_kind();
     let outcome = crate::slot::stage_frame_under_gpu_lock(
         shared,
-        crate::slot::FrameStaging::Shared,
+        crate::slot::FrameStaging::Retargeted,
         "host_system_overlay",
         size.0,
         size.1,
         |shared| {
-            overlay.target_mut().ensure_current(&shared.egl)?;
             // SAFETY: the renderer outlives this call and the single-threaded host
             // does not hold another mutable renderer reference during this pass.
             let renderer = unsafe { &mut *ptr.as_ptr() };
-            begin_surface_frame(renderer, size);
-            let outcome = overlay.render(renderer, viewport, frame);
-            renderer.flush();
+            let outcome = overlay.paint(&shared.egl, &shared.scratch, renderer, frame)?;
             let _ = overlay.overlay_mut().take_content_dirty();
-            let fbo = overlay.target_mut().current_fbo();
-            shared.blit_staging_to(fbo, size.0, size.1);
             Ok(outcome)
         },
         || {},
@@ -263,6 +253,7 @@ pub fn render_hosted_overlay(
             overlay = overlay.namespace(),
             frame = ?frame,
             static_layer = ?tree.static_layer,
+            repainted_px = tree.repainted_px,
             static_key_us = tree.timings.deserialize_us,
             layout_us = tree.timings.layout_us,
             taffy_build_us = tree.timings.taffy_build_us,

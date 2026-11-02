@@ -254,12 +254,10 @@ impl Painter {
     }
 
     fn paint(&mut self, contents: TargetContents) {
-        self.renderer.begin_frame_with_clear(
-            u32::from(W),
-            u32::from(H),
-            1.0,
+        contents.begin_frame(
+            &mut self.renderer,
+            (u32::from(W), u32::from(H)),
             FrameBackground::OpaqueBlack,
-            contents.frame_clear(),
         );
         let status = self
             .runtime

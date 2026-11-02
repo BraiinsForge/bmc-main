@@ -29,7 +29,7 @@ use std::cell::RefCell;
 
 use crate::interaction::{CoalesceIterExt, Rect};
 use crate::partition::static_layer::LayerCommit;
-use crate::renderer::FrameClear;
+use crate::renderer::{FrameBackground, FrameClear, Renderer};
 use crate::tree::StaticLayer;
 
 /// Frames that must reach every buffer, rather than only the one they paint,
@@ -63,6 +63,17 @@ impl TargetContents {
             Self::Preserved => FrameClear::Keep,
             Self::Cleared => FrameClear::Clear,
         }
+    }
+
+    /// Start `renderer`'s `width`×`height` frame over a target holding this,
+    /// cleared to `background` unless the frame keeps it.
+    pub fn begin_frame(
+        self,
+        renderer: &mut dyn Renderer,
+        (width, height): (u32, u32),
+        background: FrameBackground,
+    ) {
+        renderer.begin_frame_with_clear(width, height, 1.0, background, self.frame_clear());
     }
 }
 

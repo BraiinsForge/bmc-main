@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use bmc_intl::Localized;
 use bmc_render::renderer::Renderer;
-use bmc_widget::egl::{DmaBufInfo, EglContext};
+use bmc_widget::egl::{DmaBufInfo, EglContext, SharedRenderScratch};
 
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
@@ -491,17 +491,6 @@ impl HostedOverlay {
         );
     }
 
-    /// [`SystemOverlay::render`], worded in the device language.
-    pub fn render(
-        &mut self,
-        renderer: &mut dyn Renderer,
-        viewport: OverlayViewport,
-        frame: FrameKind,
-    ) -> RenderOutcome {
-        self.overlay
-            .render(renderer, viewport, self.localized.intl(), frame)
-    }
-
     /// [`SystemOverlay::prewarm`], with the formatter the first render will get.
     pub fn prewarm(&mut self, renderer: &mut dyn Renderer, viewport: OverlayViewport) {
         self.overlay
@@ -510,6 +499,27 @@ impl HostedOverlay {
 
     pub fn target_mut(&mut self) -> &mut OverlayRenderTarget {
         &mut self.target
+    }
+
+    /// Paint a `kind` frame into the current export buffer,
+    /// as [`OverlayRenderTarget::paint`] does.
+    pub fn paint(
+        &mut self,
+        egl: &EglContext,
+        scratch: &SharedRenderScratch,
+        renderer: &mut dyn Renderer,
+        kind: FrameKind,
+    ) -> anyhow::Result<RenderOutcome> {
+        let viewport = self.viewport();
+        self.target.paint(
+            egl,
+            scratch,
+            renderer,
+            &mut *self.overlay,
+            viewport,
+            self.localized.intl(),
+            kind,
+        )
     }
 
     /// Commit changed placement without attaching or damaging a buffer.

@@ -199,8 +199,8 @@ impl TreeUi {
         self.target
     }
 
-    /// Repaint every export buffer in full, as after a frame that kept its buffer
-    /// and painted no tree into it: none may hold the frame the damage history describes.
+    /// Repaint every export buffer in full, as after a frame that painted no tree
+    /// into its buffer: none may hold the frame the damage history describes.
     pub fn invalidate_target(&mut self) {
         self.target = TargetContents::Cleared;
         self.damage.owe_every_buffer();

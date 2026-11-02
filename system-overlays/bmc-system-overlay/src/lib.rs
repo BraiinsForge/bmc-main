@@ -38,7 +38,7 @@ mod tree;
 pub use bmc_platform::DisplayShape;
 pub use bmc_shared_utils::language::Language;
 pub use connectivity::{Snapshot, SnapshotVersion, VersionedSnapshot, snapshot_if_changed};
-pub use gpu::{OverlayRenderTarget, wait_for_gpu};
+pub use gpu::{OverlayRenderTarget, export_contents, wait_for_gpu};
 pub use hosted::HostedOverlay;
 pub use icon::register_icon;
 pub use overlay::{
@@ -46,7 +46,7 @@ pub use overlay::{
     InputRegion, LayerConfig, LocalizationRequest, NextFrame, OverlayViewport, PlatformCaps,
     RenderOutcome, RestartDeclined, SURFACE_LAYERING, ScreenEdge, SettingsCaps, SettingsRequest,
     SetupStep, SystemOverlay, TickOutcome, TouchEvent, TreeFrameProfile, UpgradeKind, UpgradePhase,
-    UpgradeSnapshot, UpgradeState, UpgradeUpdate, begin_surface_frame,
+    UpgradeSnapshot, UpgradeState, UpgradeUpdate, begin_surface_frame, paint_surface_frame,
 };
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;

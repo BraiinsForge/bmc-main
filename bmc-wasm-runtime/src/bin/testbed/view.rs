@@ -883,12 +883,10 @@ impl ViewCore {
             .as_ref()
             .expect("BUG: checked above")
             .next_frame_target(self.width, self.height);
-        self.renderer.begin_frame_with_clear(
-            self.width,
-            self.height,
-            1.0,
+        contents.begin_frame(
+            &mut self.renderer,
+            (self.width, self.height),
             FrameBackground::OpaqueBlack,
-            contents.frame_clear(),
         );
         let outcome = self
             .runtime

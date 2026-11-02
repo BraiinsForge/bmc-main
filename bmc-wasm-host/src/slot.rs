@@ -33,19 +33,10 @@ use bmc_render::renderer::FrameBackground;
 use bmc_render::renderer::{RenderAssets, Renderer};
 use bmc_wasm_runtime::{
     DiskCache, LedEffect, LedRequest, LedScope, NetworkInfo, NextAlarm as RuntimeNextAlarm,
-    RenderStatus, RuntimeConfig, SystemSnapshot, TargetContents, WasmWidgetRuntime,
+    RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_wasm_thin_protocol::{WIDGET_CACHE_BUCKET_MAX_BYTES, WIDGET_CACHE_DIR};
 
-/// The runtime counts how many frames must repaint in full after a buffer goes
-/// stale, and it cannot see how many buffers there are. This crate sees both,
-/// so a host that started triple-buffering fails to compile here rather than
-/// silently under-counting and bringing back the flicker of BDK-707/708.
-const _: () = assert!(
-    bmc_widget::egl::EXPORT_BUFFER_SLOTS == bmc_wasm_runtime::EXPORT_BUFFERS,
-    "bmc-widget rotates a different number of export buffers than bmc-wasm-runtime assumes"
-);
-use bmc_widget::egl::ExportContents;
 use bmc_widget::surface::{
     DeckWidgetSurfaceClient, InitialState, ReleasedBuffer, WidgetEvent, WidgetSurface,
 };
@@ -999,14 +990,20 @@ impl<S: SlotSurface> WidgetSlot<S> {
                 target_height,
                 |shared| {
                     let contents = runtime.next_frame_target(target_width, target_height);
-                    bind_export_target_for_frame(
-                        shared,
+                    shared.scratch.bind_export_buffer(
+                        &shared.egl,
                         &mut egl_target.buffers,
-                        ptr,
                         target_width,
                         target_height,
-                        contents,
+                        bmc_system_overlay::export_contents(contents),
                     )?;
+                    // SAFETY: the renderer outlives this frame, and the single-threaded
+                    // host holds no other reference to it meanwhile.
+                    contents.begin_frame(
+                        unsafe { &mut *ptr.as_ptr() },
+                        (target_width, target_height),
+                        FrameBackground::OpaqueBlack,
+                    );
                     HostRenderProfiling::log_phase(wasm_basename, "frame_setup", frame_setup_phase);
 
                     let phase_start = HostRenderProfiling::start_phase();
@@ -1601,42 +1598,10 @@ impl HostRenderProfiling {
     }
 }
 
-/// Point the renderer at the slot's current export buffer and start its frame.
-fn bind_export_target_for_frame(
-    shared: &SharedHost,
-    buffers: &mut bmc_widget::egl::DoubleBufferState,
-    ptr: NonNull<dyn Renderer>,
-    width: u32,
-    height: u32,
-    contents: TargetContents,
-) -> anyhow::Result<()> {
-    shared.scratch.bind_export_buffer(
-        &shared.egl,
-        buffers,
-        width,
-        height,
-        match contents {
-            TargetContents::Preserved => ExportContents::Preserved,
-            TargetContents::Cleared => ExportContents::Cleared,
-        },
-    )?;
-    let renderer = unsafe { &mut *ptr.as_ptr() };
-    renderer.begin_frame_with_clear(
-        width,
-        height,
-        1.0,
-        FrameBackground::OpaqueBlack,
-        contents.frame_clear(),
-    );
-    Ok(())
-}
-
 /// Which framebuffer a staged frame paints into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrameStaging {
-    /// Paint into the shared scratch, then blit it to the destination. Costs a
-    /// full-screen copy, which this GPU is slow at even through a one-line
-    /// shader.
+    /// Paint into the shared scratch, for a pass that exports nothing.
     Shared,
     /// Paint straight into a buffer `render_fn` retargets the shared frame FBO
     /// at, skipping the copy. femtovg holds that FBO's id as its screen target
@@ -1655,8 +1620,8 @@ pub(crate) enum FrameStaging {
 /// [`SharedHost::flush_and_wait_gl`] completes, then dropped. Any
 /// `export_and_swap` call must happen AFTER this function returns.
 ///
-/// `render_fn` receives `&mut SharedHost` so it can call
-/// [`SharedHost::blit_staging_to`] and access `shared.egl`. It must NOT
+/// `render_fn` receives `&mut SharedHost` so it can retarget `shared.scratch`
+/// and access `shared.egl`. It must NOT
 /// call [`SharedHost::flush_and_wait_gl`] itself — the helper owns that step.
 pub(crate) fn stage_frame_under_gpu_lock<F, T, G>(
     shared: &mut SharedHost,
