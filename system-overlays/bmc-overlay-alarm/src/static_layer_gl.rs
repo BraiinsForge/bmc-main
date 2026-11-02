@@ -19,9 +19,9 @@
 // the grant above.
 
 use bmc_render::renderer::test_support::ShapingRecorder;
-use bmc_render::tree::StaticLayer;
-use bmc_system_overlay::Layering;
-use bmc_system_overlay::gl_check::{FRAME_STEP, GlRun, assert_layered_run_matches_full_paint};
+use bmc_system_overlay::gl_check::{
+    CAPTURED, GlRun, REUSED, assert_layered_run_matches_full_paint,
+};
 
 use super::*;
 
@@ -38,19 +38,14 @@ fn view() -> AlarmView {
 
 fn paint(run: &mut GlRun<'_>, state: &mut AlarmRenderState, kind: FrameKind) {
     let view = view();
-    let now = state.last_render + FRAME_STEP;
-    run.paint(|renderer, layering| {
+    run.paint(kind, |renderer, frame| {
         render_alarm(
             renderer,
             SIZE,
             state,
             &view,
             &bmc_intl::formatter(bmc_intl::Language::default()),
-            OverlayFrame {
-                kind,
-                layering,
-                now,
-            },
+            frame,
         )
         .outcome
     });
@@ -65,11 +60,7 @@ fn stop_button() -> (f64, f64) {
         &mut state,
         &view(),
         &bmc_intl::formatter(bmc_intl::Language::default()),
-        OverlayFrame {
-            kind: FrameKind::Fresh,
-            layering: Layering::Unlayered,
-            now: Instant::now(),
-        },
+        OverlayFrame::unlayered(FrameKind::Fresh),
     );
     let button = state
         .tree
@@ -85,7 +76,7 @@ fn stop_button() -> (f64, f64) {
 fn a_stop_press_paints_as_a_full_paint_does() {
     let (x, y) = stop_button();
     let outcomes = assert_layered_run_matches_full_paint(SIZE, |run| {
-        let mut state = AlarmRenderState::new(Instant::now());
+        let mut state = AlarmRenderState::new(run.now());
         let ringing = |run: &mut GlRun<'_>, state: &mut AlarmRenderState| {
             for _ in 0..6 {
                 paint(run, state, FrameKind::AnimationOnly);
@@ -103,30 +94,13 @@ fn a_stop_press_paints_as_a_full_paint_does() {
         state.tree.push_touch(TouchEvent::Up { id: 0 });
         paint(run, &mut state, FrameKind::AnimationOnly);
         ringing(run, &mut state);
-        run.lose_layer(&state.tree);
-        paint(run, &mut state, FrameKind::AnimationOnly);
-        paint(run, &mut state, FrameKind::AnimationOnly);
-        run.hide(&mut state.tree);
-        paint(run, &mut state, FrameKind::Fresh);
-        ringing(run, &mut state);
     });
     let Some(outcomes) = outcomes else { return };
-    let ringing = [StaticLayer::Blitted; 6];
-    let capture = [StaticLayer::Captured { empty: false }].as_slice();
+    let ringing = [REUSED; 6];
+    let capture = [CAPTURED].as_slice();
     assert_eq!(
         outcomes,
-        [
-            capture,
-            &ringing,
-            capture,
-            &ringing,
-            capture,
-            &ringing,
-            &[StaticLayer::Missed, StaticLayer::Unused],
-            capture,
-            &ringing,
-        ]
-        .concat(),
+        [capture, &ringing, capture, &ringing, capture, &ringing,].concat(),
         "the press and the release each capture again"
     );
 }

@@ -358,16 +358,14 @@ fn wifi_view(view: &SettingsTrayView) -> WifiView<'_> {
 pub struct SettingsTrayRenderState {
     tree: TreeUi,
     icons: Option<icons::TrayIcons>,
-    last_render: Instant,
 }
 
 impl SettingsTrayRenderState {
     #[must_use]
     pub fn new(now: Instant) -> Self {
         Self {
-            tree: TreeUi::new(),
+            tree: TreeUi::new(now),
             icons: None,
-            last_render: now,
         }
     }
 }
@@ -1009,12 +1007,8 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
-    fn on_hidden(&mut self) {
-        self.render_state.tree.clear();
-    }
-
-    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
-        self.render_state.tree.release(renderer);
+    fn tree_ui(&mut self) -> Option<&mut TreeUi> {
+        Some(&mut self.render_state.tree)
     }
 
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
@@ -1084,18 +1078,9 @@ pub fn render_settings_tray(
     intl: &Intl,
     frame: OverlayFrame,
 ) -> SettingsTrayRenderOutput {
-    let OverlayFrame {
-        kind,
-        layering,
-        now,
-    } = frame;
     let icons = *state
         .icons
         .get_or_insert_with(|| icons::register_icons(renderer));
-
-    let delta_ms =
-        u32::try_from(now.duration_since(state.last_render).as_millis()).unwrap_or(u32::MAX);
-    state.last_render = now;
 
     // Sampled before the render: the tree the render lays out was built from
     // this state, so it is the baseline `pressed_changed` compares against.
@@ -1134,15 +1119,10 @@ pub fn render_settings_tray(
         )
     };
 
-    let tree_frame = match state.tree.render(
-        kind,
-        layering,
-        viewport.size(),
-        delta_ms,
-        renderer,
-        intl,
-        build,
-    ) {
+    let tree_frame = match state
+        .tree
+        .render(frame, viewport.size(), renderer, intl, build)
+    {
         Ok(tree_frame) => tree_frame,
         Err(err) => {
             tracing::error!("settings-tray tree render failed: {err}");
@@ -2170,11 +2150,7 @@ mod replay_tests {
             state,
             view,
             &english,
-            OverlayFrame {
-                kind,
-                layering: Layering::Unlayered,
-                now: Instant::now(),
-            },
+            OverlayFrame::unlayered(kind),
         )
         .outcome
     }

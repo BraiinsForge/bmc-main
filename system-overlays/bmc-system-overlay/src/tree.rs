@@ -66,6 +66,28 @@ pub struct OverlayFrame {
     pub now: Instant,
 }
 
+impl OverlayFrame {
+    /// A frame of the host's surface, drawn now.
+    #[must_use]
+    pub fn on_surface(kind: FrameKind) -> Self {
+        Self {
+            kind,
+            layering: crate::SURFACE_LAYERING,
+            now: Instant::now(),
+        }
+    }
+
+    /// A frame kept off the layer, drawn now.
+    #[must_use]
+    pub fn unlayered(kind: FrameKind) -> Self {
+        Self {
+            kind,
+            layering: Layering::Unlayered,
+            now: Instant::now(),
+        }
+    }
+}
+
 /// The last successfully rendered tree, the size it was laid out at, and its static key.
 struct CachedTree {
     node: Node,
@@ -128,6 +150,8 @@ pub struct TreeUi {
     rel_time: RelTimeWords,
     static_layer: StaticLayerCache,
     warned_unkeyed: bool,
+    /// The instant the last frame's animations advanced to.
+    last_render: Instant,
     #[cfg(any(test, feature = "test-support"))]
     replayed_last_frame: bool,
     /// Fails the next walk once its layer is planned, as no real tree makes taffy fail.
@@ -135,8 +159,17 @@ pub struct TreeUi {
     fail_next_walk: bool,
 }
 
+#[cfg(test)]
 impl Default for TreeUi {
     fn default() -> Self {
+        Self::new(Instant::now())
+    }
+}
+
+impl TreeUi {
+    /// A tree whose first frame's animations advance from `now`.
+    #[must_use]
+    pub fn new(now: Instant) -> Self {
         Self {
             interaction: InteractionState::new(),
             modal_states: HashMap::new(),
@@ -149,21 +182,16 @@ impl Default for TreeUi {
             rel_time: RelTimeWords::new(),
             static_layer: overlay_layer(),
             warned_unkeyed: false,
+            last_render: now,
             #[cfg(any(test, feature = "test-support"))]
             replayed_last_frame: false,
             #[cfg(test)]
             fail_next_walk: false,
         }
     }
-}
 
-impl TreeUi {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Lay out and draw a frame at `size` against `renderer`.
+    /// Lay out and draw `frame` at `size` against `renderer`,
+    /// advancing animations by the time since the last frame.
     ///
     /// An [`FrameKind::AnimationOnly`] frame replays the cached tree.
     /// `build` runs instead when the frame is fresh, nothing is cached,
@@ -173,11 +201,31 @@ impl TreeUi {
     /// A [`Layering::Layered`] frame draws the static half from the layer
     /// while its key holds, and captures it again when it does not.
     /// `intl` words the labels the renderer formats itself, such as a relative time.
+    pub fn render(
+        &mut self,
+        frame: OverlayFrame,
+        size: (u32, u32),
+        renderer: &mut dyn Renderer,
+        intl: &bmc_intl::Intl,
+        build: impl FnOnce() -> Node,
+    ) -> anyhow::Result<TreeFrame> {
+        let OverlayFrame {
+            kind,
+            layering,
+            now,
+        } = frame;
+        let delta_ms = u32::try_from(now.saturating_duration_since(self.last_render).as_millis())
+            .unwrap_or(u32::MAX);
+        self.last_render = now;
+        self.render_after(kind, layering, size, delta_ms, renderer, intl, build)
+    }
+
+    /// [`Self::render`], `delta_ms` after the last frame.
     #[expect(
         clippy::too_many_arguments,
         reason = "the frame's kind, layering, size, clock, target and wording"
     )]
-    pub fn render(
+    pub(crate) fn render_after(
         &mut self,
         frame: FrameKind,
         layering: Layering,

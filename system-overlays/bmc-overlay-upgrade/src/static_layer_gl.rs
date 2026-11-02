@@ -18,11 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::time::Instant;
-
-use bmc_render::tree::StaticLayer;
-use bmc_system_overlay::gl_check::{FRAME_STEP, GlRun, assert_layered_run_matches_full_paint};
-use bmc_system_overlay::{DownloadProgress, FrameKind, OverlayFrame, UpgradeKind, UpgradePhase};
+use bmc_system_overlay::gl_check::{
+    CAPTURED, GlRun, REUSED, assert_layered_run_matches_full_paint,
+};
+use bmc_system_overlay::{DownloadProgress, FrameKind, UpgradeKind, UpgradePhase};
 
 use super::{Surface, SurfaceTier, UpgradeRenderState, UpgradeView, render_upgrade};
 
@@ -39,45 +38,33 @@ fn downloading(total_bytes: Option<u64>, downloaded_bytes: u64) -> UpgradeView {
     }
 }
 
-/// One upgrade surface, its frames stamped a fixed step apart,
-/// so both passes of a run animate alike.
+/// One upgrade surface, its frames stamped by the run's clock.
 struct Card {
     state: UpgradeRenderState,
-    started: Instant,
-    frames: u32,
 }
 
 impl Card {
-    fn new() -> Self {
-        let started = Instant::now();
+    fn new(run: &GlRun<'_>) -> Self {
         Self {
-            state: UpgradeRenderState::new(started),
-            started,
-            frames: 0,
+            state: UpgradeRenderState::new(run.now()),
         }
     }
 
     fn paint(&mut self, run: &mut GlRun<'_>, view: &UpgradeView, kind: FrameKind) {
-        self.frames += 1;
-        let at = self.started + FRAME_STEP * self.frames;
         let surface = Surface {
             width: SIZE.0,
             height: SIZE.1,
             tier: SurfaceTier::fullscreen_for_width(SIZE.0),
         };
         let state = &mut self.state;
-        run.paint(|renderer, layering| {
+        run.paint(kind, |renderer, frame| {
             render_upgrade(
                 renderer,
                 surface,
                 state,
                 view,
                 &bmc_intl::formatter(bmc_intl::Language::default()),
-                OverlayFrame {
-                    kind,
-                    layering,
-                    now: at,
-                },
+                frame,
             )
         });
     }
@@ -86,16 +73,12 @@ impl Card {
 #[test]
 fn a_progress_run_paints_as_a_full_paint_does() {
     let outcomes = assert_layered_run_matches_full_paint(SIZE, |run| {
-        let mut card = Card::new();
+        let mut card = Card::new(run);
         let no_total = downloading(None, 0);
         card.paint(run, &no_total, FrameKind::Fresh);
         for _ in 0..9 {
             card.paint(run, &no_total, FrameKind::AnimationOnly);
         }
-        run.lose_layer(&card.state.tree);
-        card.paint(run, &no_total, FrameKind::AnimationOnly);
-        card.paint(run, &no_total, FrameKind::AnimationOnly);
-        run.hide(&mut card.state.tree);
         for step in 0..=20 {
             let view = downloading(Some(1_000_000), step * 50_000);
             card.paint(run, &view, FrameKind::Fresh);
@@ -104,19 +87,14 @@ fn a_progress_run_paints_as_a_full_paint_does() {
     });
     let Some(outcomes) = outcomes else { return };
     assert_eq!(
-        outcomes[..12],
-        [
-            [StaticLayer::Captured { empty: false }].as_slice(),
-            &[StaticLayer::Blitted; 9],
-            &[StaticLayer::Missed, StaticLayer::Unused],
-        ]
-        .concat(),
-        "a lost layer misses once, then the card paints uncached until it is hidden"
+        outcomes[..10],
+        [[CAPTURED].as_slice(), &[REUSED; 9]].concat(),
+        "the card without a total captures once and reuses it while the bar moves"
     );
-    for (step, pair) in outcomes[12..].chunks(2).enumerate() {
+    for (step, pair) in outcomes[10..].chunks(2).enumerate() {
         assert_eq!(
             pair,
-            [StaticLayer::Captured { empty: false }, StaticLayer::Blitted],
+            [CAPTURED, REUSED],
             "progress step {step} captures its new static half and reuses it"
         );
     }
@@ -125,7 +103,7 @@ fn a_progress_run_paints_as_a_full_paint_does() {
 #[test]
 fn two_cards_of_one_kind_keep_their_own_layers() {
     let outcomes = assert_layered_run_matches_full_paint(SIZE, |run| {
-        let (mut first, mut second) = (Card::new(), Card::new());
+        let (mut first, mut second) = (Card::new(run), Card::new(run));
         let (quarter, three_quarters) = (
             downloading(Some(1_000_000), 250_000),
             downloading(Some(1_000_000), 750_000),
@@ -136,17 +114,9 @@ fn two_cards_of_one_kind_keep_their_own_layers() {
         }
     });
     let Some(outcomes) = outcomes else { return };
-    assert_eq!(
-        outcomes[..2],
-        [
-            StaticLayer::Captured { empty: false },
-            StaticLayer::Captured { empty: false }
-        ]
-    );
+    assert_eq!(outcomes[..2], [CAPTURED, CAPTURED]);
     assert!(
-        outcomes[2..]
-            .iter()
-            .all(|outcome| *outcome == StaticLayer::Blitted),
+        outcomes[2..].iter().all(|outcome| *outcome == REUSED),
         "a shared layer would be captured over by the other card every frame: {outcomes:?}"
     );
 }

@@ -129,14 +129,12 @@ pub struct DeviceInfoRenderState {
     /// What bmc offers, once the compositor names it;
     /// until then, every pack this process reads.
     offered: Option<Vec<Language>>,
-    last_render: Instant,
 }
 
 impl std::fmt::Debug for DeviceInfoRenderState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeviceInfoRenderState")
             .field("icons", &self.icons)
-            .field("last_render", &self.last_render)
             .finish_non_exhaustive()
     }
 }
@@ -145,11 +143,10 @@ impl DeviceInfoRenderState {
     #[must_use]
     pub fn new(now: Instant) -> Self {
         Self {
-            tree: TreeUi::default(),
+            tree: TreeUi::new(now),
             icons: None,
             languages: None,
             offered: None,
-            last_render: now,
         }
     }
 
@@ -1627,15 +1624,7 @@ pub fn render_device_info(
     language_switch: LanguageSwitch,
     frame: OverlayFrame,
 ) -> DeviceInfoFrame {
-    let OverlayFrame {
-        kind,
-        layering,
-        now,
-    } = frame;
     let icons = state.ensure_icons(r);
-    let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
-        .unwrap_or(u32::MAX);
-    state.last_render = now;
 
     if *view == DeviceInfoView::Done {
         state.tree.clear();
@@ -1665,10 +1654,7 @@ pub fn render_device_info(
         )
         .expect("BUG: every view but Done has a tree")
     };
-    match state
-        .tree
-        .render(kind, layering, size, delta_ms, r, intl, build)
-    {
+    match state.tree.render(frame, size, r, intl, build) {
         Ok(tree_frame) => DeviceInfoFrame {
             outcome: tree_frame.outcome(),
             picked: tree_frame
@@ -1694,7 +1680,7 @@ mod tests {
     use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
     use bmc_render::partition::tree_static_key;
     use bmc_render::renderer::test_support::ShapingRecorder;
-    use bmc_system_overlay::{FrameKind, Layering, OverlayFrame};
+    use bmc_system_overlay::{FrameKind, OverlayFrame};
     use std::time::Instant;
 
     /// The name and panel the screens were authored against.
@@ -2451,11 +2437,7 @@ mod tests {
             DEVICE_NAME,
             false,
             LanguageSwitch::Hidden,
-            OverlayFrame {
-                kind: frame,
-                layering: Layering::Unlayered,
-                now: Instant::now(),
-            },
+            OverlayFrame::unlayered(frame),
         );
     }
 

@@ -785,13 +785,27 @@ pub trait SystemOverlay {
         DEFAULT_ANIMATION_FRAME_DELAY_MS
     }
 
+    /// The tree the overlay draws, if it draws through one,
+    /// which the hide and release defaults below look after.
+    fn tree_ui(&mut self) -> Option<&mut crate::TreeUi> {
+        None
+    }
+
     /// The surface was unmapped. Drop what only redraws it, such as a cached tree.
-    fn on_hidden(&mut self) {}
+    fn on_hidden(&mut self) {
+        if let Some(tree) = self.tree_ui() {
+            tree.clear();
+        }
+    }
 
     /// Free what the overlay keeps in `renderer` between frames, such as a static layer,
     /// so none of it outlives the surface or the renderer.
     /// Needs the renderer's GL context current.
-    fn release_renderer_resources(&mut self, _renderer: &mut dyn Renderer) {}
+    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
+        if let Some(tree) = self.tree_ui() {
+            tree.release(renderer);
+        }
+    }
 
     /// Pay one-time renderer setup costs at host startup instead of on the
     /// first reveal. The host calls this once, before the event loop, with the

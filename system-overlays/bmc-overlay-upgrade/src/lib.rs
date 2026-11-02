@@ -30,8 +30,8 @@ use bmc_platform::{BmcInfo, HardwareProfile};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
     Anchor, DownloadProgress, FrameKind, InputRegion, Layer, LayerConfig, OverlayFrame,
-    OverlayViewport, RenderOutcome, SURFACE_LAYERING, SystemOverlay, TickOutcome, TreeUi,
-    UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
+    OverlayViewport, RenderOutcome, SystemOverlay, TickOutcome, TreeUi, UpgradeKind, UpgradePhase,
+    UpgradeSnapshot, UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -177,16 +177,14 @@ impl From<UpgradeSnapshot> for UpgradeView {
 pub struct UpgradeRenderState {
     tree: TreeUi,
     icons: Option<UpgradeIcons>,
-    last_render: Instant,
 }
 
 impl UpgradeRenderState {
     #[must_use]
     pub fn new(now: Instant) -> Self {
         Self {
-            tree: TreeUi::new(),
+            tree: TreeUi::new(now),
             icons: None,
-            last_render: now,
         }
     }
 }
@@ -200,23 +198,12 @@ pub fn render_upgrade(
     intl: &Intl,
     frame: OverlayFrame,
 ) -> RenderOutcome {
-    let OverlayFrame {
-        kind,
-        layering,
-        now,
-    } = frame;
     let icons = *state
         .icons
         .get_or_insert_with(|| icons::register_icons(renderer));
-    let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
-        .unwrap_or(u32::MAX);
-    state.last_render = now;
     let size = (surface.width, surface.height);
     let build = || ui::build_upgrade_tree(view, surface, icons, intl);
-    match state
-        .tree
-        .render(kind, layering, size, delta_ms, renderer, intl, build)
-    {
+    match state.tree.render(frame, size, renderer, intl, build) {
         Ok(tree_frame) => tree_frame.outcome(),
         Err(err) => {
             tracing::error!("upgrade tree render failed: {err}");
@@ -323,11 +310,7 @@ impl OverlayState {
             &mut self.render_state,
             &view,
             intl,
-            OverlayFrame {
-                kind: frame,
-                layering: SURFACE_LAYERING,
-                now: Instant::now(),
-            },
+            OverlayFrame::on_surface(frame),
         )
     }
 }
@@ -432,12 +415,8 @@ impl SystemOverlay for UpgradeOverlay {
         ANIMATION_FRAME_MS
     }
 
-    fn on_hidden(&mut self) {
-        self.state.render_state.tree.clear();
-    }
-
-    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
-        self.state.render_state.tree.release(renderer);
+    fn tree_ui(&mut self) -> Option<&mut TreeUi> {
+        Some(&mut self.state.render_state.tree)
     }
 }
 

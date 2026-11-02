@@ -66,7 +66,7 @@ fn frame(
     size: (u32, u32),
     builds: &mut usize,
 ) -> super::TreeFrame {
-    ui.render(
+    ui.render_after(
         kind,
         Layering::Unlayered,
         size,
@@ -87,7 +87,7 @@ fn touch_on_slider_reports_drag_fraction() {
     let mut r = TestRenderer::default();
     // Warm-up frame establishes the slider's hit region (regions are
     // prior-frame state); the touch is hit-tested on the next frame.
-    ui.render(
+    ui.render_after(
         FrameKind::Fresh,
         Layering::Unlayered,
         (100, 20),
@@ -104,7 +104,7 @@ fn touch_on_slider_reports_drag_fraction() {
         y: 10.0,
     });
     let result = ui
-        .render(
+        .render_after(
             FrameKind::Fresh,
             Layering::Unlayered,
             (100, 20),
@@ -134,7 +134,7 @@ fn touch_off_the_slider_reports_no_drag() {
     let mut r = TestRenderer::default();
     // No touch pushed → no drag entry.
     let result = ui
-        .render(
+        .render_after(
             FrameKind::Fresh,
             Layering::Unlayered,
             (100, 20),
@@ -152,7 +152,7 @@ fn coalesced_down_up_on_slider_reports_release_click() {
     let mut ui = TreeUi::default();
     let mut r = TestRenderer::default();
     // Warm-up frame establishes the slider's hit region.
-    ui.render(
+    ui.render_after(
         FrameKind::Fresh,
         Layering::Unlayered,
         (100, 20),
@@ -173,7 +173,7 @@ fn coalesced_down_up_on_slider_reports_release_click() {
     });
     ui.push_touch(TouchEvent::Up { id: 0 });
     let result = ui
-        .render(
+        .render_after(
             FrameKind::Fresh,
             Layering::Unlayered,
             (100, 20),
@@ -272,10 +272,64 @@ fn a_running_animation_is_reported_on_replay() {
 }
 
 #[test]
+fn a_frame_advances_animations_by_the_time_since_the_last() {
+    use bmc_render::tree::{AnimationDef, Draw};
+    use bmc_render::ui::{AnimProperty, Easing, LoopMode};
+    use std::time::{Duration, Instant};
+    let rotating = || Node::Canvas {
+        props: PropsData::default(),
+        touch_key: None,
+        draws: vec![Draw::Modified {
+            animations: vec![AnimationDef {
+                property: AnimProperty::Rotate,
+                from: 0.0,
+                to: 1.0,
+                duration_ms: 1_000,
+                delay_ms: 0,
+                easing: Easing::Linear,
+                loop_mode: LoopMode::Forever,
+            }],
+            transition: None,
+            color_space: bmc_render::ui::ColorSpace::default(),
+            inner: Box::new(Draw::Arc {
+                cx: 20.0,
+                cy: 10.0,
+                radius: 8.0,
+                start_angle: 0.0,
+                end_angle: 1.0,
+                width: 2.0,
+                fill: bmc_render::ui::ArcFill::Solid(GREY),
+                segments: bmc_render::ui::ArcSegments::Continuous,
+                cap: bmc_render::ui::ArcCap::Round,
+            }),
+        }],
+    };
+    let t0 = Instant::now();
+    let mut ui = TreeUi::new(t0);
+    for ms in [40, 100] {
+        let frame = super::OverlayFrame {
+            kind: FrameKind::Fresh,
+            layering: Layering::Unlayered,
+            now: t0 + Duration::from_millis(ms),
+        };
+        ui.render(
+            frame,
+            (100, 20),
+            &mut TestRenderer::default(),
+            &english(),
+            rotating,
+        )
+        .expect("BUG: render must succeed");
+    }
+    let elapsed: Vec<u32> = ui.animation_states.values().map(|s| s.elapsed_ms).collect();
+    assert_eq!(elapsed, [100]);
+}
+
+#[test]
 fn a_still_tree_reports_no_animation() {
     let mut ui = TreeUi::default();
     let frame = ui
-        .render(
+        .render_after(
             FrameKind::Fresh,
             Layering::Unlayered,
             (100, 20),
@@ -314,7 +368,7 @@ fn layered(
     size: (u32, u32),
     tree: &Node,
 ) -> StaticLayer {
-    ui.render(
+    ui.render_after(
         kind,
         Layering::Layered,
         size,
@@ -344,7 +398,7 @@ fn only_the_frame_that_keys_the_tree_reports_its_cost() {
         labels.collect(),
     );
     let mut key_us = |kind| {
-        ui.render(
+        ui.render_after(
             kind,
             Layering::Layered,
             SIZE,
@@ -384,7 +438,7 @@ fn an_unlayered_frame_paints_the_tree_without_a_layer() {
     let mut ui = TreeUi::default();
     let mut r = layers();
     let outcome = ui
-        .render(
+        .render_after(
             FrameKind::Fresh,
             Layering::Unlayered,
             SIZE,
@@ -594,7 +648,7 @@ fn a_tree_built_unlayered_keys_on_its_first_layered_replay() {
     let mut ui = TreeUi::default();
     let mut r = layers();
     let tree = panel(GREY, animated_tree());
-    ui.render(
+    ui.render_after(
         FrameKind::Fresh,
         Layering::Unlayered,
         SIZE,
@@ -614,7 +668,7 @@ fn an_unlayered_frame_never_keys_its_tree() {
     let mut ui = TreeUi::default();
     let unkeyed = panel(GREY, bmc_render::ui::spacer(-1.0));
     let ((), warnings) = counting_warns(|_| {
-        ui.render(
+        ui.render_after(
             FrameKind::Fresh,
             Layering::Unlayered,
             SIZE,
@@ -657,7 +711,7 @@ fn a_failed_walk_stops_counting_on_the_layer() {
     layered(&mut ui, &mut r, FrameKind::Fresh, SIZE, &tree);
     ui.fail_next_walk = true;
     assert!(
-        ui.render(
+        ui.render_after(
             FrameKind::Fresh,
             Layering::Layered,
             SIZE,

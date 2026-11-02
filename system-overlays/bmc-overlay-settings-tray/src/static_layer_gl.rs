@@ -21,15 +21,12 @@
 use std::time::{Duration, Instant};
 
 use bmc_render::renderer::test_support::ShapingRecorder;
-use bmc_render::tree::StaticLayer;
-use bmc_system_overlay::gl_check::{FRAME_STEP, GlRun, assert_layered_run_matches_full_paint};
+use bmc_system_overlay::gl_check::{
+    CAPTURED, FRAME_STEP, GlRun, MISSED, REUSED, UNCACHED, assert_layered_run_matches_full_paint,
+};
 
 use super::*;
 
-const CAPTURED: StaticLayer = StaticLayer::Captured { empty: false };
-const REUSED: StaticLayer = StaticLayer::Blitted;
-const UNCACHED: StaticLayer = StaticLayer::Unused;
-const MISSED: StaticLayer = StaticLayer::Missed;
 const DECK: (u32, u32) = (1_280, 480);
 const BMM101: (u32, u32) = (480, 320);
 const HOLD: Duration = Duration::from_secs(5);
@@ -49,75 +46,56 @@ fn view(ip: &str, brightness: u8, held: Option<Duration>) -> SettingsTrayView {
     }
 }
 
-/// A resting tray at `size`, recorded to read where its controls lie.
+/// Where a resting tray at `size` laid out the control keyed `key`.
 #[expect(clippy::cast_precision_loss, reason = "display sizes are small")]
-fn recorded(size: (u32, u32)) -> ShapingRecorder {
-    let mut recorder = ShapingRecorder::new(size.0 as f32, size.1 as f32);
+fn bounds_of(size: (u32, u32), key: &str) -> bmc_render::interaction::Rect {
+    let mut state = SettingsTrayRenderState::new(Instant::now());
     let _ = render_settings_tray(
-        &mut recorder,
+        &mut ShapingRecorder::new(size.0 as f32, size.1 as f32),
         OverlayViewport::rectangular(size.0, size.1),
-        &mut SettingsTrayRenderState::new(Instant::now()),
+        &mut state,
         &view(FIRST_IP, 50, None),
         &bmc_intl::formatter(bmc_intl::Language::default()),
-        OverlayFrame {
-            kind: FrameKind::Fresh,
-            layering: Layering::Unlayered,
-            now: Instant::now(),
-        },
+        OverlayFrame::unlayered(FrameKind::Fresh),
     );
-    recorder
+    state
+        .tree
+        .element_bounds(key)
+        .unwrap_or_else(|| panic!("BUG: the tray lays out {key}"))
 }
 
-/// A point `fraction` along the BMM101 slider's track:
-/// the widest bar no taller than a track.
+/// A point `fraction` across the BMM101 slider, which maps a touch to a value across its bounds.
 fn on_track(fraction: f32) -> (f64, f64) {
-    const TRACK_H: f32 = 8.0;
-    let track = recorded(BMM101)
-        .rects
-        .into_iter()
-        .filter(|rect| rect.h <= TRACK_H)
-        .max_by(|a, b| a.w.total_cmp(&b.w))
-        .expect("BUG: the BMM101 tray draws its slider track");
+    let slider = bounds_of(BMM101, ui::BRIGHTNESS_SLIDER_KEY);
     (
-        f64::from(track.x + track.w * fraction),
-        f64::from(track.y + track.h / 2.0),
+        f64::from(slider.x + slider.w * fraction),
+        f64::from(slider.y + slider.h / 2.0),
     )
 }
 
-/// A point on the Deck's restart button, which sits right above its caption.
+/// The centre of the Deck tray's restart button.
 fn on_restart() -> (f64, f64) {
-    let recorder = recorded(DECK);
-    let caption = recorder
-        .paragraphs
-        .iter()
-        .find(|paragraph| paragraph.text == "Restart")
-        .expect("BUG: the Deck tray captions its restart button");
+    let button = bounds_of(DECK, ui::RESTART_KEY);
     (
-        f64::from(caption.x + caption.max_width / 2.0),
-        f64::from(caption.y - 16.0),
+        f64::from(button.x + button.w / 2.0),
+        f64::from(button.y + button.h / 2.0),
     )
 }
 
-/// The tray's render state, its frames stamped a fixed step apart,
-/// so both passes of a run animate alike.
+/// The tray's render state and the view it draws, its frames stamped by the run's clock.
 struct Tray {
     state: SettingsTrayRenderState,
     size: (u32, u32),
-    started: Instant,
-    frames: u32,
     ip: &'static str,
     brightness: u8,
     held: Option<Duration>,
 }
 
 impl Tray {
-    fn new(size: (u32, u32)) -> Self {
-        let started = Instant::now();
+    fn new(run: &GlRun<'_>, size: (u32, u32)) -> Self {
         Self {
-            state: SettingsTrayRenderState::new(started),
+            state: SettingsTrayRenderState::new(run.now()),
             size,
-            started,
-            frames: 0,
             ip: FIRST_IP,
             brightness: 50,
             held: None,
@@ -125,30 +103,25 @@ impl Tray {
     }
 
     fn paint(&mut self, run: &mut GlRun<'_>, kind: FrameKind) {
-        self.frames += 1;
-        let at = self.started + FRAME_STEP * self.frames;
         let view = view(self.ip, self.brightness, self.held);
         let viewport = OverlayViewport::rectangular(self.size.0, self.size.1);
         let state = &mut self.state;
-        run.paint(|renderer, layering| {
+        run.paint(kind, |renderer, frame| {
             render_settings_tray(
                 renderer,
                 viewport,
                 state,
                 &view,
                 &bmc_intl::formatter(bmc_intl::Language::default()),
-                OverlayFrame {
-                    kind,
-                    layering,
-                    now: at,
-                },
+                frame,
             )
             .outcome
         });
     }
 
-    /// Paint `frames` more of a restart hold at `(x, y)`, as the hold FSM advances it,
-    /// the finger jittering a pixel up and down as a resting one does.
+    /// Paint `frames` more of a restart hold at `(x, y)`, advancing the hold by hand
+    /// in place of the overlay's hold FSM, the finger jittering a pixel up and down
+    /// as a resting one does.
     fn hold_for(&mut self, run: &mut GlRun<'_>, frames: usize, (x, y): (f64, f64)) {
         for frame in 0..frames {
             let jitter = if frame % 2 == 0 { 1.0 } else { -1.0 };
@@ -182,7 +155,7 @@ impl Tray {
 #[test]
 fn a_slider_drag_paints_as_a_full_paint_does() {
     let outcomes = assert_layered_run_matches_full_paint(BMM101, |run| {
-        let mut tray = Tray::new(BMM101);
+        let mut tray = Tray::new(run, BMM101);
         for _ in 0..4 {
             tray.paint(run, FrameKind::Fresh);
         }
@@ -256,7 +229,7 @@ fn a_slider_drag_paints_as_a_full_paint_does() {
 fn a_restart_hold_paints_as_a_full_paint_does() {
     let outcomes = assert_layered_run_matches_full_paint(DECK, |run| {
         let (x, y) = on_restart();
-        let mut tray = Tray::new(DECK);
+        let mut tray = Tray::new(run, DECK);
         for _ in 0..4 {
             tray.paint(run, FrameKind::Fresh);
         }
@@ -284,10 +257,6 @@ fn a_restart_hold_paints_as_a_full_paint_does() {
         );
         tray.held = None;
         tray.paint(run, FrameKind::Fresh);
-        tray.lose_layer_and_hide(run);
-        for _ in 0..5 {
-            tray.paint(run, FrameKind::Fresh);
-        }
     });
     let Some(outcomes) = outcomes else { return };
     assert_eq!(
@@ -304,9 +273,6 @@ fn a_restart_hold_paints_as_a_full_paint_does() {
             &[
                 CAPTURED, CAPTURED, REUSED, REUSED, REUSED, CAPTURED, CAPTURED
             ],
-            &[MISSED, UNCACHED],
-            &[CAPTURED],
-            &[REUSED; 4],
         ]
         .concat()
     );

@@ -42,9 +42,9 @@ use bmc_intl::{Intl, Localized};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
     AccessPoint, DeviceState, FrameKind, Language, Layer, LayerConfig, LocalizationRequest,
-    NextFrame, OverlayFrame, OverlayViewport, PlatformCaps, RenderOutcome, SURFACE_LAYERING,
-    SetupStep, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind,
-    UpgradeSnapshot, UpgradeState, VersionedSnapshot,
+    NextFrame, OverlayFrame, OverlayViewport, PlatformCaps, RenderOutcome, SetupStep,
+    SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, TreeUi, UpgradeKind, UpgradeSnapshot,
+    UpgradeState, VersionedSnapshot,
 };
 
 /// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed,
@@ -834,11 +834,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             &self.device_name,
             self.miner,
             switch,
-            OverlayFrame {
-                kind: frame,
-                layering: SURFACE_LAYERING,
-                now: Instant::now(),
-            },
+            OverlayFrame::on_surface(frame),
         );
         // The language already shown asks for nothing: re-asking would only round-trip a no-op.
         // Any other is marked current at once, since the answer takes a save and a broadcast.
@@ -860,12 +856,8 @@ impl SystemOverlay for DeviceInfoOverlay {
         drawn.outcome
     }
 
-    fn on_hidden(&mut self) {
-        self.render_state.tree.clear();
-    }
-
-    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
-        self.render_state.tree.release(renderer);
+    fn tree_ui(&mut self) -> Option<&mut TreeUi> {
+        Some(&mut self.render_state.tree)
     }
 
     fn on_language(&mut self, language: Option<Language>) {

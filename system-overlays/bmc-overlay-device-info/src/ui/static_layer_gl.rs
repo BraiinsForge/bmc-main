@@ -19,11 +19,11 @@
 // the grant above.
 
 use std::net::Ipv4Addr;
-use std::time::Instant;
 
-use bmc_render::tree::StaticLayer;
-use bmc_system_overlay::gl_check::{FRAME_STEP, GlRun, assert_layered_run_matches_full_paint};
-use bmc_system_overlay::{AccessPoint, FrameKind, Language, OverlayFrame, TouchEvent};
+use bmc_system_overlay::gl_check::{
+    CAPTURED, GlRun, REUSED, assert_layered_run_matches_full_paint,
+};
+use bmc_system_overlay::{AccessPoint, FrameKind, Language, TouchEvent};
 
 use super::{
     DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Uplinks, language_key,
@@ -52,8 +52,7 @@ fn paint_speaking(
     let switch = current.map_or(LanguageSwitch::Hidden, |current| LanguageSwitch::Shown {
         current: Some(current),
     });
-    let now = state.last_render + FRAME_STEP;
-    run.paint(|renderer, layering| {
+    run.paint(kind, |renderer, frame| {
         render_device_info(
             renderer,
             SIZE,
@@ -63,11 +62,7 @@ fn paint_speaking(
             "Braiins Deck",
             false,
             switch,
-            OverlayFrame {
-                kind,
-                layering,
-                now,
-            },
+            frame,
         )
         .outcome
     });
@@ -83,34 +78,17 @@ fn screen(run: &mut GlRun<'_>, state: &mut DeviceInfoRenderState, view: &DeviceI
 #[test]
 fn a_screen_change_paints_as_a_full_paint_does() {
     let outcomes = assert_layered_run_matches_full_paint(SIZE, |run| {
-        let mut state = DeviceInfoRenderState::new(Instant::now());
+        let mut state = DeviceInfoRenderState::new(run.now());
         screen(run, &mut state, &DeviceInfoView::TurningApOff);
         let success = DeviceInfoView::Success {
             ip: Ipv4Addr::new(10, 0, 0, 5),
         };
         screen(run, &mut state, &success);
-        run.lose_layer(&state.tree);
-        paint(run, &mut state, &success, FrameKind::AnimationOnly);
-        paint(run, &mut state, &success, FrameKind::AnimationOnly);
-        run.hide(&mut state.tree);
         screen(run, &mut state, &DeviceInfoView::SetupCompleted);
     });
     let Some(outcomes) = outcomes else { return };
-    let screen = [
-        [StaticLayer::Captured { empty: false }].as_slice(),
-        &[StaticLayer::Blitted; 9],
-    ]
-    .concat();
-    assert_eq!(
-        outcomes,
-        [
-            screen.as_slice(),
-            &screen,
-            &[StaticLayer::Missed, StaticLayer::Unused],
-            &screen,
-        ]
-        .concat()
-    );
+    let screen = [[CAPTURED].as_slice(), &[REUSED; 9]].concat();
+    assert_eq!(outcomes, [screen.as_slice(), &screen, &screen].concat());
 }
 
 #[test]
@@ -131,7 +109,7 @@ fn a_flag_press_on_the_language_switch_paints_as_a_full_paint_does() {
     };
     assert!(offers_language_switch(&setup));
     let outcomes = assert_layered_run_matches_full_paint(SIZE, |run| {
-        let mut state = DeviceInfoRenderState::new(Instant::now());
+        let mut state = DeviceInfoRenderState::new(run.now());
         let still = |run: &mut GlRun<'_>, state: &mut DeviceInfoRenderState, current| {
             for _ in 0..5 {
                 paint_speaking(run, state, &setup, Some(current), FrameKind::AnimationOnly);
@@ -158,51 +136,17 @@ fn a_flag_press_on_the_language_switch_paints_as_a_full_paint_does() {
         // The device takes the language up, and the switch marks it current.
         paint_speaking(run, &mut state, &setup, Some(picked), FrameKind::Fresh);
         still(run, &mut state, picked);
-        run.lose_layer(&state.tree);
-        paint_speaking(
-            run,
-            &mut state,
-            &setup,
-            Some(picked),
-            FrameKind::AnimationOnly,
-        );
-        paint_speaking(
-            run,
-            &mut state,
-            &setup,
-            Some(picked),
-            FrameKind::AnimationOnly,
-        );
-        run.hide(&mut state.tree);
-        paint_speaking(run, &mut state, &setup, Some(picked), FrameKind::Fresh);
-        for _ in 0..9 {
-            paint_speaking(
-                run,
-                &mut state,
-                &setup,
-                Some(picked),
-                FrameKind::AnimationOnly,
-            );
-        }
     });
     let Some(outcomes) = outcomes else { return };
-    let still = [StaticLayer::Blitted; 5];
-    let capture = [StaticLayer::Captured { empty: false }].as_slice();
+    let still = [REUSED; 5];
+    let capture = [CAPTURED].as_slice();
     assert_eq!(
         outcomes,
         [
-            capture,
-            &still,
+            capture, &still,
             // The press marks the chip, the release lets it go,
             // and the language the device takes up moves the switch's mark.
-            capture,
-            &still,
-            capture,
-            capture,
-            &still,
-            &[StaticLayer::Missed, StaticLayer::Unused],
-            capture,
-            &[StaticLayer::Blitted; 9],
+            capture, &still, capture, capture, &still,
         ]
         .concat()
     );

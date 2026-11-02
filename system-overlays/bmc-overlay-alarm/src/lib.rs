@@ -37,8 +37,7 @@ use bmc_render::ui::{
 };
 use bmc_system_overlay::{
     AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayFrame,
-    OverlayViewport, RenderOutcome, SURFACE_LAYERING, SystemOverlay, TickOutcome, TouchEvent,
-    TreeUi,
+    OverlayViewport, RenderOutcome, SystemOverlay, TickOutcome, TouchEvent, TreeUi,
 };
 
 /// Touch key for the stop-alarm button; shared by its `Canvas` hit region and
@@ -64,15 +63,13 @@ struct Ring {
 #[expect(missing_debug_implementations, reason = "TreeUi is not Debug")]
 pub struct AlarmRenderState {
     tree: TreeUi,
-    last_render: Instant,
 }
 
 impl AlarmRenderState {
     #[must_use]
     pub fn new(now: Instant) -> AlarmRenderState {
         Self {
-            tree: TreeUi::new(),
-            last_render: now,
+            tree: TreeUi::new(now),
         }
     }
 }
@@ -384,20 +381,9 @@ pub fn render_alarm(
     intl: &Intl,
     frame: OverlayFrame,
 ) -> RenderAlarmOutput {
-    let OverlayFrame {
-        kind,
-        layering,
-        now,
-    } = frame;
-    let delta_ms = u32::try_from(now.saturating_duration_since(state.last_render).as_millis())
-        .unwrap_or(u32::MAX);
-    state.last_render = now;
-
-    let tree_frame = match state
-        .tree
-        .render(kind, layering, size, delta_ms, r, intl, || {
-            build_alarm_ui_tree(view, size, intl)
-        }) {
+    let tree_frame = match state.tree.render(frame, size, r, intl, || {
+        build_alarm_ui_tree(view, size, intl)
+    }) {
         Ok(tree_frame) => tree_frame,
         Err(err) => {
             tracing::error!("alarm tree render failed: {err}");
@@ -513,11 +499,7 @@ impl SystemOverlay for AlarmOverlay {
             &mut self.render_state,
             &view,
             intl,
-            OverlayFrame {
-                kind: frame,
-                layering: SURFACE_LAYERING,
-                now: Instant::now(),
-            },
+            OverlayFrame::on_surface(frame),
         );
 
         if output.stop {
@@ -528,12 +510,8 @@ impl SystemOverlay for AlarmOverlay {
         output.outcome
     }
 
-    fn on_hidden(&mut self) {
-        self.render_state.tree.clear();
-    }
-
-    fn release_renderer_resources(&mut self, renderer: &mut dyn Renderer) {
-        self.render_state.tree.release(renderer);
+    fn tree_ui(&mut self) -> Option<&mut TreeUi> {
+        Some(&mut self.render_state.tree)
     }
 }
 
@@ -543,8 +521,6 @@ mod tests {
     use bmc_render::partition::tree_static_key;
     use bmc_render::renderer::test_support::ShapingRecorder;
     use bmc_system_overlay::Language;
-
-    use bmc_system_overlay::Layering;
 
     use super::*;
     use bmc_system_overlay::layer_check::assert_release_frees_the_layer;
@@ -569,11 +545,7 @@ mod tests {
             state,
             &view(),
             &english,
-            OverlayFrame {
-                kind: frame,
-                layering: Layering::Unlayered,
-                now: Instant::now(),
-            },
+            OverlayFrame::unlayered(frame),
         );
     }
 

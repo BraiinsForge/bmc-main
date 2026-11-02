@@ -21,7 +21,7 @@
 //! Real-GL check that an overlay's trees paint the same through the static layer
 //! as they do in full.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::prelude::*;
@@ -29,10 +29,17 @@ use bmc_render::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_d
 
 use bmc_render::tree::StaticLayer;
 
-use crate::{Layering, RenderOutcome, SURFACE_LAYERING, TreeUi, begin_surface_frame};
+use crate::{
+    FrameKind, Layering, OverlayFrame, RenderOutcome, SURFACE_LAYERING, TreeUi, begin_surface_frame,
+};
 
 /// How far apart a script stamps its frames, fixed so both passes of a run animate alike.
 pub const FRAME_STEP: Duration = Duration::from_millis(16);
+
+pub const CAPTURED: StaticLayer = StaticLayer::Captured { empty: false };
+pub const REUSED: StaticLayer = StaticLayer::Blitted;
+pub const UNCACHED: StaticLayer = StaticLayer::Unused;
+pub const MISSED: StaticLayer = StaticLayer::Missed;
 
 type Frame = (Vec<[u8; 4]>, StaticLayer);
 
@@ -45,9 +52,17 @@ pub struct GlRun<'a> {
     layering: Layering,
     size: (u32, u32),
     frames: Vec<Frame>,
+    started: Instant,
 }
 
 impl GlRun<'_> {
+    /// The instant the next frame is stamped with, [`FRAME_STEP`] after the last.
+    #[must_use]
+    pub fn now(&self) -> Instant {
+        let painted = u32::try_from(self.frames.len()).expect("BUG: a script paints few frames");
+        self.started + FRAME_STEP * painted
+    }
+
     /// Drop `tree`'s layer behind its back, so its next frame misses.
     pub fn lose_layer(&mut self, tree: &TreeUi) {
         self.renderer
@@ -60,15 +75,24 @@ impl GlRun<'_> {
         tree.release(self.renderer);
     }
 
-    /// Paint a frame through `draw`, which renders an overlay with the layering it is handed,
-    /// and record its pixels.
+    /// Paint a `kind` frame through `draw`, which renders an overlay for the frame it is handed,
+    /// stamped by the run's clock and layered as the pass is, and record its pixels.
     ///
     /// # Panics
     ///
     /// Panics when the frame drew no tree.
-    pub fn paint(&mut self, draw: impl FnOnce(&mut dyn Renderer, Layering) -> RenderOutcome) {
+    pub fn paint(
+        &mut self,
+        kind: FrameKind,
+        draw: impl FnOnce(&mut dyn Renderer, OverlayFrame) -> RenderOutcome,
+    ) {
+        let frame = OverlayFrame {
+            kind,
+            layering: self.layering,
+            now: self.now(),
+        };
         begin_surface_frame(self.renderer, self.size);
-        let outcome = draw(self.renderer, self.layering);
+        let outcome = draw(self.renderer, frame);
         self.renderer.flush();
         let tree = outcome.tree.expect("BUG: a tree overlay reports its tree");
         self.frames.push(((self.read)(), tree.static_layer));
@@ -132,6 +156,7 @@ fn run(
         layering,
         size,
         frames: Vec::new(),
+        started: Instant::now(),
     };
     script(&mut run);
     Some(run.frames)
