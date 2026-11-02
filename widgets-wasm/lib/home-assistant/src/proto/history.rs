@@ -74,7 +74,7 @@ pub struct StatisticPoint {
 }
 
 /// How long each statistic of a statistics request covers.
-/// No `year`: Home Assistant takes it only from 2026.3, and the widgets support releases from 2024.3.
+/// No `year`: Home Assistant takes it only from 2026.3, newer than [`super::MIN_VERSION`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Period {
     FiveMinutes,

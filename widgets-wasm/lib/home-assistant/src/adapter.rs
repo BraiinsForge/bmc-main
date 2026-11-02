@@ -40,7 +40,7 @@ use crate::credential;
 use crate::proto;
 use crate::proto::{
     CallId, Closed, Command, Effects, Entity, Event, JsonLookup, Output, Period, RequestError,
-    ServiceData, Status, SubscriptionId, Wake,
+    ServiceData, Status, SubscriptionId, Version, Wake,
 };
 
 /// Receives a client's events, with the client they came from.
@@ -120,6 +120,12 @@ impl Client {
     #[must_use]
     pub fn status(&self) -> Status {
         with_running(self.0, |running| running.core.status()).unwrap_or(Status::NotConfigured)
+    }
+
+    /// The release Home Assistant reported, to name in a message on [`Status::Unsupported`].
+    #[must_use]
+    pub fn ha_version(&self) -> Option<Version> {
+        with_running(self.0, |running| running.core.ha_version()).flatten()
     }
 
     /// Follow `entities`, keeping only the `attributes` named.

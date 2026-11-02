@@ -99,13 +99,19 @@ fn closes(out: &impl Commands) -> bool {
     out.commands().contains(&Command::Close)
 }
 
+/// What a supported Home Assistant says first.
+fn auth_required() -> Value {
+    auth_required_by("2026.10.0")
+}
+
+fn auth_required_by(ha_version: &str) -> Value {
+    json!({"type": "auth_required", "ha_version": ha_version})
+}
+
 /// A client past `auth_ok`, with everything it sent on the way discarded.
 fn ready(client: &mut Session) -> Output {
     let _ = client.start();
-    let _ = feed(
-        client,
-        &json!({"type": "auth_required", "ha_version": "2026.10.0"}),
-    );
+    let _ = feed(client, &auth_required());
     feed(
         client,
         &json!({"type": "auth_ok", "ha_version": "2026.10.0"}),
@@ -167,9 +173,122 @@ fn starting_connects_to_the_slots_websocket_address() {
 fn login_sends_the_token_and_nothing_else() {
     let mut client = client();
     let _ = client.start();
-    let out = feed(&mut client, &json!({"type": "auth_required"}));
+    let out = feed(&mut client, &auth_required());
 
     assert_eq!(sent(&out), [json!({"type": "auth", "access_token": TOKEN})]);
+}
+
+#[wasm_test]
+fn the_oldest_supported_release_and_its_betas_get_the_login() {
+    for ha_version in ["2024.3.0", "2024.3.0b1", "2024.3.0.dev20240301"] {
+        let mut client = client();
+        let _ = client.start();
+        let out = feed(&mut client, &auth_required_by(ha_version));
+
+        assert_eq!(sent(&out).len(), 1, "{ha_version}");
+        assert_eq!(client.status(), Status::Connecting, "{ha_version}");
+    }
+}
+
+#[wasm_test]
+fn an_older_release_is_unsupported_before_it_gets_the_token() {
+    let mut client = client();
+    let _ = client.start();
+    let out = feed(&mut client, &auth_required_by("2024.2.5"));
+
+    assert!(sent(&out).is_empty(), "{:?}", sent(&out));
+    assert!(closes(&out));
+    assert_eq!(out.events, [Event::StatusChanged(Status::Unsupported)]);
+    assert_eq!(
+        out.effects.wake,
+        Some(Wake::In(300)),
+        "the release is checked again in 5 minutes"
+    );
+    assert_eq!(
+        client.ha_version(),
+        Some(Version {
+            year: 2024,
+            month: 2
+        }),
+        "the release found stays readable for the message"
+    );
+}
+
+#[wasm_test]
+fn a_release_that_does_not_say_its_version_is_unsupported() {
+    for message in [
+        json!({"type": "auth_required"}),
+        json!({"type": "auth_required", "ha_version": 2024}),
+        auth_required_by("0.118.5"),
+    ] {
+        let mut client = client();
+        let _ = client.start();
+        let out = feed(&mut client, &message);
+
+        assert!(sent(&out).is_empty(), "{message}");
+        assert_eq!(client.status(), Status::Unsupported, "{message}");
+        assert_eq!(client.ha_version(), None, "{message}");
+    }
+}
+
+#[wasm_test]
+fn resuming_an_unsupported_client_checks_the_release_again() {
+    let mut client = client();
+    let _ = client.start();
+    let _ = feed(&mut client, &auth_required_by("2023.12.0"));
+
+    assert!(connects(&client.resume()));
+    let _ = feed(&mut client, &auth_required());
+    let _ = feed(&mut client, &json!({"type": "auth_ok"}));
+    assert_eq!(client.status(), Status::Ready);
+}
+
+#[wasm_test]
+fn an_unsupported_client_checks_the_release_again_on_its_own() {
+    let mut client = client();
+    let _ = client.start();
+    let _ = feed(&mut client, &auth_required_by("2023.12.0"));
+
+    let check = client.on_timer();
+    assert!(connects(&check));
+    assert!(
+        check.events.is_empty(),
+        "the status stays Unsupported while checking"
+    );
+    assert_eq!(client.status(), Status::Unsupported);
+
+    let still_old = feed(&mut client, &auth_required_by("2023.12.0"));
+    assert!(
+        sent(&still_old).is_empty(),
+        "still no token for an old release"
+    );
+    assert!(still_old.events.is_empty());
+    assert_eq!(still_old.effects.wake, Some(Wake::In(300)));
+
+    let _ = client.on_timer();
+    let upgraded = feed(&mut client, &auth_required());
+    assert_eq!(
+        sent(&upgraded),
+        [json!({"type": "auth", "access_token": TOKEN})]
+    );
+    let _ = feed(&mut client, &json!({"type": "auth_ok"}));
+    assert_eq!(client.status(), Status::Ready);
+}
+
+#[wasm_test]
+fn a_home_assistant_without_subscribe_entities_is_not_checked_again() {
+    let mut client = client();
+    let _ = ready(&mut client);
+    let _ = subscribe(&mut client, &["sensor.outdoor"], &[]);
+    let out = feed(
+        &mut client,
+        &json!({"id": 1, "type": "result", "success": false,
+               "error": {"code": "unknown_command", "message": "Unknown command."}}),
+    );
+
+    assert_eq!(client.status(), Status::Unsupported);
+    assert_eq!(out.effects.wake, Some(Wake::Never));
+    assert!(client.on_timer().effects.commands.is_empty());
 }
 
 #[wasm_test]
@@ -186,7 +305,7 @@ fn auth_ok_makes_the_client_ready_and_schedules_the_first_ping() {
 fn a_rejected_token_stops_the_client_until_resumed() {
     let mut client = client();
     let _ = client.start();
-    let _ = feed(&mut client, &json!({"type": "auth_required"}));
+    let _ = feed(&mut client, &auth_required());
     let out = feed(
         &mut client,
         &json!({"type": "auth_invalid", "message": "Invalid access token"}),
@@ -690,7 +809,7 @@ fn a_dropped_connection_fails_its_calls_and_never_resends_them() {
         dropped.events
     );
 
-    let _ = feed(&mut client, &json!({"type": "auth_required"}));
+    let _ = feed(&mut client, &auth_required());
     let relogin = feed(&mut client, &json!({"type": "auth_ok"}));
     assert!(
         sent(&relogin)
@@ -707,7 +826,7 @@ fn a_late_answer_to_a_failed_call_is_ignored() {
     let (_, pressed) = press(&mut client);
     let id = sent(&pressed)[0]["id"].clone();
     assert!(connects(&client.on_close(Closed::Dropped)));
-    let _ = feed(&mut client, &json!({"type": "auth_required"}));
+    let _ = feed(&mut client, &auth_required());
     let _ = feed(&mut client, &json!({"type": "auth_ok"}));
 
     let late = feed(
@@ -1393,7 +1512,7 @@ fn log_in_after_the_backoff(client: &mut Session) {
         connects(&client.on_timer()),
         "the backoff ends in an attempt"
     );
-    let _ = feed(client, &json!({"type": "auth_required"}));
+    let _ = feed(client, &auth_required());
     let _ = feed(client, &json!({"type": "auth_ok"}));
     assert_eq!(client.status(), Status::Ready);
 }
@@ -1453,7 +1572,7 @@ fn a_first_attempt_that_fails_reports_disconnected() {
 fn a_connect_that_never_logs_in_times_out() {
     let mut client = client();
     let _ = client.start();
-    let _ = feed(&mut client, &json!({"type": "auth_required"}));
+    let _ = feed(&mut client, &auth_required());
     let out = client.on_timer();
 
     assert!(closes(&out));
@@ -1699,7 +1818,7 @@ fn entities_go_stale_on_a_drop_and_fresh_on_the_next_snapshot() {
         "the last value stays readable"
     );
 
-    let _ = feed(&mut client, &json!({"type": "auth_required"}));
+    let _ = feed(&mut client, &auth_required());
     let relogin = feed(&mut client, &json!({"type": "auth_ok"}));
     assert_eq!(
         sent(&relogin),

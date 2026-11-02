@@ -39,6 +39,7 @@ mod history;
 mod json;
 mod reply;
 mod service_data;
+mod version;
 
 pub use check::is_entity_id;
 pub use client::{
@@ -56,3 +57,4 @@ pub use history::{HistoryPoint, MAX_HISTORY_POINTS, Period, Series, StatisticPoi
 pub use json::JsonLookup;
 pub use reply::{CallFailure, Event, HaError, Reply, UNKNOWN_ERROR, Values};
 pub use service_data::ServiceData;
+pub use version::{MIN_VERSION, Version};

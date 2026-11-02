@@ -31,6 +31,7 @@ use super::history::Period;
 use super::json::{JsonLookup, ObjectWriter};
 use super::reply::{CallFailure, Event, HaError, PendingCall, Reply, UNKNOWN_ERROR, Wanted};
 use super::service_data::{CheckedData, ServiceData};
+use super::version::{MIN_VERSION, Version};
 
 /// Connect timeout, from the connect until `auth_ok`,
 /// as the Home Assistant JS client applies it.
@@ -42,6 +43,9 @@ const CONNECT_TIMEOUT_SECS: u32 = 10;
 const TICK_SECS: u32 = 30;
 /// Longest wait between reconnect attempts, as the Home Assistant JS client caps it.
 const MAX_BACKOFF_SECS: u32 = 5;
+/// How often a release too old is checked again, before any login,
+/// so an upgraded Home Assistant is picked up within minutes of its restart.
+const UPGRADE_CHECK_SECS: u32 = 5 * 60;
 /// The ticks a call waits for its answer, as [`CallFailure::TimedOut`] describes.
 const CALL_TIMEOUT_TICKS: usize = 2;
 
@@ -90,7 +94,10 @@ pub enum Status {
     /// The account's address is one the host cannot connect to: a `wss://` one, or one that does not parse.
     /// No retry until [`Session::resume`].
     UnsupportedAddress,
-    /// Home Assistant is too old for `subscribe_entities`. No retry until [`Session::resume`].
+    /// Home Assistant is older than [`MIN_VERSION`], did not say which release it is,
+    /// or lacks `subscribe_entities`.
+    /// The release is checked again every 5 minutes, before any login, and at once on [`Session::resume`];
+    /// a Home Assistant that lacks `subscribe_entities` is not retried until then.
     Unsupported,
 }
 
@@ -165,6 +172,8 @@ enum Phase {
     },
     /// Waiting out the delay before the next attempt.
     Backoff,
+    /// Stopped as [`Status::Unsupported`] over the release, until the next check of it.
+    AwaitingUpgrade,
     Stopped,
 }
 
@@ -267,6 +276,7 @@ pub struct Session {
     setup: Setup,
     phase: Phase,
     status: Status,
+    ha_version: Option<Version>,
     /// Consecutive failed attempts since a connection last answered a ping.
     failed_attempts: usize,
     requests: Requests,
@@ -282,6 +292,7 @@ impl Session {
             setup,
             phase: Phase::Idle,
             status: Status::Connecting,
+            ha_version: None,
             failed_attempts: 0,
             requests: Requests::new(),
             subscriptions: Vec::new(),
@@ -293,6 +304,14 @@ impl Session {
     #[must_use]
     pub fn status(&self) -> Status {
         self.status
+    }
+
+    /// The release Home Assistant reported when the latest connection opened,
+    /// still readable once the client stops as [`Status::Unsupported`], so a widget can name it.
+    /// `None` before then, or when the version is unreadable.
+    #[must_use]
+    pub fn ha_version(&self) -> Option<Version> {
+        self.ha_version
     }
 
     #[must_use]
@@ -336,7 +355,7 @@ impl Session {
     pub fn resume(&mut self) -> Effects {
         let mut effects = Effects::default();
         match self.phase {
-            Phase::Stopped => {}
+            Phase::Stopped | Phase::AwaitingUpgrade => {}
             // The host may already have queued its refusal of the old credentials,
             // which closing the socket discards.
             Phase::Connecting => effects.commands.push(Command::Close),
@@ -356,7 +375,7 @@ impl Session {
         let mut out = Output::default();
         match self.phase {
             Phase::Connecting | Phase::Authenticating | Phase::Ready { .. } => {}
-            Phase::Idle | Phase::Backoff | Phase::Stopped => return out,
+            Phase::Idle | Phase::Backoff | Phase::AwaitingUpgrade | Phase::Stopped => return out,
         }
         match closed {
             Closed::CredentialRefused => {
@@ -387,7 +406,8 @@ impl Session {
                 awaiting_pong: Some(_),
                 ..
             } => self.lose_connection(Socket::Open, Loss::Dropped, &mut out),
-            Phase::Backoff => self.connect(&mut out.effects),
+            // The status stays Unsupported until the check finds a release that will do.
+            Phase::Backoff | Phase::AwaitingUpgrade => self.connect(&mut out.effects),
             Phase::Ready {
                 awaiting_pong: None,
                 link,
@@ -409,6 +429,17 @@ impl Session {
             .map(RequestId);
         match (kind.as_str(), self.phase) {
             ("auth_required", Phase::Connecting) => {
+                self.ha_version = message
+                    .str("/ha_version")
+                    .as_deref()
+                    .and_then(Version::parse);
+                // Before the login, so the token never reaches a release the widgets cannot use.
+                if self.ha_version.is_none_or(|version| version < MIN_VERSION) {
+                    self.stop(Status::Unsupported, Socket::Open, &mut out);
+                    self.phase = Phase::AwaitingUpgrade;
+                    out.effects.wake = Some(Wake::In(UPGRADE_CHECK_SECS));
+                    return out;
+                }
                 self.phase = Phase::Authenticating;
                 let auth = ObjectWriter::new()
                     .string("type", "auth")
