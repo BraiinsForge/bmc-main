@@ -22,7 +22,6 @@
 import { Component } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import { useNavigate, type NavigateFunction } from 'react-router';
-import { Code, ConnectError } from '@connectrpc/connect';
 
 // App, lib
 import * as pb from '@/proto';
@@ -45,12 +44,6 @@ interface Props {
     intl: IntlShape;
     navigate: NavigateFunction;
     capabilities: Capabilities;
-}
-
-// NOTE: a failure to reach the server at all, as opposed to a status it sent.
-function isConnectionLost(error: unknown): boolean {
-    const { code } = ConnectError.from(error);
-    return code === Code.Unavailable || code === Code.Unknown;
 }
 
 interface State {
@@ -272,7 +265,7 @@ class View extends Component<Props, State> {
             // was accepted; only a device still answering as setup-pending
             // proves the request was lost. One that moved to another address
             // never answers here, so silence is taken as success.
-            if (this.#isMiningSetup && isConnectionLost($)) {
+            if (this.#isMiningSetup && pb.isConnectionLost($)) {
                 try {
                     const outcome = await awaitSetupOutcome(() => pb.rpc.init.getSettingsData({}, { signal }), {
                         signal,

@@ -74,6 +74,12 @@ export function renderFieldErrorsAsList(fieldErrors: Maybe<FieldErrors>): null |
     return fieldErrors.map(x => `- ${x}`).join('\n');
 }
 
+/** A failure to reach the device at all, as opposed to a status it sent. */
+export function isConnectionLost(error: unknown): boolean {
+    const { code } = ConnectError.from(error);
+    return code === Code.Unavailable || code === Code.Unknown;
+}
+
 export function collectAllErrors(error: unknown | Error | ConnectError): null | string[] {
     const $ = parseFormErrors(error, []);
     return $.global.length ? $.global : null;

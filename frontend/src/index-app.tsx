@@ -32,12 +32,14 @@ import '@/lib/carbonFlags';
 import '@fontsource-variable/noto-sans-sc';
 import '@/styles/carbon/carbon.global.scss';
 
-function boot(rootEl: HTMLElement): void {
+async function boot(rootEl: HTMLElement): Promise<void> {
     const root = createRoot(rootEl);
     let tree: ReactNode;
     try {
-        // Before the first render, so the page never starts in another language.
+        // Both before the first render: the page never starts in another language,
+        // and `Root` redirects by a session it already knows.
         store.boot();
+        await store.fetchSessionInfo();
         tree = (
             <>
                 <AppHead />
@@ -57,4 +59,4 @@ function boot(rootEl: HTMLElement): void {
 }
 
 const rootEl = document.getElementById('root');
-if (rootEl) boot(rootEl);
+if (rootEl) void boot(rootEl);

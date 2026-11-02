@@ -18,6 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { useIntl } from 'react-intl';
+
 import { Button, LogoHeaderMiner, LogoHeader } from '@/components';
 import { getID } from '@/lib/form';
 import { Layout } from '../Layout';
@@ -38,6 +40,7 @@ export interface WelcomeProps {
 const $ = getID('initial-setup-welcome').get;
 export function Welcome(props: WelcomeProps) {
     const { onNext, productName, miner } = props;
+    const { formatMessage } = useIntl();
 
     return (
         <Layout
@@ -48,14 +51,38 @@ export function Welcome(props: WelcomeProps) {
                     <LogoHeader style={{ width: 'auto', height: 18 }} />
                 )
             }
-            footer={<Button id={$('continue')} kind="primary" onClick={onNext} children="Continue" />}
+            footer={
+                <Button
+                    id={$('continue')}
+                    kind="primary"
+                    onClick={onNext}
+                    children={formatMessage({
+                        defaultMessage: 'Continue',
+                        description: 'Button on the setup welcome page, opening the Wi-Fi step',
+                    })}
+                />
+            }
         >
-            <img src={miner ? minerImage : image} alt="hero" />
-            <h1 className={css.title} children={`Welcome to Your New ${productName || 'Braiins Device'}!`} />
-            <p className={css.text}>
-                Let’s get your device up and running. You’ll walk through a few quick setup steps to configure network
-                and access settings.
-            </p>
+            <img src={miner ? minerImage : image} alt="" />
+            <h1
+                className={css.title}
+                children={formatMessage(
+                    {
+                        defaultMessage: 'Welcome to Your New {product}!',
+                        description:
+                            'Title of the setup welcome page; product is the device name, such as Braiins Deck',
+                    },
+                    { product: productName || 'Braiins Device' },
+                )}
+            />
+            <p
+                className={css.text}
+                children={formatMessage({
+                    defaultMessage:
+                        'Let’s get your device up and running. You’ll walk through a few quick setup steps to configure network and access settings.',
+                    description: 'Introduction under the title of the setup welcome page',
+                })}
+            />
         </Layout>
     );
 }

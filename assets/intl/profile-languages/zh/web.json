@@ -629,6 +629,11 @@
     "source": "Settings",
     "translation": "设置"
   },
+  "DGrsrUn+wh": {
+    "source": "Let’s get your device up and running. You’ll walk through a few quick setup steps to configure network and access settings.",
+    "translation": "让我们开始设置您的设备。只需几个简单步骤，即可完成网络和访问设置。",
+    "description": "Introduction under the title of the setup welcome page"
+  },
   "DN7wMSWUFB": {
     "source": "Close",
     "translation": "关闭",
@@ -723,6 +728,11 @@
   "GTyKt+zd0k": {
     "source": "Top level navigation",
     "translation": "顶级导航"
+  },
+  "GY/wZiv0so": {
+    "source": "Initial Setup",
+    "translation": "初始设置",
+    "description": "Second step of the setup progress, on the next page"
   },
   "GYoIyTRzA5": {
     "source": "Configure Widget",
@@ -884,6 +894,11 @@
     "source": "LED notifications in night mode enabled",
     "translation": "已启用夜间模式 LED 通知"
   },
+  "KkcVdK23kV": {
+    "source": "Failed to set Wi-Fi!",
+    "translation": "设置 Wi-Fi 失败！",
+    "description": "Setup error when the device did not take the chosen Wi-Fi network"
+  },
   "Knv5mnobZb": {
     "source": "Please follow up instructions on the device screen to continue.",
     "translation": "请按照设备屏幕上的说明继续操作。"
@@ -1027,6 +1042,11 @@
   "P6PLpip+L0": {
     "source": "Join",
     "translation": "加入"
+  },
+  "PCdDffUCiE": {
+    "source": "Select Wi-Fi you want to connect",
+    "translation": "选择要连接的 Wi-Fi",
+    "description": "Line under the title of the setup step listing the Wi-Fi networks"
   },
   "PcBtrgfx1Z": {
     "source": "Upload the widget as a .nar archive of its package. See the <a>bmc-main repository</a> for instructions.",
@@ -1193,6 +1213,11 @@
     "source": "— Invalid —",
     "translation": "— 无效 —"
   },
+  "WHoa7XNKrL": {
+    "source": "Refresh",
+    "translation": "刷新",
+    "description": "Link under the Wi-Fi list to scan for networks again"
+  },
   "WMNHPhDie+": {
     "source": "Saturday",
     "translation": "星期六"
@@ -1209,6 +1234,11 @@
     "source": "Date Format",
     "translation": "日期格式"
   },
+  "WnDXmlb4J0": {
+    "source": "Select Wi-Fi",
+    "translation": "选择 Wi-Fi",
+    "description": "Title of the setup step listing the Wi-Fi networks around the device"
+  },
   "XGOpYiYCX+": {
     "source": "Failed to load initial values!",
     "translation": "加载初始值失败！"
@@ -1216,6 +1246,11 @@
   "XWu7Z5IYJY": {
     "source": "Latest system version:",
     "translation": "最新系统版本："
+  },
+  "XnONhSrUSV": {
+    "source": "Skip (use Ethernet)",
+    "translation": "跳过（使用以太网）",
+    "description": "Link under the Wi-Fi list to continue the setup on a cable instead"
   },
   "XqQbkDMjPz": {
     "source": "Account deleted",
@@ -1232,6 +1267,11 @@
   "YAgYL60fLm": {
     "source": "Tuesday",
     "translation": "星期二"
+  },
+  "YAykn0B71V": {
+    "source": "Other Networks",
+    "translation": "其他网络",
+    "description": "Link under the Wi-Fi list to enter a network that is not listed"
   },
   "YEeUZJzlqw": {
     "source": "Failed to install the widget package!",
@@ -1275,6 +1315,11 @@
   "ZK1d6fQ6/I": {
     "source": "SSID",
     "translation": "SSID"
+  },
+  "ZZ05qSfooj": {
+    "source": "Wi-Fi Settings",
+    "translation": "Wi-Fi 设置",
+    "description": "First step of the setup progress, the one on this page"
   },
   "ZeyseXFIms": {
     "source": "Decrement number",
@@ -1658,6 +1703,11 @@
     "translation": "未完成",
     "description": "Screen-reader state read after a progress step's label: the step is still to come"
   },
+  "liPjwOaORe": {
+    "source": "Continue",
+    "translation": "继续",
+    "description": "Button on the setup welcome page, opening the Wi-Fi step"
+  },
   "lxblglMBAV": {
     "source": "Wednesday",
     "translation": "星期三"
@@ -1879,6 +1929,11 @@
     "translation": "关闭通知",
     "description": "Screen-reader name of a notification's close button"
   },
+  "ryTgV7LZN3": {
+    "source": "Welcome to Your New {product}!",
+    "translation": "欢迎使用您的新 {product}！",
+    "description": "Title of the setup welcome page; product is the device name, such as Braiins Deck"
+  },
   "s30llJGEgl": {
     "source": "Failed to update widget cycling settings!",
     "translation": "更新小组件轮播设置失败！"
@@ -2011,6 +2066,11 @@
     "source": "Edit",
     "translation": "编辑"
   },
+  "wFVdqrUIs8": {
+    "source": "Failed to load Wi-Fi networks!",
+    "translation": "加载 Wi-Fi 网络失败！",
+    "description": "Setup error when the device could not list the Wi-Fi networks around it"
+  },
   "wG2x/1KAk3": {
     "source": "Invalid file type",
     "translation": "文件类型无效"
@@ -2126,6 +2186,11 @@
   "ySElrrqDXl": {
     "source": "Remove the file",
     "translation": "移除文件"
+  },
+  "yZrHSfa5Tp": {
+    "source": "Failed to skip Wi-Fi setup!",
+    "translation": "跳过 Wi-Fi 设置失败！",
+    "description": "Setup error when the device refused to continue on Ethernet without Wi-Fi"
   },
   "yb+ZynwpTp": {
     "source": "LED notifications enabled",

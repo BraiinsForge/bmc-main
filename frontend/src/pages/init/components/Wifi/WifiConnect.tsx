@@ -91,6 +91,35 @@ class View extends Component<Props, State> {
 
             back: formatMessage({ defaultMessage: 'Back' }),
             confirm: formatMessage({ defaultMessage: 'Confirm' }),
+
+            selectWifi: formatMessage({
+                defaultMessage: 'Select Wi-Fi',
+                description: 'Title of the setup step listing the Wi-Fi networks around the device',
+            }),
+            selectWifiNote: formatMessage({
+                defaultMessage: 'Select Wi-Fi you want to connect',
+                description: 'Line under the title of the setup step listing the Wi-Fi networks',
+            }),
+            otherNetworks: formatMessage({
+                defaultMessage: 'Other Networks',
+                description: 'Link under the Wi-Fi list to enter a network that is not listed',
+            }),
+            refresh: formatMessage({
+                defaultMessage: 'Refresh',
+                description: 'Link under the Wi-Fi list to scan for networks again',
+            }),
+            skipToEthernet: formatMessage({
+                defaultMessage: 'Skip (use Ethernet)',
+                description: 'Link under the Wi-Fi list to continue the setup on a cable instead',
+            }),
+            wifiSettingsStep: formatMessage({
+                defaultMessage: 'Wi-Fi Settings',
+                description: 'First step of the setup progress, the one on this page',
+            }),
+            initialSetupStep: formatMessage({
+                defaultMessage: 'Initial Setup',
+                description: 'Second step of the setup progress, on the next page',
+            }),
         };
     }
     #renderEncryptionType = (type: Maybe<pb.EncryptionType>): string => {
@@ -283,8 +312,8 @@ class View extends Component<Props, State> {
 
             content = (
                 <Fragment>
-                    <h1 className={css.title} children="Select Wi-Fi" />
-                    <p className={css.note}>Select Wi-Fi you want to connect</p>
+                    <h1 className={css.title} children={txt.selectWifi} />
+                    <p className={css.note} children={txt.selectWifiNote} />
 
                     <div
                         className={css.netList}
@@ -298,12 +327,12 @@ class View extends Component<Props, State> {
                     />
 
                     <div className={css.links}>
-                        <Link className={css.link} children="Other Networks" onClick={this.#manualEntryActivate} />
-                        <Link className={css.link} children="Refresh" onClick={onReload} renderIcon={IconReload} />
+                        <Link className={css.link} children={txt.otherNetworks} onClick={this.#manualEntryActivate} />
+                        <Link className={css.link} children={txt.refresh} onClick={onReload} renderIcon={IconReload} />
                         {this.props.onSkip ? (
                             <Link
                                 className={css.link}
-                                children="Skip (use Ethernet)"
+                                children={txt.skipToEthernet}
                                 onClick={this.#skip}
                                 disabled={this.state.isSkipping}
                             />
@@ -351,8 +380,8 @@ class View extends Component<Props, State> {
                 footer={footer}
             >
                 <ProgressIndicator currentIndex={0} className={css.progress}>
-                    <ProgressStep label="Wi-Fi Settings" />
-                    <ProgressStep label="Initial Setup" className={css.disabledTab} />
+                    <ProgressStep label={txt.wifiSettingsStep} />
+                    <ProgressStep label={txt.initialSetupStep} className={css.disabledTab} />
                 </ProgressIndicator>
                 {content}
             </Layout>

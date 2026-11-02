@@ -220,9 +220,5 @@ export function useStore<Res>(getter: (store: Store) => Res) {
     return state;
 }
 
-// Fetching the user info as soon as possible
-// makes us aware of their auth status
-await store.fetchSessionInfo();
-
 Object.assign(globalThis, { store });
 if (process.env.NODE_ENV === 'development') console.log(store);

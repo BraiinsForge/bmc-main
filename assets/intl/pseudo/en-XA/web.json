@@ -629,6 +629,11 @@
     "source": "Settings",
     "translation": "[Şḗḗŧŧīƞɠş]"
   },
+  "DGrsrUn+wh": {
+    "source": "Let’s get your device up and running. You’ll walk through a few quick setup steps to configure network and access settings.",
+    "translation": "[Ŀḗḗŧ’ş ɠḗḗŧ ẏǿǿŭŭř ḓḗḗṽīƈḗḗ ŭŭƥ ȧȧƞḓ řŭŭƞƞīƞɠ. Ẏǿǿŭŭ’ŀŀ ẇȧȧŀķ ŧħřǿǿŭŭɠħ ȧȧ ƒḗḗẇ ɋŭŭīƈķ şḗḗŧŭŭƥ şŧḗḗƥş ŧǿǿ ƈǿǿƞƒīɠŭŭřḗḗ ƞḗḗŧẇǿǿřķ ȧȧƞḓ ȧȧƈƈḗḗşş şḗḗŧŧīƞɠş.]",
+    "description": "Introduction under the title of the setup welcome page"
+  },
   "DN7wMSWUFB": {
     "source": "Close",
     "translation": "[Ƈŀǿǿşḗḗ]",
@@ -723,6 +728,11 @@
   "GTyKt+zd0k": {
     "source": "Top level navigation",
     "translation": "[Ŧǿǿƥ ŀḗḗṽḗḗŀ ƞȧȧṽīɠȧȧŧīǿǿƞ]"
+  },
+  "GY/wZiv0so": {
+    "source": "Initial Setup",
+    "translation": "[Īƞīŧīȧȧŀ Şḗḗŧŭŭƥ]",
+    "description": "Second step of the setup progress, on the next page"
   },
   "GYoIyTRzA5": {
     "source": "Configure Widget",
@@ -884,6 +894,11 @@
     "source": "LED notifications in night mode enabled",
     "translation": "[ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş īƞ ƞīɠħŧ ḿǿǿḓḗḗ ḗḗƞȧȧƀŀḗḗḓ]"
   },
+  "KkcVdK23kV": {
+    "source": "Failed to set Wi-Fi!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ Ẇī-Ƒī!]",
+    "description": "Setup error when the device did not take the chosen Wi-Fi network"
+  },
   "Knv5mnobZb": {
     "source": "Please follow up instructions on the device screen to continue.",
     "translation": "[Ƥŀḗḗȧȧşḗḗ ƒǿǿŀŀǿǿẇ ŭŭƥ īƞşŧřŭŭƈŧīǿǿƞş ǿǿƞ ŧħḗḗ ḓḗḗṽīƈḗḗ şƈřḗḗḗḗƞ ŧǿǿ ƈǿǿƞŧīƞŭŭḗḗ.]"
@@ -1027,6 +1042,11 @@
   "P6PLpip+L0": {
     "source": "Join",
     "translation": "[Ĵǿǿīƞ]"
+  },
+  "PCdDffUCiE": {
+    "source": "Select Wi-Fi you want to connect",
+    "translation": "[Şḗḗŀḗḗƈŧ Ẇī-Ƒī ẏǿǿŭŭ ẇȧȧƞŧ ŧǿǿ ƈǿǿƞƞḗḗƈŧ]",
+    "description": "Line under the title of the setup step listing the Wi-Fi networks"
   },
   "PcBtrgfx1Z": {
     "source": "Upload the widget as a .nar archive of its package. See the <a>bmc-main repository</a> for instructions.",
@@ -1193,6 +1213,11 @@
     "source": "— Invalid —",
     "translation": "[— Īƞṽȧȧŀīḓ —]"
   },
+  "WHoa7XNKrL": {
+    "source": "Refresh",
+    "translation": "[Řḗḗƒřḗḗşħ]",
+    "description": "Link under the Wi-Fi list to scan for networks again"
+  },
   "WMNHPhDie+": {
     "source": "Saturday",
     "translation": "[Şȧȧŧŭŭřḓȧȧẏ]"
@@ -1209,6 +1234,11 @@
     "source": "Date Format",
     "translation": "[Ḓȧȧŧḗḗ Ƒǿǿřḿȧȧŧ]"
   },
+  "WnDXmlb4J0": {
+    "source": "Select Wi-Fi",
+    "translation": "[Şḗḗŀḗḗƈŧ Ẇī-Ƒī]",
+    "description": "Title of the setup step listing the Wi-Fi networks around the device"
+  },
   "XGOpYiYCX+": {
     "source": "Failed to load initial values!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ īƞīŧīȧȧŀ ṽȧȧŀŭŭḗḗş!]"
@@ -1216,6 +1246,11 @@
   "XWu7Z5IYJY": {
     "source": "Latest system version:",
     "translation": "[Ŀȧȧŧḗḗşŧ şẏşŧḗḗḿ ṽḗḗřşīǿǿƞ:]"
+  },
+  "XnONhSrUSV": {
+    "source": "Skip (use Ethernet)",
+    "translation": "[Şķīƥ (ŭŭşḗḗ Ḗŧħḗḗřƞḗḗŧ)]",
+    "description": "Link under the Wi-Fi list to continue the setup on a cable instead"
   },
   "XqQbkDMjPz": {
     "source": "Account deleted",
@@ -1232,6 +1267,11 @@
   "YAgYL60fLm": {
     "source": "Tuesday",
     "translation": "[Ŧŭŭḗḗşḓȧȧẏ]"
+  },
+  "YAykn0B71V": {
+    "source": "Other Networks",
+    "translation": "[Ǿŧħḗḗř Ƞḗḗŧẇǿǿřķş]",
+    "description": "Link under the Wi-Fi list to enter a network that is not listed"
   },
   "YEeUZJzlqw": {
     "source": "Failed to install the widget package!",
@@ -1275,6 +1315,11 @@
   "ZK1d6fQ6/I": {
     "source": "SSID",
     "translation": "[ŞŞĪḒ]"
+  },
+  "ZZ05qSfooj": {
+    "source": "Wi-Fi Settings",
+    "translation": "[Ẇī-Ƒī Şḗḗŧŧīƞɠş]",
+    "description": "First step of the setup progress, the one on this page"
   },
   "ZeyseXFIms": {
     "source": "Decrement number",
@@ -1658,6 +1703,11 @@
     "translation": "[Īƞƈǿǿḿƥŀḗḗŧḗḗ]",
     "description": "Screen-reader state read after a progress step's label: the step is still to come"
   },
+  "liPjwOaORe": {
+    "source": "Continue",
+    "translation": "[Ƈǿǿƞŧīƞŭŭḗḗ]",
+    "description": "Button on the setup welcome page, opening the Wi-Fi step"
+  },
   "lxblglMBAV": {
     "source": "Wednesday",
     "translation": "[Ẇḗḗḓƞḗḗşḓȧȧẏ]"
@@ -1879,6 +1929,11 @@
     "translation": "[Ƈŀǿǿşḗḗ ƞǿǿŧīƒīƈȧȧŧīǿǿƞ]",
     "description": "Screen-reader name of a notification's close button"
   },
+  "ryTgV7LZN3": {
+    "source": "Welcome to Your New {product}!",
+    "translation": "[Ẇḗḗŀƈǿǿḿḗḗ ŧǿǿ Ẏǿǿŭŭř Ƞḗḗẇ {product}!]",
+    "description": "Title of the setup welcome page; product is the device name, such as Braiins Deck"
+  },
   "s30llJGEgl": {
     "source": "Failed to update widget cycling settings!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŭŭƥḓȧȧŧḗḗ ẇīḓɠḗḗŧ ƈẏƈŀīƞɠ şḗḗŧŧīƞɠş!]"
@@ -2011,6 +2066,11 @@
     "source": "Edit",
     "translation": "[Ḗḓīŧ]"
   },
+  "wFVdqrUIs8": {
+    "source": "Failed to load Wi-Fi networks!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ Ẇī-Ƒī ƞḗḗŧẇǿǿřķş!]",
+    "description": "Setup error when the device could not list the Wi-Fi networks around it"
+  },
   "wG2x/1KAk3": {
     "source": "Invalid file type",
     "translation": "[Īƞṽȧȧŀīḓ ƒīŀḗḗ ŧẏƥḗḗ]"
@@ -2126,6 +2186,11 @@
   "ySElrrqDXl": {
     "source": "Remove the file",
     "translation": "[Řḗḗḿǿǿṽḗḗ ŧħḗḗ ƒīŀḗḗ]"
+  },
+  "yZrHSfa5Tp": {
+    "source": "Failed to skip Wi-Fi setup!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şķīƥ Ẇī-Ƒī şḗḗŧŭŭƥ!]",
+    "description": "Setup error when the device refused to continue on Ethernet without Wi-Fi"
   },
   "yb+ZynwpTp": {
     "source": "LED notifications enabled",

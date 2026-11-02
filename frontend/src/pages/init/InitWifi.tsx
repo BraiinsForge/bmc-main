@@ -19,6 +19,7 @@
 // the grant above.
 
 import { Component } from 'react';
+import { useIntl, type IntlShape } from 'react-intl';
 
 // App, lib
 import * as pb from '@/proto';
@@ -44,9 +45,10 @@ enum Stage {
     done = 'done',
 }
 
-interface Props {
+interface InitWifiProps {
     capabilities: Capabilities;
 }
+type Props = InitWifiProps & { intl: IntlShape };
 
 interface State {
     stage: Stage;
@@ -65,10 +67,16 @@ const getInitialState = (): State => ({
     errors: null,
 });
 
-export default class InitWifi extends Component<Props, State> {
+class View extends Component<Props, State> {
     readonly state = getInitialState();
 
     componentWillUnmount = () => pb.abort.all(this);
+
+    /** The device's own words when it answered, `worded` when it could not be reached. */
+    #fail = (error: unknown, worded: string): void => {
+        const answered = pb.isConnectionLost(error) ? null : pb.collectAllErrors(error);
+        this.setState({ errors: answered ?? [worded] });
+    };
 
     private abortScanWifi = pb.abort.get();
     #scanWifi = async (): Promise<void> => {
@@ -82,7 +90,13 @@ export default class InitWifi extends Component<Props, State> {
             networks = res.networks;
         } catch ($) {
             if (pb.abort.is($)) return;
-            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to load Wi-Fi networks!'] });
+            this.#fail(
+                $,
+                this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to load Wi-Fi networks!',
+                    description: 'Setup error when the device could not list the Wi-Fi networks around it',
+                }),
+            );
         }
 
         this.setState({ wifi: { isLoading: false, networks } });
@@ -110,7 +124,13 @@ export default class InitWifi extends Component<Props, State> {
             return true;
         } catch ($) {
             if (pb.abort.is($)) return false;
-            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to set Wi-Fi!'] });
+            this.#fail(
+                $,
+                this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to set Wi-Fi!',
+                    description: 'Setup error when the device did not take the chosen Wi-Fi network',
+                }),
+            );
             return false;
         }
     };
@@ -120,7 +140,13 @@ export default class InitWifi extends Component<Props, State> {
             await pb.rpc.init.skipWifi({});
         } catch ($) {
             if (pb.abort.is($)) return false;
-            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to skip Wi-Fi setup!'] });
+            this.#fail(
+                $,
+                this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to skip Wi-Fi setup!',
+                    description: 'Setup error when the device refused to continue on Ethernet without Wi-Fi',
+                }),
+            );
             return false;
         }
         this.#awaitDeviceSetup();
@@ -193,4 +219,9 @@ export default class InitWifi extends Component<Props, State> {
             </div>
         );
     }
+}
+
+export default function InitWifi(props: InitWifiProps) {
+    const intl = useIntl();
+    return <View {...props} intl={intl} />;
 }

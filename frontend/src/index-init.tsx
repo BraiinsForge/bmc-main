@@ -22,28 +22,21 @@ import 'core-js/actual';
 
 import { StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createIntl, createIntlCache, RawIntlProvider } from 'react-intl';
+import { HelmetProvider } from '@dr.pogodin/react-helmet';
 
 import { readSystem } from '@/lib/system';
+import { store } from '@/store';
 import { BootError } from '@/components';
+import { LocaleProvider } from '@/components/LocaleProvider';
 import '@/lib/carbonFlags';
 import App from './pages/init/InitWifi';
-
-const noop = () => {};
-const empty = Object.freeze({});
-const intlCache = createIntlCache();
-const intlObject = createIntl(
-    { locale: 'en', timeZone: 'UTC', messages: empty, onWarn: noop, onError: noop },
-    intlCache,
-);
-export function IntlProvider(props: { children: ReactNode }) {
-    return <RawIntlProvider value={intlObject} children={props.children} />;
-}
 
 function boot(rootEl: HTMLElement): void {
     let tree: ReactNode;
 
     try {
+        // Before the first render, so the page never starts in another language.
+        store.boot();
         tree = <App capabilities={readSystem().capabilities} />;
     } catch (error) {
         tree = <BootError error={error} />;
@@ -51,7 +44,9 @@ function boot(rootEl: HTMLElement): void {
 
     createRoot(rootEl).render(
         <StrictMode>
-            <IntlProvider children={tree} />
+            <HelmetProvider>
+                <LocaleProvider children={tree} />
+            </HelmetProvider>
         </StrictMode>,
     );
 }
