@@ -172,37 +172,35 @@ mod wasm {
 
         fn str(doc: &JsonId, path: &str) -> Option<String> {
             let id = doc.to_wire();
-            // First call with a reasonable buffer to get the actual length
-            let mut buf = vec![0_u8; 256];
-            let actual = unsafe {
+            // Asked with no room, the host only reports the length,
+            // negative when the path holds no string,
+            // so the string is allocated at its size
+            // and a widget keeping it holds no spare capacity.
+            let len = unsafe {
+                host_json_get_str(
+                    id,
+                    path.as_ptr(),
+                    crate::ffi_u32(path.len()),
+                    core::ptr::null_mut(),
+                    0,
+                )
+            };
+            let len = usize::try_from(len).ok()?;
+            if len == 0 {
+                return Some(String::new());
+            }
+            let mut buf = vec![0_u8; len];
+            let written = unsafe {
                 host_json_get_str(
                     id,
                     path.as_ptr(),
                     crate::ffi_u32(path.len()),
                     buf.as_mut_ptr(),
-                    crate::ffi_u32(buf.len()),
+                    crate::ffi_u32(len),
                 )
             };
-            // Negative: not found, or the wrong type.
-            let actual = usize::try_from(actual).ok()?;
-            if actual <= buf.len() {
-                buf.truncate(actual);
-                String::from_utf8(buf).ok()
-            } else {
-                // Retry with exact size
-                let mut buf = vec![0_u8; actual];
-                let len = unsafe {
-                    host_json_get_str(
-                        id,
-                        path.as_ptr(),
-                        crate::ffi_u32(path.len()),
-                        buf.as_mut_ptr(),
-                        crate::ffi_u32(buf.len()),
-                    )
-                };
-                buf.truncate(usize::try_from(len).ok()?);
-                String::from_utf8(buf).ok()
-            }
+            buf.truncate(usize::try_from(written).ok()?);
+            String::from_utf8(buf).ok()
         }
 
         fn i64(doc: &JsonId, path: &str) -> Option<i64> {
