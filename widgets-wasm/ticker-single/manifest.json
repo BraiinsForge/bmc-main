@@ -77,7 +77,7 @@
     },
     "precision": {
       "name": "Precision",
-      "description": "Decimal places of the price over the sparkline; leave empty to pick them automatically",
+      "description": "Decimal places of the price; leave empty to pick them automatically",
       "type": "integer",
       "optional": true,
       "min": 0,

@@ -103,18 +103,8 @@ impl Series {
 }
 
 pub use prices::format::{
-    MIN_PRICE, MIN_PRICE_DECIMALS, PricePrecision, change_text, price_precision,
+    MIN_PRICE, MIN_PRICE_DECIMALS, PricePrecision, change_text, display_precision,
 };
-
-/// Exactly `decimals` fraction digits when the operator chose them,
-/// else the shared magnitude rule.
-#[must_use]
-pub fn display_precision(symbol: &str, value: f64, decimals: Option<u32>) -> PricePrecision {
-    match decimals {
-        Some(digits) => PricePrecision::Fraction(digits),
-        None => price_precision(symbol, value),
-    }
-}
 
 /// The currency icon: a glyph and a representative solid disc color. `None` for
 /// `^`-prefixed indices, which have no icon.
@@ -167,26 +157,6 @@ mod tests {
 
     use super::*;
     use prices::candle::CandleBar;
-
-    #[wasm_test]
-    fn chosen_decimals_override_the_magnitude_rule() {
-        assert_eq!(
-            display_precision("BTC-USD", 106_234.56, Some(3)),
-            PricePrecision::Fraction(3)
-        );
-        assert_eq!(
-            display_precision("X", 0.000_000_49, Some(2)),
-            PricePrecision::Fraction(2)
-        );
-    }
-
-    #[wasm_test]
-    fn unset_decimals_keep_the_magnitude_rule() {
-        assert_eq!(
-            display_precision("BTC-USD", 106_234.56, None),
-            price_precision("BTC-USD", 106_234.56)
-        );
-    }
 
     fn bars(closes: &[f64], step: i64) -> Candles {
         let bars = (0_i64..)

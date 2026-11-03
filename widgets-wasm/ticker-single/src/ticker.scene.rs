@@ -106,7 +106,14 @@ fn ticker_single(ctx: &mut SceneCtx, ui: &mut Ui) {
             titled(label, (size.width, size.height), move || {
                 let series = sample_series(market_open, falling);
                 if candlestick {
-                    candlestick::series_view(&series, "AAPL", Period::D7, Period::D7.window(), size)
+                    candlestick::series_view(
+                        &series,
+                        "AAPL",
+                        Period::D7,
+                        Period::D7.window(),
+                        None,
+                        size,
+                    )
                 } else {
                     sparkline::series_view(&series, "AAPL", Period::D1.window(), None, size)
                 }
