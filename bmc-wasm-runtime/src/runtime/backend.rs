@@ -1235,11 +1235,24 @@ impl WasmWidgetRuntime {
     /// (the most recently submitted tree is shown with a warning bar).
     /// After [`Self::max_fuel_strikes`] consecutive fuel-outs the widget is killed
     /// and [`RenderStatus::Dead`] is returned on every subsequent call.
+    pub fn render(&mut self, delta_ms: u32, target: TargetContents) -> Result<RenderStatus> {
+        let status = self.render_frame(delta_ms, target);
+        // The host exports the buffer whatever the frame drew, so one that drew no tree,
+        // or drew the fuel warning over it, holds nothing the damage history describes.
+        let state = self.store.data_mut();
+        if matches!(state.last_repaint, FrameRepaint::NoTree)
+            || matches!(status, Ok(RenderStatus::FuelExhausted))
+        {
+            state.layered.owe_every_buffer();
+        }
+        status
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "carries trace-level instrumentation for BDK-293 hot-reload freeze investigation; remove the expect when the tracing comes back out"
     )]
-    pub fn render(&mut self, delta_ms: u32, target: TargetContents) -> Result<RenderStatus> {
+    fn render_frame(&mut self, delta_ms: u32, target: TargetContents) -> Result<RenderStatus> {
         let render_func = match self.entry {
             Entry::Widget { render } => render,
             #[cfg(any(test, feature = "hermetic-host"))]
@@ -3025,6 +3038,78 @@ mod tests {
             runtime.last_repaint()
         );
         assert!(runtime.last_dynamic_rects().is_none());
+    }
+
+    /// The host exports the buffer anyway, so it holds nothing the damage history describes.
+    #[test]
+    fn a_frame_painting_no_tree_owes_every_buffer() {
+        let mut runtime = minimal_runtime();
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(480.0, 480.0);
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| {
+                runtime.render(16, crate::TargetContents::Cleared)
+            })
+            .expect("BUG: the minimal fixture renders");
+
+        assert_eq!(
+            runtime.store.data().layered.damage().owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS
+        );
+    }
+
+    /// The warning bar lands in one buffer only, outside any walk's damage,
+    /// so a later replay kept over the other would leave it flickering.
+    #[test]
+    fn a_frame_out_of_fuel_owes_every_buffer() {
+        let wasm = wat::parse_str(format!(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              (func (export "__bmc_sdk_init") (result i64)
+                i64.const {})
+              (func (export "render") (param i32)
+                (loop $forever
+                  br $forever)))
+            "#,
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
+        ))
+        .expect("BUG: the looping WAT must parse");
+        let module = WasmWidgetModule::compile(&wasm).expect("BUG: the looping WAT must compile");
+        let mut runtime = runtime_from_module(
+            &module,
+            RuntimeConfig {
+                fuel_per_frame: 1_000,
+                ..RuntimeConfig::default()
+            },
+        );
+        runtime.store.data_mut().cached_tree = Some(crate::host_api::CachedTree {
+            node: bmc_render::tree::Node::Spacer { flex: 1.0 },
+            width: 320.0,
+            height: 240.0,
+            static_bytes: bmc_render::partition::StaticBytesKey(0),
+        });
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(320.0, 240.0);
+        let status = runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| {
+                runtime.render(16, crate::TargetContents::Cleared)
+            })
+            .expect("BUG: a fuel trap is a status, not an error");
+
+        assert!(
+            matches!(status, crate::RenderStatus::FuelExhausted),
+            "got {status:?}"
+        );
+        assert!(
+            !matches!(
+                runtime.last_repaint(),
+                bmc_render::repaint::FrameRepaint::NoTree
+            ),
+            "the fixture must replay a tree under the bar"
+        );
+        assert_eq!(
+            runtime.store.data().layered.damage().owed_full_repaints(),
+            bmc_render::repaint::EXPORT_BUFFERS
+        );
     }
 
     #[test]
