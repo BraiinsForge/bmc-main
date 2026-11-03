@@ -24,6 +24,10 @@ nix run .#deck -- init --device 192.168.1.2
 Add `--dry-run` to probe the device and build the tarball without mutating anything. After init the device has a working
 `/nix/store` and a `nix-store` binary at `/run/current-profile/bin/nix-store`, which `deck deploy` relies on.
 
+On a BMC100 or BMM101 whose firmware is older than the BMC application supports, `init` aborts before it changes the
+device. Upgrade the firmware first, in the device's web UI or with `deck sysupgrade` (a BMM101 needs its image passed
+with `--image`). `deck deploy` refuses such a device the same way.
+
 To reinitialize a device, first clean up the existing store (the abort hint prints this command):
 
 ```sh

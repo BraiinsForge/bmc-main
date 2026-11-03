@@ -29,7 +29,7 @@ generation.
 
 from dataclasses import dataclass
 
-from bmc_tui import catalog, console, nix
+from bmc_tui import catalog, console, nix, supported_firmware
 from bmc_tui.device import Device
 from bmc_tui.nix import Nix
 from bmc_tui.stage import dry_run, entrypoint
@@ -53,6 +53,7 @@ class Init:
         dev.print()
 
         catalog.ensure_device_reachable(dev)
+        supported_firmware.ensure_supported_firmware(dev)
         catalog.build_init_tarball(backend, plan)
         catalog.build_nix_cli(backend, plan)
         try:

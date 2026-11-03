@@ -29,7 +29,7 @@ its own nix-store binary, not a full nix.
 
 from dataclasses import dataclass, field
 
-from bmc_tui import catalog, console, nix
+from bmc_tui import catalog, console, nix, supported_firmware
 from bmc_tui.device import Device
 from bmc_tui.stage import dry_run, entrypoint
 
@@ -58,6 +58,7 @@ class Deploy:
 
         catalog.ensure_grpcurl()
         catalog.ensure_device_reachable(dev)
+        supported_firmware.ensure_supported_firmware(dev)
         catalog.disable_auto_upgrade(dev, plan)
         catalog.ensure_nix_cli(backend, dev)
         catalog.resolve_packages(backend, plan)

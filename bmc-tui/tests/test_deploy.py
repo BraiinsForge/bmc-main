@@ -24,7 +24,7 @@ from typing import NoReturn
 
 import pytest
 
-from bmc_tui import catalog, console, nix
+from bmc_tui import catalog, console, nix, supported_firmware
 from bmc_tui.procedures import deploy
 from tests import stubs
 
@@ -57,6 +57,7 @@ def test_deploy_observes_activation_without_hard_restart(
         "disable_auto_upgrade",
     ):
         monkeypatch.setattr(catalog, name, stubs.returning(None))
+    monkeypatch.setattr(supported_firmware, "ensure_supported_firmware", stubs.returning(None))
 
     old_pid = catalog.Pid("111")
     observed: list[tuple[object, catalog.Pid | None]] = []
@@ -100,6 +101,11 @@ def test_deploy_disables_automatic_upgrades_before_touching_the_device(
         "disable_auto_upgrade",
     ):
         monkeypatch.setattr(catalog, name, stubs.recording(calls, name))
+    monkeypatch.setattr(
+        supported_firmware,
+        "ensure_supported_firmware",
+        stubs.recording(calls, "ensure_supported_firmware"),
+    )
 
     deploy.Deploy(device="deck").run()
 
@@ -107,11 +113,12 @@ def test_deploy_disables_automatic_upgrades_before_touching_the_device(
     assert calls[deferred] == "disable_deferred_auto_upgrade", (
         "a bmc that did not answer before the deploy answers only once its packages are active"
     )
-    assert calls[:3] == [
+    assert calls[:4] == [
         "ensure_grpcurl",
         "ensure_device_reachable",
+        "ensure_supported_firmware",
         "disable_auto_upgrade",
-    ], "automatic upgrades must be off, or the deploy refused, before the device changes"
+    ], "unsupported firmware must be refused, and automatic upgrades off, before the device changes"
     assert calls[-1] == "restore_cleared_servers", (
         "restored servers must not reach an automatic upgrade that is still on"
     )
