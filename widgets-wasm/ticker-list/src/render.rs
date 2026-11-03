@@ -31,7 +31,7 @@ use crate::layout::{Band, SizeBucket, band_for, size_bucket};
 use crate::model::{RowState, TickerRow};
 use prices::chart;
 use prices::closed_market::{CLOSED_CHART_ALPHA, pause_marker};
-use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision};
+use prices::format::{MIN_PRICE, MIN_PRICE_DECIMALS, PricePrecision, change_text, price_precision};
 
 const BACKGROUND: Color = BLACK;
 const PRIMARY: Color = Color::from_rgb(0xf4, 0xf4, 0xf4);
@@ -154,7 +154,7 @@ fn price_text(row_data: &TickerRow) -> String {
         PricePrecision::Fraction(digits) => format_number!(row_data.price, digits),
         PricePrecision::BelowMin => {
             let mut out = String::from("<");
-            out.push_str(&format_number!(MIN_PRICE, 6));
+            out.push_str(&format_number!(MIN_PRICE, MIN_PRICE_DECIMALS));
             out
         }
     }

@@ -55,12 +55,14 @@ fn effective_pair(params: &manifest_params::Params) -> &str {
 }
 
 /// The operator's price decimals; `None` keeps the automatic rule.
-/// A negative value, which the manifest's `min` refuses, falls back to it too.
+/// A negative value, which the manifest's `min` refuses, falls back to it too;
+/// one above the `max`, which mirrors [`model::MIN_PRICE_DECIMALS`], is held to it.
 #[cfg(any(target_arch = "wasm32", test))]
 fn price_decimals(params: &manifest_params::Params) -> Option<u32> {
     params
         .precision
         .and_then(|digits| u32::try_from(digits).ok())
+        .map(|digits| digits.min(model::MIN_PRICE_DECIMALS))
 }
 
 /// How much of the tile a parameter update invalidates.
@@ -191,6 +193,14 @@ mod tests {
         assert_eq!(price_decimals(&p), None);
         p.precision = Some(4);
         assert_eq!(price_decimals(&p), Some(4));
+    }
+
+    #[wasm_test]
+    fn precision_stops_at_the_digits_of_the_smallest_price() {
+        use manifest_params::{Period, View};
+        let mut p = params("AAPL", Period::_7d, View::Sparkline);
+        p.precision = Some(9);
+        assert_eq!(price_decimals(&p), Some(model::MIN_PRICE_DECIMALS));
     }
 
     #[wasm_test]

@@ -38,6 +38,9 @@ pub enum PricePrecision {
 /// [`PricePrecision::BelowMin`].
 pub const MIN_PRICE: f64 = 1e-6;
 
+/// Fraction digits that spell [`MIN_PRICE`]; no price shows more.
+pub const MIN_PRICE_DECIMALS: u32 = 6;
+
 /// Fiat codes recognised for the FX-pair precision override. Both sides of a
 /// `BASE-QUOTE` symbol must match for the override to apply, so `BTC-USD`
 /// stays on the magnitude rule.
@@ -213,6 +216,12 @@ mod tests {
     #[wasm_test]
     fn dust_prices_collapse_to_below_min() {
         assert_eq!(price_precision("X", 0.000_000_49), BelowMin);
+    }
+
+    #[wasm_test]
+    fn min_price_decimals_spell_min_price() {
+        let decimals = i32::try_from(MIN_PRICE_DECIMALS).expect("BUG: a handful of digits");
+        assert!((10f64.powi(-decimals) - MIN_PRICE).abs() < f64::EPSILON);
     }
 
     #[wasm_test]

@@ -28,7 +28,8 @@ use bmc_wasm_sdk::*;
 
 use crate::display::{SizeBand, band_for};
 use crate::model::{
-    IconStyle, MIN_PRICE, PricePrecision, Series, change_text, display_precision, icon_for,
+    IconStyle, MIN_PRICE, MIN_PRICE_DECIMALS, PricePrecision, Series, change_text,
+    display_precision, icon_for,
 };
 use prices::closed_market::{CLOSED_CHART_ALPHA, pause_marker};
 
@@ -152,7 +153,7 @@ fn price_text(symbol: &str, value: f64, decimals: Option<u32>) -> String {
         PricePrecision::Fraction(digits) => format_number!(value, digits),
         PricePrecision::BelowMin => {
             let mut out = String::from("<");
-            out.push_str(&format_number!(MIN_PRICE, 6));
+            out.push_str(&format_number!(MIN_PRICE, MIN_PRICE_DECIMALS));
             out
         }
     }
