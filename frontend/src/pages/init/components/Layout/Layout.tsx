@@ -18,7 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { useState } from 'react';
 import cn from 'clsx';
+
+import { InlineNotificationsGroup } from '@/components';
+import { LanguageSwitch } from '../LanguageSwitch';
 import css from './Layout.scss';
 
 export interface LayoutProps {
@@ -30,10 +34,17 @@ export interface LayoutProps {
 }
 export function Layout(props: LayoutProps): ReactElement {
     const { header, children, footer, className, style } = props;
+    const [languageErrors, setLanguageErrors] = useState<null | string[]>(null);
 
     return (
         <div className={cn(css.root, className)} style={style}>
-            <header className={css.header} children={header} />
+            <div className={css.top}>
+                <header className={css.header}>
+                    {header}
+                    <LanguageSwitch className={css.language} onErrors={setLanguageErrors} />
+                </header>
+                <InlineNotificationsGroup kind="error" items={languageErrors} stretch />
+            </div>
             <main className={css.main} children={children} />
             {footer == null || (Array.isArray(footer) && footer.length === 0) ? null : (
                 <footer className={css.footer} children={footer} />

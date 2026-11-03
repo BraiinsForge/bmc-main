@@ -331,6 +331,11 @@
     "source": "Change the password used to access device settings.",
     "translation": "更改用于访问设备设置的密码。"
   },
+  "5KTpvlibuM": {
+    "source": "Language saved; reload the page to see it",
+    "translation": "语言已保存；请重新加载页面以查看",
+    "description": "Setup error when the device saved the new language but the page could not load its translation; the page stays in its current language until reloaded"
+  },
   "5MHgr85l1L": {
     "source": "Failed to clone the widget!",
     "translation": "克隆小组件失败！"
@@ -1465,6 +1470,11 @@
     "source": "Sound volume in night mode saved",
     "translation": "夜间模式音量已保存"
   },
+  "eKNt87qXcV": {
+    "source": "Failed to change the language",
+    "translation": "更改语言失败",
+    "description": "Setup error, shown alone without its cause, when the device did not save the language picked in the setup header"
+  },
   "eOJyfZiR7Q": {
     "source": "— None —",
     "translation": "— 无 —"
@@ -1969,6 +1979,11 @@
   "sv/rpClw+A": {
     "source": "Widget packages installed from a file are not checked by Braiins Forge. A malicious package can take over this device and anything it can reach on your network. Install only packages from a source you trust.",
     "translation": "从文件安装的小组件软件包未经 Braiins Forge 检查。恶意软件包可能控制此设备，以及它在您网络中能访问的一切。请只安装来自可信来源的软件包。"
+  },
+  "syQeS1noc3": {
+    "source": "Language",
+    "translation": "语言",
+    "description": "Accessible name of the language switch in the setup header"
   },
   "t24w8RMlYf": {
     "source": "Failed to save the night mode brightness!",

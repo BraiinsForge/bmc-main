@@ -27,6 +27,11 @@ import { readBrand, type Brand } from '@/lib/brand';
 import { intlFor, type Locale, SOURCE_LOCALE } from '@/lib/intl';
 import { readSystem, type Capabilities } from '@/lib/system';
 
+// The device saves a setup pick as one config write, and the page then loads its catalog.
+// Either still unanswered after this is a stalled link,
+// which would keep every switch read-only.
+const SETUP_LANGUAGE_TIMEOUT_MS = 10_000;
+
 export type Listener<R> = (store: Store) => R;
 export type SubscribeResult = {
     unsubscribe(): void;
@@ -40,8 +45,16 @@ interface State {
     sessionInfo: SessionInfo;
     hardwareCapabilities: Capabilities;
     brand: null | Brand;
-    /** Whether the device offers its languages. */
+    // Whether the device offers its languages.
     i18n: boolean;
+    // Empty until `loadLanguages()` has listed them.
+    languages: ReadonlyArray<pb.LanguageInfo>;
+    // What the device took in the setup while the page
+    // could not follow, until the two agree again.
+    unspokenLanguage: null | string;
+    // A setup pick is on its way, so no other
+    // starts on this or the next setup step.
+    isSavingLanguage: boolean;
     // English until the page's language is spoken, before the first render.
     locale: Locale;
 }
@@ -58,6 +71,9 @@ class Store {
         hardwareCapabilities: null,
         brand: null,
         i18n: false,
+        languages: [],
+        unspokenLanguage: null,
+        isSavingLanguage: false,
         locale: { tag: SOURCE_LOCALE },
     });
     #setState<Key extends keyof StoreState>(
@@ -77,6 +93,22 @@ class Store {
     /** Unlike `state`, readable before `boot()`. */
     get locale(): Locale {
         return this.#state.locale;
+    }
+    /** Unlike `state`, readable before `boot()`. */
+    get i18n(): boolean {
+        return this.#state.i18n;
+    }
+    /** Unlike `state`, readable before `boot()`. */
+    get languages(): ReadonlyArray<pb.LanguageInfo> {
+        return this.#state.languages;
+    }
+    /** Unlike `state`, readable before `boot()`. */
+    get unspokenLanguage(): null | string {
+        return this.#state.unspokenLanguage;
+    }
+    /** Unlike `state`, readable before `boot()`. */
+    get isSavingLanguage(): boolean {
+        return this.#state.isSavingLanguage;
     }
 
     #listeners = new Set<Listener<any>>();
@@ -156,13 +188,13 @@ class Store {
      * A catalog that does not load leaves the current language in place and returns `false`;
      * a later call wins over one whose catalog is still loading, which then returns `true`.
      */
-    speak = async (tag: string): Promise<boolean> => {
+    speak = async (tag: string, timeoutMs?: number): Promise<boolean> => {
         const { signal } = this.#speakAbort.replace();
         if (tag === this.#state.locale.tag) return true;
         let messages: Locale['messages'];
         if (this.#state.i18n) {
             try {
-                ({ messages } = await pb.rpc.language.getWebCatalog({ language: tag }, { signal }));
+                ({ messages } = await pb.rpc.language.getWebCatalog({ language: tag }, { signal, timeoutMs }));
             } catch (error) {
                 if (signal.aborted) return true;
                 console.warn(`No web catalog for ${tag}; staying in ${this.#state.locale.tag}`, error);
@@ -186,6 +218,35 @@ class Store {
         return this.speak(tag);
     };
 
+    #languagesLoad: null | Promise<void> = null;
+    /**
+     * Lists the device's languages once, so each setup step does not carry the flags over the link again.
+     * A failed list is retried on the next call.
+     */
+    loadLanguages = (): Promise<void> => {
+        this.#languagesLoad ??= pb.rpc.language.listLanguages({}).then(
+            ({ languages }) => this.#setState('languages', languages),
+            error => {
+                this.#languagesLoad = null;
+                console.warn('No language list', error);
+            },
+        );
+        return this.#languagesLoad;
+    };
+
+    /** `setLanguage` for the first setup, which has no session yet. */
+    setSetupLanguage = async (tag: string): Promise<boolean> => {
+        this.#setState('isSavingLanguage', true);
+        try {
+            await pb.rpc.init.setLanguage({ language: tag }, { timeoutMs: SETUP_LANGUAGE_TIMEOUT_MS });
+            const spoken = await this.speak(tag, SETUP_LANGUAGE_TIMEOUT_MS);
+            this.#setState('unspokenLanguage', spoken ? null : tag);
+            return spoken;
+        } finally {
+            this.#setState('isSavingLanguage', false);
+        }
+    };
+
     setHardwareCapabilities = (caps: null | Capabilities): void => {
         this.#setState('hardwareCapabilities', caps);
     };
@@ -200,6 +261,8 @@ class Store {
     boot = (): void => {
         const { capabilities: caps, i18n, language } = readSystem();
         this.#setState('i18n', i18n);
+        // A page that boots speaks the device's own language.
+        this.#setState('unspokenLanguage', null);
         if (language) this.#setState('locale', language);
         this.setHardwareCapabilities(caps);
         // system.js carries the brand script only where boser manages the device.

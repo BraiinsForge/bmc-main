@@ -31,18 +31,26 @@
     background-color: $layer-01;
 }
 
-.header {
-    composes: horizontal center from 'styles/layout.scss';
+// The header and what the language switch reports stay in view while a long form scrolls.
+.top {
     position: sticky;
     z-index: 10;
     top: 0;
 
     flex-shrink: 0;
+}
+
+.header {
+    composes: horizontal center from 'styles/layout.scss';
     block-size: to-rem(58px);
 
     background-color: $layer-01;
     border-bottom: 2px solid $border-subtle;
     padding-inline: mini-units(2);
+}
+
+.language {
+    margin-inline-start: auto;
 }
 
 .main {

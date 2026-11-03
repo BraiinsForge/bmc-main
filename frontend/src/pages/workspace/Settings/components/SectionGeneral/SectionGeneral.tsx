@@ -35,6 +35,7 @@ import {
     type ButtonSwitchItem,
     ComboBox,
     Dropdown,
+    LanguageName,
     // CarbonFormField
 } from '@/components';
 import type {
@@ -134,16 +135,7 @@ class View extends Component<Props> {
 
     #languageToString = (x: null | pb.LanguageInfo): string => x?.nativeName ?? '';
     #languageRenderElement = (x: null | pb.LanguageInfo): NonNullable<ReactNode> =>
-        x ? (
-            <span className={css.languageElement} lang={x.tag}>
-                {x.flag ? (
-                    <img className={css.languageFlag} src={`data:${x.flag.mimeType};base64,${x.flag.data}`} alt="" />
-                ) : null}
-                <span children={x.nativeName} />
-            </span>
-        ) : (
-            ''
-        );
+        x ? <LanguageName language={x} /> : '';
     #languageChange: DropdownProps<null | pb.LanguageInfo>['onChange'] = x => {
         if (x.selectedItem) this.props.language?.onChange?.(x.selectedItem.tag);
     };

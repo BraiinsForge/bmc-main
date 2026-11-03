@@ -331,6 +331,11 @@
     "source": "Change the password used to access device settings.",
     "translation": "[Ƈħȧȧƞɠḗḗ ŧħḗḗ ƥȧȧşşẇǿǿřḓ ŭŭşḗḗḓ ŧǿǿ ȧȧƈƈḗḗşş ḓḗḗṽīƈḗḗ şḗḗŧŧīƞɠş.]"
   },
+  "5KTpvlibuM": {
+    "source": "Language saved; reload the page to see it",
+    "translation": "[Ŀȧȧƞɠŭŭȧȧɠḗḗ şȧȧṽḗḗḓ; řḗḗŀǿǿȧȧḓ ŧħḗḗ ƥȧȧɠḗḗ ŧǿǿ şḗḗḗḗ īŧ]",
+    "description": "Setup error when the device saved the new language but the page could not load its translation; the page stays in its current language until reloaded"
+  },
   "5MHgr85l1L": {
     "source": "Failed to clone the widget!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈŀǿǿƞḗḗ ŧħḗḗ ẇīḓɠḗḗŧ!]"
@@ -1465,6 +1470,11 @@
     "source": "Sound volume in night mode saved",
     "translation": "[Şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ īƞ ƞīɠħŧ ḿǿǿḓḗḗ şȧȧṽḗḗḓ]"
   },
+  "eKNt87qXcV": {
+    "source": "Failed to change the language",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħȧȧƞɠḗḗ ŧħḗḗ ŀȧȧƞɠŭŭȧȧɠḗḗ]",
+    "description": "Setup error, shown alone without its cause, when the device did not save the language picked in the setup header"
+  },
   "eOJyfZiR7Q": {
     "source": "— None —",
     "translation": "[— Ƞǿǿƞḗḗ —]"
@@ -1969,6 +1979,11 @@
   "sv/rpClw+A": {
     "source": "Widget packages installed from a file are not checked by Braiins Forge. A malicious package can take over this device and anything it can reach on your network. Install only packages from a source you trust.",
     "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗş īƞşŧȧȧŀŀḗḗḓ ƒřǿǿḿ ȧȧ ƒīŀḗḗ ȧȧřḗḗ ƞǿǿŧ ƈħḗḗƈķḗḗḓ ƀẏ Ɓřȧȧīīƞş Ƒǿǿřɠḗḗ. Ȧ ḿȧȧŀīƈīǿǿŭŭş ƥȧȧƈķȧȧɠḗḗ ƈȧȧƞ ŧȧȧķḗḗ ǿǿṽḗḗř ŧħīş ḓḗḗṽīƈḗḗ ȧȧƞḓ ȧȧƞẏŧħīƞɠ īŧ ƈȧȧƞ řḗḗȧȧƈħ ǿǿƞ ẏǿǿŭŭř ƞḗḗŧẇǿǿřķ. Īƞşŧȧȧŀŀ ǿǿƞŀẏ ƥȧȧƈķȧȧɠḗḗş ƒřǿǿḿ ȧȧ şǿǿŭŭřƈḗḗ ẏǿǿŭŭ ŧřŭŭşŧ.]"
+  },
+  "syQeS1noc3": {
+    "source": "Language",
+    "translation": "[Ŀȧȧƞɠŭŭȧȧɠḗḗ]",
+    "description": "Accessible name of the language switch in the setup header"
   },
   "t24w8RMlYf": {
     "source": "Failed to save the night mode brightness!",

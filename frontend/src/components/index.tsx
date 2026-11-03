@@ -35,6 +35,7 @@ export * from './Image';
 export * from './InlineLoading';
 export * from './InlineNotification';
 export * from './InlineNotificationsGroup';
+export * from './LanguageName';
 export * from './Link';
 export * from './LinksBar';
 export * from './Loading';

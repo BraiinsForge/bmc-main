@@ -265,3 +265,85 @@ describe('store.setLanguage', () => {
         expect(store.locale.tag).toBe('en');
     });
 });
+
+describe('store.setSetupLanguage', () => {
+    afterEach(async () => {
+        mocks.clear();
+        rstest.restoreAllMocks();
+        rstest.useRealTimers();
+        await backToEnglish();
+    });
+
+    test('a catalog that never arrives frees the switch and asks for a reload', async () => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n: true } });
+        store.boot();
+        const init: Partial<ServiceMocks<typeof pb.services.InitialSetupService>> = { setLanguage: () => ({}) };
+        mocks.service(pb.services.InitialSetupService, init as ServiceMocks<typeof pb.services.InitialSetupService>);
+        const catalog: Partial<ServiceMocks<typeof pb.LanguageService>> = {
+            getWebCatalog: ({ conf }) => {
+                conf({ delay: 600_000 });
+                return { messages: {} };
+            },
+        };
+        mocks.service(pb.LanguageService, catalog as ServiceMocks<typeof pb.LanguageService>);
+        rstest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const picked = store.setSetupLanguage('zh');
+        await rstest.advanceTimersByTimeAsync(60_000);
+
+        expect(store.isSavingLanguage, 'the switch is writable again').toBe(false);
+        expect(store.unspokenLanguage).toBe('zh');
+        await expect(picked).resolves.toBe(false);
+    });
+
+    test('a save the device never answers frees the switch', async () => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n: true } });
+        store.boot();
+        const init: Partial<ServiceMocks<typeof pb.services.InitialSetupService>> = {
+            setLanguage: ({ conf }) => {
+                conf({ delay: 600_000 });
+                return {};
+            },
+        };
+        mocks.service(pb.services.InitialSetupService, init as ServiceMocks<typeof pb.services.InitialSetupService>);
+
+        const picked = store.setSetupLanguage('zh');
+        const failed = expect(picked).rejects.toThrow();
+        await rstest.advanceTimersByTimeAsync(60_000);
+
+        expect(store.isSavingLanguage, 'the switch is writable again').toBe(false);
+        await failed;
+    });
+});
+
+describe('store.loadLanguages', () => {
+    afterEach(() => {
+        mocks.clear();
+        rstest.restoreAllMocks();
+    });
+
+    test('lists the languages once, and again only after a list that failed', async () => {
+        const languages = [pb.create(pb.LanguageInfoSchema, { tag: 'zh', nativeName: '简体中文' })];
+        let requests = 0;
+        const methods: Partial<ServiceMocks<typeof pb.LanguageService>> = {
+            listLanguages: () => {
+                requests += 1;
+                if (requests === 1) throw new ConnectError('the link dropped', Code.Unavailable);
+                return { languages };
+            },
+        };
+        mocks.service(pb.LanguageService, methods as ServiceMocks<typeof pb.LanguageService>);
+        rstest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await store.loadLanguages();
+        expect(store.languages).toEqual([]);
+
+        await Promise.all([store.loadLanguages(), store.loadLanguages()]);
+        await store.loadLanguages();
+
+        expect(requests).toBe(2);
+        expect(store.languages.map(x => x.tag)).toEqual(['zh']);
+    });
+});
