@@ -81,7 +81,7 @@
       "type": "integer",
       "optional": true,
       "min": 0,
-      "max": 8
+      "max": 6
     }
   }
 }

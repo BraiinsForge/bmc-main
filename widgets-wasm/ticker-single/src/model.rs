@@ -102,7 +102,9 @@ impl Series {
     }
 }
 
-pub use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision};
+pub use prices::format::{
+    MIN_PRICE, MIN_PRICE_DECIMALS, PricePrecision, change_text, price_precision,
+};
 
 /// Exactly `decimals` fraction digits when the operator chose them,
 /// else the shared magnitude rule.
