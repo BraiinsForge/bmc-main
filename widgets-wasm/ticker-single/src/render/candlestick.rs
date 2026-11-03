@@ -28,7 +28,8 @@ use bmc_wasm_sdk::calendar::tz_convert;
 
 use crate::chart_layout::{
     candle_shapes, clamp_center_y, label_indices, label_kind, label_min_px, label_text,
-    max_candles, merge_bars, month_leads, nice_ticks, price_range, price_to_y, volume_heights,
+    max_candles, merge_bars, month_leads, nice_ticks, price_range, price_to_y, tick_decimals,
+    volume_heights,
 };
 use prices::period::Period;
 
@@ -54,6 +55,8 @@ fn dashed_line(x: f32, y: f32, width: f32, color: Color) -> Draw {
 }
 
 /// The loaded view: header on top, candle chart on a canvas below.
+/// `decimals` fixes the badge's fraction digits and the axis's floor;
+/// `None` keeps the shared rule.
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
@@ -68,6 +71,7 @@ pub fn series_view(
     symbol: &str,
     period: Period,
     period_label: &str,
+    decimals: Option<u32>,
     ws: WidgetSize,
 ) -> Node {
     let band = band_for(ws.variant).scaled(ws.fit());
@@ -104,7 +108,9 @@ pub fn series_view(
         // so they cannot drift out of horizontal alignment.
         let shapes = candle_shapes(&bars, plot_x, plot_w, 0.0, plot_h, min, max);
         let grid = SYMBOL_COLOR.with_alpha(GRID_ALPHA * alpha);
-        for tick in nice_ticks(min, max, Y_TICK_TARGET) {
+        let ticks = nice_ticks(min, max, Y_TICK_TARGET);
+        let tick_digits = decimals.map(|digits| digits.max(tick_decimals(&ticks)));
+        for tick in ticks {
             let y = price_to_y(tick, min, max, 0.0, plot_h);
             draws.push(dashed_line(plot_x, y, plot_w, grid));
             let label_y = clamp_center_y(y, plot_h, band.axis_font as f32);
@@ -113,7 +119,7 @@ pub fn series_view(
                 label_y - axis_box_h / 2.0,
                 band.axis_width,
                 axis_box_h,
-                price_text(symbol, tick, None),
+                price_text(symbol, tick, tick_digits),
                 style!(
                     size: band.axis_font,
                     color: SYMBOL_COLOR.with_alpha(alpha),
@@ -161,7 +167,7 @@ pub fn series_view(
             price_y - axis_box_h / 2.0,
             band.axis_width,
             axis_box_h,
-            price_text(symbol, series.current, None),
+            price_text(symbol, series.current, decimals),
             style!(
                 size: band.axis_font,
                 weight: FontWeight::BOLD,
@@ -311,6 +317,7 @@ mod tests {
             "AAPL",
             Period::D7,
             "7d",
+            None,
             WidgetSize::from_dimensions(480, 320),
         ));
         let wide = canvas_draws(series_view(
@@ -318,6 +325,7 @@ mod tests {
             "AAPL",
             Period::D7,
             "7d",
+            None,
             WidgetSize::from_dimensions(1_280, 720),
         ));
 
@@ -339,7 +347,7 @@ mod tests {
     fn horizontal_paths_preserve_plot_geometry_and_style() {
         let series = series();
         let ws = WidgetSize::from_dimensions(1_280, 720);
-        let draws = canvas_draws(series_view(&series, "AAPL", Period::D7, "7d", ws));
+        let draws = canvas_draws(series_view(&series, "AAPL", Period::D7, "7d", None, ws));
         let paths = dashed_paths(&draws);
         let band = band_for(ws.variant).scaled(ws.fit());
         let width = ws.width as f32;
@@ -385,7 +393,7 @@ mod tests {
     fn axis_price_boxes_are_shorter_than_two_authored_lines() {
         let series = series();
         let ws = WidgetSize::from_dimensions(1_280, 720);
-        let draws = canvas_draws(series_view(&series, "AAPL", Period::D7, "7d", ws));
+        let draws = canvas_draws(series_view(&series, "AAPL", Period::D7, "7d", None, ws));
         let band = band_for(ws.variant).scaled(ws.fit());
         let boxes = autofit_boxes(&draws);
         let (min, max) = price_range(&series.bars, series.current)

@@ -637,6 +637,7 @@ mod wasm_glue {
                             symbol,
                             period_of(&params),
                             params.period.as_manifest_value(),
+                            price_decimals(&params),
                             ws,
                         ),
                     };

@@ -40,6 +40,9 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 - The price itself is formatted with as many decimals as its magnitude warrants — none at 1000 and above, two at 1 and
   above, and progressively more for small values, down to `<0.000001` for anything smaller than that.
 - Currency pairs made of two fiat currencies below a rate of 1000 use five decimals, or three when quoted in JPY.
+- The optional *Precision* parameter (0 to 6) overrides that rule with a fixed number of decimals, for example `21.23`
+  instead of `21.23456` for `USD-CZK`. The sparkline price and the candlestick badge use it exactly; the candlestick
+  axis uses it too, but keeps enough decimals that neighbouring grid labels never read the same.
 - Number grouping and the decimal separator follow the device localization setting.
 
 ### Switch between a sparkline and a candlestick chart
@@ -87,7 +90,7 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
   to 1280x480. The round BFM100 face is not supported.
 - Non-canonical rectangular viewports keep the closest shared size classification and scale by the widget fit factor, so
   BMM101's 480x320 fullscreen viewport shrinks rather than overflows.
-- *Symbol*, *Time Period*, and *View* are manifest-driven widget parameters, configurable from the web UI.
+- *Symbol*, *Time Period*, *View*, and *Precision* are manifest-driven widget parameters, configurable from the web UI.
 - The manifest subscribes to the device `localization` setting. The candlestick time axis additionally follows the
   device timezone, time format, and date format.
 - Price data comes from `https://nexus.braiinsforge.com/api/v1/data/prices/`; the widget polls every 60 seconds with a

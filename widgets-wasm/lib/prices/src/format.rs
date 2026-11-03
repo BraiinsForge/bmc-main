@@ -99,6 +99,16 @@ fn bucket_digits(v: f64) -> u32 {
     }
 }
 
+/// Exactly `decimals` fraction digits when the operator chose them,
+/// else the shared magnitude rule.
+#[must_use]
+pub fn display_precision(symbol: &str, value: f64, decimals: Option<u32>) -> PricePrecision {
+    match decimals {
+        Some(digits) => PricePrecision::Fraction(digits),
+        None => price_precision(symbol, value),
+    }
+}
+
 /// The quote half of an FX pair symbol, when both halves are fiat codes.
 fn fx_quote(symbol: &str) -> Option<&str> {
     let symbol = symbol.strip_suffix("=X").unwrap_or(symbol);
@@ -260,6 +270,23 @@ mod tests {
         assert_eq!(price_precision("USD-JPY", 1000.0), Fraction(0));
         assert_eq!(price_precision("EUR-USD", 999.99), Fraction(5));
         assert_eq!(price_precision("USD-JPY", 999.99), Fraction(3));
+    }
+
+    #[wasm_test]
+    fn chosen_decimals_override_the_magnitude_rule() {
+        assert_eq!(
+            display_precision("BTC-USD", 106_234.56, Some(3)),
+            Fraction(3)
+        );
+        assert_eq!(display_precision("X", 0.000_000_49, Some(2)), Fraction(2));
+    }
+
+    #[wasm_test]
+    fn unset_decimals_keep_the_magnitude_rule() {
+        assert_eq!(
+            display_precision("BTC-USD", 106_234.56, None),
+            price_precision("BTC-USD", 106_234.56)
+        );
     }
 
     #[wasm_test]
