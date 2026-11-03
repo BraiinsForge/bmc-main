@@ -1,7 +1,7 @@
 # Deck Device Operations
 
 Initialising, deploying to, and iterating on a Deck from a dev host. The store-init, package-deploy, and firmware-flash
-flows live in the `deck` harness (`nix run .#deck`); a single shell script remains for fast native-binary iteration.
+flows live in the bmc-tui harness (`nix run .#bmc-tui`); a single shell script remains for fast native-binary iteration.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ flows live in the `deck` harness (`nix run .#deck`); a single shell script remai
 
 ## deck init — First-time Nix store setup
 
-`nix run .#deck -- init` initializes a fresh device with the Nix store. This is a **one-time** operation for devices
+`nix run .#bmc-tui -- init` initializes a fresh device with the Nix store. This is a **one-time** operation for devices
 that have never had Nix installed.
 
 It refuses to overwrite a populated `/nix` or `/mnt/data/nix`, bind-mounts `/mnt/data/nix` at `/nix`, builds and streams
@@ -18,7 +18,7 @@ the `init-tarball-armv7` flake output (a minimal Nix store with the `nix-store` 
 it on the device, and activates the initial profile generation.
 
 ```sh
-nix run .#deck -- init --device 192.168.1.2
+nix run .#bmc-tui -- init --device 192.168.1.2
 ```
 
 Add `--dry-run` to probe the device and build the tarball without mutating anything. After init the device has a working
@@ -36,9 +36,9 @@ ssh root@192.168.1.2 'umount /nix 2>/dev/null; rm -rf /mnt/data/nix /nix'
 
 ## deck deploy — Deploy packages to an initialized device
 
-`nix run .#deck -- deploy` is the primary means of deployment throughout day-to-day development. This kind of deployment
-always builds Nix packages, though. So for faster iteration on a single component, like a native widget or compositor,
-you might prefer `nix-cargo-deploy.sh`.
+`nix run .#bmc-tui -- deploy` is the primary means of deployment throughout day-to-day development. This kind of
+deployment always builds Nix packages, though. So for faster iteration on a single component, like a native widget or
+compositor, you might prefer `nix-cargo-deploy.sh`.
 
 It builds Nix flake packages and copies their entire closures to the device's `/nix/store` using `nix copy`, then
 installs them into the bmc profile via one `bmc-nix-cli` call. The device must already be initialized with `deck init`.
@@ -51,13 +51,13 @@ built directly.
 
 ```sh
 # core plus every widget
-nix run .#deck -- deploy --device 192.168.1.2
+nix run .#bmc-tui -- deploy --device 192.168.1.2
 
 # a specific set of Deck packages (bare names expand to .#deck-packages.*)
-nix run .#deck -- deploy --device 192.168.1.2 --packages core widget-clock
+nix run .#bmc-tui -- deploy --device 192.168.1.2 --packages core widget-clock
 
 # a package from nixpkgs
-nix run .#deck -- deploy --device 192.168.1.2 --packages '.#armv7-nixpkgs.strace'
+nix run .#bmc-tui -- deploy --device 192.168.1.2 --packages '.#armv7-nixpkgs.strace'
 ```
 
 The deployed packages are installed into the bmc profile and activated immediately. Executables are available under
@@ -74,27 +74,27 @@ build, for timings that match what ships. Use either when you need to observe or
 `release` to drop the overhead.
 
 ```sh
-nix run .#deck -- deploy --device 192.168.1.2 --profile debug
+nix run .#bmc-tui -- deploy --device 192.168.1.2 --profile debug
 ```
 
 ## deck sysupgrade — Flash a firmware image
 
-`nix run .#deck -- sysupgrade` uploads a sysupgrade tar to the device's `/tmp`, verifies its checksum there, runs
+`nix run .#bmc-tui -- sysupgrade` uploads a sysupgrade tar to the device's `/tmp`, verifies its checksum there, runs
 `sysupgrade`, waits for the reboot and checks the running version. The image can be a local tar, a direct URL to one, or
 a release from the published index:
 
 ```sh
 # pick a release interactively from https://downloads.braiins.com/braiins-deck/index.v1.json
-nix run .#deck -- sysupgrade --device 192.168.1.2
+nix run .#bmc-tui -- sysupgrade --device 192.168.1.2
 
 # the same pick from the staging index
-nix run .#deck -- sysupgrade --device 192.168.1.2 --index https://downloads.braiins.com.ii.zone/braiins-deck/index.v1.json
+nix run .#bmc-tui -- sysupgrade --device 192.168.1.2 --index https://downloads.braiins.com.ii.zone/braiins-deck/index.v1.json
 
 # a direct link
-nix run .#deck -- sysupgrade --device 192.168.1.2 --image https://feeds.braiins-os.com/.../firmware_....tar
+nix run .#bmc-tui -- sysupgrade --device 192.168.1.2 --image https://feeds.braiins-os.com/.../firmware_....tar
 
 # a pre-downloaded tar
-nix run .#deck -- sysupgrade --device 192.168.1.2 --image ./firmware_....tar
+nix run .#bmc-tui -- sysupgrade --device 192.168.1.2 --image ./firmware_....tar
 ```
 
 Downloads land in `$XDG_CACHE_HOME/deck/firmware/` (`~/.cache/deck/firmware/` by default). A release picked from the
@@ -104,7 +104,7 @@ checksum, so it is fetched afresh every time. `--index` points the pick at anoth
 The flash prompts for confirmation (`--yes` skips it); `--force` passes `-F` to `sysupgrade` to override the device's
 own compatibility check.
 
-Run `nix run .#deck -- <init|deploy|sysupgrade|upgrade-e2e> --help` for the full option set of each procedure.
+Run `nix run .#bmc-tui -- <init|deploy|sysupgrade|upgrade-e2e> --help` for the full option set of each procedure.
 
 ## nix-cargo-deploy.sh — Fast impure deploy of cargo-built native binaries
 
@@ -113,7 +113,7 @@ fixes that you expect to work in the produced version. This will be faster, espe
 leaf crate.
 
 IMPORTANT NOTE: This script is currently doing a dirty replacement inside of the profile. That means that the changes
-are lost right after creating a new generation, ie. deploying through `nix run .#deck`.
+are lost right after creating a new generation, ie. deploying through `nix run .#bmc-tui`.
 
 Copies a locally cargo-built native binary directly to the device for fast development iteration. The binary is uploaded
 to `/mnt/data/tmp/cargo-deploy/`, and the existing profile entry under `/run/current-profile/` is repointed to that

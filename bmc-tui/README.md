@@ -4,15 +4,15 @@ Staged-procedure harness for operating a Braiins Deck from a dev host: initialis
 packages, and flash firmware — each as a typed, dry-run-able procedure with progress, confirmation gates, and uniform
 error reporting. The package also carries the shared `rich` presentation layer the `bmc-virt` VM harness builds on.
 
-Run it via `nix run .#deck -- <init|deploy|sysupgrade> --help`.
+Run it via `nix run .#bmc-tui -- <init|deploy|sysupgrade> --help`.
 
 ## Architecture
 
-For BMM101 upgrade testing through Boser's REST upgrade API, use `nix run .#deck -- boser-upgrade-e2e --help`. See the
-[Boser upgrade E2E procedure](../docs/devlogs/BDK-787/e2e-usage.md) for host inputs and the manual device preparation.
-The runner serves test indexes/cache and, once the operator reports the device prepared, checks, starts and follows one
-upgrade over REST, then verifies the device over SSH (boot id, `/etc/bos_version`, profile generation and manifest) and
-fails the run when the device disagrees with the offer.
+For BMM101 upgrade testing through Boser's REST upgrade API, use `nix run .#bmc-tui -- boser-upgrade-e2e --help`. See
+the [Boser upgrade E2E procedure](../docs/devlogs/BDK-787/e2e-usage.md) for host inputs and the manual device
+preparation. The runner serves test indexes/cache and, once the operator reports the device prepared, checks, starts and
+follows one upgrade over REST, then verifies the device over SSH (boot id, `/etc/bos_version`, profile generation and
+manifest) and fails the run when the device disagrees with the offer.
 
 A procedure is a flat sequence of stages; each stage is a typed function guarded by prose verbs that carry the
 run/skip/fail verdict.
@@ -44,7 +44,7 @@ The injected seams (`Exec`, `Nix`) let the stages run under unit tests with no r
   ship together.
 - **Closures ship via the device's own `nix-store`.** `nix copy` drives the device's `nix-store` remotely over ssh, so
   the device needs only the store, not a full nix; registration is one `bmc-nix-cli add-packages` call.
-- **One dispatch app.** `nix run .#deck` unions the procedures over a tyro subcommand, backed by a light bmc-tui-only
+- **One dispatch app.** `nix run .#bmc-tui` unions the procedures over a tyro subcommand, backed by a light bmc-tui-only
   venv (rich + tyro). Each procedure stays independently runnable (`python -m bmc_tui.procedures.deploy`).
 - **Confirmation with attention.** Irreversible steps gate behind a confirm prompt (`--yes` to skip) that rings the
   terminal bell and fires a best-effort OS notification — silenced on quick runs and when not a TTY, so a looked-away

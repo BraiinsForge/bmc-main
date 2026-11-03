@@ -50,8 +50,8 @@ Install the following host tools:
 The `nix develop` shell provides the Rust toolchain, Protobuf compiler, `pkg-config`, Node.js, and pnpm. GPU libraries
 from Nix are currently not supported, so running the widget testbed requires the native development libraries from your
 system package manager: Fontconfig, FreeType, Wayland, libxkbcommon, Mesa/OpenGL/EGL, ALSA, libinput, udev, and libdrm.
-Package names differ between distributions. Building for and deploying to the device via `nix run .#deck -- deploy` does
-not need these libraries.
+Package names differ between distributions. Building for and deploying to the device via `nix run .#bmc-tui -- deploy`
+does not need these libraries.
 
 Root SSH access is available by default. Log in as `root` using the password configured in the device's web UI.
 
@@ -151,7 +151,7 @@ Nix discovers widget crates with manifests in the widget workspaces and exposes 
 [initial deployment](#deploy-to-a-device), deploy an individual widget with:
 
 ```shell
-nix run .#deck -- deploy --device "$DEVICE_IP" --packages widget-my-widget
+nix run .#bmc-tui -- deploy --device "$DEVICE_IP" --packages widget-my-widget
 ```
 
 Replace `my-widget` with your widget's directory name. Verify the result on the device as well as in the testbed. See
@@ -169,7 +169,7 @@ On a Deck running firmware 26.09 or later, or a BMM101 running firmware 26.10 or
 your checkout to the address set in `DEVICE_IP`:
 
 ```shell
-nix run .#deck -- deploy --device "$DEVICE_IP"
+nix run .#bmc-tui -- deploy --device "$DEVICE_IP"
 ```
 
 `deck deploy` turns automatic upgrades off, so they do not replace the deployed packages. Manual upgrades keep working,
@@ -318,5 +318,5 @@ nix build .#widgets-armv7-glibc-release -o result-widgets-arm
 
 ## Deployment during development
 
-`nix run .#deck` is the harness for deploying packages to a device and flashing firmware to a Deck — run it with
+`nix run .#bmc-tui` is the harness for deploying packages to a device and flashing firmware to a Deck — run it with
 `--help` (and `<subcommand> --help`) for its procedures and options. For details see `docs/deployment.md`.

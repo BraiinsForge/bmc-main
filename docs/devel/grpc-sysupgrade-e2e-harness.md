@@ -71,7 +71,7 @@ marker before preparing the device.
 ## Invocation
 
 ```sh
-nix run .#deck -- e2e-grpc-sysupgrade --device DEVICE_IP --image PATH_TO_TARBALL
+nix run .#bmc-tui -- e2e-grpc-sysupgrade --device DEVICE_IP --image PATH_TO_TARBALL
 ```
 
 - `--index-port` (default 8082) — the host port serving the firmware index and `firmware.tar`.

@@ -7,8 +7,8 @@ to a new generation. It is a development harness; nothing here ships on the devi
 
 ## Prerequisites
 
-- A Deck with a Nix-initialized store (`nix run .#deck -- init`, then `nix run .#deck -- deploy`), running a bmc app
-  that implements the `UpgradeService` RPCs (`CheckForUpgrade`, `StartUpgrade`).
+- A Deck with a Nix-initialized store (`nix run .#bmc-tui -- init`, then `nix run .#bmc-tui -- deploy`), running a bmc
+  app that implements the `UpgradeService` RPCs (`CheckForUpgrade`, `StartUpgrade`).
 
 - `/etc/nix-upgrade/servers.json` on the device — created automatically when missing. Factory provisioning normally
   writes it; a `deck init` device lacks it, and `register-server` (the "Register server on device" stage) then
@@ -23,7 +23,7 @@ to a new generation. It is a development harness; nothing here ships on the devi
 ## Invocation
 
 ```sh
-nix run .#deck -- upgrade-e2e --device DEVICE_IP
+nix run .#bmc-tui -- upgrade-e2e --device DEVICE_IP
 ```
 
 With no `--packages`, the harness builds and serves every deck package — a superset of `deck deploy`'s default set. Use
@@ -42,10 +42,10 @@ change at the same version both count. Rebuilding from the same tree that deploy
 paths, so make a code change (or serve a different profile) before running the harness, otherwise the
 `Check for upgrade` stage aborts with "no package upgrade offered".
 
-**Deploy the current tree before the run.** Run `nix run .#deck -- deploy` first so the installed baseline is the latest
-software, then make your code change and run `upgrade-e2e`. That way you are verifying that the newest software can
-still upgrade itself; running the harness against a stale deployed baseline instead exercises some old-version upgrade
-path that no longer reflects what ships.
+**Deploy the current tree before the run.** Run `nix run .#bmc-tui -- deploy` first so the installed baseline is the
+latest software, then make your code change and run `upgrade-e2e`. That way you are verifying that the newest software
+can still upgrade itself; running the harness against a stale deployed baseline instead exercises some old-version
+upgrade path that no longer reflects what ships.
 
 ## What the Stages Do
 
@@ -98,13 +98,13 @@ construction; this procedure creates the gap on purpose — it removes a widget 
 installs it back:
 
 ```sh
-nix run .#deck -- install-widget-e2e --device DEVICE_IP
+nix run .#bmc-tui -- install-widget-e2e --device DEVICE_IP
 ```
 
 `--widget` picks the package to remove and reinstall (default `widget-blockheight`); it must be a leaf widget the served
 build contains, or the install is never offered. The prerequisites, `--packages`/`--profile`/`--password`/port flags,
 and the full-package-set caveat above all apply unchanged. As with `upgrade-e2e`, deploy the current tree first
-(`nix run .#deck -- deploy`) so the install runs against the latest software. Unlike `upgrade-e2e`, no code change
+(`nix run .#bmc-tui -- deploy`) so the install runs against the latest software. Unlike `upgrade-e2e`, no code change
 between deploy and run is needed: the removal itself creates the plan difference, so rebuilding the same tree works.
 
 The shared preparation stages (preconditions through "Register server on device" and "Authenticate") are identical.

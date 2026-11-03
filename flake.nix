@@ -149,8 +149,19 @@
         # Every member, for the scripts whose `#!nix shell` lines run on it.
         python-tools-venv = pythonSet.mkVirtualEnv "python-tools" pythonWorkspace.deps.default;
 
-        # Light venv backing the `deck` app — bmc-tui alone, without the other members.
+        # Light venv backing the `bmc-tui` app — bmc-tui alone, without the other members.
         bmc-tui-venv = pythonSet.mkVirtualEnv "bmc-tui" { bmc-tui = [ ]; };
+
+        bmc-tui-app = {
+          type = "app";
+          program = pkgs.lib.getExe (pkgs.writeShellApplication {
+            name = "deck";
+            runtimeInputs = [ pkgs.grpcurl ];
+            text = ''
+              exec ${bmc-tui-venv}/bin/deck "$@"
+            '';
+          });
+        };
 
         # What `python-lint` type-checks against, so basedpyright resolves the versions
         # `uv.lock` pins rather than whatever the ambient interpreter carries.
@@ -402,17 +413,9 @@
         };
 
         # Single device-tooling entry point:
-        # `nix run .#deck -- <sysupgrade|deploy> …`.
-        apps.deck = {
-          type = "app";
-          program = pkgs.lib.getExe (pkgs.writeShellApplication {
-            name = "deck";
-            runtimeInputs = [ pkgs.grpcurl ];
-            text = ''
-              exec ${bmc-tui-venv}/bin/deck "$@"
-            '';
-          });
-        };
+        # `nix run .#bmc-tui -- <sysupgrade|deploy> …`; `.#deck` is its older name.
+        apps.bmc-tui = bmc-tui-app;
+        apps.deck = bmc-tui-app;
 
         # Firmware release index test serving:
         # `nix run .#firmware-index-serve -- <proxy|local>`.

@@ -10,13 +10,13 @@ Run it when touching the `image` feature list in the workspace `Cargo.toml`, the
 
 ```sh
 # every enabled decoder, plus the pixel-budget and fetch-cap cases
-nix run .#deck -- image-formats --device 192.168.1.2
+nix run .#bmc-tui -- image-formats --device 192.168.1.2
 
 # one case, leaving it on screen
-nix run .#deck -- image-formats --device 192.168.1.2 --only webp --keep-config
+nix run .#bmc-tui -- image-formats --device 192.168.1.2 --only webp --keep-config
 
 # put the previous config back
-nix run .#deck -- image-formats --device 192.168.1.2 --restore
+nix run .#bmc-tui -- image-formats --device 192.168.1.2 --restore
 ```
 
 `--dwell-seconds` sets both the scene cycling duration on the device and the wait, so a shorter run stays coherent.

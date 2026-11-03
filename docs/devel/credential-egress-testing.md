@@ -13,13 +13,13 @@ the delivery path in `bmc/src/widget/coordinator.rs`, or the egress policies in 
 
 ```sh
 # every case
-nix run .#deck -- check-credential-egress --device 192.168.1.2
+nix run .#bmc-tui -- check-credential-egress --device 192.168.1.2
 
 # leave the test scenes and accounts on the device
-nix run .#deck -- check-credential-egress --device 192.168.1.2 --keep-config
+nix run .#bmc-tui -- check-credential-egress --device 192.168.1.2 --keep-config
 
 # put the previous config and accounts back
-nix run .#deck -- check-credential-egress --device 192.168.1.2 --restore
+nix run .#bmc-tui -- check-credential-egress --device 192.168.1.2 --restore
 ```
 
 `--dwell-seconds` sets both the scene cycling duration on the device and the wait, so a shorter run stays coherent.

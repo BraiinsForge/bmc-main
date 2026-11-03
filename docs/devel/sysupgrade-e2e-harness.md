@@ -63,7 +63,7 @@ device is running image A's version before it flashes B.
 ## Invocation
 
 ```sh
-nix run .#deck -- e2e-sysupgrade --device DEVICE_IP --image-a PATH_TO_A --image-b PATH_TO_B
+nix run .#bmc-tui -- e2e-sysupgrade --device DEVICE_IP --image-a PATH_TO_A --image-b PATH_TO_B
 ```
 
 - `--scenario init|upgrade|full` (default `full`) — run only scenario A, only scenario B (which requires a store already
@@ -135,7 +135,7 @@ partition/partial-store damage (B), upgrade-path faults (C), and delivery varian
 contract as `deck e2e-sysupgrade`; both image arguments are always required.
 
 ```
-nix run .#deck -- e2e-sysupgrade-faults --device deck.local \
+nix run .#bmc-tui -- e2e-sysupgrade-faults --device deck.local \
     --image-a fw-A.tar --image-b fw-B.tar --scenario all --yes
 ```
 

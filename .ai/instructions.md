@@ -92,7 +92,7 @@ nix develop .#armv7-glibc-debug
 
 ### Deploying to Device
 
-Deploying to, inspecting, and iterating on a real Deck — the `nix run .#deck` harness (`init`/`deploy`/`sysupgrade`),
+Deploying to, inspecting, and iterating on a real Deck — the `nix run .#bmc-tui` harness (`init`/`deploy`/`sysupgrade`),
 the `nix-cargo-deploy.sh` fast path, and on-device log/cache/config — is documented in
 **[`docs/deployment.md`](docs/deployment.md) ("Deck Device Operations")**.
 

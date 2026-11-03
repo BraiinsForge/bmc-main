@@ -116,7 +116,7 @@ full Nix package, copies it to the device and activates a new profile generation
 and **wasm** widgets:
 
 ```bash
-nix run .#deck -- deploy --device 192.168.1.2 --packages '.#deck-packages.widget-flip-clock'
+nix run .#bmc-tui -- deploy --device 192.168.1.2 --packages '.#deck-packages.widget-flip-clock'
 ```
 
 The script:

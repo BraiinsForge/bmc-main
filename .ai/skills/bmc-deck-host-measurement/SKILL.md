@@ -25,7 +25,7 @@ slot, and the screen stays on "Loading scene…".
 Always deploy the full set, core plus every widget, so that the host and the widgets come from one tree:
 
 ```sh
-nix run .#deck -- deploy --device <ip>
+nix run .#bmc-tui -- deploy --device <ip>
 ```
 
 Never `--packages core` alone for a measurement.
@@ -35,7 +35,7 @@ detached worktree at `origin/master`, with the deploy run from inside it:
 
 ```sh
 git worktree add --detach <path>/master-baseline origin/master
-cd <path>/master-baseline && nix run .#deck -- deploy --device <ip>
+cd <path>/master-baseline && nix run .#bmc-tui -- deploy --device <ip>
 ```
 
 The first deploy of a tree whose `Cargo.lock` differs from what was last built rebuilds that profile's dependency cache.
