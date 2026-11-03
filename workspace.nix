@@ -738,6 +738,8 @@ in
     deck-packages = armv7PackageDefs;
     deck-packages-debug = armv7ProfilingPackageDefs bmc.profiles.armv7-glibc-debug;
     deck-packages-profiling = armv7ProfilingPackageDefs bmc.profiles.armv7-glibc-release;
+    # Plain store paths, which `packages.<system>` refuses as not derivations.
+    inherit sounds fonts;
   };
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts.packages // {
     inherit bmc-video-play-armv7;
@@ -774,7 +776,6 @@ in
 
     frontend = frontend.build;
     frontendNodeModules = frontend.nodeModules;
-    inherit sounds fonts;
   };
   devShells =
     let
