@@ -557,13 +557,7 @@ fn render_frame(
     )?;
     wait_for_gpu(egl);
     drop(lock);
-    let (dmabuf, slot) = target.export_and_swap()?;
-    // Mint+cache the wl_buffer for this slot, then attach. mark_presented marks
-    // the slot in-flight until the compositor sends wl_buffer.release.
-    let wl_buffer = target.wl_buffer_for_slot(client, &dmabuf, slot)?;
-    client.submit_buffer_with_wl_buffer(&dmabuf, &wl_buffer)?;
-    client.flush()?;
-    target.mark_presented(slot);
+    target.submit(client)?;
     overlay.on_frame_submitted(Instant::now());
     Ok(outcome)
 }

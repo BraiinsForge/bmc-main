@@ -240,8 +240,7 @@ pub fn render_hosted_overlay(
     if let Some(offset) = layer_offset {
         overlay.stage_vertical_offset(offset)?;
     }
-    let (dmabuf, slot) = overlay.target_mut().export_and_swap()?;
-    overlay.submit_exported(&dmabuf, slot)?;
+    overlay.submit()?;
     // The cadence counts from `now`, taken before this overlay's tick and render,
     // so a frame slower than the cadence leaves the next one due. The ramps anchor
     // at a fresh timestamp instead: anchoring them before the tick and render

@@ -124,10 +124,18 @@ impl OverlayRenderTarget {
         )
     }
 
-    /// Export the current buffer as DMA-BUF and swap to the other slot.
-    /// Returns the DMA-BUF info and the slot index of the exported buffer.
-    pub fn export_and_swap(&mut self) -> anyhow::Result<(DmaBufInfo, usize)> {
-        self.buffers.export_and_swap()
+    /// Export the current buffer, attach it to `client`'s surface through its cached
+    /// `wl_buffer`, and keep its slot in flight until the compositor releases it.
+    pub fn submit(
+        &mut self,
+        client: &mut crate::surface::LayerSurfaceClient,
+    ) -> anyhow::Result<()> {
+        let (dmabuf, slot) = self.buffers.export_and_swap()?;
+        let wl_buffer = self.wl_buffer_for_slot(client, &dmabuf, slot)?;
+        client.submit_buffer_with_wl_buffer(&dmabuf, &wl_buffer)?;
+        client.flush()?;
+        self.wl_buffers.mark_presented(slot);
+        Ok(())
     }
 
     #[must_use]
@@ -160,12 +168,6 @@ impl OverlayRenderTarget {
         self.wl_buffers.is_available(self.buffers.current_slot())
     }
 
-    /// Record that `slot`'s buffer has been submitted to the compositor and is
-    /// pinned until its `wl_buffer.release`.
-    pub fn mark_presented(&mut self, slot: usize) {
-        self.wl_buffers.mark_presented(slot);
-    }
-
     /// Translate a compositor `wl_buffer.release` into a freed export slot by
     /// matching the released buffer against the cached `wl_buffer`s.
     pub fn mark_released_buffer(&mut self, released: &ReleasedBuffer) {
@@ -175,7 +177,7 @@ impl OverlayRenderTarget {
 
     /// Mint (once) and cache the `wl_buffer` for `slot` via the layer-surface
     /// client. Subsequent calls return the cached buffer.
-    pub fn wl_buffer_for_slot(
+    fn wl_buffer_for_slot(
         &mut self,
         client: &mut crate::surface::LayerSurfaceClient,
         info: &DmaBufInfo,

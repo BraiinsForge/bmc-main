@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use bmc_intl::Localized;
 use bmc_render::renderer::Renderer;
-use bmc_widget::egl::{DmaBufInfo, EglContext, SharedRenderScratch};
+use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
@@ -497,10 +497,6 @@ impl HostedOverlay {
             .prewarm(renderer, viewport, self.localized.intl());
     }
 
-    pub fn target_mut(&mut self) -> &mut OverlayRenderTarget {
-        &mut self.target
-    }
-
     /// Paint a `kind` frame into the current export buffer,
     /// as [`OverlayRenderTarget::paint`] does.
     pub fn paint(
@@ -569,18 +565,9 @@ impl HostedOverlay {
         Ok(())
     }
 
-    /// Attach an exported buffer: mint+cache its `wl_buffer`, commit it to the
-    /// layer surface, and mark the slot in-flight until the compositor releases
-    /// it. Borrows target and client together (legal as one `&mut self`).
-    pub fn submit_exported(&mut self, dmabuf: &DmaBufInfo, slot: usize) -> anyhow::Result<()> {
-        let wl_buffer = self
-            .target
-            .wl_buffer_for_slot(&mut self.client, dmabuf, slot)?;
-        self.client
-            .submit_buffer_with_wl_buffer(dmabuf, &wl_buffer)?;
-        self.client.flush()?;
-        self.target.mark_presented(slot);
-        Ok(())
+    /// Submit the painted buffer to the layer surface, as [`OverlayRenderTarget::submit`] does.
+    pub fn submit(&mut self) -> anyhow::Result<()> {
+        self.target.submit(&mut self.client)
     }
 
     /// The kind of frame the next render draws: fresh when the overlay's tick,
