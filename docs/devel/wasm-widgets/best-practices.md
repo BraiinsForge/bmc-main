@@ -123,6 +123,17 @@ a `Vec<Node>` do not add recursive depth, but nested containers deepen the SDK's
 
 See [Memory](memory.md) for the 64 KiB stack budget, measured high-water marks, and scaling implications.
 
+## Work sequentially
+
+The host gives each widget a small, fixed set of background resources, listed with their defaults in
+[`RuntimeResourceLimits`](../../../bmc-wasm-runtime/src/runtime_limits.rs). The tightest is image decoding: one decode
+in flight per widget. A request past a limit is refused, not queued: `BitmapSlot::set_fit` and `FetchRequest::send`
+return `None`, and `set_fit_ref` hands the body back.
+
+Do not fan work out in parallel. Keep the waiting work in a queue inside the widget, and start the next decode from the
+callback that reports the previous one. The device also runs one decode at a time across all widgets, so parallel
+requests only buffer more data while they wait. The timer limits are in [Timers](timers.md#limits).
+
 ## Build strings with the SDK macro
 
 Use the SDK `fmt!` macro, not `std`'s `format!`/`write!`. The `no-fmt-in-wasm` ast-grep rule rejects the allocating
