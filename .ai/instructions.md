@@ -323,7 +323,8 @@ The server registers no gRPC reflection; point grpcurl at the protos instead
 
   - Compile successfully
   - Pass all existing tests
-  - Include tests for new functionality
+  - Include tests for new functionality, or leave them to the commit right after it: a separate tests commit keeps the
+    production code easy to find in review
   - Follow project formatting/linting
 
 - **Before committing**, run these in order — each step rewrites what the next one judges, so the order is not
