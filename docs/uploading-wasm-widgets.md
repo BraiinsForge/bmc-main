@@ -76,6 +76,9 @@ exec /run/current-profile/bin/bmc-wasm-thin-v@sdkMajor@ \
     "$@"
 ```
 
+The launcher script must match the SDK-generated template byte-for-byte, including whitespace, line continuations, and
+the trailing newline. Functionally equivalent shell scripts are rejected.
+
 Make the script executable. Place the manifest, compiled `my-widget.wasm`, and optional icon at the paths shown above
 before dumping the archive. Build the module with the matching [widget SDK](../bmc-wasm-runtime/README.md).
 
