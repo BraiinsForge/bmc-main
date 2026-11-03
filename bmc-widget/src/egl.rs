@@ -23,7 +23,8 @@
 //! Provides the common GPU infrastructure shared by all GPU-rendering widgets:
 //! GPU device setup, EGL context creation, and DMA-BUF-exportable buffer
 //! management. Widgets compose their own rendering pipeline on top — direct
-//! FBO rendering (flip-clock) or two-FBO with staging/blit (wasm).
+//! FBO rendering (flip-clock) or a shared femtovg FBO retargeted at each
+//! export buffer (wasm).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -149,7 +150,8 @@ pub struct DmaBufInfo {
 ///
 /// Shared by all GPU widgets regardless of pipeline type. Widgets obtain an
 /// `EglContext`, allocate [`ExportBuffer`]s for DMA-BUF output, and build
-/// their own rendering pipeline (direct FBO, staging+blit, etc.) on top.
+/// their own rendering pipeline on top (direct FBO, or femtovg retargeted at
+/// export buffers).
 pub struct EglContext {
     /// GBM device for buffer allocation.
     gbm: GbmDevice<DrmDeviceFd>,
@@ -907,14 +909,13 @@ impl ExportBuffer {
     }
 }
 
-/// Per-widget staging render target: a GL color texture, stencil RBO, and FBO.
+/// Per-widget render target: a GL color texture, stencil RBO, and FBO.
 ///
-/// femtovg renders Y-flipped when targeting an FBO and needs an 8-bit stencil
-/// for its painting algorithms. Each widget owns one of these against a shared
-/// [`EglContext`]; the widget renders into `fbo` with femtovg, then blits with
-/// Y-flip into a separate DMA-BUF-backed [`ExportBuffer`] for compositor
-/// submission. Depth attachment is optional (matches [`ExportBuffer`] policy);
-/// most femtovg widgets do not need it.
+/// femtovg needs an 8-bit stencil for its painting algorithms.
+/// [`SharedRenderScratch`] keeps one as its staging pair, which a frame paints
+/// into unless it is retargeted at a DMA-BUF-backed [`ExportBuffer`]. Depth
+/// attachment is optional (matches [`ExportBuffer`] policy); most femtovg
+/// widgets do not need it.
 ///
 /// Must be released via [`EglContext::destroy_widget_export_buffer`] before
 /// dropping — GL deletion requires the EGL context current on this thread,
@@ -1116,7 +1117,7 @@ impl<B> Default for TwoSlotBufferCache<B> {
 ///
 /// Manages two lazily-allocated [`ExportBuffer`]s with ping-pong swap.
 /// Widgets compose this with [`EglContext`] and their own rendering pipeline
-/// (direct FBO, staging+blit, etc.).
+/// (direct FBO, or femtovg retargeted at export buffers).
 /// Export buffers a slot rotates through.
 ///
 /// The compositor samples one while the widget paints the other, so a frame
@@ -1431,8 +1432,6 @@ struct BlitResources {
     vbo: glow::Buffer,
     pos_loc: u32,
     uv_loc: u32,
-    uv_scale_loc: glow::UniformLocation,
-    uv_offset_loc: glow::UniformLocation,
 }
 
 impl BlitResources {
@@ -1441,10 +1440,8 @@ impl BlitResources {
 attribute vec2 a_pos;
 attribute vec2 a_uv;
 varying vec2 v_uv;
-uniform vec2 u_uv_scale;
-uniform vec2 u_uv_offset;
 void main() {
-    v_uv = a_uv * u_uv_scale + u_uv_offset;
+    v_uv = a_uv;
     gl_Position = vec4(a_pos, 0.0, 1.0);
 }
 ";
@@ -1509,37 +1506,25 @@ void main() {
             gl.get_attrib_location(program, "a_uv")
                 .expect("BUG: a_uv not found in blit shader")
         };
-        let uv_scale_loc = unsafe {
-            gl.get_uniform_location(program, "u_uv_scale")
-                .expect("BUG: u_uv_scale not found in blit shader")
-        };
-        let uv_offset_loc = unsafe {
-            gl.get_uniform_location(program, "u_uv_offset")
-                .expect("BUG: u_uv_offset not found in blit shader")
-        };
-
         Ok(Self {
             program,
             vbo,
             pos_loc,
             uv_loc,
-            uv_scale_loc,
-            uv_offset_loc,
         })
     }
 
-    /// Upload the full-screen quad. Each vertex pairs its NDC position with a
-    /// UV whose V runs the other way, so sampling is Y-flipped by construction
-    /// - see [`UvSampling`] for the source that has to undo it.
+    /// Upload the full-screen quad, each vertex pairing its NDC position with the UV
+    /// at the same corner, so a copy keeps its source's row order.
     fn upload_quad(gl: &glow::Context, program: glow::Program) -> Result<glow::Buffer> {
         #[rustfmt::skip]
         let vertices: [f32; 24] = [
-            -1.0, -1.0,  0.0, 1.0,
-             1.0, -1.0,  1.0, 1.0,
-             1.0,  1.0,  1.0, 0.0,
-            -1.0, -1.0,  0.0, 1.0,
-             1.0,  1.0,  1.0, 0.0,
-            -1.0,  1.0,  0.0, 0.0,
+            -1.0, -1.0,  0.0, 0.0,
+             1.0, -1.0,  1.0, 0.0,
+             1.0,  1.0,  1.0, 1.0,
+            -1.0, -1.0,  0.0, 0.0,
+             1.0,  1.0,  1.0, 1.0,
+            -1.0,  1.0,  0.0, 1.0,
         ];
 
         unsafe {
@@ -1557,31 +1542,48 @@ void main() {
         }
     }
 
+    /// Copy `src` wholesale into `dest_fbo`, both being the same size, rows in their order.
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    fn seed(
+        &self,
+        gl: &glow::Context,
+        src: glow::Texture,
+        dest_fbo: glow::Framebuffer,
+        w: u32,
+        h: u32,
+    ) {
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(dest_fbo));
+            gl.viewport(0, 0, w as i32, h as i32);
+            gl.disable(glow::SCISSOR_TEST);
+            gl.disable(glow::STENCIL_TEST);
+            gl.disable(glow::DEPTH_TEST);
+            gl.disable(glow::CULL_FACE);
+            gl.disable(glow::BLEND);
+            gl.color_mask(true, true, true, true);
+
+            gl.use_program(Some(self.program));
+
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(src));
+
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+            gl.enable_vertex_attrib_array(self.pos_loc);
+            gl.vertex_attrib_pointer_f32(self.pos_loc, 2, glow::FLOAT, false, 16, 0);
+            gl.enable_vertex_attrib_array(self.uv_loc);
+            gl.vertex_attrib_pointer_f32(self.uv_loc, 2, glow::FLOAT, false, 16, 8);
+
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+
+            gl.disable_vertex_attrib_array(self.pos_loc);
+            gl.disable_vertex_attrib_array(self.uv_loc);
+        }
+    }
+
     fn destroy(&self, gl: &glow::Context) {
         unsafe {
             gl.delete_program(self.program);
             gl.delete_buffer(self.vbo);
-        }
-    }
-}
-
-/// How the blit program samples its source texture.
-///
-/// The blit quad bakes in a Y-flip, femtovg rendering upside down when it
-/// targets an FBO. A source that is already in export orientation therefore has
-/// to undo that flip rather than inherit it.
-#[derive(Clone, Copy, PartialEq, Debug)]
-struct UvSampling {
-    scale: (f32, f32),
-    offset: (f32, f32),
-}
-
-impl UvSampling {
-    /// Sample an already-upright texture whole, undoing the quad's Y-flip.
-    fn upright_whole() -> Self {
-        Self {
-            scale: (1.0, -1.0),
-            offset: (0.0, 1.0),
         }
     }
 }
@@ -1628,9 +1630,9 @@ impl fmt::Debug for SharedRenderScratch {
 
 impl SharedRenderScratch {
     /// Allocate a staging FBO sized to `(max_width, max_height)` and the
-    /// Y-flip blit program against `ctx`. Per-frame consumers may render at
-    /// any size up to this maximum; [`Self::begin_frame`] sets viewport to
-    /// the per-frame size.
+    /// program that seeds a fresh export buffer from its sibling, against
+    /// `ctx`. Per-frame consumers may render at any size up to this maximum;
+    /// [`Self::begin_frame`] sets viewport to the per-frame size.
     pub fn new(ctx: &EglContext, max_width: u32, max_height: u32) -> Result<Self> {
         let staging = ctx
             .allocate_widget_export_buffer(max_width, max_height, Attachment::Stencil)
@@ -1746,6 +1748,7 @@ impl SharedRenderScratch {
             ExportContents::Preserved => true,
             ExportContents::Cleared => false,
         };
+        refuse_unseedable(contents, buffers.allocated_slots())?;
         let (export, seed) = buffers.ensure_current_seeded(ctx)?;
         let stencil = export
             .stencil_rb()
@@ -1812,13 +1815,8 @@ impl SharedRenderScratch {
         }
     }
 
-    /// Copy `src` wholesale into `dest_fbo`, both being the same size.
-    ///
-    /// Seeds a freshly allocated export buffer from its sibling. A `Prepared`
-    /// slot drops its spare buffer (see `prepared_compaction_slot`) and keeps
-    /// only the one on screen, so waking re-allocates the other with undefined
-    /// pixels — and a damage-scissored frame paints only the regions that moved,
-    /// leaving the rest of the surface whatever the driver handed back.
+    /// Seed a freshly allocated export buffer, `dest_fbo`, from its sibling's `src`:
+    /// it holds undefined pixels, and a damage-scissored frame paints only the regions that moved.
     fn seed_export_buffer(
         &self,
         ctx: &EglContext,
@@ -1827,50 +1825,7 @@ impl SharedRenderScratch {
         w: u32,
         h: u32,
     ) {
-        self.blit_texture_scaled(ctx, src, UvSampling::upright_whole(), dest_fbo, w, h);
-    }
-
-    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
-    fn blit_texture_scaled(
-        &self,
-        ctx: &EglContext,
-        src: glow::Texture,
-        sampling: UvSampling,
-        dest_fbo: glow::Framebuffer,
-        w: u32,
-        h: u32,
-    ) {
-        let gl = ctx.gl();
-        unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(dest_fbo));
-            gl.viewport(0, 0, w as i32, h as i32);
-            gl.disable(glow::SCISSOR_TEST);
-            gl.disable(glow::STENCIL_TEST);
-            gl.disable(glow::DEPTH_TEST);
-            gl.disable(glow::CULL_FACE);
-            gl.disable(glow::BLEND);
-            gl.color_mask(true, true, true, true);
-
-            gl.use_program(Some(self.blit.program));
-            let (u_scale, v_scale) = sampling.scale;
-            gl.uniform_2_f32(Some(&self.blit.uv_scale_loc), u_scale, v_scale);
-            let (u_offset, v_offset) = sampling.offset;
-            gl.uniform_2_f32(Some(&self.blit.uv_offset_loc), u_offset, v_offset);
-
-            gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, Some(src));
-
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.blit.vbo));
-            gl.enable_vertex_attrib_array(self.blit.pos_loc);
-            gl.vertex_attrib_pointer_f32(self.blit.pos_loc, 2, glow::FLOAT, false, 16, 0);
-            gl.enable_vertex_attrib_array(self.blit.uv_loc);
-            gl.vertex_attrib_pointer_f32(self.blit.uv_loc, 2, glow::FLOAT, false, 16, 8);
-
-            gl.draw_arrays(glow::TRIANGLES, 0, 6);
-
-            gl.disable_vertex_attrib_array(self.blit.pos_loc);
-            gl.disable_vertex_attrib_array(self.blit.uv_loc);
-        }
+        self.blit.seed(ctx.gl(), src, dest_fbo, w, h);
     }
 
     /// Release all GL resources. Callers must invoke this while `ctx` is
@@ -1880,6 +1835,18 @@ impl SharedRenderScratch {
         self.blit.destroy(ctx.gl());
         ctx.destroy_widget_export_buffer(self.staging);
     }
+}
+
+/// Refuse a frame that keeps its buffer while no slot holds a frame to seed it from.
+fn refuse_unseedable(
+    contents: ExportContents,
+    allocated: [bool; EXPORT_BUFFER_SLOTS],
+) -> Result<()> {
+    anyhow::ensure!(
+        contents == ExportContents::Cleared || allocated.contains(&true),
+        "BUG: a frame kept a buffer never painted, with no sibling to seed it from"
+    );
+    Ok(())
 }
 
 /// Load an EGL/GL extension function pointer by name.
@@ -1906,8 +1873,9 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Attachment, DoubleBufferState, EglContext, ExportContents, ExportFormat,
-        SharedRenderScratch, SlotReleaseState, TwoSlotBufferCache, UvSampling, WidgetExportBuffer,
+        Attachment, BlitResources, DoubleBufferState, EglContext, ExportContents, ExportFormat,
+        SharedRenderScratch, SlotReleaseState, TwoSlotBufferCache, WidgetExportBuffer,
+        refuse_unseedable,
     };
     use drm_fourcc::DrmFourcc;
 
@@ -1976,21 +1944,6 @@ mod tests {
 
         assert!(value.is_none());
         assert_eq!(cache.cached_count(), 0);
-    }
-
-    #[test]
-    fn upright_sampling_undoes_the_blit_quad_y_flip() {
-        // The quad pairs its bottom vertices with v = 1 and its top with v = 0,
-        // the flip femtovg's FBO output needs. Seeding copies a sibling export
-        // buffer, which is already upright, so it has to come back out flat.
-        let (quad_bottom_v, quad_top_v) = (1.0_f32, 0.0_f32);
-        let sample = |s: UvSampling, v: f32| v * s.scale.1 + s.offset.1;
-
-        let upright = UvSampling::upright_whole();
-        assert_eq!(
-            (sample(upright, quad_bottom_v), sample(upright, quad_top_v)),
-            (0.0, 1.0)
-        );
     }
 
     #[test]
@@ -2142,8 +2095,44 @@ mod tests {
         scratch.destroy(&ctx);
     }
 
-    /// A frame that keeps a freshly allocated buffer finds its sibling's frame there;
-    /// one that does not finds it cleared.
+    /// A seed copies its source's rows where they were, whatever context it runs on,
+    /// so this runs on headless GL rather than only on a device's render node.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_seed_keeps_its_sources_row_order() {
+        use bmc_render::test_harness::{GlHarness, RotatingTarget};
+        use glow::HasContext;
+
+        let Some(harness) = GlHarness::new_or_skip() else {
+            return;
+        };
+        let gl = &harness.gl;
+        let target = RotatingTarget::new(gl, 64, 64);
+        // The source: red, with a green band along the rows GL draws first.
+        target.attach(gl, 0);
+        unsafe {
+            gl.clear_color(1.0, 0.0, 0.0, 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+            gl.enable(glow::SCISSOR_TEST);
+            gl.scissor(0, 0, 64, 16);
+            gl.clear_color(0.0, 1.0, 0.0, 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+            gl.disable(glow::SCISSOR_TEST);
+        }
+        target.attach(gl, 1);
+        let blit = BlitResources::new(gl).expect("BUG: the blit program builds on headless GL");
+        blit.seed(gl, target.texture(0), target.fbo(), 64, 64);
+
+        let pixels = target.read(gl);
+        let at = |row_from_top: usize| pixels[row_from_top * 64 + 32];
+        assert_eq!(
+            (at(64 - 8), at(64 - 56)),
+            ([0, 255, 0, 255], [255, 0, 0, 255]),
+            "the green band must stay along the rows GL draws first"
+        );
+        blit.destroy(gl);
+    }
+
     #[test]
     #[ignore = "EglContext::new() opens /dev/dri/renderD128; the CI sandbox surfaceless EGL has no DRM render node"]
     fn a_buffer_without_a_stencil_is_refused() {
@@ -2165,6 +2154,46 @@ mod tests {
     }
 
     #[test]
+    fn only_a_kept_frame_with_nothing_to_seed_from_is_refused() {
+        for (contents, allocated, refused) in [
+            (ExportContents::Preserved, [false, false], true),
+            (ExportContents::Preserved, [true, false], false),
+            (ExportContents::Preserved, [false, true], false),
+            (ExportContents::Cleared, [false, false], false),
+        ] {
+            assert_eq!(
+                refuse_unseedable(contents, allocated).is_err(),
+                refused,
+                "{contents:?} with slots {allocated:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "EglContext::new() opens /dev/dri/renderD128; the CI sandbox surfaceless EGL has no DRM render node"]
+    fn a_kept_frame_with_no_buffer_to_seed_from_is_refused() {
+        let ctx = EglContext::new().expect("BUG: EGL context creation should succeed in test env");
+        let scratch = SharedRenderScratch::new(&ctx, 64, 64)
+            .expect("BUG: SharedRenderScratch should allocate");
+        let mut buffers = DoubleBufferState::new(64, 64, Attachment::Stencil);
+        let refusal = scratch
+            .bind_export_buffer(&ctx, &mut buffers, 64, 64, ExportContents::Preserved)
+            .expect_err("nothing holds the frame this one would keep");
+        assert!(
+            format!("{refusal:#}").contains("no sibling"),
+            "refused for another reason: {refusal:#}"
+        );
+        assert_eq!(
+            buffers.allocated_slots(),
+            [false; 2],
+            "a refused frame leaves no unseeded buffer behind"
+        );
+        scratch.destroy(&ctx);
+    }
+
+    /// A frame that keeps a freshly allocated buffer finds its sibling's frame there;
+    /// one that does not finds it cleared.
+    #[test]
     #[ignore = "EglContext::new() opens /dev/dri/renderD128; the CI sandbox surfaceless EGL has no DRM render node"]
     fn a_kept_fresh_buffer_is_seeded_from_its_sibling() {
         use glow::HasContext;
@@ -2172,7 +2201,7 @@ mod tests {
         let ctx = EglContext::new().expect("BUG: EGL context creation should succeed in test env");
         let scratch = SharedRenderScratch::new(&ctx, 64, 64)
             .expect("BUG: SharedRenderScratch should allocate");
-        let centre = |buffers: &DoubleBufferState| -> [u8; 4] {
+        let pixel_at = |buffers: &DoubleBufferState, y: i32| -> [u8; 4] {
             let fbo = buffers
                 .current_ref()
                 .expect("BUG: the buffer was bound")
@@ -2182,7 +2211,7 @@ mod tests {
                 ctx.gl().bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
                 ctx.gl().read_pixels(
                     32,
-                    32,
+                    y,
                     1,
                     1,
                     glow::RGBA,
@@ -2192,10 +2221,12 @@ mod tests {
             }
             px
         };
+        let (red, green, black) = ([255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 0, 255]);
 
-        for (contents, expected) in [
-            (ExportContents::Preserved, [255, 0, 0, 255]),
-            (ExportContents::Cleared, [0, 0, 0, 255]),
+        // A kept buffer starts from its sibling's rows in their own order; a cleared one is wiped.
+        for (contents, low, high) in [
+            (ExportContents::Preserved, green, red),
+            (ExportContents::Cleared, black, black),
         ] {
             let mut buffers = DoubleBufferState::new(64, 64, Attachment::Stencil);
             scratch
@@ -2204,6 +2235,11 @@ mod tests {
             unsafe {
                 ctx.gl().clear_color(1.0, 0.0, 0.0, 1.0);
                 ctx.gl().clear(glow::COLOR_BUFFER_BIT);
+                ctx.gl().enable(glow::SCISSOR_TEST);
+                ctx.gl().scissor(0, 0, 64, 16);
+                ctx.gl().clear_color(0.0, 1.0, 0.0, 1.0);
+                ctx.gl().clear(glow::COLOR_BUFFER_BIT);
+                ctx.gl().disable(glow::SCISSOR_TEST);
             }
             buffers
                 .export_and_swap()
@@ -2211,7 +2247,11 @@ mod tests {
             scratch
                 .bind_export_buffer(&ctx, &mut buffers, 64, 64, contents)
                 .expect("BUG: the second buffer should bind");
-            assert_eq!(centre(&buffers), expected, "{contents:?}");
+            assert_eq!(
+                (pixel_at(&buffers, 8), pixel_at(&buffers, 56)),
+                (low, high),
+                "{contents:?}"
+            );
             buffers.destroy_all(&ctx);
         }
         scratch.destroy(&ctx);

@@ -436,6 +436,17 @@ impl RotatingTarget {
         self.fbo.0.get()
     }
 
+    #[must_use]
+    pub fn fbo(&self) -> glow::Framebuffer {
+        self.fbo
+    }
+
+    /// The `index`th buffer's colour texture.
+    #[must_use]
+    pub fn texture(&self, index: usize) -> glow::Texture {
+        self.textures[index]
+    }
+
     /// Point the framebuffer at the `index`th buffer's texture.
     pub fn attach(&self, gl: &glow::Context, index: usize) {
         use glow::HasContext as _;

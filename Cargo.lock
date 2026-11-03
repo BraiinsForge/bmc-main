@@ -1838,6 +1838,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-ipc",
+ "bmc-render",
  "bmc-widget-protocol",
  "drm-fourcc",
  "gbm",

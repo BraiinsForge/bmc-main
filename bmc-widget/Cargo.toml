@@ -34,5 +34,9 @@ wayland-backend = { workspace = true, features = ["client_system"], optional = t
 wayland-client = { workspace = true, optional = true }
 wayland-protocols = { workspace = true, features = ["staging"], optional = true }
 
+[dev-dependencies]
+# The headless GL harness the seeding blit is tested on.
+bmc-render = { workspace = true, features = ["gl-harness"] }
+
 [lints]
 workspace = true
