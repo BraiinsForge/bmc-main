@@ -25,7 +25,7 @@ import { cleanup, renderHook } from '@testing-library/react/pure';
 
 import { store, useStore } from '@/store';
 import * as pb from '@/proto';
-import { mocks } from '@/proto/transport';
+import { languageInterceptor, mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
 import { stubLocation } from '@/mocks/location';
 import { deckCapabilities, deckSystemWire } from '@/pages/workspace/Display/capabilities.fixture';
@@ -200,6 +200,83 @@ describe('store.boot', () => {
         store.boot();
 
         expect(store.locale.tag).toBe('en');
+    });
+});
+
+describe('the language an RPC asks for', () => {
+    async function asked(): Promise<null | string> {
+        const header = new Headers();
+        await languageInterceptor(() => Promise.resolve({} as never))({ header } as never);
+        return header.get('Accept-Language');
+    }
+
+    afterEach(async () => {
+        mocks.clear();
+        await backToEnglish();
+    });
+
+    test('is English before the page names one, not the browser’s own list', async () => {
+        rstest.resetModules();
+        const fresh = await import('@/proto/transport');
+        const header = new Headers();
+
+        await fresh.languageInterceptor(() => Promise.resolve({} as never))({ header } as never);
+
+        expect(header.get('Accept-Language')).toBe('en');
+    });
+
+    test('is the one the page came with', async () => {
+        const language = { tag: 'cs', messages: {} };
+        Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n: true, language } });
+
+        store.boot();
+
+        expect(await asked()).toBe('cs');
+    });
+
+    test('goes out with every request the transport sends', async () => {
+        const language = { tag: 'cs', messages: {} };
+        Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n: true, language } });
+        store.boot();
+        let sent: null | string = null;
+        const methods: Partial<ServiceMocks<typeof pb.ConfigurationService>> = {
+            getGeneralSettingsData: ({ header }) => {
+                sent = header.get('Accept-Language');
+                return pb.create(pb.GeneralSettingsDataResponseSchema);
+            },
+        };
+        mocks.service(pb.ConfigurationService, methods as ServiceMocks<typeof pb.ConfigurationService>);
+
+        await pb.rpc.config.getGeneralSettingsData({});
+
+        expect(sent).toBe('cs');
+    });
+
+    test('follows the language the page goes on to speak', async () => {
+        Object.assign(window, { SYSTEM: deckSystemWire() });
+        store.boot();
+
+        await store.speak('zh');
+
+        expect(await asked()).toBe('zh');
+    });
+
+    test('stays put while a catalog fails to load', async () => {
+        const language = { tag: 'cs', messages: {} };
+        Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n: true, language } });
+        store.boot();
+        const methods: Partial<ServiceMocks<typeof pb.LanguageService>> = {
+            getWebCatalog: () => {
+                throw new ConnectError('the device does not offer it', Code.InvalidArgument);
+            },
+        };
+        mocks.service(pb.LanguageService, methods as ServiceMocks<typeof pb.LanguageService>);
+        const warn = rstest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await store.speak('zh');
+        warn.mockRestore();
+
+        expect(await asked()).toBe('cs');
     });
 });
 

@@ -21,6 +21,7 @@
 import { useState, useEffect } from 'react';
 import type { IntlShape } from 'react-intl';
 import * as pb from '@/proto';
+import { setRequestLanguage } from '@/proto/transport';
 import { URLS } from '@/constants';
 import { boserChrome, loginOwned } from '@/lib/capabilities';
 import { readBrand, type Brand } from '@/lib/brand';
@@ -283,9 +284,14 @@ class Store {
             }
             if (signal.aborted) return true;
         }
-        this.#setState('locale', { tag, messages });
+        this.#setLocale({ tag, messages });
         return true;
     };
+
+    #setLocale(locale: Locale): void {
+        setRequestLanguage(locale.tag);
+        this.#setState('locale', locale);
+    }
 
     /** The `IntlShape` of the current locale, for text formatted outside the React tree. */
     intl = (): IntlShape => intlFor(this.#state.locale);
@@ -344,7 +350,7 @@ class Store {
         this.#setState('i18n', i18n);
         // A page that boots speaks the device's own language.
         this.#setState('unspokenLanguage', null);
-        if (language) this.#setState('locale', language);
+        if (language) this.#setLocale(language);
         this.setHardwareCapabilities(caps);
         // system.js carries the brand script only where boser manages the device.
         this.setBrand(boserChrome(caps) ? readBrand() : null);

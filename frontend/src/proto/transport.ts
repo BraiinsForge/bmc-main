@@ -19,17 +19,30 @@
 // the grant above.
 
 import type { DescService } from '@bufbuild/protobuf';
-import { createClient, type Client } from '@connectrpc/connect';
+import { createClient, type Client, type Interceptor } from '@connectrpc/connect';
 import { createGrpcWebTransport } from '@connectrpc/connect-web';
 
+import { SOURCE_LOCALE } from '@/lib/intl';
 import { GrpcMockInterceptor } from '@/lib/proto';
 
 export const mocks = new GrpcMockInterceptor();
 
+let requestLanguage: string = SOURCE_LOCALE;
+
+export function setRequestLanguage(tag: string): void {
+    requestLanguage = tag;
+}
+
+/** Has the device word its errors in the language the page speaks, not the browser's list. */
+export const languageInterceptor: Interceptor = next => request => {
+    request.header.set('Accept-Language', requestLanguage);
+    return next(request);
+};
+
 export const transport = createGrpcWebTransport({
     baseUrl: '/',
     useBinaryFormat: true,
-    interceptors: [mocks.interceptor],
+    interceptors: [languageInterceptor, mocks.interceptor],
     binaryOptions: {
         readUnknownFields: true,
         writeUnknownFields: true,

@@ -45,6 +45,7 @@ export type GrpcConfSetter = (configuration: MockFunConf) => void;
 
 interface MockFnInput<RequestMessage extends Message> {
     req: RequestMessage;
+    header: Headers;
     ctx: MockState;
     conf: GrpcConfSetter;
 
@@ -161,6 +162,7 @@ export class GrpcMockInterceptor {
                     const aborter = new Aborter().attach(request.signal);
                     const mockerInput = {
                         req: inputMessage,
+                        header: request.header,
                         ctx: Object.assign({}, this.#state, {
                             service: request.service.typeName,
                             method: request.method.name,
