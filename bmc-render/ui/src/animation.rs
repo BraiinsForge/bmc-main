@@ -26,6 +26,9 @@
 pub enum AnimProperty {
     Rotate = 0,
     Scale = 1,
+    /// Multiplies the draw's opacity by the value clamped to 0..=1,
+    /// each alpha animation on its own,
+    /// so one overshooting 1 holds the draw as opaque as its siblings leave it.
     Alpha = 2,
     TranslateX = 3,
     TranslateY = 4,

@@ -419,3 +419,60 @@ fn autofit_text_dispatches_to_renderer() {
     assert_eq!(*min_size, 16);
     assert_eq!(*max_size, 0);
 }
+
+#[test]
+fn an_alpha_animation_overshooting_one_leaves_a_sibling_fade_alone() {
+    let held = |property, value| AnimationDef {
+        property,
+        from: value,
+        to: value,
+        duration_ms: 1_000,
+        delay_ms: 0,
+        easing: Easing::Linear,
+        loop_mode: LoopMode::Forever,
+    };
+    let draw = Draw::Modified {
+        animations: vec![
+            held(AnimProperty::Alpha, 4.0),
+            held(AnimProperty::Alpha, 0.5),
+        ],
+        transition: None,
+        color_space: ColorSpace::default(),
+        inner: Box::new(Draw::Arc {
+            cx: 0.0,
+            cy: 0.0,
+            radius: 10.0,
+            start_angle: 0.0,
+            end_angle: std::f32::consts::TAU,
+            width: 1.0,
+            fill: ArcFill::Solid(WHITE),
+            segments: ArcSegments::Continuous,
+            cap: ArcCap::Butt,
+        }),
+    };
+    let mut renderer = RecordingRenderer::default();
+    let mut animation_states = HashMap::new();
+    let mut transition_states = HashMap::new();
+    let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+
+    render_draw_inner_for_test(
+        &mut renderer,
+        &draw,
+        0.0,
+        0.0,
+        100.0,
+        100.0,
+        DrawOffset::default(),
+        0.0,
+        1.0,
+        1.0,
+        0.0,
+        None,
+        &mut anim_ctx,
+    );
+
+    let [RenderEvent::Arc { fill, .. }] = &renderer.events[..] else {
+        panic!("BUG: expected one arc draw event");
+    };
+    assert_eq!(*fill, ArcFill::Solid(WHITE.scale_alpha(0.5)));
+}

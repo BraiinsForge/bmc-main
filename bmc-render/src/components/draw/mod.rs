@@ -729,7 +729,7 @@ fn render_draw_inner(
                 match anim_def.property {
                     AnimProperty::Rotate => acc_rotation += value,
                     AnimProperty::Scale => acc_scale *= value,
-                    AnimProperty::Alpha => acc_alpha *= value,
+                    AnimProperty::Alpha => acc_alpha *= value.clamp(0.0, 1.0),
                     AnimProperty::TranslateX => acc_offset.translate_x += value,
                     AnimProperty::TranslateY => acc_offset.translate_y += value,
                     AnimProperty::OrbitAngle => acc_orbit_angle += value,
