@@ -20,11 +20,12 @@
 
 //! Cross-host GC for the on-disk widget asset cache.
 //!
-//! Several hosts run at once — one per WASM SDK major, since a protocol break
-//! keeps old and new hosts alive until every widget upgrades. So a host can't
-//! treat its own slots as the whole live set. Each host publishes the tokens it
-//! holds in a GC-root file (mtime = heartbeat); reconcile keeps the union over
-//! all live hosts and prunes stale roots. Shape mirrors `cleanup_stale_files`.
+//! Several hosts can run at once, one per WASM protocol major,
+//! when a protocol transition configures old and new hosts side by side.
+//! So a host can't treat its own slots as the whole live set.
+//! Each host publishes the tokens it holds in a GC-root file (mtime = heartbeat);
+//! reconcile keeps the union over all live hosts and prunes stale roots.
+//! Shape mirrors `cleanup_stale_files`.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -76,10 +77,9 @@ fn gc_roots_dir() -> PathBuf {
     cache.parent().unwrap_or(cache).join("widget-gc-roots")
 }
 
-/// Root filename, keyed by the full SDK version — free, and future-proof if
-/// concurrent-host distinction tightens from major-only to any version mismatch.
+/// Root filename, keyed by the full protocol version.
 fn host_root_filename() -> String {
-    let (major, minor, patch) = bmc_wasm_protocol::SDK_VERSION;
+    let (major, minor, patch) = bmc_wasm_protocol::PROTOCOL_VERSION;
     format!("sdk-v{major}.{minor}.{patch}")
 }
 

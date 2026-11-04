@@ -252,7 +252,7 @@
 //! Layout does not pre-load other assets.
 //! A missing cache entry remains recoverable through the widget's normal refetch path.
 //! Assets registered from guest memory have no external restore source, so they stay
-//! resident and usable while dormant for compatibility with SDK 0.2 widgets.
+//! resident and usable while dormant for compatibility with protocol 0.2 widgets.
 //! Explicit `Slot::evict()` or `evict_all()` always destroys the reservation,
 //! regardless of lifecycle phase.
 //! Sleep and wake can coalesce before renderer delivery.
@@ -316,12 +316,12 @@ pub(crate) fn ffi_u32(value: usize) -> u32 {
 extern crate self as bmc_wasm_sdk;
 
 // SDK instantiation handshake the host calls once: installs the panic hook,
-// returns the SDK version for the compat check.
+// returns the protocol version for the compat check.
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn __bmc_sdk_init() -> u64 {
     install_panic_hook();
-    version_pack(SDK_VERSION)
+    version_pack(PROTOCOL_VERSION)
 }
 
 /// Logs widget panics as `file:line: message` — file name only, since the build

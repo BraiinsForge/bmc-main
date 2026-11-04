@@ -42,7 +42,7 @@ use bmc_upgrade::packages::{
     SavedUpload, SystemPackageChange, WidgetInstallError, WidgetInstallOutcome,
     installable_packages_from,
 };
-use bmc_upgrade::widget_package::{WASM_SDK_MAJOR, WidgetPackage, WidgetUpload};
+use bmc_upgrade::widget_package::{WASM_PROTOCOL_MAJOR, WidgetPackage, WidgetUpload};
 use bmc_widget_manifest::Manifest;
 use tokio::sync::Notify;
 
@@ -380,7 +380,7 @@ fn install_unpacked(
     unpacked: &Path,
     staging: &Path,
 ) -> Result<(WidgetPackage, WidgetInstallOutcome), WidgetInstallError> {
-    let package = WidgetPackage::from_dir(unpacked, WASM_SDK_MAJOR)
+    let package = WidgetPackage::from_dir(unpacked, WASM_PROTOCOL_MAJOR)
         .map_err(bmc_upgrade::packages::package_error)?;
     for root in installed_roots {
         if let Some(installed) = package.folder_clash(root) {

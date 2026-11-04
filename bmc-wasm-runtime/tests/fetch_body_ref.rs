@@ -189,7 +189,7 @@ fn fetch_body_wat(delivery: BodyDelivery, behavior: CallbackBehavior) -> String 
         i32.const 2048
         call $host_image_dimensions_ref))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 

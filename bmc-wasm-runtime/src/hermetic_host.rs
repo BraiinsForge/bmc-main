@@ -124,7 +124,7 @@ mod tests {
                 i64.const {})
               (func (export "passes")))
             "#,
-            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
         ))
         .expect("BUG: the test-module WAT must parse");
         let directory = tempfile::tempdir().expect("BUG: a temporary directory is available");

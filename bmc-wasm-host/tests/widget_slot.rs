@@ -207,8 +207,8 @@ impl RenderTargetFactory for StubFactory {
 
 fn network_probe_widget_wat() -> String {
     include_str!("../../bmc-wasm-runtime/tests/fixtures/network_probe.wat").replace(
-        "__SDK_VERSION__",
-        &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION).to_string(),
+        "__PROTOCOL_VERSION__",
+        &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION).to_string(),
     )
 }
 
@@ -216,8 +216,8 @@ fn update_probe_widget_wat(hook: &str, request_frame: bool) -> String {
     include_str!("../../bmc-wasm-runtime/tests/fixtures/update_probe.wat")
         .replace("__UPDATE_HOOK__", hook)
         .replace(
-            "__SDK_VERSION__",
-            &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION).to_string(),
+            "__PROTOCOL_VERSION__",
+            &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION).to_string(),
         )
         .replace(
             "__REQUEST_FRAME__",
@@ -263,7 +263,7 @@ fn credential_snapshot_probe_widget_wat() -> String {
       (func (export "update_count") (result i32) global.get $update_count)
       (func (export "type_first_byte") (result i32) global.get $type_first_byte))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -275,7 +275,7 @@ fn hookless_widget_wat() -> String {
       (func (export "__bmc_sdk_init") (result i64) i64.const {})
       (func (export "render") (param i32)))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -1014,7 +1014,7 @@ fn one_second_timer_widget_wat() -> String {
       (func (export "__on_timer") (param i32) (param i32))
       (func (export "render") (param i32)))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 

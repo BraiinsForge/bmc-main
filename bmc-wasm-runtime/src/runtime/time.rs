@@ -90,7 +90,7 @@ pub(super) fn expand_rrule_impl(input: &[u8]) -> Vec<i64> {
     }
 }
 
-/// The 20-byte answer widgets built against SDK 0.5 decode.
+/// The 20-byte answer widgets built against protocol 0.5 decode.
 ///
 /// Frozen: those binaries read the fields at `[12..19]` without validating
 /// anything, so the layout has to outlive them.

@@ -86,7 +86,7 @@ enum FromWorker {
         handoff: Option<Handoff>,
     },
     /// The rebuild's outcome, carrying the info the new runtime reports —
-    /// the SDK version and export set change with the widget.
+    /// the protocol version and export set change with the widget.
     Reloaded(Result<ViewInfo, String>),
 }
 
@@ -190,7 +190,7 @@ impl Worker {
     ///
     /// A reload that produced no working widget leaves the default behind,
     /// so the view reports itself dead rather than keeping the replaced
-    /// build's answers to `live` and `sdk_version`.
+    /// build's answers to `live` and `protocol_version`.
     fn take_reload_ack(&mut self) -> Result<(), String> {
         match self.rx.recv() {
             Ok(FromWorker::Reloaded(Ok(info))) => {
@@ -619,7 +619,7 @@ mod reload_ack_tests {
         let (mut worker, answers) = worker();
         let rebuilt = ViewInfo {
             live: true,
-            sdk_version: Some((1, 2, 3)),
+            protocol_version: Some((1, 2, 3)),
             exports_on_touch: true,
         };
         answers
@@ -631,7 +631,7 @@ mod reload_ack_tests {
             .expect("a rebuilt widget must report success");
 
         assert_eq!(
-            worker.info().sdk_version,
+            worker.info().protocol_version,
             Some((1, 2, 3)),
             "the reload's info must replace what was read at construction",
         );

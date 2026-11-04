@@ -25,7 +25,7 @@ use nix_archive::nar;
 
 use super::{PackageUpgrader, WidgetInstallError, WidgetInstallOutcome};
 use crate::widget_package::{
-    ArchiveStream, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, WASM_SDK_MAJOR, WidgetPackage,
+    ArchiveStream, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, WASM_PROTOCOL_MAJOR, WidgetPackage,
     WidgetPackageError, limit_archive,
 };
 
@@ -133,7 +133,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageUpgrader<N> {
         self.refuse_unless_free(saved.unpacked_bytes().saturating_mul(2))?;
         let unpacked = saved.unpack().await?;
         let checked = unpacked.clone();
-        let package = blocking(move || WidgetPackage::from_dir(&checked, WASM_SDK_MAJOR))
+        let package = blocking(move || WidgetPackage::from_dir(&checked, WASM_PROTOCOL_MAJOR))
             .await
             .map_err(package_error)?;
 
@@ -383,7 +383,7 @@ pub fn package_error(error: WidgetPackageError) -> WidgetInstallError {
         | WidgetPackageError::Programs
         | WidgetPackageError::Icon(_)
         | WidgetPackageError::WrapperNotExecutable(_)
-        | WidgetPackageError::SdkMajor { .. }
+        | WidgetPackageError::ProtocolMajor { .. }
         | WidgetPackageError::Wrapper(_)
         | WidgetPackageError::NotWasm(_) => WidgetInstallError::Rejected(error),
     }

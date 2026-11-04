@@ -23,15 +23,19 @@ use std::time::Duration;
 
 use bmc_wasm_thin::args::{Config, RawArgs};
 use bmc_wasm_thin::paths::resolve_wayland_display_path;
-use bmc_wasm_thin_protocol::{default_socket_path, socket_path_for_sdk_major};
+use bmc_wasm_thin_protocol::{default_socket_path, socket_path_for_wasm_protocol_major};
 
 #[test]
-fn socket_defaults_follow_runtime_sdk_major() {
-    // Derives the major rather than pinning the version: this exercises the
-    // socket-path scheme, not the SDK version, so minor/patch bumps shouldn't touch it.
-    let major = bmc_wasm_protocol::SDK_VERSION.0;
+fn socket_defaults_follow_wasm_protocol_major() {
+    // Derives the major rather than pinning the version:
+    // this exercises the socket-path scheme, not the WASM protocol version,
+    // so minor/patch bumps shouldn't touch it.
+    let major = bmc_wasm_protocol::PROTOCOL_VERSION.0;
     let socket = format!("/run/bmc/wasm-host-sdk-v{major}.sock");
-    assert_eq!(socket_path_for_sdk_major(major), default_socket_path());
+    assert_eq!(
+        socket_path_for_wasm_protocol_major(major),
+        default_socket_path()
+    );
     assert_eq!(default_socket_path(), Path::new(&socket));
 }
 

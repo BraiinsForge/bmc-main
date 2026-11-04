@@ -59,8 +59,7 @@ let
   publicJpg = publicAsset.mkPublicIcon publicAssetManifest "icon.jpg";
   publicJpeg = publicAsset.mkPublicIcon publicAssetManifest "icon.jpeg";
   rejects = value: !(builtins.tryEval (builtins.deepSeq value true)).success;
-  parseSdkMajor = import ./sdk-major.nix { inherit lib; };
-  sdkMajor = parseSdkMajor (builtins.readFile ../bmc-wasm-runtime/protocol/src/version.rs);
+  parseProtocolMajor = pkgs.callPackage ./protocol-major.nix { };
   launcher = deckPackages.core.pkg.wasmLauncher;
   wasmHost = deckPackages.core.pkg.wasmHost;
   bmcSystemConfig = deckPackages.core.pkg.bmcSystemConfig;
@@ -206,21 +205,20 @@ in
       touch $out
     '';
 
-  wasm-sdk-major =
-    assert sdkMajor == 0;
-    assert rejects (parseSdkMajor "pub const SDK_VERSION:(u16, u16, u16) = (0, 2, 0);");
+  wasm-protocol-major =
+    assert launcher.protocolMajor == 0;
+    assert rejects (parseProtocolMajor "pub const PROTOCOL_VERSION:(u16, u16, u16) = (0, 2, 0);");
     assert rejects
-      (parseSdkMajor ''
-        pub const SDK_VERSION: (u16, u16, u16) = (0, 2, 0);
-        pub const SDK_VERSION: (u16, u16, u16) = (1, 0, 0);
+      (parseProtocolMajor ''
+        pub const PROTOCOL_VERSION: (u16, u16, u16) = (0, 2, 0);
+        pub const PROTOCOL_VERSION: (u16, u16, u16) = (1, 0, 0);
       '');
-    pkgs.runCommand "wasm-sdk-major" { } ''
+    pkgs.runCommand "wasm-protocol-major" { } ''
       touch $out
     '';
 
   wasm-launcher =
-    assert launcher.sdkMajor == sdkMajor;
-    assert launcher.launcherName == "bmc-wasm-thin-v${toString sdkMajor}";
+    assert launcher.launcherName == "bmc-wasm-thin-v${toString launcher.protocolMajor}";
     pkgs.runCommand "wasm-launcher" { } ''
       script=${launcher}/bin/${launcher.launcherName}
       test -x "$script"

@@ -18,18 +18,20 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! SDK protocol version for host/widget compatibility.
+//! Protocol version for host/widget compatibility.
 //!
 //! Every widget exports `__bmc_sdk_init`; the host calls it once to read the
 //! version (rejecting on major mismatch) and install the panic hook.
 
-/// Current SDK protocol version (major, minor, patch).
+/// Current host/widget protocol version (major, minor, patch).
+///
+/// Set by hand: this versions the wire, independently of the crate's Cargo version.
 ///
 /// Bump on any breaking change to:
 /// - Host function signatures (names, parameter types, return types)
 /// - Binary tree serialization format (node types, field layout)
 /// - Host-side behavioral contracts (e.g. button click reporting)
-pub const SDK_VERSION: (u16, u16, u16) = (0, 9, 0);
+pub const PROTOCOL_VERSION: (u16, u16, u16) = (0, 9, 0);
 
 /// The instantiation-handshake export: returns the version, installs the hook.
 pub const SDK_INIT_EXPORT: &str = "__bmc_sdk_init";

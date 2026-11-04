@@ -36,7 +36,7 @@ fn probe_wat() -> String {
         i64.const {})
       (func (export "render") (param i32)))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 

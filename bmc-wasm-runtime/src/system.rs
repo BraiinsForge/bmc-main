@@ -51,7 +51,7 @@
 //! Per-field kind-tagging keeps wire layout extensible:
 //! a future field gets a new `SystemFieldKind` variant without renumbering
 //! and without bumping a version. The reader stops at the first kind
-//! it does not know, so new kinds are appended: a widget built against an older SDK
+//! it does not know, so new kinds are appended: a widget built against an older protocol
 //! still sees every field that precedes them and falls back to defaults for the rest
 //! rather than refusing the snapshot.
 

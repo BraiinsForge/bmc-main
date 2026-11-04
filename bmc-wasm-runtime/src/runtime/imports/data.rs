@@ -591,7 +591,7 @@ fn register_json_shape_imports(linker: &mut Linker<HostState>) -> Result<()> {
 }
 
 fn register_date_imports(linker: &mut Linker<HostState>) -> Result<()> {
-    // Widgets from SDK 0.5 and earlier import this parser as `host_parse_date`.
+    // Widgets from protocol 0.5 and earlier import this parser as `host_parse_date`.
     // Both names resolve here, since the published SDK leaves binaries
     // nobody can rebuild importing the old one.
     // `host_bitmap_sample` keeps its retired name for the same reason.

@@ -46,9 +46,9 @@ pub const MAX_ARCHIVE_ENTRIES: usize = 4096;
 pub const UPLOAD_DEADLINE_MINS: u64 = 5;
 pub const UPLOAD_DEADLINE: Duration = Duration::from_secs(UPLOAD_DEADLINE_MINS * 60);
 
-/// The SDK major the device's launcher serves; a wrapper for another one
+/// The protocol major the device's launcher serves; a wrapper for another one
 /// would exec a launcher that is not in the profile.
-pub const WASM_SDK_MAJOR: u16 = bmc_wasm_protocol::SDK_VERSION.0;
+pub const WASM_PROTOCOL_MAJOR: u16 = bmc_wasm_protocol::PROTOCOL_VERSION.0;
 
 /// Package-name prefix shared with `nix/packages.nix`.
 pub const PACKAGE_NAME_PREFIX: &str = "widget-";
@@ -141,8 +141,13 @@ pub enum WidgetPackageError {
     Icon(String),
     #[error("'{}' must be executable", shown(.0))]
     WrapperNotExecutable(String),
-    #[error("widget was built for SDK v{package}, this device runs SDK v{device}")]
-    SdkMajor { package: u16, device: u16 },
+    #[error(
+        "widget was built with WASM protocol v{package}, \
+         but this device supports only v{device}. \
+         Rebuild it with a matching SDK, \
+         or update the device if the widget's protocol is newer."
+    )]
+    ProtocolMajor { package: u16, device: u16 },
     #[error("'{}' is not the launcher wrapper the widget SDK generates", shown(.0))]
     Wrapper(String),
     #[error("'{}' is not a WASM module", shown(.0))]
@@ -280,19 +285,18 @@ impl tokio::io::AsyncRead for LimitedArchive {
 }
 
 impl WidgetPackage {
-    /// Validate an unpacked archive rooted at `root` against the device's
-    /// SDK major.
+    /// Validate an unpacked archive rooted at `root` against the device's protocol major.
     ///
     /// # Errors
     ///
     /// The first rule the archive breaks, worded for the person who uploaded it.
-    pub fn from_dir(root: &Path, sdk_major: u16) -> Result<Self, WidgetPackageError> {
+    pub fn from_dir(root: &Path, protocol_major: u16) -> Result<Self, WidgetPackageError> {
         let WidgetDir {
             maintainer,
             name,
             path,
         } = single_widget_dir(root)?;
-        let manifest = validate_widget_dir(&name, &path, sdk_major)?;
+        let manifest = validate_widget_dir(&name, &path, protocol_major)?;
         Ok(Self {
             maintainer,
             name,
@@ -530,7 +534,7 @@ fn declares_programs(dir: &Path) -> bool {
 fn validate_widget_dir(
     name: &str,
     dir: &Path,
-    sdk_major: u16,
+    protocol_major: u16,
 ) -> Result<Manifest, WidgetPackageError> {
     let wrapper_path = format!("bin/{name}");
     let wasm_path = format!("lib/wasm/{name}.wasm");
@@ -613,7 +617,7 @@ fn validate_widget_dir(
     if !wrapper_executable {
         return Err(WidgetPackageError::WrapperNotExecutable(wrapper_path));
     }
-    check_wrapper(name, &wrapper_path, &wrapper_script, sdk_major)?;
+    check_wrapper(name, &wrapper_path, &wrapper_script, protocol_major)?;
 
     if !wasm_seen {
         return Err(WidgetPackageError::Missing(wasm_path));
@@ -684,9 +688,9 @@ fn walk(
 /// The wrapper `nix/wasm-widgets.nix` writes for a profile-mode widget;
 /// the archive's wrapper must match it byte for byte.
 #[must_use]
-pub fn expected_wrapper(name: &str, sdk_major: u16) -> String {
+pub fn expected_wrapper(name: &str, protocol_major: u16) -> String {
     WRAPPER_TEMPLATE
-        .replace("@sdkMajor@", &sdk_major.to_string())
+        .replace("@protocolMajor@", &protocol_major.to_string())
         .replace("@name@", name)
 }
 
@@ -694,26 +698,26 @@ fn check_wrapper(
     name: &str,
     path: &str,
     contents: &[u8],
-    sdk_major: u16,
+    protocol_major: u16,
 ) -> Result<(), WidgetPackageError> {
-    if contents == expected_wrapper(name, sdk_major).as_bytes() {
+    if contents == expected_wrapper(name, protocol_major).as_bytes() {
         return Ok(());
     }
-    match wrapper_sdk_major(name, contents) {
-        Some(package) if package != sdk_major => Err(WidgetPackageError::SdkMajor {
+    match wrapper_protocol_major(name, contents) {
+        Some(package) if package != protocol_major => Err(WidgetPackageError::ProtocolMajor {
             package,
-            device: sdk_major,
+            device: protocol_major,
         }),
         _ => Err(WidgetPackageError::Wrapper(path.to_owned())),
     }
 }
 
-/// The SDK major of a wrapper that is the template in every other byte.
-fn wrapper_sdk_major(name: &str, contents: &[u8]) -> Option<u16> {
+/// The protocol major of a wrapper that is the template in every other byte.
+fn wrapper_protocol_major(name: &str, contents: &[u8]) -> Option<u16> {
     let template = WRAPPER_TEMPLATE.replace("@name@", name);
     let (before, after) = template
-        .split_once("@sdkMajor@")
-        .expect("BUG: the template names the launcher's SDK major");
+        .split_once("@protocolMajor@")
+        .expect("BUG: the template names the launcher's protocol major");
     let major = contents
         .strip_prefix(before.as_bytes())?
         .strip_suffix(after.as_bytes())?;
@@ -730,7 +734,7 @@ pub mod fixtures {
     use nix_archive::nar::{Encoder, Error};
     use std::collections::BTreeMap;
 
-    pub const SDK_MAJOR: u16 = super::WASM_SDK_MAJOR;
+    pub const PROTOCOL_MAJOR: u16 = super::WASM_PROTOCOL_MAJOR;
     pub const UID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
     /// An owned tree a test can edit before it is encoded.
@@ -825,7 +829,7 @@ pub mod fixtures {
                 "bin",
                 dir(vec![(
                     name,
-                    executable(super::expected_wrapper(name, SDK_MAJOR).as_bytes()),
+                    executable(super::expected_wrapper(name, PROTOCOL_MAJOR).as_bytes()),
                 )]),
             ),
             (

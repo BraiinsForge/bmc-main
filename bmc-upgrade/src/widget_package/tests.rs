@@ -28,7 +28,7 @@ fn validate(tree: &Node) -> Result<WidgetPackage, WidgetPackageError> {
     let staging = tempfile::tempdir().expect("BUG: tempdir");
     let root = staging.path().join("package");
     restore(&encode(tree), &root, CaseHack::Disabled).expect("BUG: fixture restores");
-    WidgetPackage::from_dir(&root, SDK_MAJOR)
+    WidgetPackage::from_dir(&root, PROTOCOL_MAJOR)
 }
 
 fn validate_dir(dir: BTreeMap<String, Node>) -> Result<WidgetPackage, WidgetPackageError> {
@@ -58,14 +58,14 @@ fn the_resolved_package_is_a_user_installed_local_widget() {
 
 #[test]
 fn a_wrapper_that_differs_from_the_template_in_any_byte_is_refused() {
-    let template = expected_wrapper("example", SDK_MAJOR);
+    let template = expected_wrapper("example", PROTOCOL_MAJOR);
     let cases = [
         // sh deletes a backslash-newline, so this runs `exec/run/current-profile/…`.
         template.replacen("exec /run", "exec\\\n/run", 1),
         template.replace(" \\\n    ", " "),
         format!("{template}\n"),
         format!(
-            "#!/bin/sh\nexec /run/current-profile/bin/bmc-wasm-thin-v{SDK_MAJOR} --wasm /nix/store/x/example.wasm \"$@\"\n"
+            "#!/bin/sh\nexec /run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm /nix/store/x/example.wasm \"$@\"\n"
         ),
     ];
     for wrapper in cases {
@@ -82,18 +82,26 @@ fn a_wrapper_that_differs_from_the_template_in_any_byte_is_refused() {
 }
 
 #[test]
-fn a_wrapper_for_another_sdk_major_names_both_versions() {
+fn a_wrapper_for_another_protocol_major_names_both_versions() {
     let mut dir = widget_dir("example", "1.0.0");
     set(
         &mut dir,
         "bin/example",
-        executable(expected_wrapper("example", SDK_MAJOR + 1).as_bytes()),
+        executable(expected_wrapper("example", PROTOCOL_MAJOR + 1).as_bytes()),
     );
+    let error = validate_dir(dir).expect_err("another major must be refused");
     assert!(matches!(
-        validate_dir(dir),
-        Err(WidgetPackageError::SdkMajor { package, device })
-            if package == SDK_MAJOR + 1 && device == SDK_MAJOR
+        error,
+        WidgetPackageError::ProtocolMajor { package, device }
+            if package == PROTOCOL_MAJOR + 1 && device == PROTOCOL_MAJOR
     ));
+    let reason = error.to_string();
+    assert!(
+        reason.contains("WASM protocol")
+            && reason.contains("Rebuild it with a matching SDK")
+            && reason.contains("update the device"),
+        "the check refuses both directions, so the uploader needs both remedies: {reason}"
+    );
 }
 
 #[test]
@@ -378,7 +386,7 @@ fn an_overlong_wrapper_is_refused_before_it_is_compared() {
     let mut widget = widget_dir("example", "1.0.0");
     let padded = format!(
         "{}{}",
-        expected_wrapper("example", SDK_MAJOR),
+        expected_wrapper("example", PROTOCOL_MAJOR),
         "\n".repeat(MAX_WRAPPER_BYTES)
     );
     set(&mut widget, "bin/example", executable(padded.as_bytes()));
@@ -525,7 +533,7 @@ fn only_the_wrapper_may_be_executable() {
     set(
         &mut widget,
         "bin/example",
-        file(expected_wrapper("example", SDK_MAJOR).as_bytes()),
+        file(expected_wrapper("example", PROTOCOL_MAJOR).as_bytes()),
     );
     assert!(matches!(
         validate_dir(widget),
@@ -542,22 +550,22 @@ fn only_the_wrapper_may_be_executable() {
 
 #[test]
 fn the_expected_wrapper_is_the_nix_template_with_the_launcher_filled_in() {
-    let wrapper = expected_wrapper("example", SDK_MAJOR);
+    let wrapper = expected_wrapper("example", PROTOCOL_MAJOR);
     assert!(
-        !wrapper.contains("@sdkMajor@") && !wrapper.contains("@name@"),
+        !wrapper.contains("@protocolMajor@") && !wrapper.contains("@name@"),
         "every placeholder is filled: {wrapper}"
     );
     assert!(wrapper.contains(&format!(
-        "/run/current-profile/bin/bmc-wasm-thin-v{SDK_MAJOR} "
+        "/run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} "
     )));
     assert!(wrapper.contains("\"${0%/*}/../lib/wasm/example.wasm\""));
 }
 
 #[test]
-fn a_wrapper_naming_this_major_another_way_is_not_an_sdk_mismatch() {
+fn a_wrapper_naming_this_major_another_way_is_not_a_protocol_mismatch() {
     let mut dir = widget_dir("example", "1.0.0");
     let wrapper = WRAPPER_TEMPLATE
-        .replace("@sdkMajor@", &format!("0{SDK_MAJOR}"))
+        .replace("@protocolMajor@", &format!("0{PROTOCOL_MAJOR}"))
         .replace("@name@", "example");
     set(&mut dir, "bin/example", executable(wrapper.as_bytes()));
     assert!(
@@ -565,7 +573,7 @@ fn a_wrapper_naming_this_major_another_way_is_not_an_sdk_mismatch() {
             validate_dir(dir),
             Err(WidgetPackageError::Wrapper(path)) if path == "bin/example"
         ),
-        "\"built for SDK vN, this device runs SDK vN\" would contradict itself"
+        "\"built with WASM protocol vN, but this device supports only vN\" would contradict itself"
     );
 }
 
@@ -573,7 +581,7 @@ fn a_wrapper_naming_this_major_another_way_is_not_an_sdk_mismatch() {
 fn a_wrapper_with_a_second_command_is_refused() {
     let mut dir = widget_dir("example", "1.0.0");
     let two_commands = format!(
-        "#!/bin/sh\nrm -rf /\nexec /run/current-profile/bin/bmc-wasm-thin-v{SDK_MAJOR} --wasm \"${{0%/*}}/../lib/wasm/example.wasm\" --asset-root \"${{0%/*}}/../lib/assets\" \"$@\"\n"
+        "#!/bin/sh\nrm -rf /\nexec /run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm \"${{0%/*}}/../lib/wasm/example.wasm\" --asset-root \"${{0%/*}}/../lib/assets\" \"$@\"\n"
     );
     set(&mut dir, "bin/example", executable(two_commands.as_bytes()));
     assert!(
@@ -621,7 +629,7 @@ fn a_wrapper_split_on_what_sh_does_not_split_on_is_refused() {
             "bin/example",
             executable(
                 format!(
-                    "#!/bin/sh\nexec{separator}/run/current-profile/bin/bmc-wasm-thin-v{SDK_MAJOR} --wasm \"${{0%/*}}/../lib/wasm/example.wasm\" --asset-root \"${{0%/*}}/../lib/assets\" \"$@\"\n"
+                    "#!/bin/sh\nexec{separator}/run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm \"${{0%/*}}/../lib/wasm/example.wasm\" --asset-root \"${{0%/*}}/../lib/assets\" \"$@\"\n"
                 )
                 .as_bytes(),
             ),
@@ -711,7 +719,8 @@ fn a_name_that_is_not_utf8_is_the_packages_fault() {
     std::fs::write(root.join(std::ffi::OsStr::from_bytes(b"bad-\xff")), b"")
         .expect("BUG: the staging fs takes any bytes");
 
-    let error = WidgetPackage::from_dir(&root, SDK_MAJOR).expect_err("BUG: the name is not UTF-8");
+    let error =
+        WidgetPackage::from_dir(&root, PROTOCOL_MAJOR).expect_err("BUG: the name is not UTF-8");
 
     assert!(
         matches!(&error, WidgetPackageError::NotUtf8Name(name) if name == "bad-\u{fffd}"),

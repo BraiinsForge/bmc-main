@@ -66,8 +66,8 @@
 ///
 /// The decoder dispatches on the tag. Adding a new field to the snapshot
 /// grows this enum (and both sides' field-by-field handling) without
-/// renumbering existing tags — preserving forward compatibility across
-/// SDK / host version skew.
+/// renumbering existing tags — preserving forward compatibility
+/// across widget / host version skew.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SystemFieldKind {

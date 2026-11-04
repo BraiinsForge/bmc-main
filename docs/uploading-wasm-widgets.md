@@ -65,12 +65,12 @@ See the [manifest specification](devel/widget-manifest.md) and its
 
 ## Launcher script
 
-`bin/my-widget` is this script with `@name@` replaced by `my-widget` and `@sdkMajor@` replaced by the SDK major the
-device supports. For 26.10, that major is `0`.
+`bin/my-widget` is this script with `@name@` replaced by `my-widget` and `@protocolMajor@` replaced by the WASM protocol
+major the device supports. For 26.10, that major is `0`.
 
 ```sh
 #!/bin/sh
-exec /run/current-profile/bin/bmc-wasm-thin-v@sdkMajor@ \
+exec /run/current-profile/bin/bmc-wasm-thin-v@protocolMajor@ \
     --wasm "${0%/*}/../lib/wasm/@name@.wasm" \
     --asset-root "${0%/*}/../lib/assets" \
     "$@"
@@ -80,7 +80,15 @@ The launcher script must match the SDK-generated template byte-for-byte, includi
 the trailing newline. Functionally equivalent shell scripts are rejected.
 
 Make the script executable. Place the manifest, compiled `my-widget.wasm`, and optional icon at the paths shown above
-before dumping the archive. Build the module with the matching [widget SDK](../bmc-wasm-runtime/README.md).
+before dumping the archive. Build the module with a [widget SDK](../bmc-wasm-runtime/README.md) speaking the device's
+WASM protocol major.
+
+In your widget's install instructions, tell users to update the device to the latest release. Within a WASM protocol
+major the host keeps running widgets built against an older SDK, apart from the limits listed in the
+[release notes](releases/).
+
+Don't have users search a binary or the host log for a version string. That text is not a stable interface: it has
+changed between releases, so a search can come back empty for a widget that loaded fine.
 
 ## Create and install the archive
 

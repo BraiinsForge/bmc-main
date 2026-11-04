@@ -23,7 +23,7 @@ activated package.
 > As a user, I want runtime upgrades to replace incompatible background processes automatically so widgets recover
 > without manual intervention.
 
-- The compositor starts and supervises the host for the active SDK major independently of widget startup.
+- The compositor starts and supervises the host for the active WASM protocol major independently of widget startup.
 - Widget thins wait for that host and never choose, start, or replace it.
 - A graceful compositor restart stops its host before the new compositor starts the replacement.
 - After forced compositor termination, socket arbitration rejects a replacement while the old host is alive; the
@@ -33,7 +33,8 @@ activated package.
 
 > As a user, I want the display to restart only when the compositor or its native widget runtime actually changed.
 
-- The compositor service records the per-SDK thin launcher and host as independent executable dependencies.
+- The compositor service records the per-WASM-protocol-major thin launcher and host as independent executable
+  dependencies.
 - A compositor, thin, or host package change alters those dependencies and lets the service orchestrator restart the
   compositor and its host.
 - Widget package changes do not alter the core package or compositor service, so they use targeted replacement instead.

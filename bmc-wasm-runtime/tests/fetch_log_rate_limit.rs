@@ -112,7 +112,7 @@ fn fetch_probe_wat(url: &str) -> String {
         global.get $response_count))
     "#,
         url_len = url.len(),
-        version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 

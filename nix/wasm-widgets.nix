@@ -38,7 +38,8 @@
 #                   selected profile (typically armv7-glibc-release)
 #   - host:         cross-compiled bmc-wasm-host + autopatchelf for the
 #                   selected profile (typically armv7-glibc-release)
-#   - wasmLauncher: per-SDK-major launcher that pins the thin
+#   - wasmLauncher: per-protocol-major launcher the widget wrappers exec,
+#                   which in turn execs the thin pinned to it
 #   - mkWasmWidget: build one lib/bmc-widgets/<name>/ tree (shell wrapper
 #                   + .wasm blob + manifest) that execs the thin wrapper
 { pkgs
@@ -55,9 +56,9 @@
 let
   lib = pkgs.lib;
   inherit (import ./public-asset.nix { inherit lib; }) mkPublicIcon;
-  parseSdkMajor = import ./sdk-major.nix { inherit lib; };
-  sdkMajor = parseSdkMajor (builtins.readFile ../bmc-wasm-runtime/protocol/src/version.rs);
-  launcherName = "bmc-wasm-thin-v${toString sdkMajor}";
+  parseProtocolMajor = pkgs.callPackage ./protocol-major.nix { };
+  protocolMajor = parseProtocolMajor (builtins.readFile ../bmc-wasm-runtime/protocol/src/version.rs);
+  launcherName = "bmc-wasm-thin-v${toString protocolMajor}";
 
   # Package-asset extraction and reference cleaning shared by the examples
   # bundle and per-widget wasm builds.
@@ -160,7 +161,7 @@ let
       '';
     }).overrideAttrs (old: {
       passthru = (old.passthru or { }) // {
-        inherit sdkMajor launcherName thin;
+        inherit protocolMajor launcherName thin;
       };
     });
 
@@ -200,7 +201,7 @@ let
       # Read from the template the device checks uploaded wrappers against,
       # so the two cannot drift.
       profileWrapper = pkgs.writeText "bmc-widget-${name}-wrapper"
-        (builtins.replaceStrings [ "@sdkMajor@" "@name@" ] [ (toString sdkMajor) name ]
+        (builtins.replaceStrings [ "@protocolMajor@" "@name@" ] [ (toString protocolMajor) name ]
           (builtins.readFile ../bmc-upgrade/assets/wasm-widget-wrapper.sh));
       installWrapper =
         if wrapperMode == "profile" then ''
@@ -253,6 +254,6 @@ let
     });
 in
 {
-  inherit sdkMajor launcherName wasmExamples wasmWidgetsBundle wasmWidgets thin host
+  inherit protocolMajor launcherName wasmExamples wasmWidgetsBundle wasmWidgets thin host
     mkWasmLauncher wasmLauncher mkWasmWidget;
 }

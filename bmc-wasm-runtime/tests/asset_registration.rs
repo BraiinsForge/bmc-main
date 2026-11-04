@@ -178,7 +178,7 @@ fn package_registration_wat(kind: AssetKind, id: &[u8; 32]) -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $wake_count (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32))
           (func (export "on_wake")
             global.get $wake_count
@@ -194,7 +194,7 @@ fn package_registration_wat(kind: AssetKind, id: &[u8; 32]) -> String {
         "#,
         import = kind.package_import_name(),
         tag_len = REGISTERED_TAG.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -235,7 +235,7 @@ fn package_demand_wat(kind: AssetKind, id: &[u8; 32]) -> String {
           (data (i32.const 0) "{data}")
           (global $wake_count (mut i32) (i32.const 0))
           (global $asset_id (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             i32.const {tree_id_ptr}
             global.get $asset_id
@@ -264,7 +264,7 @@ fn package_demand_wat(kind: AssetKind, id: &[u8; 32]) -> String {
         tag_len = REGISTERED_TAG.len(),
         tree_id_ptr = tree_ptr + tree_id_offset,
         tree_len = tree.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -303,7 +303,7 @@ fn cache_bitmap_demand_wat_for(draw: bmc_ui::Draw) -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $cache_id (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             i32.const {tree_ptr}
             i32.const {tree_len}
@@ -325,7 +325,7 @@ fn cache_bitmap_demand_wat_for(draw: bmc_ui::Draw) -> String {
         "#,
         tag_len = DORMANT_CACHE_TAG.len(),
         tree_len = tree.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -516,7 +516,7 @@ fn selective_cache_bitmap_demand_wat() -> String {
           (global $used_id (mut i32) (i32.const 0))
           (global $unused_id (mut i32) (i32.const 0))
           (global $submit_enabled (mut i32) (i32.const 1))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             global.get $submit_enabled
             if
@@ -546,7 +546,7 @@ fn selective_cache_bitmap_demand_wat() -> String {
         used_tag_len = DORMANT_CACHE_TAG.len(),
         unused_tag_len = unused_tag.len(),
         tree_len = tree.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -599,7 +599,7 @@ fn package_bitmap_fit_collision_wat(id: &[u8; 32], bitmap: &[u8]) -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $ready_id (mut i32) (i32.const -1))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             i32.const {tree_id_ptr}
             global.get $ready_id
@@ -634,7 +634,7 @@ fn package_bitmap_fit_collision_wat(id: &[u8; 32], bitmap: &[u8]) -> String {
         bitmap_len = bitmap.len(),
         tree_id_ptr = tree_ptr + tree_id_offset,
         tree_len = tree.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -652,7 +652,7 @@ fn package_audio_registration_wat(id: &[u8; 32]) -> String {
             (func $register (param i32 i32 i32) (result i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32))
           (func (export "register_valid") (result i32)
             i32.const 0
@@ -661,7 +661,7 @@ fn package_audio_registration_wat(id: &[u8; 32]) -> String {
             call $register))
         "#,
         tag_len = REGISTERED_TAG.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -737,13 +737,13 @@ fn minimal_triangle_mesh() -> Vec<u8> {
 }
 
 fn asset_registration_wat(kind: AssetKind, fixture: &[u8]) -> String {
-    asset_registration_wat_for_sdk(kind, fixture, bmc_wasm_protocol::SDK_VERSION)
+    asset_registration_wat_for_protocol_version(kind, fixture, bmc_wasm_protocol::PROTOCOL_VERSION)
 }
 
-fn asset_registration_wat_for_sdk(
+fn asset_registration_wat_for_protocol_version(
     kind: AssetKind,
     fixture: &[u8],
-    sdk_version: (u16, u16, u16),
+    protocol_version: (u16, u16, u16),
 ) -> String {
     let registered_tag_ptr = 0;
     let unknown_tag_ptr = REGISTERED_TAG.len();
@@ -763,7 +763,7 @@ fn asset_registration_wat_for_sdk(
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (func (export "__bmc_sdk_init") (result i64)
-            i64.const {sdk})
+            i64.const {protocol})
           (func (export "render") (param i32))
           (func (export "register_valid") (result i32)
             (call $register
@@ -789,7 +789,7 @@ fn asset_registration_wat_for_sdk(
         registered_tag_len = REGISTERED_TAG.len(),
         unknown_tag_len = UNKNOWN_TAG.len(),
         fixture_len = fixture.len(),
-        sdk = bmc_wasm_protocol::version_pack(sdk_version),
+        protocol = bmc_wasm_protocol::version_pack(protocol_version),
     )
 }
 
@@ -841,7 +841,7 @@ fn dormant_registration_probe_wat() -> String {
           (global $mesh_id (mut i32) (i32.const 0))
           (global $fit_id (mut i32) (i32.const 0))
           (global $cache_id (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32))
           (func (export "__on_image_ready") (param i32 i32))
           (func (export "__on_image_dropped") (param i32))
@@ -947,7 +947,7 @@ fn dormant_registration_probe_wat() -> String {
         svg_len = svg.len(),
         bitmap_len = bitmap.len(),
         mesh_len = mesh.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -1177,7 +1177,7 @@ fn legacy_0_2_widget_keeps_the_pointer_asset_abi() {
         return;
     };
     let fixture = compiled_empty_svg();
-    let wat = asset_registration_wat_for_sdk(AssetKind::Svg, &fixture, (0, 2, 0));
+    let wat = asset_registration_wat_for_protocol_version(AssetKind::Svg, &fixture, (0, 2, 0));
     let wasm = wat::parse_str(&wat).expect("BUG: legacy asset registration WAT must parse");
     let mut proc = gl.proc_address();
     // SAFETY: HeadlessGl keeps the GL context current.

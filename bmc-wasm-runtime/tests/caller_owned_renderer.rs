@@ -60,7 +60,7 @@ fn painting_wat() -> String {
         i32.const 4278190335
         call $host_fill_rect))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 

@@ -22,16 +22,16 @@
 source:
 let
   declarations = builtins.filter
-    (line: lib.hasPrefix "pub const SDK_VERSION:" line)
+    (line: lib.hasPrefix "pub const PROTOCOL_VERSION:" line)
     (lib.splitString "\n" source);
   declaration =
     assert lib.assertMsg (builtins.length declarations == 1)
-      "expected exactly one SDK_VERSION declaration";
+      "expected exactly one PROTOCOL_VERSION declaration";
     builtins.head declarations;
   parsed = builtins.match
-    "pub const SDK_VERSION: \\(u16, u16, u16\\) = \\(([0-9]+), ([0-9]+), ([0-9]+)\\);"
+    "pub const PROTOCOL_VERSION: \\(u16, u16, u16\\) = \\(([0-9]+), ([0-9]+), ([0-9]+)\\);"
     declaration;
 in
 assert lib.assertMsg (parsed != null)
-  "SDK_VERSION declaration no longer matches the pinned grammar";
+  "PROTOCOL_VERSION declaration no longer matches the pinned grammar";
 builtins.fromJSON (builtins.elemAt parsed 0)

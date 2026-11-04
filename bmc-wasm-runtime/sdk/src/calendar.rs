@@ -126,7 +126,7 @@ mod wasm {
         ) -> i32;
 
         // Not `host_tz_convert`: that name is frozen on the 20-byte layout
-        // SDK 0.5 binaries decode.
+        // protocol 0.5 binaries decode.
         fn host_tz_wall_clock(
             unix_secs: i64,
             tz_ptr: *const u8,

@@ -2188,7 +2188,7 @@ mod tests {
     /// A span written before spans carried a size decodes as it always did:
     /// no size bit, so nothing is read past its own record.
     ///
-    /// That is the compatibility the SDK version promises
+    /// That is the compatibility the protocol version promises
     /// — a new host reads every old widget; the reverse is not owed.
     /// The bytes are literal, as that writer emitted them, with every flag
     /// it knew set: a packer that moved a bit would still round-trip itself.

@@ -792,7 +792,7 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
-/// Register an inert `host_bitmap_sample` so widgets built against SDK 0.2.x
+/// Register an inert `host_bitmap_sample` so widgets built against protocol 0.2.x
 /// that sampled still instantiate.
 ///
 /// `0` is the sentinel those widgets already read as "no sampled colour".

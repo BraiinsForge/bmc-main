@@ -242,7 +242,7 @@ mod tests {
               (func (export "probe") (result i32)
                 i32.const {probe}))
             "#,
-            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
         ))
         .expect("BUG: cache test WAT must parse")
     }

@@ -44,7 +44,7 @@ fn listen_wat(taken_port: u16) -> String {
       (global $on_ephemeral_port (mut i32) (i32.const 0))
 
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const {sdk_version})
+        i64.const {protocol_version})
 
       (func (export "__alloc") (param $len i32) (result i32)
         (i32.const 1024))
@@ -58,7 +58,7 @@ fn listen_wat(taken_port: u16) -> String {
       (func (export "on_taken_port") (result i32) (global.get $on_taken_port))
       (func (export "on_ephemeral_port") (result i32) (global.get $on_ephemeral_port)))
     "#,
-        sdk_version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol_version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 

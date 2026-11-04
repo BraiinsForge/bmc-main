@@ -98,7 +98,7 @@ fn registering_wat(png: &[u8]) -> String {
           (data (i32.const 0) "{blob}")
           (global $registered (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64)
-            i64.const {sdk})
+            i64.const {protocol})
           (func (export "render") (param i32)
             (if (i32.eqz (global.get $registered))
               (then
@@ -110,7 +110,7 @@ fn registering_wat(png: &[u8]) -> String {
                     (i32.const {png_len})))
                 (global.set $registered (i32.const 1))))))
         "#,
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 

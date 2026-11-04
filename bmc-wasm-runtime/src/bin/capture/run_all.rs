@@ -1006,7 +1006,7 @@ mod tests {
     fn distill_keeps_the_error_and_drops_capture_chatter() {
         let raw = "Unified replay: foo (3 events) for iss at 1280x480\n\
                    pci id for fd 9: 10de:2684, driver (null)\n\
-                   Capturing iss at 1280x480 (SDK 0.1.0)\n\
+                   Capturing iss at 1280x480 (protocol 0.1.0)\n\
                    Captured frame 0 → /x/frame_0000.png\n\
                    error: hermetic capture breach in iss (1280x480):\n\
                    error:   fetch: GET https://x/y\n";
@@ -1030,7 +1030,7 @@ mod tests {
     /// prefix and the name it carries are a contract between the two.
     #[test]
     fn the_renderer_marker_is_read_off_a_capture_line() {
-        let raw = b"Capturing iss at 1280x480 (SDK 0.1.0)\n\
+        let raw = b"Capturing iss at 1280x480 (protocol 0.1.0)\n\
                     renderer: llvmpipe (LLVM 21.1.8, 256 bits)\n" as &[u8];
         assert_eq!(
             renderer_from_stderr(raw),

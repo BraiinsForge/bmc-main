@@ -6,7 +6,7 @@
   (global $network_count (mut i32) (i32.const 0))
 
   (func (export "__bmc_sdk_init") (result i64)
-    i64.const __SDK_VERSION__)
+    i64.const __PROTOCOL_VERSION__)
 
   (func (export "render") (param i32))
 

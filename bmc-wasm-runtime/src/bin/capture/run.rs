@@ -579,9 +579,9 @@ fn run_unified_capture(
         renderer.enable_text_layout_profiling();
     }
 
-    let (major, minor, patch) = runtime.sdk_version();
+    let (major, minor, patch) = runtime.protocol_version();
     eprintln!(
-        "Capturing {widget_name} at {}x{} (SDK {major}.{minor}.{patch})",
+        "Capturing {widget_name} at {}x{} (protocol {major}.{minor}.{patch})",
         ctx.width, ctx.height
     );
 

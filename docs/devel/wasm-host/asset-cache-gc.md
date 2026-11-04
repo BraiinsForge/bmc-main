@@ -1,10 +1,11 @@
 # Widget Asset Cache & Cross-Host GC
 
 How the on-disk widget asset cache is laid out, and how orphaned entries remain safe if several host versions run during
-an SDK transition.
+a protocol transition.
 
 For why cache-backed renderer assets survive dormancy, see [`renderer-assets.md`](renderer-assets.md). For the
-major-versioned host socket, see [`process-model.md`](process-model.md) and [`sdk-versioning.md`](sdk-versioning.md).
+major-versioned host socket, see [`process-model.md`](process-model.md) and
+[`protocol-versioning.md`](protocol-versioning.md).
 
 ## Cache layout
 
@@ -32,10 +33,10 @@ mid-shutdown, external write). Without reclamation they accumulate — confirmed
 only trims blobs *within* one bucket; it is not the cross-bucket reconcile.)
 
 The obvious design — "list the buckets of every widget in `config.scenes`, delete the rest" — is **wrong here**. A host
-owns only the slots connected to its SDK-major socket, not the whole config. The default system starts one active SDK
-host, but an incompatible SDK transition can configure old and new hosts as separate compositor commands. Either host
-would treat the other's live buckets as orphans. The live set therefore has to be assembled from what each running host
-declares.
+owns only the slots connected to its WASM-protocol-major socket, not the whole config. The default system starts one
+host, but an incompatible protocol transition can configure old and new hosts as separate compositor commands. Either
+host would treat the other's live buckets as orphans. The live set therefore has to be assembled from what each running
+host declares.
 
 The filesystem is the only thing every host shares (going through the compositor is deliberately avoided), so liveness
 is published there.
@@ -45,11 +46,11 @@ is published there.
 Each host owns one **GC-root file** in a sibling directory:
 
 ```
-/mnt/data/bmc/widget-gc-roots/sdk-v<major>
+/mnt/data/bmc/widget-gc-roots/sdk-v<major>.<minor>.<patch>
 ```
 
-- **Name** — keyed by SDK major, which keeps concurrent hosts distinct using the same scheme as the
-  `wasm-host-sdk-v<major>` socket.
+- **Name** — keyed by the full WASM protocol version, finer than the `wasm-host-sdk-v<major>` socket, so hosts of
+  different versions never share a root.
 - **Contents** — the cache tokens the host currently holds, one per line.
 - **mtime is the heartbeat** — rewriting the file (on the periodic tick, and whenever a slot is added) bumps its mtime.
 
@@ -107,15 +108,15 @@ drive `WasmWidgetRuntime` directly and never enter `run_loop`).
 Publishing is immediate, so it can be checked without waiting:
 
 ```
-ls -la /mnt/data/bmc/widget-gc-roots/ && cat /mnt/data/bmc/widget-gc-roots/sdk-v0
+ls -la /mnt/data/bmc/widget-gc-roots/ && cat /mnt/data/bmc/widget-gc-roots/sdk-v*
 ```
 
 Reclamation, pruning, and the cross-host union only fire on the tick. To exercise them:
 
 - **Orphan reclaim** — `mkdir /mnt/data/bmc/widget-cache/deadbeef-orphan`, wait a tick, watch it vanish (the
   `widget asset cache GC` debug line carries the stats).
-- **Cross-host union / stale** — only one SDK major exists today, so fake a peer: a fresh `sdk-v1` root with a token
-  keeps that token's bucket; an old-mtime `sdk-v1` root is pruned and its bucket reclaimed.
+- **Cross-host union / stale** — only one WASM protocol major exists today, so fake a peer: a fresh `sdk-v1.0.0` root
+  with a token keeps that token's bucket; an old-mtime `sdk-v1.0.0` root is pruned and its bucket reclaimed.
 - **No-startup-wipe** — restart the host and confirm `widget-cache/` buckets survive immediately, proving the fresh host
   republishes before its first sweep.
 

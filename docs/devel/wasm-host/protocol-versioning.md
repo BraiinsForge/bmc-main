@@ -1,11 +1,11 @@
-# SDK Version Matching
+# Protocol Version Matching
 
-Ensures widgets compiled against one SDK version cannot silently break on a mismatched host.
+Ensures widgets compiled against one protocol version cannot silently break on a mismatched host.
 
 ## Problem
 
-No version checking exists between WASM widgets and the host runtime. A widget compiled against a different SDK version
-can silently produce garbage rendering, crash on missing host functions, or misinterpret the binary tree format.
+Without a version check between WASM widgets and the host runtime, a widget compiled against a different protocol
+version can silently produce garbage rendering, crash on missing host functions, or misinterpret the binary tree format.
 
 ## Design
 
@@ -21,26 +21,31 @@ build profiles because wasm-ld always preserves `#[no_mangle]` exports from depe
 
 ### Version scheme: semver packed into u64
 
-Semver `major.minor.patch` as 3 x `u16` packed into a `u64`. Starting at `0.1.0` to match current crate versions.
+Semver `major.minor.patch` as 3 x `u16` packed into a `u64`.
 
 **Matching rule:** major must match exactly. Minor/patch are informational (logged for diagnostics). This keeps the door
 open for backwards-compatible minor bumps later.
 
 ### Where the version lives
 
-The canonical constant is in `bmc-wasm-protocol` (the shared wire-format crate used by both SDK and host). The SDK's
-exported function references it — any widget depending on `bmc-wasm-sdk` gets the version export automatically. No
-widget code changes needed.
+The canonical constant is in `bmc-wasm-protocol` (the shared wire-format crate used by both SDK and host). It is set by
+hand and versions the wire, independently of the crate's Cargo version. The SDK's exported function references it — any
+widget depending on `bmc-wasm-sdk` gets the version export automatically. No widget code changes needed.
 
 Non-Rust toolchains would need to export `__bmc_sdk_init() -> u64` manually (same packing scheme).
+
+Names that reach disk or a shipped widget keep their `sdk` spelling: the `__bmc_sdk_init` export, the
+`wasm-host-sdk-v<major>.sock` control socket, the host log file named after it and the `sdk-v<major>.<minor>.<patch>` GC
+root file.
 
 ### Host-side check
 
 ```
-Engine + Module → FemtoVgRenderer → HostState → Store → Linker → instantiate → check_sdk_version() → render/init
+Engine + Module → FemtoVgRenderer → HostState → Store → Linker → instantiate → check_protocol_version() → render/init
 ```
 
-The check runs after instantiation (since it calls the export) but before any widget code (`init`/`render`).
+The check runs after instantiation (since it calls the export), so a module's `start` section runs first, but before
+`init` and `render`.
 
 ### Error cases
 
@@ -64,27 +69,27 @@ takes a minor bump — the version is the only signal a reader gets.
 If a retired function has no such sentinel in its return type, the retirement is not backwards compatible at all and
 needs a major bump instead of a stub.
 
-An inert stub may be deleted at the next **major** bump, and not before. That is the point where `check_sdk_version`
-begins rejecting every widget that could have imported it, so the registration becomes dead weight rather than a
-compatibility shim.
+An inert stub may be deleted at the next **major** bump, and not before. That is the point where
+`check_protocol_version` begins rejecting every widget that could have imported it, so the registration becomes dead
+weight rather than a compatibility shim.
 
 `env.host_bitmap_sample` is the first of these: retired in 0.3.0, droppable at 1.0.0. Its contract — instantiation plus
 the sentinel return — is pinned by `bmc-wasm-runtime/tests/bitmap_sample_abi.rs`.
 
 ### Key files
 
-| File                                       | Role                                                                             |
-| ------------------------------------------ | -------------------------------------------------------------------------------- |
-| `bmc-wasm-runtime/protocol/src/version.rs` | `SDK_VERSION` constant, export name, pack/unpack helpers                         |
-| `bmc-wasm-runtime/sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_init()` — auto-exported from every widget                |
-| `bmc-wasm-runtime/src/runtime/backend.rs`  | `check_sdk_version()` — calls export after instantiation; `sdk_version()` getter |
-| `bmc-wasm-runtime/src/runtime/imports/`    | `Linker` registrations for the `env.host_*` surface, including inert stubs       |
-| `bmc-wasm-runtime/src/bin/testbed/main.rs` | Prints version to CLI, shows in window title (including on hot-reload)           |
+| File                                       | Role                                                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `bmc-wasm-runtime/protocol/src/version.rs` | `PROTOCOL_VERSION` constant, export name, pack/unpack helpers                              |
+| `bmc-wasm-runtime/sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_init()` — auto-exported from every widget                          |
+| `bmc-wasm-runtime/src/runtime/backend.rs`  | `check_protocol_version()` — calls export after instantiation; `protocol_version()` getter |
+| `bmc-wasm-runtime/src/runtime/imports/`    | `Linker` registrations for the `env.host_*` surface, including inert stubs                 |
+| `bmc-wasm-runtime/src/bin/testbed/main.rs` | Prints the widget's protocol version on the first build                                    |
 
 ## Phase 2: multi-version hosting (future)
 
-The long-term plan is volta-style version management: the widget manifest (outside WASM) declares the SDK version it was
-compiled against, and the device loads the matching host binding for that version.
+The long-term plan is volta-style version management: the widget manifest (outside WASM) declares the protocol version
+it was compiled against, and the device loads the matching host binding for that version.
 
 The exported version serves as ground truth — even if the manifest is wrong, the host can verify the binary matches what
 it claims.

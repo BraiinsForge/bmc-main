@@ -157,7 +157,7 @@ fn fetch_callback_wat(action: CallbackAction, initial_bitmap: Option<&[u8]>) -> 
           (data (i32.const 0) "{data}")
           (global $callback_count (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64)
-            i64.const {sdk})
+            i64.const {protocol})
           (func (export "__alloc") (param $len i32) (result i32)
             (i32.const 1024))
           (func (export "init")
@@ -190,7 +190,7 @@ fn fetch_callback_wat(action: CallbackAction, initial_bitmap: Option<&[u8]>) -> 
         url_len = url.len(),
         callback_action = callback_action,
         register_initial = register_initial.unwrap_or_default(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 

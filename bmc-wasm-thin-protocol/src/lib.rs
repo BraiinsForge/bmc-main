@@ -31,13 +31,13 @@ const FRAME_HEADER_LEN: usize = 6; // u16 version + u32 frame_len, both little-e
 pub const MAX_FRAME_LEN: u32 = 128 * 1024; // upper bound that bounds peer memory commitment
 
 #[must_use]
-pub fn socket_path_for_sdk_major(major: u16) -> std::path::PathBuf {
+pub fn socket_path_for_wasm_protocol_major(major: u16) -> std::path::PathBuf {
     std::path::PathBuf::from(format!("/run/bmc/wasm-host-sdk-v{major}.sock"))
 }
 
 #[must_use]
 pub fn default_socket_path() -> std::path::PathBuf {
-    socket_path_for_sdk_major(bmc_wasm_protocol::SDK_VERSION.0)
+    socket_path_for_wasm_protocol_major(bmc_wasm_protocol::PROTOCOL_VERSION.0)
 }
 
 /// Persistent root for per-instance widget asset buckets (`<root>/<bucket>`).
@@ -75,7 +75,7 @@ pub fn derive_log_path(socket_path: &std::path::Path) -> std::path::PathBuf {
 /// serving `socket_path`.
 ///
 /// The file name is fixed within the socket's directory, so every host
-/// there — including different SDK majors running through an upgrade —
+/// there — including hosts of different WASM protocol majors —
 /// serializes decodes on the same lock, while a custom socket directory
 /// (tests, sandboxes) gets its own writable, hermetic lock.
 #[must_use]

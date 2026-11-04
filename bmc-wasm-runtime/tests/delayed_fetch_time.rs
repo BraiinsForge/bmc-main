@@ -82,7 +82,7 @@ fn delayed_fetch_wat() -> String {
       (func (export "response_count") (result i32)
         global.get $response_count))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 

@@ -86,7 +86,7 @@ fn timer_wat(init_body: &str, with_on_timer_export: bool) -> String {
       (global $wakes (mut i32) (i32.const 0))
 
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const {sdk_version})
+        i64.const {protocol_version})
 
       (func (export "__alloc") (param $len i32) (result i32)
         (i32.const 1024))
@@ -118,7 +118,7 @@ fn timer_wat(init_body: &str, with_on_timer_export: bool) -> String {
       (func (export "second_ticks") (result i32) (global.get $second_ticks))
       (func (export "last_elapsed") (result i32) (global.get $last_elapsed)))
     "#,
-        sdk_version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol_version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -272,7 +272,7 @@ fn burning_timer_wat(timers: usize, iterations: u32) -> String {
       (global $completed (mut i32) (i32.const 0))
 
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const {sdk_version})
+        i64.const {protocol_version})
 
       (func (export "init")
         {init_body})
@@ -289,7 +289,7 @@ fn burning_timer_wat(timers: usize, iterations: u32) -> String {
 
       (func (export "completed") (result i32) (global.get $completed)))
     "#,
-        sdk_version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol_version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 

@@ -349,7 +349,10 @@ impl ViewCore {
     pub(crate) fn info(&self) -> ViewInfo {
         ViewInfo {
             live: self.runtime.is_some(),
-            sdk_version: self.runtime.as_ref().map(WasmWidgetRuntime::sdk_version),
+            protocol_version: self
+                .runtime
+                .as_ref()
+                .map(WasmWidgetRuntime::protocol_version),
             exports_on_touch: self
                 .runtime
                 .as_ref()
@@ -403,7 +406,7 @@ impl ViewCore {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ViewInfo {
     pub(crate) live: bool,
-    pub(crate) sdk_version: Option<(u16, u16, u16)>,
+    pub(crate) protocol_version: Option<(u16, u16, u16)>,
     pub(crate) exports_on_touch: bool,
 }
 
@@ -600,9 +603,9 @@ impl DeviceView {
         self.height
     }
 
-    /// The SDK the loaded widget was built against.
-    pub(crate) fn sdk_version(&self) -> Option<(u16, u16, u16)> {
-        self.info.sdk_version
+    /// The protocol version the loaded widget was built against.
+    pub(crate) fn protocol_version(&self) -> Option<(u16, u16, u16)> {
+        self.info.protocol_version
     }
 
     /// Timings from the last render, for the status bar and view overlays.

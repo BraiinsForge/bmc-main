@@ -100,9 +100,9 @@ fn poll_renderer_deliveries_expect_trap(
 /// Test widget that counts lifecycle invocations and records observations
 /// on each `on_params_update` call. Exports observation getters used by the tests.
 ///
-/// The reported SDK version is derived from `bmc_wasm_protocol::SDK_VERSION`,
-/// so a version bump needs no edit here — only the pinned literal in
-/// `sdk_version_constant_matches_fixture_assumption`.
+/// The reported protocol version is derived from `bmc_wasm_protocol::PROTOCOL_VERSION`,
+/// so a version bump needs no edit here,
+/// only the pinned literal in `protocol_version_constant_matches_fixture_assumption`.
 fn probe_widget_wat() -> String {
     format!(
         r#"
@@ -119,7 +119,7 @@ fn probe_widget_wat() -> String {
       (global $last_version_in_update (mut i64) (i64.const 0))
       (global $last_snapshot_len_in_update (mut i32) (i32.const 0))
 
-      ;; Required by the host. Returns the packed `bmc_wasm_protocol::SDK_VERSION`.
+      ;; Required by the host. Returns the packed `bmc_wasm_protocol::PROTOCOL_VERSION`.
       (func (export "__bmc_sdk_init") (result i64)
         i64.const {})
 
@@ -158,7 +158,7 @@ fn probe_widget_wat() -> String {
       (func (export "last_snapshot_len_in_update") (result i32)
         global.get $last_snapshot_len_in_update))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -187,7 +187,7 @@ fn oob_snapshot_traps_wat() -> String {
         call $host_params_snapshot
         drop))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -245,7 +245,7 @@ fn system_probe_widget_wat() -> String {
         i32.const 4096
         call $host_system_snapshot))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -280,7 +280,7 @@ fn dual_probe_widget_wat() -> String {
       (func (export "params_count") (result i32) global.get $params_count)
       (func (export "system_count") (result i32) global.get $system_count))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -307,7 +307,7 @@ fn oob_system_snapshot_traps_wat() -> String {
         call $host_system_snapshot
         drop))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -336,7 +336,7 @@ fn misbehaving_submit_tree_wat() -> String {
         i32.const 0
         call $host_submit_tree))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -368,7 +368,7 @@ fn touch_probe_widget_wat() -> String {
 
       (func (export "touch_count") (result i32) global.get $touch_count))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -378,8 +378,8 @@ fn touch_probe_widget_wat() -> String {
 /// The counter getter lets the test assert the hook fired exactly once.
 fn network_probe_widget_wat() -> String {
     include_str!("fixtures/network_probe.wat").replace(
-        "__SDK_VERSION__",
-        &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION).to_string(),
+        "__PROTOCOL_VERSION__",
+        &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION).to_string(),
     )
 }
 
@@ -402,7 +402,7 @@ fn sleep_asset_probe_wat(on_sleep_export: &str) -> String {
           (data (i32.const 0) "{data}")
           (global $asset_id (mut i32) (i32.const 0))
           (global $sleep_count (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             i32.const 0
             i32.const {tag_len}
@@ -416,7 +416,7 @@ fn sleep_asset_probe_wat(on_sleep_export: &str) -> String {
         "#,
         tag_len = LIFECYCLE_ASSET_TAG.len(),
         svg_len = svg.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -438,7 +438,7 @@ fn deferred_sleep_then_wake_probe_wat() -> String {
           (global $sleep_registration_id (mut i32) (i32.const 0))
           (global $wake_probe_id (mut i32) (i32.const 0))
           (global $wake_restore_id (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             i32.const 0
             i32.const {tag_len}
@@ -491,7 +491,7 @@ fn deferred_sleep_then_wake_probe_wat() -> String {
         "#,
         tag_len = LIFECYCLE_ASSET_TAG.len(),
         svg_len = svg.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -514,7 +514,7 @@ fn coalesced_package_registration_wat(id: &[u8; 32]) -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $sleep_registration_id (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             i32.const {tree_ptr}
             i32.const {tree_len}
@@ -533,7 +533,7 @@ fn coalesced_package_registration_wat(id: &[u8; 32]) -> String {
         "#,
         tag_len = LIFECYCLE_ASSET_TAG.len(),
         tree_len = tree.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -555,7 +555,7 @@ fn dormant_image_decode_probe_wat() -> String {
           (data (i32.const 0) "{data}")
           (global $ready_count (mut i32) (i32.const 0))
           (global $dropped_count (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32))
           (func (export "start_decode") (result i32)
             i32.const 0
@@ -583,7 +583,7 @@ fn dormant_image_decode_probe_wat() -> String {
         "#,
         tag_len = DORMANT_IMAGE_DECODE_TAG.len(),
         png_len = png.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -599,7 +599,7 @@ fn cache_lifecycle_probe_wat() -> String {
           (data (i32.const 0) "image")
           (global $initial_bitmap_id (mut i32) (i32.const 0))
           (global $wake_bitmap_id (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             i32.const 0
             i32.const 5
@@ -620,7 +620,7 @@ fn cache_lifecycle_probe_wat() -> String {
           (func (export "wake_bitmap_id") (result i32)
             global.get $wake_bitmap_id))
         "#,
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -693,7 +693,7 @@ fn active_asset_probe_wat(burn_after_first_render: bool) -> String {
           (data (i32.const 0) "{data}")
           (global $asset_id (mut i32) (i32.const 0))
           (global $render_count (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             global.get $render_count
             i32.const 1
@@ -718,7 +718,7 @@ fn active_asset_probe_wat(burn_after_first_render: bool) -> String {
         tag_len = LIFECYCLE_ASSET_TAG.len(),
         svg_len = svg.len(),
         tree_len = tree.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -755,7 +755,7 @@ fn submit_then_burn_wat() -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $render_count (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             global.get $render_count
             i32.const 1
@@ -778,7 +778,7 @@ fn submit_then_burn_wat() -> String {
         "#,
         data = wat_string_literal(&tree),
         tree_len = tree.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -814,7 +814,7 @@ fn dormant_callback_probe_wat() -> String {
           (global $asset_id (mut i32) (i32.const 0))
           (global $callback_id (mut i32) (i32.const -1))
           (global $callback_evicted (mut i32) (i32.const -1))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func $register (result i32)
             i32.const 0
             i32.const {tag_len}
@@ -838,7 +838,7 @@ fn dormant_callback_probe_wat() -> String {
         "#,
         tag_len = LIFECYCLE_ASSET_TAG.len(),
         svg_len = svg.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 
@@ -848,8 +848,8 @@ fn credential_update_probe_widget_wat() -> String {
     include_str!("fixtures/update_probe.wat")
         .replace("__UPDATE_HOOK__", "on_credentials_update")
         .replace(
-            "__SDK_VERSION__",
-            &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION).to_string(),
+            "__PROTOCOL_VERSION__",
+            &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION).to_string(),
         )
         .replace("__REQUEST_FRAME__", "call $host_request_frame")
 }
@@ -882,7 +882,7 @@ fn fuel_exhausting_update_wat() -> String {
       (func (export "on_params_update")
         (loop $forever br $forever)))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     )
 }
 
@@ -993,27 +993,27 @@ fn deliver_credentials_update_fires_hook_and_preserves_frame_request() {
 }
 
 #[test]
-fn sdk_version_constant_matches_fixture_assumption() {
-    // The single intentional version pin. The WAT fixtures derive their
-    // `__bmc_sdk_init` value from `bmc_wasm_protocol::SDK_VERSION` at build
-    // time, so they never need touching; this literal is the one place a
-    // `SDK_VERSION` bump must be reflected by hand.
-    let (major, minor, patch) = WasmWidgetRuntime::host_sdk_version();
+fn protocol_version_constant_matches_fixture_assumption() {
+    // The single intentional version pin.
+    // The WAT fixtures derive their `__bmc_sdk_init` value
+    // from `bmc_wasm_protocol::PROTOCOL_VERSION` at build time, so they never need touching;
+    // this literal is the one place a `PROTOCOL_VERSION` bump must be reflected by hand.
+    let (major, minor, patch) = WasmWidgetRuntime::host_protocol_version();
     let packed = u64::from(major) | (u64::from(minor) << 16) | (u64::from(patch) << 32);
     assert_eq!(
         packed, 589_824,
-        "host SDK version drifted to ({major}, {minor}, {patch}); \
-         bumping `SDK_VERSION` means updating this pinned literal."
+        "host protocol version drifted to ({major}, {minor}, {patch}); \
+         bumping `PROTOCOL_VERSION` means updating this pinned literal."
     );
 }
 
 /// A widget declaring the major after the host's.
 ///
-/// Every other fixture reports `SDK_VERSION` — a tree builds its widgets
+/// Every other fixture reports `PROTOCOL_VERSION` — a tree builds its widgets
 /// against the SDK sitting in it. This one has to disagree, and does so
 /// by construction rather than through a literal that goes stale.
 fn next_major_wat() -> String {
-    let (major, minor, patch) = bmc_wasm_protocol::SDK_VERSION;
+    let (major, minor, patch) = bmc_wasm_protocol::PROTOCOL_VERSION;
     format!(
         r#"
     (module
@@ -1040,7 +1040,9 @@ fn a_widget_a_major_ahead_of_the_host_is_refused() {
         panic!("BUG: a foreign major must not instantiate");
     };
     assert!(
-        error.to_string().contains("SDK major version mismatch"),
+        error
+            .to_string()
+            .contains("WASM protocol major version mismatch"),
         "refused, but not over the version: {error}"
     );
 }
@@ -1387,7 +1389,7 @@ fn widget_without_hook_is_silently_fine() {
           (func (export "__bmc_sdk_init") (result i64) i64.const {})
           (func (export "render") (param i32)))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     );
     let (mut runtime, _renderer) = build_runtime(&wat, &gl, BTreeMap::new());
 
@@ -1442,7 +1444,7 @@ fn widget_without_on_touch_drops_touch_without_requesting_a_frame() {
           (func (export "__bmc_sdk_init") (result i64) i64.const {})
           (func (export "render") (param i32)))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     );
     let (mut runtime, _renderer) = build_runtime(&wat, &gl, BTreeMap::new());
 
@@ -1501,7 +1503,7 @@ fn widget_without_on_network_update_is_silently_skipped() {
           (func (export "__bmc_sdk_init") (result i64) i64.const {})
           (func (export "render") (param i32)))
     "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
     );
     let mut runtime = build_runtime_without_renderer(&wat);
 

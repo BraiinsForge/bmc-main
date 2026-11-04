@@ -29,7 +29,7 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 use bmc_intl::Language;
 use bmc_ui::{BLACK, BitmapId, Color, MeshId, SVG_RESERVED_MIN, SvgId};
-use bmc_wasm_protocol::{ON_TIMER_EXPORT, SDK_INIT_EXPORT, SDK_VERSION, version_unpack};
+use bmc_wasm_protocol::{ON_TIMER_EXPORT, PROTOCOL_VERSION, SDK_INIT_EXPORT, version_unpack};
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
@@ -131,11 +131,11 @@ fn in_lifecycle<R>(
 ///
 /// Returns the widget's `(major, minor, patch)` version on success.
 /// Rejects on missing export or major version mismatch.
-fn check_sdk_version(
+fn check_protocol_version(
     instance: wasmi::Instance,
     store: &mut wasmi::Store<HostState>,
 ) -> Result<(u16, u16, u16)> {
-    let (major, minor, patch) = SDK_VERSION;
+    let (major, minor, patch) = PROTOCOL_VERSION;
 
     let version_func = instance
         .get_typed_func::<(), u64>(&*store, SDK_INIT_EXPORT)
@@ -154,13 +154,13 @@ fn check_sdk_version(
 
     if w_major != major {
         bail!(
-            "SDK major version mismatch: widget is {w_major}.{w_minor}.{w_patch}, \
+            "WASM protocol major version mismatch: widget is {w_major}.{w_minor}.{w_patch}, \
              host expects {major}.{minor}.{patch}"
         );
     }
 
     tracing::info!(
-        "widget SDK version {w_major}.{w_minor}.{w_patch} \
+        "widget WASM protocol version {w_major}.{w_minor}.{w_patch} \
          (host {major}.{minor}.{patch})"
     );
     Ok(widget_version)
@@ -918,7 +918,7 @@ pub struct WasmWidgetRuntime {
     /// timers start only when it is present.
     pub(super) on_timer_func: Option<wasmi::TypedFunc<(u32, u32), ()>>,
     pending_hook: Option<PendingHook>,
-    sdk_version: (u16, u16, u16),
+    protocol_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
     pub(super) fuel_per_frame: u64,
     /// Consecutive frames that exceeded the fuel budget.
@@ -1160,7 +1160,7 @@ impl WasmWidgetRuntime {
 
         // State is staged; instantiate (running `start`, if any) and resolve exports.
         let instance = linker.instantiate_and_start(&mut store, &module.module)?;
-        let sdk_version = check_sdk_version(instance, &mut store)?;
+        let protocol_version = check_protocol_version(instance, &mut store)?;
         let entered = match entry {
             EntryPolicy::Widget => Entry::Widget {
                 render: instance.get_typed_func::<u32, ()>(&store, "render")?,
@@ -1229,7 +1229,7 @@ impl WasmWidgetRuntime {
             on_sleep_func,
             on_timer_func,
             pending_hook: None,
-            sdk_version,
+            protocol_version,
             fuel_per_frame,
             fuel_strikes: 0,
             guest_trap: None,
@@ -2294,16 +2294,16 @@ impl WasmWidgetRuntime {
         self.store.data_mut().walk.interaction.push_event(event);
     }
 
-    /// The SDK version the widget was compiled with (major, minor, patch).
+    /// The protocol version the widget was compiled with (major, minor, patch).
     #[must_use]
-    pub fn sdk_version(&self) -> (u16, u16, u16) {
-        self.sdk_version
+    pub fn protocol_version(&self) -> (u16, u16, u16) {
+        self.protocol_version
     }
 
-    /// The SDK version the host expects (major, minor, patch).
+    /// The protocol version the host expects (major, minor, patch).
     #[must_use]
-    pub fn host_sdk_version() -> (u16, u16, u16) {
-        SDK_VERSION
+    pub fn host_protocol_version() -> (u16, u16, u16) {
+        PROTOCOL_VERSION
     }
 
     /// Look up the screen-space bounds of a registered UI element by string ID.
@@ -2695,7 +2695,7 @@ mod tests {
     use bmc_render::interaction::Rect;
     use bmc_ui::{DisplayShape, SVG_RESERVED_MIN, SvgId, ViewportShape};
 
-    /// Minimal SDK-version-shaped widget so `WasmWidgetRuntime::new` finishes
+    /// Minimal widget that passes the version check so `WasmWidgetRuntime::new` finishes
     /// instantiation without needing a renderer or GL context.
     fn minimal_wat() -> String {
         format!(
@@ -2706,7 +2706,7 @@ mod tests {
             i64.const {})
           (func (export "render") (param i32)))
         "#,
-            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
         )
     }
 
@@ -2749,7 +2749,7 @@ mod tests {
           (func (export "global_value") (result i32)
             global.get $value))
         "#,
-            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
         )
     }
 
@@ -2779,7 +2779,7 @@ mod tests {
           (func (export "completed") (result i32)
             global.get $completed))
         "#,
-            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
         )
     }
 
@@ -3388,7 +3388,7 @@ mod tests {
             i32.const {system_len}
             call $install))
         "#,
-            version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+            version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
             system_len = system.len(),
         )
     }

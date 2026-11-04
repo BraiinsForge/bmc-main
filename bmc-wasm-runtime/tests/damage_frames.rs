@@ -86,7 +86,7 @@ fn two_tree_wat(trees: &[Vec<u8>; 2]) -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $frame (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             (local $entry i32)
             global.get $frame
@@ -116,7 +116,7 @@ fn two_tree_wat(trees: &[Vec<u8>; 2]) -> String {
             global.set $frame))
         "#,
         data = wat_string_literal(&data),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 

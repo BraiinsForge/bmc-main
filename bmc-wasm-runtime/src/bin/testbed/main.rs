@@ -2026,9 +2026,9 @@ impl TestbedApp {
             tiles.push(self.build_one_view(placed, platform, seed, led_rx, painter, window)?);
         }
         if first_build
-            && let Some((major, minor, patch)) = tiles.iter().find_map(DeviceView::sdk_version)
+            && let Some((major, minor, patch)) = tiles.iter().find_map(DeviceView::protocol_version)
         {
-            println!("Widget SDK version: {major}.{minor}.{patch}");
+            println!("Widget WASM protocol version: {major}.{minor}.{patch}");
         }
         // Snapshot the active recording tile's KV directory at start
         // so the fixture's `header.kv` reproduces the initial state on replay.

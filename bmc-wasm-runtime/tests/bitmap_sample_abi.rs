@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Bitmap sampling is gone, but widgets built against SDK 0.2.x still import
+//! Bitmap sampling is gone, but widgets built against protocol 0.2.x still import
 //! `host_bitmap_sample`.
 //! The runtime keeps an inert function under that name so those binaries load;
 //! this test pins both halves of the contract.
@@ -26,11 +26,11 @@
 use bmc_ui::{DisplayShape, ViewportShape};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 
-/// Pinned rather than read from `SDK_VERSION`: the fixture is a widget built
+/// Pinned rather than read from `PROTOCOL_VERSION`: the fixture is a widget built
 /// before the removal and has to stay one as the host version moves on.
-const LEGACY_SDK_VERSION: (u16, u16, u16) = (0, 2, 0);
+const LEGACY_PROTOCOL_VERSION: (u16, u16, u16) = (0, 2, 0);
 
-/// Minimal 0.2.x widget importing the retired sampling function.
+/// Minimal protocol 0.2.x widget importing the retired sampling function.
 ///
 /// The sampled ID is a valid one, so a reinstated implementation would reach
 /// for the renderer instead of bailing out early — that is what makes the
@@ -57,7 +57,7 @@ fn bitmap_sample_probe_wat() -> String {
         i32.const 16
         call $bitmap_sample))
     "#,
-        bmc_wasm_protocol::version_pack(LEGACY_SDK_VERSION)
+        bmc_wasm_protocol::version_pack(LEGACY_PROTOCOL_VERSION)
     )
 }
 

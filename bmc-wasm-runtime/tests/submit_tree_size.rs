@@ -70,7 +70,7 @@ fn claimed_size_wat(width: u16, height: u16) -> String {
             (func $submit_tree (param i32 i32 i32 i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
-          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             i32.const 0
             i32.const {tree_len}
@@ -80,7 +80,7 @@ fn claimed_size_wat(width: u16, height: u16) -> String {
         "#,
         data = wat_string_literal(&tree),
         tree_len = tree.len(),
-        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
     )
 }
 

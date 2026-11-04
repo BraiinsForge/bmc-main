@@ -18,14 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Widgets from SDK 0.5 and earlier import the instant parser as `host_parse_date`
+//! Widgets from protocol 0.5 and earlier import the instant parser as `host_parse_date`
 //! and decode a 20-byte layout from `host_tz_convert`. Both are pinned here.
 
 use bmc_ui::{DisplayShape, ViewportShape};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 
 /// The version the fixture widget declares — the last one before the rename.
-const LEGACY_SDK_VERSION: (u16, u16, u16) = (0, 5, 0);
+const LEGACY_PROTOCOL_VERSION: (u16, u16, u16) = (0, 5, 0);
 
 /// `2026-08-21T10:30:00Z` as a unix timestamp.
 const KNOWN_INSTANT: i64 = 1_787_308_200;
@@ -42,7 +42,7 @@ fn legacy_date_probe_wat() -> String {
       (data (i32.const 0) "2026-08-21T10:30:00Z")
 
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const {sdk})
+        i64.const {protocol})
 
       (func (export "render") (param i32))
 
@@ -53,7 +53,7 @@ fn legacy_date_probe_wat() -> String {
         i64.const {instant}
         i64.eq))
     "#,
-        sdk = bmc_wasm_protocol::version_pack(LEGACY_SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(LEGACY_PROTOCOL_VERSION),
         instant = KNOWN_INSTANT,
     )
 }
@@ -84,7 +84,7 @@ fn the_retired_date_import_still_parses_an_instant() {
     );
 }
 
-/// Minimal widget decoding `host_tz_convert` the way an SDK 0.5 binary did.
+/// Minimal widget decoding `host_tz_convert` the way a protocol 0.5 binary did.
 fn legacy_tz_probe_wat() -> String {
     // `KNOWN_INSTANT` in Europe/Prague: 12:30 CEST, UTC+02:00, a Friday.
     format!(
@@ -97,7 +97,7 @@ fn legacy_tz_probe_wat() -> String {
       (data (i32.const 0) "Europe/Prague")
 
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const {sdk})
+        i64.const {protocol})
 
       (func (export "render") (param i32))
 
@@ -130,7 +130,7 @@ fn legacy_tz_probe_wat() -> String {
         (i32.eq (i32.load8_u (i32.const 51)) (i32.const 4))
         i32.and))
     "#,
-        sdk = bmc_wasm_protocol::version_pack(LEGACY_SDK_VERSION),
+        protocol = bmc_wasm_protocol::version_pack(LEGACY_PROTOCOL_VERSION),
         instant = KNOWN_INSTANT,
     )
 }
