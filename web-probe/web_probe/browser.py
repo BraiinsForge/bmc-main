@@ -131,6 +131,21 @@ class Probe:
         """Everything the page has logged since the probe opened."""
         return list(self._console)
 
+    @contextmanager
+    def logged_out(self) -> Generator["Probe"]:
+        """A probe in a browser context of its own, with no session, this one's left untouched.
+        What it logs joins this probe's."""
+        browser = self.page.context.browser
+        if browser is None:
+            raise RuntimeError("BUG: `open_probe` always opens its page from a launched browser")
+        page = browser.new_page(viewport=self.page.viewport_size)
+        guest = Probe(page, self._origin)
+        try:
+            yield guest
+        finally:
+            self._console.extend(guest.console())
+            page.context.close()
+
 
 @contextmanager
 def open_probe(origin: str, *, width: int = 1280, height: int = 800) -> Generator[Probe]:

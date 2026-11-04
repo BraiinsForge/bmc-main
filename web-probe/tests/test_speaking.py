@@ -27,7 +27,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from web_probe import device
 from web_probe.browser import Probe
-from web_probe.device import LanguageUnknown, speaking
+from web_probe.device import LanguageStuck, LanguageUnknown, speaking
 
 # `speaking` reaches the page only through the picker calls `Picker` stands in for.
 PROBE = cast(Probe, object())
@@ -122,10 +122,26 @@ def test_a_language_that_could_not_be_set_back_is_refused_before_any_switch(
     assert picker.picked == []
 
 
-def test_a_failure_setting_the_language_back_leaves_the_blocks_own_error(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_failure_setting_the_language_back_leaves_the_blocks_own_error_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _ = installed(monkeypatch, Picker("en-US", setting_back_fails=True))
 
     with pytest.raises(RuntimeError, match="the walk failed"), speaking(PROBE, "en-XA"):
         raise RuntimeError("the walk failed")
+
+    said = capsys.readouterr().err
+    assert "en-XA" in said
+    assert "en-US" in said
+
+
+def test_a_failure_setting_the_language_back_after_a_clean_block_names_both_languages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ = installed(monkeypatch, Picker("en-US", setting_back_fails=True))
+
+    with (
+        pytest.raises(LanguageStuck, match=r"may still speak en-XA.*back to en-US.*picker is gone"),
+        speaking(PROBE, "en-XA"),
+    ):
+        pass

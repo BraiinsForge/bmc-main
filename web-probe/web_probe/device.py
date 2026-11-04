@@ -24,11 +24,11 @@ Elements are found by the ids the frontend derives from its form paths (`getID`)
 by `data-tab`, by their roles and by ARIA relations, which no language changes, never by wording.
 """
 
-import sys
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from bmc_tui import console
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -68,6 +68,10 @@ class LanguageUnknown(Exception):  # noqa: N818  names what happened, as `Timeou
 
 class TabsMissing(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
     """The settings page shows no tabs, so all but its first section would go unseen."""
+
+
+class LanguageStuck(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
+    """The device's language could not be set back after the walk switched it."""
 
 
 def log_in(probe: Probe, password: str) -> None:
@@ -164,13 +168,22 @@ def speaking(probe: Probe, tag: str) -> Generator[None]:
         yield
     except BaseException:
         # The block's own error explains the failure.
-        # One from setting the language back must not replace it.
+        # One from setting the language back must not replace it, nor go unsaid.
         try:
-            set_language(probe, before)
-        except (PlaywrightError, Unreachable) as error:
-            print(f"could not set the language back to {before}: {error}", file=sys.stderr)
+            _set_language_back(probe, tag, before)
+        except LanguageStuck as stuck:
+            console.error(console.lit(stuck))
         raise
-    set_language(probe, before)
+    _set_language_back(probe, tag, before)
+
+
+def _set_language_back(probe: Probe, tag: str, before: str) -> None:
+    try:
+        set_language(probe, before)
+    except (PlaywrightError, Unreachable) as error:
+        reason = str(error).splitlines()[0]
+        msg = f"the device may still speak {tag}: could not set it back to {before}: {reason}"
+        raise LanguageStuck(msg) from error
 
 
 def pages(probe: Probe) -> Iterator[str]:
@@ -219,14 +232,12 @@ def shoot_pages(probe: Probe, out: Path) -> Iterator[tuple[str, Path]]:
             yield shown, probe.shot(out / shot_name(shown))
 
 
-def shoot_login(probe: Probe, out: Path, password: str) -> Path | None:
-    """The login page shot whole into `out`, in the device's language, logged in again after,
+def shoot_login(probe: Probe, out: Path) -> Path | None:
+    """The login page shot whole into `out`, in the device's language,
     or none from a device without a password, which shows no login page.
-    The session is the browser's cookie alone, so dropping it is a logout no wording decides."""
-    probe.page.context.clear_cookies()
-    probe.visit("/")
-    if probe.path() != LOGIN_PATH:
-        return None
-    shot = probe.shot(out / shot_name(LOGIN_PATH))
-    log_in(probe, password)
-    return shot
+    Shot from a session of its own, as `speaking` can only set the language back while logged in."""
+    with probe.logged_out() as guest:
+        guest.visit("/")
+        if guest.path() != LOGIN_PATH:
+            return None
+        return guest.shot(out / shot_name(LOGIN_PATH))

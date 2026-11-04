@@ -84,8 +84,9 @@ executionEnvironments = [
     # bmc_tui as the in-repo source it is, not the untyped install the venv holds.
     { root = "bmc-virt/harness", extraPaths = ["bmc-tui"] },
     { root = "scripts" },
-    { root = "web-probe/tests", extraPaths = ["web-probe"], reportPrivateUsage = false },
-    { root = "web-probe" },
+    { root = "web-probe/tests", extraPaths = ["web-probe", "bmc-tui"], reportPrivateUsage = false },
+    # bmc_tui as the in-repo source it is, not the untyped install the venv holds.
+    { root = "web-probe", extraPaths = ["bmc-tui"] },
     { root = "bmc-intl/sweep/tests", extraPaths = ["bmc-intl/sweep", "bmc-tui", "web-probe"], reportPrivateUsage = false },
     # bmc_tui and web_probe as the in-repo sources they are, not the untyped installs the venv holds.
     { root = "bmc-intl/sweep", extraPaths = ["bmc-tui", "web-probe"] },

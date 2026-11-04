@@ -24,11 +24,13 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import tyro
+from bmc_tui import console
 from tyro.conf import Positional
 
 from web_probe.browser import BrowsersMissing, Unreachable, open_probe
 from web_probe.device import (
     LOGIN_PATH,
+    LanguageStuck,
     LanguageUnknown,
     LoginRefused,
     LoginStalled,
@@ -72,7 +74,7 @@ def walk(
         with nullcontext() if language is None else speaking(probe, language):
             for path, shot in shoot_pages(probe, out):
                 print(f"{path} -> {shot}")
-            if login := shoot_login(probe, out, password):
+            if login := shoot_login(probe, out):
                 print(f"{LOGIN_PATH} -> {login}")
         errors = [entry for entry in probe.console() if entry.kind == "error"]
         print(f"console errors: {len(errors)}")
@@ -84,6 +86,9 @@ def walk(
 def main() -> None:
     try:
         code = tyro.cli(walk)
+    except LanguageStuck as error:
+        console.error(console.lit(error))
+        code = 1
     except (
         BrowsersMissing,
         Unreachable,

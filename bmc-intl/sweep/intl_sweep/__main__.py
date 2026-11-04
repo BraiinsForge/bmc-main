@@ -36,6 +36,7 @@ from bmc_tui.stage import Abort, entrypoint, stage
 from playwright.sync_api import Error as PlaywrightError
 from web_probe.browser import BrowsersMissing, Unreachable, open_probe
 from web_probe.device import (
+    LanguageStuck,
     LanguageUnknown,
     LoginRefused,
     LoginStalled,
@@ -149,7 +150,7 @@ def web(url: str, password: str) -> str:
         raise Abort(f"{error} - is the web UI running at {url}?") from error
     except LoginRefused as error:
         raise Abort(f"{error} - pass the device's password with --password") from error
-    except (LoginStalled, LanguageUnknown, TabsMissing) as error:
+    except (LoginStalled, LanguageUnknown, LanguageStuck, TabsMissing) as error:
         raise Abort(str(error)) from error
     except PlaywrightError as error:
         raise Abort(f"the web walk failed: {error.message.splitlines()[0]}") from error
@@ -182,7 +183,7 @@ def _walk_web(url: str, password: str) -> str:
 
         with speaking(probe, LANGUAGE):
             shots = [shot for _, shot in shoot_pages(probe, out)]
-            if login := shoot_login(probe, out, password):
+            if login := shoot_login(probe, out):
                 shots.append(login)
 
     return f"{len(shots)} shots under {console.lit(out)}"
