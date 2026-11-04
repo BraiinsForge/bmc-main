@@ -82,6 +82,20 @@ cargo-deny-wasm:
     - nix build -L .#checks.x86_64-linux.cargo-deny-wasm
     - nix build -L .#checks.x86_64-linux.cargo-deny-wasm-examples
 
+flake-check:
+  stage: lint
+  needs: []
+  script:
+    # `--no-build` refuses what evaluation itself has to build, failing with `path '….drv' is not valid`,
+    # so force every derivation the check evaluates first.
+    - |
+      for output in checks packages devShells; do
+        nix eval --json ".#$output.x86_64-linux" --apply 'builtins.mapAttrs (_: drv: drv.drvPath)' > /dev/null
+      done
+      nix eval --json .#apps.x86_64-linux --apply 'builtins.mapAttrs (_: app: app.program)' > /dev/null
+      nix eval --raw .#formatter.x86_64-linux.drvPath > /dev/null
+    - nix flake check --no-build
+
 ast-grep:
   stage: lint
   needs: []
