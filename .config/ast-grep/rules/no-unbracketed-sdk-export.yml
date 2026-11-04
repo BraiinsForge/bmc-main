@@ -1,0 +1,40 @@
+# The host calls an `__on_*` export from outside any export, and `Target::deliver` panics there,
+# so an export that skips `widget::export` traps on its first delivery to a method callback.
+# A trap ends the widget. Only a test driving the export through `as_host` sees a missing bracket,
+# and a new export may have none.
+#
+# The bracket must be the whole body: a statement beside it runs outside it.
+
+id: no-unbracketed-sdk-export
+language: rust
+severity: error
+
+message: A host-called `__on_*` export must be a single `widget::export` call.
+
+files:
+  - "bmc-wasm-runtime/sdk/src/**/*.rs"
+
+rule:
+  kind: function_item
+  all:
+    - has:
+        field: name
+        regex: ^__on_
+    - any:
+        - not:
+            has:
+              field: body
+              has:
+                any:
+                  - pattern: widget::export($$$)
+                  - pattern: widget::export($$$);
+        - has:
+            field: body
+            has:
+              not:
+                any:
+                  - kind: line_comment
+                  - kind: block_comment
+                  - regex: "^[{}]$"
+                  - pattern: widget::export($$$)
+                  - pattern: widget::export($$$);
