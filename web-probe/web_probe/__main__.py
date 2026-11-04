@@ -18,7 +18,7 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-"""Walk the device's web UI: log in, switch language, shoot every page it links to."""
+"""Walk the device's web UI: log in, switch language, shoot every page and tab it leads to."""
 
 from contextlib import nullcontext
 from pathlib import Path
@@ -32,6 +32,7 @@ from web_probe.device import (
     LanguageUnknown,
     LoginRefused,
     LoginStalled,
+    TabsMissing,
     log_in,
     offered_languages,
     shoot_login,
@@ -48,7 +49,7 @@ def walk(
     language: str | None = None,
     out: Path = SHOTS,
 ) -> int:
-    """Log in, switch language if asked, and shoot every page the UI leads to, whole.
+    """Log in, switch language if asked, and shoot every page and tab the UI leads to, whole.
 
     The language is the device's own setting, so a switched one is switched back after.
 
@@ -56,7 +57,7 @@ def walk(
         origin: where the web UI answers, such as `http://localhost:6070`
         password: the device's web password, `root` on the mock
         language: a tag the device offers, such as `en-XA`, or left out for the device's own
-        out: where the shots go, one PNG per page
+        out: where the shots go, one PNG per page or tab
     """
     with open_probe(origin) as probe:
         log_in(probe, password)
@@ -83,7 +84,14 @@ def walk(
 def main() -> None:
     try:
         code = tyro.cli(walk)
-    except (BrowsersMissing, Unreachable, LoginRefused, LoginStalled, LanguageUnknown) as error:
+    except (
+        BrowsersMissing,
+        Unreachable,
+        LoginRefused,
+        LoginStalled,
+        LanguageUnknown,
+        TabsMissing,
+    ) as error:
         print(error)
         code = 1
     raise SystemExit(code)

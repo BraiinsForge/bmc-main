@@ -39,6 +39,7 @@ from web_probe.device import (
     LanguageUnknown,
     LoginRefused,
     LoginStalled,
+    TabsMissing,
     in_setup,
     log_in,
     offered_languages,
@@ -148,7 +149,7 @@ def web(url: str, password: str) -> str:
         raise Abort(f"{error} - is the web UI running at {url}?") from error
     except LoginRefused as error:
         raise Abort(f"{error} - pass the device's password with --password") from error
-    except (LoginStalled, LanguageUnknown) as error:
+    except (LoginStalled, LanguageUnknown, TabsMissing) as error:
         raise Abort(str(error)) from error
     except PlaywrightError as error:
         raise Abort(f"the web walk failed: {error.message.splitlines()[0]}") from error
@@ -184,7 +185,7 @@ def _walk_web(url: str, password: str) -> str:
             if login := shoot_login(probe, out, password):
                 shots.append(login)
 
-    return f"{len(shots)} pages, shots under {console.lit(out)}"
+    return f"{len(shots)} shots under {console.lit(out)}"
 
 
 def main(args: Sweep) -> None:

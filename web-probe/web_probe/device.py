@@ -21,7 +21,7 @@
 """The device's own web UI: logging in, its pages, and its language picker.
 
 Elements are found by the ids the frontend derives from its form paths (`getID`),
-by their roles and by ARIA relations, which no language changes, never by their wording.
+by `data-tab`, by their roles and by ARIA relations, which no language changes, never by wording.
 """
 
 import sys
@@ -47,6 +47,7 @@ LOGIN_TIMEOUT_MS = 10_000
 _PASSWORD = "#login-password"
 _SUBMIT = "#login-submit"
 _LANGUAGE = "#settings-general-language"
+_TAB = "[data-tab]:enabled"
 
 # What the login form shows when the device refuses: an error notification for the form,
 # or the password field marked invalid. Either describes the reason through `aria-describedby`.
@@ -63,6 +64,10 @@ class LoginStalled(Exception):  # noqa: N818  names what happened, as `TimeoutEr
 
 class LanguageUnknown(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
     """The language picker shows none of the device's languages as its own."""
+
+
+class TabsMissing(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
+    """The settings page shows no tabs, so all but its first section would go unseen."""
 
 
 def log_in(probe: Probe, password: str) -> None:
@@ -184,14 +189,34 @@ def pages(probe: Probe) -> Iterator[str]:
 
 
 def shot_name(path: str) -> str:
-    """The file a page's shot is saved as: `/display/1` as `display_1.png`, `/` as `home.png`."""
-    return f"{path.strip('/').replace('/', '_') or 'home'}.png"
+    """The file a page's shot is saved as: `/display/1` as `display_1.png`, `/` as `home.png`,
+    `/settings#updates` as `settings_updates.png`."""
+    name = path.strip("/").replace("/", "_").replace("#", "_")
+    return f"{name or 'home'}.png"
+
+
+def page_tabs(probe: Probe) -> list[str]:
+    """The keys of the tabs the current page offers."""
+    tabs = probe.page.locator(_TAB).all()
+    return [key for tab in tabs if (key := tab.get_attribute("data-tab"))]
 
 
 def shoot_pages(probe: Probe, out: Path) -> Iterator[tuple[str, Path]]:
-    """Every page `pages` reaches, shot whole into `out`, with the path it was shot at."""
+    """Every page `pages` reaches, shot whole into `out`, with the path it was shot at.
+    A page with tabs is shot once per tab, as `path#tab`, the tabs its device offers.
+    Settings always has tabs, so finding none there is refused, not shot as if it had been walked:
+    a passing run would hide the sections it never saw."""
     for path in pages(probe):
-        yield path, probe.shot(out / shot_name(path))
+        tabs = page_tabs(probe)
+        if not tabs and path == SETTINGS_PATH:
+            msg = f"settings shows no tabs, at {probe.path()}: a frontend without `data-tab`?"
+            raise TabsMissing(msg)
+        if not tabs:
+            yield path, probe.shot(out / shot_name(path))
+        for key in tabs:
+            probe.page.click(f'{_TAB}[data-tab="{key}"]')
+            shown = f"{path}#{key}"
+            yield shown, probe.shot(out / shot_name(shown))
 
 
 def shoot_login(probe: Probe, out: Path, password: str) -> Path | None:

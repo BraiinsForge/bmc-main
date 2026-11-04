@@ -112,6 +112,7 @@ export function Tabs<K extends StrNum = string>(props: TabsProps<K>) {
             <button
                 type="button"
                 key={index}
+                data-tab={key}
                 children={
                     <span className={css.tabContent}>
                         <span children={label} />
