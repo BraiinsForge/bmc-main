@@ -26,7 +26,6 @@
     block-size: 100vh;
     overflow-x: hidden;
 
-    composes: scrollbar from 'styles/interaction.scss';
     composes: vertical center from 'styles/layout.scss';
 
     padding-block-start: mini-units(8);

@@ -38,7 +38,6 @@ $links-gutter: mini-units(2);
 
 .links {
     composes: horizontal center startJustified from 'styles/layout.scss';
-    composes: scrollbar from 'styles/interaction.scss';
 
     position: relative;
     max-width: 100%;

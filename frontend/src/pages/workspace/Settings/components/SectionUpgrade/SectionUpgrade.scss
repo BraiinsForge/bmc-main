@@ -230,7 +230,6 @@
 
 .overlayContent {
     composes: inline vertical startJustified from 'styles/layout.scss';
-    composes: scrollbar from 'styles/interaction.scss';
     gap: mini-units(3);
 
     max-width: 60vw;

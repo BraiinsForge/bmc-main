@@ -19,7 +19,6 @@
 // the grant above.
 
 @use 'styles/carbon' as *;
-@use 'styles/interaction';
 
 .hideModalCloseButton {
     :global(.cds--modal-close) {

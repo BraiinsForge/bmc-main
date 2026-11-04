@@ -18,13 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-@use 'styles/interaction';
 @use 'styles/carbon/colors';
 @use 'styles/carbon' as *;
 
 .tabs {
     composes: horizontal from 'styles/layout.scss';
-    composes: scrollbar from 'styles/interaction.scss';
     overflow: auto hidden;
     position: relative;
     width: 100%;
@@ -47,8 +45,6 @@
     &.noWrap {
         flex-wrap: nowrap;
         overflow-x: auto;
-
-        @include interaction.scrollbar;
     }
 }
 

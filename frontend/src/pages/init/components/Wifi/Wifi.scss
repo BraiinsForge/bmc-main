@@ -62,7 +62,6 @@
 
 .netList {
     composes: selfStretch from 'styles/layout.scss';
-    composes: scrollbar from 'styles/interaction.scss';
     overflow: auto;
 
     max-block-size: to-rem(200px);

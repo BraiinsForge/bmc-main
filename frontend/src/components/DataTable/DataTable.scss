@@ -18,7 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-@use 'styles/interaction';
 @use 'styles/carbon' as *;
 
 // The generic color variables used throughout this sheet are collected here
@@ -65,10 +64,7 @@ $row-bg-selected-hover: $background-selected-hover;
             // focus outline upon interaction
             outline: none !important;
 
-            // Nicer scrollbar in the table body
             overflow: auto;
-
-            @include interaction.scrollbar;
         }
     }
 

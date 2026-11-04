@@ -26,7 +26,6 @@
 @use '@carbon/react';
 
 // Our stuff
-@use '../interaction';
 @use './fonts';
 
 $navbar-background: $braiins-gray-100;
@@ -36,6 +35,31 @@ $navbar-hover-item-bg-color: $braiins-gray-70;
 
 * {
     text-rendering: geometricprecision !important;
+
+    // https://css-tricks.com/custom-scrollbars-in-webkit/
+    scrollbar-color: $scrollbar-fg $scrollbar-bg;
+    scrollbar-width: thin;
+
+    &::-webkit-scrollbar-button {
+        display: none;
+    }
+
+    // The track takes no opacity, and the thumb no transitions.
+    &::-webkit-scrollbar-track,
+    &::-webkit-scrollbar-corner {
+        background: $scrollbar-bg;
+    }
+    &::-webkit-scrollbar-track:hover,
+    &::-webkit-scrollbar-corner:hover {
+        background: $scrollbar-bg-hover;
+    }
+
+    &::-webkit-scrollbar-thumb {
+        background-color: $scrollbar-fg;
+    }
+    &::-webkit-scrollbar-thumb:hover {
+        background-color: $scrollbar-fg-hover;
+    }
 }
 
 /* Theme configuration */
@@ -236,10 +260,8 @@ header.cds--header {
     padding-inline: 0 1.5rem;
 }
 
-// Custom scrollbars in menus, and an edge for the open overlay.
+// An edge for the open overlay.
 .cds--list-box__menu {
-    @include interaction.scrollbar;
-
     // Outline, not border: it draws outside the box, so it neither
     // changes the scroll geometry nor gets painted over by item rows.
     // Shadows also improve contrast when overlaying content
@@ -254,7 +276,4 @@ header.cds--header {
 
 .cds--modal-container {
     box-shadow: shadows.$elevation-16dp;
-}
-.cds--modal-content {
-    @include interaction.scrollbar;
 }

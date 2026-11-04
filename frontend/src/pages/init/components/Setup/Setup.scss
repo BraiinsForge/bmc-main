@@ -71,7 +71,6 @@
     composes: selfStretch vertical from 'styles/layout.scss';
     gap: mini-units(2);
 
-    composes: scrollbar from 'styles/interaction.scss';
     overflow: auto;
 
     margin-block-start: mini-units(5);

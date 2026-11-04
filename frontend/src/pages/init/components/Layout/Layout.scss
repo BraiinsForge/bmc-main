@@ -54,7 +54,6 @@
 }
 
 .main {
-    composes: scrollbar from 'styles/interaction.scss';
     composes: vertical flex from 'styles/layout.scss';
     padding: mini-units(2) mini-units(2) mini-units(5);
 
