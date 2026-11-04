@@ -263,7 +263,7 @@ class View extends Component<Props, State> {
                 label: txt.confirm,
                 onClick: () => {
                     const { ssid, encryptionType, password } = selectedNetwork;
-                    this.#submit({
+                    void this.#submit({
                         $typeName: 'braiins.bmc.web.SetWifiRequest',
                         ssid,
                         password,

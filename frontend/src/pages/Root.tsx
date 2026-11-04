@@ -94,7 +94,7 @@ class View extends Component<Props, State> {
         if (prevProps.isAuthenticated !== isAuthenticated || isRootPath) {
             // This already runs the mount's check with fresher props; letting it fire too redirects twice.
             this.#mount.cancel();
-            this.#maybeRedirect();
+            void this.#maybeRedirect();
         }
     }
 
@@ -104,7 +104,7 @@ class View extends Component<Props, State> {
      * It does introduce a slight delay, but it's much more elegant and ultimately performant.
      */
     #mount = debounce(async () => {
-        this.#maybeRedirect();
+        void this.#maybeRedirect();
     }, 150);
     #maybeRedirect = async (): Promise<void> => {
         const { navigate, pathname, isAuthenticated, isRootPath, boserLogin } = this.props;
@@ -216,7 +216,7 @@ class View extends Component<Props, State> {
              * AFTER the new triggers the abort signal and save the sound info.
              */
             const { currentlyPlaying } = this.state.appContextValue.device.sound;
-            if (currentlyPlaying?.id === sound.id) this.#soundSetPlaying(null);
+            if (currentlyPlaying?.id === sound.id) void this.#soundSetPlaying(null);
         }
     };
     #soundStop = async (): Promise<void> => {

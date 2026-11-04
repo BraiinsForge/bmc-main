@@ -77,7 +77,7 @@ class View extends Component<Props, State> {
         // We think we are playing a sound, but context says otherwise
         else if (isPlaying && !currentlyPlaying) this.setState({ isPlaying: false });
         // Sound changed and we are playing → switch
-        else if (sound.value !== prevProps.sound.value && isPlaying) this.#playSelectedSound();
+        else if (sound.value !== prevProps.sound.value && isPlaying) void this.#playSelectedSound();
     }
     componentWillUnmount() {
         pb.abort.all(this);

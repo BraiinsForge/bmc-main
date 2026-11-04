@@ -55,7 +55,7 @@ export function useAutoSelect<T extends HTMLElement>(conf?: UseAutoSelectConfig)
 
         if (autoCopy) {
             const text = element.textContent ?? '';
-            copy2clipboard(text);
+            void copy2clipboard(text);
         }
         selectNodeContent(element);
     }, [autoCopy, disabled]);

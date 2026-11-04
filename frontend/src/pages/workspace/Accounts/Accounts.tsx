@@ -352,7 +352,7 @@ class View extends Component<Props, State> {
             msg ||= formatMessage({ defaultMessage: 'Account deletion failed!' });
             toast.error(msg);
         } finally {
-            this.#fetch();
+            void this.#fetch();
         }
     };
 

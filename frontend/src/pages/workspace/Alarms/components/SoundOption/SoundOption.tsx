@@ -101,7 +101,7 @@ class View extends Component<Props, State> {
 
         const { isPlaying } = this.state;
         if (isPlaying) this.#stop();
-        else this.#play();
+        else void this.#play();
     };
 
     render() {

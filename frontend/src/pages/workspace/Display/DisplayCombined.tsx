@@ -175,12 +175,12 @@ class View extends Component<Props, State> {
     }
 
     componentDidMount() {
-        this.#loadScene();
-        this.#previewOpen();
-        this.#loadManifestWidgets();
-        this.#loadTimezones();
-        this.#loadAccounts();
-        this.#loadCredentialTypes();
+        void this.#loadScene();
+        void this.#previewOpen();
+        void this.#loadManifestWidgets();
+        void this.#loadTimezones();
+        void this.#loadAccounts();
+        void this.#loadCredentialTypes();
     }
     componentWillUnmount() {
         pb.abort.all(this);
@@ -386,7 +386,7 @@ class View extends Component<Props, State> {
 
     #handleAdd = (position: pb.WidgetPosition): void => {
         this.setState({ openDialogKind: 'scene-select', addPosition: position }, () => {
-            this.#loadManifestWidgets();
+            void this.#loadManifestWidgets();
         });
     };
 

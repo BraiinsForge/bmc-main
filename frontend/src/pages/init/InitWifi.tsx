@@ -114,7 +114,7 @@ class View extends Component<Props, State> {
             return;
         }
         this.setState({ stage: Stage.wifi });
-        this.#scanWifi();
+        void this.#scanWifi();
     };
 
     #wifiSelect = (x: pb.WifiNetwork): void => console.log(x);
@@ -149,7 +149,7 @@ class View extends Component<Props, State> {
             );
             return false;
         }
-        this.#awaitDeviceSetup();
+        void this.#awaitDeviceSetup();
         return true;
     };
 

@@ -321,11 +321,11 @@ function SideLink(props: SideLink) {
     const handleClick = useCallback(
         (e: UIEvent) => {
             if (e.type === 'click') {
-                navigate(url);
+                void navigate(url);
                 (document.activeElement as Maybe<HTMLElement>)?.blur();
             } else if (e.type === 'keydown') {
                 const key = (e as KeyboardEvent).key;
-                if (key === Key.Enter || key === ' ') navigate(url);
+                if (key === Key.Enter || key === ' ') void navigate(url);
             }
         },
         [url, navigate],

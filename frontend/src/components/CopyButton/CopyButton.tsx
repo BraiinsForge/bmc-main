@@ -43,7 +43,7 @@ export function CopyButton(props: CopyButtonProps) {
     const disabled = value == null || value === '';
 
     const handleClick = () => {
-        if (value) copy2clipboard(value);
+        if (value) void copy2clipboard(value);
     };
 
     const p = {

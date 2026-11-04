@@ -91,7 +91,7 @@ export class View extends Component<Props, State> {
     readonly state = getInitialState();
 
     componentDidMount() {
-        this.#load();
+        void this.#load();
     }
     componentWillUnmount() {
         pb.abort.all(this);

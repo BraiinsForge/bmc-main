@@ -26,7 +26,7 @@ import { randomSlices } from './index';
 describe('mocks/generic', () => {
     describe('randomSlices', () => {
         test('returns correct number of items', () => {
-            fc.assert(
+            void fc.assert(
                 fc.property(fc.integer({ min: 1, max: 99 }), num => {
                     expect(randomSlices(100, num)).toHaveLength(num);
                 }),
@@ -34,7 +34,7 @@ describe('mocks/generic', () => {
         });
 
         test('obeys the lower value boundary', () => {
-            fc.assert(
+            void fc.assert(
                 fc.property(fc.integer({ min: 1, max: 30 }), limit => {
                     const arr = randomSlices(100, 10, limit);
                     const offenders = arr.filter(x => x !== 0 && x < limit);
@@ -45,7 +45,7 @@ describe('mocks/generic', () => {
         });
 
         test('obeys the upper value boundary', () => {
-            fc.assert(
+            void fc.assert(
                 fc.property(fc.double({ min: 0.3, max: 0.7, noDefaultInfinity: true, noNaN: true }), limit => {
                     const pool = 100;
                     const max = 100 * limit;
@@ -61,7 +61,7 @@ describe('mocks/generic', () => {
         });
 
         test('results sum equals to given pool size', () => {
-            fc.assert(
+            void fc.assert(
                 fc.property(fc.integer({ min: 100, max: 1000 }), n => {
                     const arr = randomSlices(n, Math.floor(n / 10));
                     expect(arr.reduce((acc, v) => acc + v, 0)).toEqual(n);

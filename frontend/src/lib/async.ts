@@ -77,7 +77,7 @@ export function deferred<T>(onResolve?: (value: T) => void, onReject?: (reason: 
         };
     });
 
-    Object.defineProperty(promise, 'state', { get: () => state });
+    void Object.defineProperty(promise, 'state', { get: () => state });
     // @ts-expect-error: It's fine, trust me, I'm a doctor
     return Object.assign(promise, methods) as Deferred<T>;
 }

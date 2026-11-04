@@ -146,7 +146,7 @@ export class Ping {
         this.stop();
         this.#isActive = true;
 
-        this.#ping().then(() => {
+        void this.#ping().then(() => {
             // There could be a race condition where we get stopped
             // between the process start and status resolution.
             if (!this.#isActive) return;

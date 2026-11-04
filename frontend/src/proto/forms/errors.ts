@@ -43,7 +43,7 @@ export function parseError(error: BareException, defaultMessagePreffix?: string)
     if (defaultMessagePreffix) res.message = `${defaultMessagePreffix}: ${res.message}`;
 
     const isAuthError: boolean = [Code.PermissionDenied, Code.Unauthenticated].includes(connectError.code);
-    if (isAuthError) import('@/store').then(({ store }) => store.goToLogin());
+    if (isAuthError) void import('@/store').then(({ store }) => store.goToLogin());
 
     return res;
 }

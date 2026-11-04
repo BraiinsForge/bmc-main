@@ -232,12 +232,12 @@ class View extends Component<Props, State> {
         const { unsubscribe } = listenDocumentEvent({ name: 'click', handler: this.#windowClickHandle });
         this.#windowClickUnsubscribe = unsubscribe;
         if (this.#headerRef.current) this.#headerResize.observe(this.#headerRef.current);
-        this.#loadMetadata();
-        this.#loadScenes();
-        this.#loadManifestWidgets();
-        this.#loadTimezones();
-        this.#loadAccounts();
-        this.#loadCredentialTypes();
+        void this.#loadMetadata();
+        void this.#loadScenes();
+        void this.#loadManifestWidgets();
+        void this.#loadTimezones();
+        void this.#loadAccounts();
+        void this.#loadCredentialTypes();
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
@@ -420,7 +420,7 @@ class View extends Component<Props, State> {
                     : formatMessage({ defaultMessage: 'The widget package was installed.' }),
                 { title: formatMessage({ defaultMessage: 'Widget Package Installed' }) },
             );
-            this.#loadManifestWidgets();
+            void this.#loadManifestWidgets();
         } catch (error) {
             const timedOut = error instanceof DOMException && error.name === 'TimeoutError';
             toast.error(
@@ -465,7 +465,7 @@ class View extends Component<Props, State> {
 
     #sceneAddChooseKind = (): void => {
         this.setState({ openDialogKind: 'scene-select' }, () => {
-            this.#loadManifestWidgets();
+            void this.#loadManifestWidgets();
         });
     };
 

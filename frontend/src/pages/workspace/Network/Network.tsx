@@ -143,7 +143,7 @@ class View extends Component<Props, State> {
 
     #mount = debounce(() => {
         this.#syncTabs();
-        this.#load();
+        void this.#load();
     }, 150);
     #syncTabs = () => {
         // const { location } = this.props;
@@ -535,7 +535,7 @@ export default function NetworkPage() {
     const hidden = !networkConfigurable(capabilities);
 
     useEffect(() => {
-        if (hidden) navigate(URLS.pages.display.list, { replace: true });
+        if (hidden) void navigate(URLS.pages.display.list, { replace: true });
     }, [navigate, hidden]);
 
     if (hidden) return null;

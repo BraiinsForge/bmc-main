@@ -143,7 +143,7 @@ class Store {
             return;
         }
         // Lazy: the routes import Root, which imports the store.
-        import('@/routes').then(({ default: router }) => router.navigate(URLS.auth.login));
+        void import('@/routes').then(({ default: router }) => router.navigate(URLS.auth.login));
     };
 
     #fetchSessionInfoAbort = pb.abort.get();

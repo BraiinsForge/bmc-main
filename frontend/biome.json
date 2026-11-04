@@ -118,7 +118,9 @@
                 "noDelete": "off"
             },
 
-            "nursery": {}
+            "nursery": {
+                "noFloatingPromises": "error"
+            }
         }
     },
 
