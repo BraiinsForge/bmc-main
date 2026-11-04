@@ -4,6 +4,14 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[package.metadata.nix]
+include = [
+    "../../../../widgets-wasm-examples/mesh-demo/assets/suzanne.glb",
+    "../../../../widgets-wasm-examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav",
+    "../../../../widgets-wasm/lib/remote-image/assets/renew.svg",
+    "../../../../widgets-wasm/spacex-launch/assets/unknown.png",
+]
+
 [lib]
 crate-type = ["cdylib"]
 

@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[package.metadata.nix]
+include = ["../../../../widgets-wasm/spacex-launch/assets/falcon-heavy.png"]
+
 [dependencies]
 
 [build-dependencies]

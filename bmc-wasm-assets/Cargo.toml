@@ -6,15 +6,12 @@ license = "GPL-3.0-or-later"
 
 # Cross-crate payloads compiled by the linker and macro fixtures; the Nix
 # source filter otherwise keeps only Rust, TOML, and lock files.
+# Widget assets go in the fixture's own manifest instead:
+# from here they reach every crate depending on this one, `wasm-host` among them.
 [package.metadata.nix]
 include = [
     "../bmc-render/assets/panel.9.png",
     "../bmc-render/assets/skins/gallery_slider/**",
-    "../widgets-wasm/iss-position/src/render/texture.jpg",
-    "../widgets-wasm/lib/remote-image/assets/renew.svg",
-    "../widgets-wasm/spacex-launch/assets/*.png",
-    "../widgets-wasm-examples/mesh-demo/assets/suzanne.glb",
-    "../widgets-wasm-examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav",
 ]
 
 [features]
