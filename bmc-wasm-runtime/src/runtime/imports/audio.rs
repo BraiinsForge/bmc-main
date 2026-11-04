@@ -157,7 +157,7 @@ fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {
 
             #[cfg(feature = "audio")]
             {
-                let Some((_, ref handle)) = state.audio_stream else {
+                let Some(handle) = state.audio_output() else {
                     return;
                 };
                 let cursor = std::io::Cursor::new(data);

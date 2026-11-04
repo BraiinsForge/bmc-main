@@ -27,6 +27,8 @@
 //! of the host-side public surface.
 
 use chrono::{DateTime, FixedOffset};
+#[cfg(feature = "audio")]
+use std::cell::OnceCell;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -1321,9 +1323,10 @@ pub(crate) struct HostState {
     pub(crate) last_asset_restoration: Option<crate::runtime::RendererAssetRestorationObservation>,
 
     /// Audio output stream — must stay alive for the entire session.
-    /// `None` if audio output is unavailable (headless, no ALSA, etc.).
+    /// Opened by the first sound played, as most instances never play one.
+    /// Holds `None` if audio output is unavailable (headless, no ALSA, etc.).
     #[cfg(feature = "audio")]
-    pub audio_stream: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
+    audio_stream: OnceCell<Option<(rodio::OutputStream, rodio::OutputStreamHandle)>>,
 
     /// Logical viewport dimensions the widget renders into.
     /// Set by `WasmWidgetRuntime::new` before the guest's
@@ -1608,17 +1611,7 @@ impl HostState {
             asset_cache: None,
             package_assets: None,
             #[cfg(feature = "audio")]
-            audio_stream: {
-                match rodio::OutputStream::try_default() {
-                    Ok((stream, handle)) => Some((stream, handle)),
-                    Err(e) => {
-                        tracing::warn!(
-                            "audio output unavailable: {e} — audio_play will be a no-op"
-                        );
-                        None
-                    }
-                }
-            },
+            audio_stream: OnceCell::new(),
             widget_width: 0,
             widget_height: 0,
             viewport_shape: bmc_ui::ViewportShape::Rectangular,
@@ -1627,6 +1620,21 @@ impl HostState {
             display_shape: bmc_ui::DisplayShape::Rectangular,
             display_dpi: 0,
         }
+    }
+
+    /// The audio output, opened on first use.
+    #[cfg(feature = "audio")]
+    pub(crate) fn audio_output(&self) -> Option<&rodio::OutputStreamHandle> {
+        let stream = self
+            .audio_stream
+            .get_or_init(|| match rodio::OutputStream::try_default() {
+                Ok(stream) => Some(stream),
+                Err(e) => {
+                    tracing::warn!("audio output unavailable: {e} — audio_play will be a no-op");
+                    None
+                }
+            });
+        stream.as_ref().map(|(_, handle)| handle)
     }
 
     /// Reset per-frame flags.
@@ -2292,6 +2300,21 @@ mod tests {
         state.mark_renderer_assets_active();
         assert!(!state.renderer_assets_are_dormant());
         assert_eq!(state.renderer_asset_gate, RendererAssetGate::Active);
+    }
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn an_instance_that_plays_nothing_never_opens_the_audio_output() {
+        let state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+            FetchAgent::default(),
+        );
+
+        assert!(
+            state.audio_stream.get().is_none(),
+            "opening the output can block for good on a host routing ALSA to PipeWire"
+        );
     }
 
     #[test]
