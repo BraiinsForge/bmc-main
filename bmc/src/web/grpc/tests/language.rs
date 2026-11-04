@@ -215,6 +215,10 @@ async fn an_operational_device_sets_no_language_through_the_setup() {
         .await
         .expect_err("an operational device has Settings for its language");
     assert_eq!(error.code, ErrorCode::FailedPrecondition);
+    assert_eq!(
+        error.message.as_deref(),
+        Some("This is only available while the device is being set up.")
+    );
 }
 
 #[tokio::test]

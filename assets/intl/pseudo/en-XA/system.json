@@ -14,6 +14,11 @@
     "translation": "[Ƈħḗḗƈķ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ]",
     "description": "Device-info line under the no-network title, asking to check the wired connection"
   },
+  "/CqPTduXiE": {
+    "source": "This is only available at the device settings step of the setup.",
+    "translation": "[Ŧħīş īş ǿǿƞŀẏ ȧȧṽȧȧīŀȧȧƀŀḗḗ ȧȧŧ ŧħḗḗ ḓḗḗṽīƈḗḗ şḗḗŧŧīƞɠş şŧḗḗƥ ǿǿƒ ŧħḗḗ şḗḗŧŭŭƥ.]",
+    "description": "Error when the setup's device settings form is used while the device is at another step"
+  },
   "/UvA/X77Kt": {
     "source": "Building",
     "translation": "[Ɓŭŭīŀḓīƞɠ]",
@@ -79,6 +84,11 @@
     "translation": "[Ẇȧȧīŧīƞɠ ƒǿǿř Ẇī-Ƒī ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
     "description": "Device-info connect progress line while no network is joined yet"
   },
+  "5z04qGv9CU": {
+    "source": "Choose a unit system",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ŭŭƞīŧ şẏşŧḗḗḿ]",
+    "description": "Error under the metric or imperial field when nothing is chosen"
+  },
   "60DqZHm87/": {
     "source": "No network connection",
     "translation": "[Ƞǿǿ ƞḗḗŧẇǿǿřķ ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
@@ -88,6 +98,11 @@
     "source": "{primary} {secondary}",
     "translation": "[{primary} {secondary}]",
     "description": "Relative time, the two segments side by side: 7m 30s"
+  },
+  "7lNDqfhO4P": {
+    "source": "Choose an encryption type",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧƞ ḗḗƞƈřẏƥŧīǿǿƞ ŧẏƥḗḗ]",
+    "description": "Error under the Wi-Fi encryption field when nothing is chosen"
   },
   "97LQdzs6/Y": {
     "source": "{device_name} is ready!",
@@ -139,6 +154,11 @@
     "translation": "[Ƈǿǿƞƞḗḗƈŧḗḗḓ ƀŭŭŧ ƞǿǿŧħīƞɠ ħȧȧƥƥḗḗƞş?]",
     "description": "Device-info setup, first line of the headline above the QR code"
   },
+  "H/F400Zh8S": {
+    "source": "{value} is not a valid IPv4.",
+    "translation": "[{value} īş ƞǿǿŧ ȧȧ ṽȧȧŀīḓ ĪƤṽ4.]",
+    "description": "Error under a network address field; value is what was typed"
+  },
   "HsiwpZhFtX": {
     "source": "Can't restart now",
     "translation": "[Ƈȧȧƞ'ŧ řḗḗşŧȧȧřŧ ƞǿǿẇ]",
@@ -164,6 +184,11 @@
     "translation": "[{hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}} {minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}} ȧȧɠǿǿ]",
     "description": "Relative time label for a moment behind, hours and minutes spelled out; both are whole numbers"
   },
+  "KHno+BRDQE": {
+    "source": "Use only letters, digits and hyphens, separated by dots",
+    "translation": "[Ŭşḗḗ ǿǿƞŀẏ ŀḗḗŧŧḗḗřş, ḓīɠīŧş ȧȧƞḓ ħẏƥħḗḗƞş, şḗḗƥȧȧřȧȧŧḗḗḓ ƀẏ ḓǿǿŧş]",
+    "description": "Error under the device's hostname field"
+  },
   "LmOJe5rX2r": {
     "source": "Wi-Fi Connection",
     "translation": "[Ẇī-Ƒī Ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
@@ -178,6 +203,16 @@
     "source": "or connect the Ethernet cable",
     "translation": "[ǿǿř ƈǿǿƞƞḗḗƈŧ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ]",
     "description": "Device-info setup line under the Wi-Fi instructions, the wired alternative on a board with an Ethernet port"
+  },
+  "MKzfvLJWUZ": {
+    "source": "This is only available while the device's Wi-Fi is being set up.",
+    "translation": "[Ŧħīş īş ǿǿƞŀẏ ȧȧṽȧȧīŀȧȧƀŀḗḗ ẇħīŀḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ'ş Ẇī-Ƒī īş ƀḗḗīƞɠ şḗḗŧ ŭŭƥ.]",
+    "description": "Error when the setup's Wi-Fi step is used while the device is not waiting for Wi-Fi settings"
+  },
+  "OCm3mUiaLn": {
+    "source": "Choose a temperature unit",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ŧḗḗḿƥḗḗřȧȧŧŭŭřḗḗ ŭŭƞīŧ]",
+    "description": "Error under the temperature unit field when nothing is chosen"
   },
   "OWV4zp14B/": {
     "source": "Activating packages",
@@ -204,6 +239,11 @@
     "translation": "[Ƈǿǿƞƞḗḗƈŧīƞɠ ŧǿǿ Ẇī-Ƒī...]",
     "description": "Device-info screen title while the device joins a Wi-Fi network"
   },
+  "Rh2wsuyizL": {
+    "source": "Invalid URL!",
+    "translation": "[Īƞṽȧȧŀīḓ ŬŘĿ!]",
+    "description": "Error under the mining pool's address field"
+  },
   "S6DYT1b/D3": {
     "source": "Alarm",
     "translation": "[Ȧŀȧȧřḿ]",
@@ -213,6 +253,11 @@
     "source": "It used too many resources and was suspended.",
     "translation": "[Īŧ ŭŭşḗḗḓ ŧǿǿǿǿ ḿȧȧƞẏ řḗḗşǿǿŭŭřƈḗḗş ȧȧƞḓ ẇȧȧş şŭŭşƥḗḗƞḓḗḗḓ.]",
     "description": "Banner line under the stopped-widget title"
+  },
+  "TK0DK0guj4": {
+    "source": "Incorrect current password!",
+    "translation": "[Īƞƈǿǿřřḗḗƈŧ ƈŭŭřřḗḗƞŧ ƥȧȧşşẇǿǿřḓ!]",
+    "description": "Error under the current password field when changing or removing the password"
   },
   "UkW/zUhInw": {
     "source": "SETUP",
@@ -234,6 +279,11 @@
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ ƒīřḿẇȧȧřḗḗ]",
     "description": "Upgrade overlay title during the firmware download"
   },
+  "WjT+LdMYru": {
+    "source": "Some of the fields are invalid.",
+    "translation": "[Şǿǿḿḗḗ ǿǿƒ ŧħḗḗ ƒīḗḗŀḓş ȧȧřḗḗ īƞṽȧȧŀīḓ.]",
+    "description": "Error above a form the device refused, with the reasons under its fields"
+  },
   "XAK9Pep0j+": {
     "source": "Reconfigure Wi-Fi",
     "translation": "[Řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī]",
@@ -254,6 +304,11 @@
     "translation": "[Ĵǿǿīƞ ŧħīş ƞḗḗŧẇǿǿřķ ƒřǿǿḿ ẏǿǿŭŭř ƥħǿǿƞḗḗ ŧǿǿ řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī.]",
     "description": "Settings tray, hint under the setup network's name"
   },
+  "Z+u4emuLEZ": {
+    "source": "This is only available while the device is being set up.",
+    "translation": "[Ŧħīş īş ǿǿƞŀẏ ȧȧṽȧȧīŀȧȧƀŀḗḗ ẇħīŀḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ īş ƀḗḗīƞɠ şḗḗŧ ŭŭƥ.]",
+    "description": "Error when the setup's language picker is used on a device that has finished its setup"
+  },
   "ZpT42pFYon": {
     "source": "Applying firmware",
     "translation": "[Ȧƥƥŀẏīƞɠ ƒīřḿẇȧȧřḗḗ]",
@@ -273,6 +328,11 @@
     "source": "Downloading packages",
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
     "description": "Upgrade overlay title during the package download"
+  },
+  "bZW/Dljxnk": {
+    "source": "This is only available once the device has finished its setup.",
+    "translation": "[Ŧħīş īş ǿǿƞŀẏ ȧȧṽȧȧīŀȧȧƀŀḗḗ ǿǿƞƈḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ ħȧȧş ƒīƞīşħḗḗḓ īŧş şḗḗŧŭŭƥ.]",
+    "description": "Error when a network setting is used before the device's first-time setup is done"
   },
   "bnxAOQxJ+J": {
     "source": "Volume",
@@ -299,6 +359,11 @@
     "translation": "[Ŭƥḓȧȧŧḗḗ Ƒīƞīşħḗḗḓ]",
     "description": "Upgrade overlay title once the upgrade has completed"
   },
+  "dCeW6nHBL2": {
+    "source": "Choose a number format",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ƞŭŭḿƀḗḗř ƒǿǿřḿȧȧŧ]",
+    "description": "Error under the number format field when nothing is chosen"
+  },
   "dcysy6W8xK": {
     "source": "Restart",
     "translation": "[Řḗḗşŧȧȧřŧ]",
@@ -308,6 +373,11 @@
     "source": "hold {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
     "translation": "[ħǿǿŀḓ {seconds, plural, one {{seconds} şḗḗƈǿǿƞḓ} other {{seconds} şḗḗƈǿǿƞḓş}}]",
     "description": "Settings tray, under a hold-to-confirm button: how long to hold it; seconds is a whole number"
+  },
+  "e1A6/LD3Kt": {
+    "source": "Missing value!",
+    "translation": "[Ḿīşşīƞɠ ṽȧȧŀŭŭḗḗ!]",
+    "description": "Error under a required form field left empty"
   },
   "f+3IQb8cxo": {
     "source": "in {duration}",
@@ -354,6 +424,16 @@
     "translation": "[Ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
     "description": "Settings tray, label of what the device is online through: a Wi-Fi network or its cable"
   },
+  "kAWtX4VRJ3": {
+    "source": "Choose a time format",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ŧīḿḗḗ ƒǿǿřḿȧȧŧ]",
+    "description": "Error under the 12 or 24 hour clock field when nothing is chosen"
+  },
+  "kKApfGOChP": {
+    "source": "Choose a date format",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ḓȧȧŧḗḗ ƒǿǿřḿȧȧŧ]",
+    "description": "Error under the date format field when nothing is chosen"
+  },
   "kmFsbpoffG": {
     "source": "Downloading",
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ]",
@@ -368,6 +448,11 @@
     "source": "Restart failed",
     "translation": "[Řḗḗşŧȧȧřŧ ƒȧȧīŀḗḗḓ]",
     "description": "Settings tray notice title when the restart did not happen and no reason came"
+  },
+  "miWTwyBX3v": {
+    "source": "Incorrect username or password!",
+    "translation": "[Īƞƈǿǿřřḗḗƈŧ ŭŭşḗḗřƞȧȧḿḗḗ ǿǿř ƥȧȧşşẇǿǿřḓ!]",
+    "description": "Error on the login page when the password is wrong"
   },
   "n8XlxYQaXU": {
     "source": "Rebooting",
@@ -424,6 +509,11 @@
     "translation": "[Ƥřḗḗƥȧȧřīƞɠ ŭŭƥḓȧȧŧḗḗ]",
     "description": "Upgrade overlay title before the upgrade reports its first phase"
   },
+  "uXhdMHmowN": {
+    "source": "Protocol must be specified.",
+    "translation": "[Ƥřǿǿŧǿǿƈǿǿŀ ḿŭŭşŧ ƀḗḗ şƥḗḗƈīƒīḗḗḓ.]",
+    "description": "Error when neither automatic (DHCP) nor manual network settings are chosen"
+  },
   "v8yqe1Qm2t": {
     "source": "Stop Alarm",
     "translation": "[Şŧǿǿƥ Ȧŀȧȧřḿ]",
@@ -433,6 +523,11 @@
     "source": "Applying",
     "translation": "[Ȧƥƥŀẏīƞɠ]",
     "description": "Upgrade overlay, short title before a percentage on a small display: applying firmware"
+  },
+  "vvZ41n1Csg": {
+    "source": "Choose a timezone",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ŧīḿḗḗẑǿǿƞḗḗ]",
+    "description": "Error under the timezone field when nothing valid is chosen"
   },
   "wYMNAQyCIN": {
     "source": "{minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}} ago",

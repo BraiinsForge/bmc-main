@@ -24,6 +24,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use bmc_grpc::google::rpc::BadRequest;
+use bmc_grpc::google::rpc::bad_request::FieldViolation;
 use buffa::view::HasMessageView;
 use buffa::{Message as _, MessageName as _};
 use bytes::Bytes;
@@ -78,8 +79,8 @@ pub(crate) fn grpc_web() -> ClientConfig {
         .with_protocol(Protocol::GrpcWeb)
 }
 
-/// The fields named by the `google.rpc.BadRequest` details of `error`.
-pub(crate) fn violation_fields(error: &ConnectError) -> Vec<String> {
+/// The violations in the `google.rpc.BadRequest` details of `error`.
+pub(crate) fn field_violations(error: &ConnectError) -> Vec<FieldViolation> {
     error
         .details
         .iter()
@@ -92,6 +93,13 @@ pub(crate) fn violation_fields(error: &ConnectError) -> Vec<String> {
                 .expect("BUG: a BadRequest detail decodes")
                 .field_violations
         })
+        .collect()
+}
+
+/// The fields named by the `google.rpc.BadRequest` details of `error`.
+pub(crate) fn violation_fields(error: &ConnectError) -> Vec<String> {
+    field_violations(error)
+        .into_iter()
         .map(|violation| violation.field)
         .collect()
 }

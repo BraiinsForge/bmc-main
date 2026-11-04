@@ -67,9 +67,12 @@ impl session::Manager for OneSession {
     type Session = StubSession;
     const SESSION_TIMEOUT: u32 = 0;
 
-    async fn login(&self, _password: &str) -> Result<Cookie<'static>, Self::Error> {
+    async fn login(
+        &self,
+        _password: &str,
+    ) -> Result<Cookie<'static>, session::LoginError<Self::Error>> {
         if self.password_set {
-            Err(std::io::Error::other("a password is set"))
+            Err(session::LoginError::BadCredentials)
         } else {
             Ok(Cookie::parse(SESSION_COOKIE).expect("BUG: static cookie"))
         }

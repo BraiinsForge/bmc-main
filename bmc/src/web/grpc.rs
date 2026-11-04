@@ -50,6 +50,7 @@ use tokio::sync::RwLock;
 mod account_management;
 pub mod authentication;
 mod credential_management;
+mod intl;
 mod language;
 pub(super) use language::listed_tag;
 mod logging;

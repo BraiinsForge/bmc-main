@@ -19,11 +19,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use crate::session::Manager as SessionManager;
+use super::intl::intl;
+use crate::session::{LoginError, Manager as SessionManager};
 use crate::web::session::{extract_cookies, extract_session};
 use bmc_grpc::web::{self, LoginRequest, LoginResponse};
+use bmc_intl::{Intl, format_message};
 use buffa_types::google::protobuf::{BoolValue, Empty};
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
+use std::fmt::Display;
 use std::sync::Arc;
 
 pub struct AuthenticationService<S>
@@ -67,7 +70,7 @@ where
             .session_manager
             .login(request.password)
             .await
-            .map_err(|e| ConnectError::unauthenticated(e.to_string()))?;
+            .map_err(|error| login_error(&intl(&ctx), &error))?;
 
         #[cfg(debug_assertions)]
         tracing::debug!("Session {} has been started", cookie.value());
@@ -97,5 +100,54 @@ where
         cookies.remove(cookie);
 
         Response::ok(Empty::default())
+    }
+}
+
+fn login_error(intl: &Intl, error: &LoginError<impl Display>) -> ConnectError {
+    match error {
+        LoginError::BadCredentials => ConnectError::unauthenticated(format_message!(
+            intl,
+            default_message: "Incorrect username or password!",
+            description: "Error on the login page when the password is wrong",
+        )),
+        LoginError::Failed(error) => ConnectError::internal(error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bmc_intl::Language;
+    use connectrpc::ErrorCode;
+
+    #[test]
+    fn a_wrong_password_is_unauthenticated_and_worded() {
+        let intl = bmc_intl::shared_formatter(Language::EN);
+        let error = login_error(&intl, &LoginError::<&str>::BadCredentials);
+        assert_eq!(error.code, ErrorCode::Unauthenticated);
+        assert_eq!(
+            error.message.as_deref(),
+            Some("Incorrect username or password!")
+        );
+    }
+
+    #[test]
+    fn a_device_that_failed_is_internal_and_keeps_its_own_text() {
+        let intl = bmc_intl::shared_formatter(Language::EN);
+        let error = login_error(&intl, &LoginError::Failed("no reply from ubus"));
+        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(error.message.as_deref(), Some("no reply from ubus"));
+    }
+
+    #[test]
+    fn a_request_asking_for_chinese_is_refused_in_it() {
+        let intl = crate::web::grpc::intl::asking_for("zh");
+        let error = login_error(&intl, &LoginError::<&str>::BadCredentials);
+        assert_eq!(error.code, ErrorCode::Unauthenticated);
+        let message = error.message.expect("BUG: a refusal is always worded");
+        assert_ne!(
+            message, "Incorrect username or password!",
+            "worded in English"
+        );
     }
 }

@@ -25,6 +25,13 @@ pub trait Handle: Clone + Unpin + Send + Sync + 'static + std::fmt::Debug {
     fn id(&self) -> String;
 }
 
+#[derive(Debug)]
+pub enum LoginError<E> {
+    BadCredentials,
+    /// The device could not check the password.
+    Failed(E),
+}
+
 #[async_trait::async_trait]
 pub trait Manager: Default + Sync + Send + 'static {
     type Error: std::error::Error + Send + Sync;
@@ -33,7 +40,7 @@ pub trait Manager: Default + Sync + Send + 'static {
     // session timeout in seconds
     const SESSION_TIMEOUT: u32;
 
-    async fn login(&self, password: &str) -> Result<Cookie<'static>, Self::Error>;
+    async fn login(&self, password: &str) -> Result<Cookie<'static>, LoginError<Self::Error>>;
     async fn logout(&self, session: Self::Session) -> Result<Cookie<'static>, Self::Error>;
     /// Logout all related sessions of the user except current session
     async fn logout_all_related(&self, session: Self::Session) -> Result<(), Self::Error>;

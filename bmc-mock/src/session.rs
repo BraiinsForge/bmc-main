@@ -33,13 +33,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Session not found")]
-    SessionNotFound,
+    NotFound,
     #[error("Session cookie not found")]
-    SessionCookieNotFound,
+    CookieNotFound,
     #[error("Session cookie is invalid")]
-    SessionCookieInvalid,
-    #[error("Incorrect username or password")]
-    BadCredentials,
+    CookieInvalid,
 }
 
 #[derive(Clone, Debug)]
@@ -136,14 +134,14 @@ impl session::Manager for MockSessionManager {
 
     const SESSION_TIMEOUT: u32 = 3600;
 
-    async fn login(&self, password: &str) -> Result<Cookie<'static>, Error> {
+    async fn login(&self, password: &str) -> Result<Cookie<'static>, session::LoginError<Error>> {
         let password_is_correct = {
             let guard = self.password.lock().expect("BUG: cannot lock password");
             guard.as_ref().is_none_or(|p| *p == password)
         };
 
         if !password_is_correct {
-            return Err(Error::BadCredentials);
+            return Err(session::LoginError::BadCredentials);
         }
 
         let random_session: String = rand::rng()
@@ -196,7 +194,7 @@ impl session::Manager for MockSessionManager {
         let mut sessions = self.sessions_lock();
 
         let target_username = {
-            let target_session = sessions.get(&handle.token).ok_or(Error::SessionNotFound)?;
+            let target_session = sessions.get(&handle.token).ok_or(Error::NotFound)?;
             target_session.username.clone()
         };
 
@@ -220,9 +218,7 @@ impl session::Manager for MockSessionManager {
 
             let mut sessions = self.sessions_lock();
 
-            let session = sessions
-                .get_mut(&handle.token)
-                .ok_or(Error::SessionNotFound)?;
+            let session = sessions.get_mut(&handle.token).ok_or(Error::NotFound)?;
 
             session.expiration_time = Self::get_expiration_time(Self::SESSION_TIMEOUT);
 
@@ -235,7 +231,7 @@ impl session::Manager for MockSessionManager {
             Ok(cookie)
         } else {
             debug!("Invalid session {:?} can not be extended", handle);
-            Err(Error::SessionCookieInvalid)
+            Err(Error::CookieInvalid)
         }
     }
 
@@ -243,7 +239,7 @@ impl session::Manager for MockSessionManager {
         let cookie = cookies
             .iter()
             .find(|cookie| cookie.name() == Self::COOKIE_SESSION)
-            .ok_or(Error::SessionCookieNotFound)?;
+            .ok_or(Error::CookieNotFound)?;
 
         debug!(
             "Found session cookie name:{} value:{}",
@@ -260,6 +256,6 @@ impl session::Manager for MockSessionManager {
                 )
             })
             .filter(Handle::is_valid)
-            .ok_or(Error::SessionNotFound)
+            .ok_or(Error::NotFound)
     }
 }

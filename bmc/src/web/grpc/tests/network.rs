@@ -23,6 +23,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use bmc_grpc::web::{EncryptionType, NetworkService as _, SetWifiRequest, SignalStrength};
+use bmc_intl::Language;
 use bmc_net::mock::MockNetworkManager;
 use bmc_net_types::wifi::{
     EncryptionType as WifiEncryption, WifiConfiguration, WifiLinkState, WifiMode, WifiStatus,
@@ -212,7 +213,7 @@ fn a_saved_network_reports_the_encryption_type_a_join_sends_back() {
             .expect("BUG: a saved network is reported with its network")
             .encryption_type;
         assert_eq!(
-            try_into_encryption_type(reported).ok(),
+            try_into_encryption_type(&bmc_intl::shared_formatter(Language::EN), reported).ok(),
             Some(saved),
             "{saved} must come back as itself"
         );

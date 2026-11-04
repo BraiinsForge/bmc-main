@@ -27,6 +27,7 @@ use bmc_grpc::web::{
     WifiSavedNetworksResponse, WifiStatus as GrpcWifiStatus, WifiStatusResponse,
     network_config::Protocol,
 };
+use bmc_intl::{Intl, format_message};
 use bmc_net::{NetworkManager, WifiControl};
 use bmc_net_types::wifi::{EncryptionType, SignalStrength};
 use buffa::EnumValue;
@@ -36,8 +37,8 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tracing::warn;
 
-use super::GrpcError;
-use super::shared::{invalid_field, violation, with_violations};
+use super::intl::intl;
+use super::shared::{missing_value, require_state, violation, with_violations};
 use crate::initial_setup::{WifiJoins, WifiSetupError};
 use crate::manager::{NetworkProtocolConfig, NetworkProtocolConfigStatic};
 use crate::{
@@ -65,22 +66,25 @@ where
         }
     }
 
-    async fn check_precondition(&self, state: BmcState) -> Result<(), ConnectError> {
-        let current_state = self
-            .manager
-            .network_manager()
-            .provisioning()
-            .device_state()
-            .await;
-        // A device with no setup flow at all is as settled as a provisioned one
-        // for the network calls, so `Unsupported` satisfies `Operational`.
-        let settled = state == BmcState::Operational && current_state == BmcState::Unsupported;
-        if current_state != state && !settled {
-            return Err(ConnectError::failed_precondition(format!(
-                "Function is only available when the device is in '{state}' state. Current state is '{current_state}'.",
-            )));
-        }
-        Ok(())
+    async fn require_setup_finished(&self, intl: &Intl) -> Result<BmcState, ConnectError> {
+        require_state(
+            &*self.manager,
+            // A device with no setup flow at all is as settled as a provisioned one.
+            |state| match state {
+                BmcState::Operational | BmcState::Unsupported => true,
+                BmcState::FactoryDefault
+                | BmcState::SetupPending
+                | BmcState::WifiReconfiguration => false,
+            },
+            || {
+                format_message!(
+                    intl,
+                    default_message: "This is only available once the device has finished its setup.",
+                    description: "Error when a network setting is used before the device's first-time setup is done",
+                )
+            },
+        )
+        .await
     }
 }
 
@@ -136,12 +140,12 @@ where
 
     async fn set_network_config(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, NetworkConfig>,
     ) -> ServiceResult<Empty> {
         let request = request.to_owned_message();
 
-        let config = try_from_network_config(&request)?;
+        let config = try_from_network_config(&intl(&ctx), &request)?;
 
         self.manager
             .network_manager()
@@ -157,10 +161,10 @@ where
 
     async fn get_wifi_status(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<WifiStatusResponse> {
-        self.check_precondition(BmcState::Operational).await?;
+        self.require_setup_finished(&intl(&ctx)).await?;
 
         let net_man = self.manager.network_manager();
         let wifi_data = require_wifi(net_man)?.status().await.map_err(|e| {
@@ -177,10 +181,10 @@ where
 
     async fn get_wifi_saved_networks(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<WifiSavedNetworksResponse> {
-        self.check_precondition(BmcState::Operational).await?;
+        self.require_setup_finished(&intl(&ctx)).await?;
 
         let net_man = self.manager.network_manager();
         let wifi_data = require_wifi(net_man)?
@@ -199,12 +203,13 @@ where
 
     async fn set_wifi(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetWifiRequest>,
     ) -> ServiceResult<Empty> {
-        self.check_precondition(BmcState::Operational).await?;
+        let intl = intl(&ctx);
+        self.require_setup_finished(&intl).await?;
 
-        let config = try_into_wifi_network_config(request.to_owned_message())?;
+        let config = try_into_wifi_network_config(&intl, request.to_owned_message())?;
         require_wifi(self.manager.network_manager())?;
 
         let join = self.wifi_joins.join(config).map_err(|e| match e {
@@ -220,10 +225,10 @@ where
 
     async fn scan_wifi(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<ScanWifiResponse> {
-        self.check_precondition(BmcState::Operational).await?;
+        self.require_setup_finished(&intl(&ctx)).await?;
 
         Response::ok(scan_wifi_response(self.manager.clone()).await?)
     }
@@ -258,17 +263,20 @@ pub(crate) fn into_network_config(config: &NetworkProtocolConfig) -> NetworkConf
 }
 
 pub(crate) fn try_from_network_config(
+    intl: &Intl,
     config: &NetworkConfig,
 ) -> Result<NetworkProtocolConfig, ConnectError> {
-    parse_network_config(config, "protocol", "").map_err(bad_request)
+    parse_network_config(intl, config, "protocol", "").map_err(|v| bad_request(intl, v))
 }
 
 /// One `InvalidArgument` carrying every field violation collected so far.
-pub(crate) fn bad_request(field_violations: Vec<FieldViolation>) -> ConnectError {
-    with_violations(
-        ConnectError::invalid_argument(GrpcError::BadRequest.to_string()),
-        field_violations,
-    )
+pub(crate) fn bad_request(intl: &Intl, field_violations: Vec<FieldViolation>) -> ConnectError {
+    let message = format_message!(
+        intl,
+        default_message: "Some of the fields are invalid.",
+        description: "Error above a form the device refused, with the reasons under its fields",
+    );
+    with_violations(ConnectError::invalid_argument(message), field_violations)
 }
 
 /// Parses a network config, naming a missing protocol `protocol_field` and
@@ -276,25 +284,36 @@ pub(crate) fn bad_request(field_violations: Vec<FieldViolation>) -> ConnectError
 /// the config in a larger request reports paths the client can map back onto
 /// its form.
 pub(crate) fn parse_network_config(
+    intl: &Intl,
     config: &NetworkConfig,
     protocol_field: &str,
     static_prefix: &str,
 ) -> Result<NetworkProtocolConfig, Vec<FieldViolation>> {
-    fn parse_ipv4(field: &str, value: &str) -> Result<Ipv4Addr, FieldViolation> {
+    fn parse_ipv4(intl: &Intl, field: &str, value: &str) -> Result<Ipv4Addr, FieldViolation> {
         if value.is_empty() {
-            return Err(violation(field, "Missing value!"));
+            return Err(violation(field, missing_value(intl)));
         }
 
-        value
-            .parse::<Ipv4Addr>()
-            .map_err(|_| violation(field, format!("'{value}' is not a valid IPv4!")))
+        value.parse::<Ipv4Addr>().map_err(|_| {
+            violation(
+                field,
+                format_message!(
+                    intl,
+                    default_message: "{value} is not a valid IPv4.",
+                    description: "Error under a network address field; value is what was typed",
+                    values: { value: value },
+                ),
+            )
+        })
     }
 
     let Some(protocol) = config.protocol.as_ref() else {
-        return Err(vec![violation(
-            protocol_field,
-            "Protocol must be specified!",
-        )]);
+        let description = format_message!(
+            intl,
+            default_message: "Protocol must be specified.",
+            description: "Error when neither automatic (DHCP) nor manual network settings are chosen",
+        );
+        return Err(vec![violation(protocol_field, description)]);
     };
 
     match protocol {
@@ -304,7 +323,7 @@ pub(crate) fn parse_network_config(
 
             macro_rules! parse_field {
                 ($field:expr, $value:expr) => {
-                    match parse_ipv4(&format!("{static_prefix}{}", $field), $value) {
+                    match parse_ipv4(intl, &format!("{static_prefix}{}", $field), $value) {
                         Ok(val) => Some(val),
                         Err(err) => {
                             field_violations.push(err);
@@ -367,9 +386,10 @@ pub(crate) async fn scan_wifi_response(
 }
 
 pub(crate) fn try_into_wifi_network_config(
+    intl: &Intl,
     request: SetWifiRequest,
 ) -> Result<WifiNetworkConfig, ConnectError> {
-    let encryption = try_into_encryption_type(request.encryption_type)?;
+    let encryption = try_into_encryption_type(intl, request.encryption_type)?;
 
     Ok(WifiNetworkConfig {
         ssid: request.ssid,
@@ -379,13 +399,16 @@ pub(crate) fn try_into_wifi_network_config(
 }
 
 pub(crate) fn try_into_encryption_type(
+    intl: &Intl,
     value: EnumValue<GrpcEncryptionType>,
 ) -> Result<EncryptionType, ConnectError> {
     let unspecified = || {
-        invalid_field(
-            "encryption_type",
-            "Encryption type must be specified and cannot be UNSPECIFIED.",
-        )
+        let description = format_message!(
+            intl,
+            default_message: "Choose an encryption type",
+            description: "Error under the Wi-Fi encryption field when nothing is chosen",
+        );
+        bad_request(intl, vec![violation("encryption_type", description)])
     };
     let EnumValue::Known(value) = value else {
         return Err(unspecified());

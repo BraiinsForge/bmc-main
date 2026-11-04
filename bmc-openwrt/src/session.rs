@@ -70,12 +70,12 @@ pub enum Error {
     SerdeJson(#[from] serde_json::Error),
     #[error("Ubus error: {0}")]
     UbusError(String),
+    #[error("Ubus error: permission denied")]
+    UbusPermissionDenied,
     #[error("Session not found")]
     SessionNotFound,
     #[error("Session cookie not found")]
     SessionCookieNotFound,
-    #[error("Incorrect username or password")]
-    BadCredentials,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -99,6 +99,8 @@ impl OpenwrtSessionManager {
     const UBUS_COMMAND_ARG_SET: &str = "set";
     const UBUS_COMMAND_ARG_LIST: &str = "list";
     const UBUS_COMMAND_ARG_DESTROY: &str = "destroy";
+    // `ubus` exits with its status negated: `UBUS_STATUS_PERMISSION_DENIED` is 6.
+    const UBUS_EXIT_PERMISSION_DENIED: i32 = 250;
 
     async fn call_ubus_session(command_name: &str, arg: Option<&str>) -> Result<String, Error> {
         let mut cmd = Command::new(Self::UBUS_COMMAND);
@@ -112,6 +114,9 @@ impl OpenwrtSessionManager {
 
         let output = cmd.output().await?;
 
+        if output.status.code() == Some(Self::UBUS_EXIT_PERMISSION_DENIED) {
+            return Err(Error::UbusPermissionDenied);
+        }
         if !output.status.success() {
             return Err(Error::UbusError(String::from_utf8(output.stderr)?));
         }
@@ -148,7 +153,7 @@ impl OpenwrtSessionManager {
         username: &str,
         password: &str,
         timeout: u32,
-    ) -> Result<UbusSession, Error> {
+    ) -> Result<UbusSession, session::LoginError<Error>> {
         Self::call_ubus_session_deserialize(
             Self::UBUS_COMMAND_ARG_LOGIN,
             Some(
@@ -161,7 +166,15 @@ impl OpenwrtSessionManager {
             ),
         )
         .await
-        .map_err(|_| Error::BadCredentials)
+        .map_err(|error| match error {
+            Error::UbusPermissionDenied => session::LoginError::BadCredentials,
+            failed @ (Error::Io(_)
+            | Error::FromUtf8Error(_)
+            | Error::SerdeJson(_)
+            | Error::UbusError(_)
+            | Error::SessionNotFound
+            | Error::SessionCookieNotFound) => session::LoginError::Failed(failed),
+        })
     }
 
     // Function for set ubus session user,dummy token and section
@@ -225,13 +238,14 @@ impl session::Manager for OpenwrtSessionManager {
 
     const SESSION_TIMEOUT: u32 = 3600;
 
-    async fn login(&self, password: &str) -> Result<Cookie<'static>, Error> {
+    async fn login(&self, password: &str) -> Result<Cookie<'static>, session::LoginError<Error>> {
         let ubus_session = Self::ubus_login(ROOT_USERNAME, password, Self::SESSION_TIMEOUT).await?;
 
         debug!("New ubus session created for user {ROOT_USERNAME}");
 
         Self::ubus_set_luci_compatible_values(&ubus_session.ubus_rpc_session, ROOT_USERNAME)
-            .await?;
+            .await
+            .map_err(session::LoginError::Failed)?;
 
         let mut cookie = Cookie::new(Self::COOKIE_SESSION, ubus_session.ubus_rpc_session);
         cookie.set_path(Self::COOKIE_SESSION_PATH);

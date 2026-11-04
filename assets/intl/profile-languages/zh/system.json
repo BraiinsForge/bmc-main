@@ -14,6 +14,11 @@
     "translation": "请检查网线",
     "description": "Device-info line under the no-network title, asking to check the wired connection"
   },
+  "/CqPTduXiE": {
+    "source": "This is only available at the device settings step of the setup.",
+    "translation": "此功能仅在设置流程的设备设置步骤中可用。",
+    "description": "Error when the setup's device settings form is used while the device is at another step"
+  },
   "/UvA/X77Kt": {
     "source": "Building",
     "translation": "正在构建",
@@ -79,6 +84,11 @@
     "translation": "正在等待 Wi-Fi 连接",
     "description": "Device-info connect progress line while no network is joined yet"
   },
+  "5z04qGv9CU": {
+    "source": "Choose a unit system",
+    "translation": "请选择单位制",
+    "description": "Error under the metric or imperial field when nothing is chosen"
+  },
   "60DqZHm87/": {
     "source": "No network connection",
     "translation": "无网络连接",
@@ -88,6 +98,11 @@
     "source": "{primary} {secondary}",
     "translation": "{primary}{secondary}",
     "description": "Relative time, the two segments side by side: 7m 30s"
+  },
+  "7lNDqfhO4P": {
+    "source": "Choose an encryption type",
+    "translation": "请选择加密类型",
+    "description": "Error under the Wi-Fi encryption field when nothing is chosen"
   },
   "97LQdzs6/Y": {
     "source": "{device_name} is ready!",
@@ -139,6 +154,11 @@
     "translation": "已连接但没有反应？",
     "description": "Device-info setup, first line of the headline above the QR code"
   },
+  "H/F400Zh8S": {
+    "source": "{value} is not a valid IPv4.",
+    "translation": "{value} 不是有效的 IPv4 地址。",
+    "description": "Error under a network address field; value is what was typed"
+  },
   "HsiwpZhFtX": {
     "source": "Can't restart now",
     "translation": "暂时无法重启",
@@ -164,6 +184,11 @@
     "translation": "{hours, plural, other {{hours}小时}}{minutes, plural, other {{minutes}分钟}}前",
     "description": "Relative time label for a moment behind, hours and minutes spelled out; both are whole numbers"
   },
+  "KHno+BRDQE": {
+    "source": "Use only letters, digits and hyphens, separated by dots",
+    "translation": "只能使用字母、数字和连字符，并以点分隔",
+    "description": "Error under the device's hostname field"
+  },
   "LmOJe5rX2r": {
     "source": "Wi-Fi Connection",
     "translation": "Wi-Fi 连接",
@@ -178,6 +203,16 @@
     "source": "or connect the Ethernet cable",
     "translation": "或连接网线",
     "description": "Device-info setup line under the Wi-Fi instructions, the wired alternative on a board with an Ethernet port"
+  },
+  "MKzfvLJWUZ": {
+    "source": "This is only available while the device's Wi-Fi is being set up.",
+    "translation": "此功能仅在设置设备 Wi-Fi 时可用。",
+    "description": "Error when the setup's Wi-Fi step is used while the device is not waiting for Wi-Fi settings"
+  },
+  "OCm3mUiaLn": {
+    "source": "Choose a temperature unit",
+    "translation": "请选择温度单位",
+    "description": "Error under the temperature unit field when nothing is chosen"
   },
   "OWV4zp14B/": {
     "source": "Activating packages",
@@ -204,6 +239,11 @@
     "translation": "正在连接 Wi-Fi…",
     "description": "Device-info screen title while the device joins a Wi-Fi network"
   },
+  "Rh2wsuyizL": {
+    "source": "Invalid URL!",
+    "translation": "网址无效！",
+    "description": "Error under the mining pool's address field"
+  },
   "S6DYT1b/D3": {
     "source": "Alarm",
     "translation": "闹钟",
@@ -213,6 +253,11 @@
     "source": "It used too many resources and was suspended.",
     "translation": "它占用了过多资源，已被暂停。",
     "description": "Banner line under the stopped-widget title"
+  },
+  "TK0DK0guj4": {
+    "source": "Incorrect current password!",
+    "translation": "当前密码不正确！",
+    "description": "Error under the current password field when changing or removing the password"
   },
   "UkW/zUhInw": {
     "source": "SETUP",
@@ -234,6 +279,11 @@
     "translation": "正在下载固件",
     "description": "Upgrade overlay title during the firmware download"
   },
+  "WjT+LdMYru": {
+    "source": "Some of the fields are invalid.",
+    "translation": "部分字段无效。",
+    "description": "Error above a form the device refused, with the reasons under its fields"
+  },
   "XAK9Pep0j+": {
     "source": "Reconfigure Wi-Fi",
     "translation": "重新配置 Wi-Fi",
@@ -254,6 +304,11 @@
     "translation": "用手机加入此网络以重新配置 Wi-Fi。",
     "description": "Settings tray, hint under the setup network's name"
   },
+  "Z+u4emuLEZ": {
+    "source": "This is only available while the device is being set up.",
+    "translation": "此功能仅在设备设置期间可用。",
+    "description": "Error when the setup's language picker is used on a device that has finished its setup"
+  },
   "ZpT42pFYon": {
     "source": "Applying firmware",
     "translation": "正在写入固件",
@@ -273,6 +328,11 @@
     "source": "Downloading packages",
     "translation": "正在下载软件包",
     "description": "Upgrade overlay title during the package download"
+  },
+  "bZW/Dljxnk": {
+    "source": "This is only available once the device has finished its setup.",
+    "translation": "设备完成初始设置后才能使用此功能。",
+    "description": "Error when a network setting is used before the device's first-time setup is done"
   },
   "bnxAOQxJ+J": {
     "source": "Volume",
@@ -299,6 +359,11 @@
     "translation": "更新完成",
     "description": "Upgrade overlay title once the upgrade has completed"
   },
+  "dCeW6nHBL2": {
+    "source": "Choose a number format",
+    "translation": "请选择数字格式",
+    "description": "Error under the number format field when nothing is chosen"
+  },
   "dcysy6W8xK": {
     "source": "Restart",
     "translation": "重启",
@@ -308,6 +373,11 @@
     "source": "hold {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
     "translation": "长按 {seconds, plural, other {{seconds} 秒}}",
     "description": "Settings tray, under a hold-to-confirm button: how long to hold it; seconds is a whole number"
+  },
+  "e1A6/LD3Kt": {
+    "source": "Missing value!",
+    "translation": "此项为必填项！",
+    "description": "Error under a required form field left empty"
   },
   "f+3IQb8cxo": {
     "source": "in {duration}",
@@ -354,6 +424,16 @@
     "translation": "连接方式",
     "description": "Settings tray, label of what the device is online through: a Wi-Fi network or its cable"
   },
+  "kAWtX4VRJ3": {
+    "source": "Choose a time format",
+    "translation": "请选择时间格式",
+    "description": "Error under the 12 or 24 hour clock field when nothing is chosen"
+  },
+  "kKApfGOChP": {
+    "source": "Choose a date format",
+    "translation": "请选择日期格式",
+    "description": "Error under the date format field when nothing is chosen"
+  },
   "kmFsbpoffG": {
     "source": "Downloading",
     "translation": "正在下载",
@@ -368,6 +448,11 @@
     "source": "Restart failed",
     "translation": "重启失败",
     "description": "Settings tray notice title when the restart did not happen and no reason came"
+  },
+  "miWTwyBX3v": {
+    "source": "Incorrect username or password!",
+    "translation": "用户名或密码不正确！",
+    "description": "Error on the login page when the password is wrong"
   },
   "n8XlxYQaXU": {
     "source": "Rebooting",
@@ -424,6 +509,11 @@
     "translation": "正在准备更新",
     "description": "Upgrade overlay title before the upgrade reports its first phase"
   },
+  "uXhdMHmowN": {
+    "source": "Protocol must be specified.",
+    "translation": "必须指定协议。",
+    "description": "Error when neither automatic (DHCP) nor manual network settings are chosen"
+  },
   "v8yqe1Qm2t": {
     "source": "Stop Alarm",
     "translation": "停止闹钟",
@@ -433,6 +523,11 @@
     "source": "Applying",
     "translation": "正在写入",
     "description": "Upgrade overlay, short title before a percentage on a small display: applying firmware"
+  },
+  "vvZ41n1Csg": {
+    "source": "Choose a timezone",
+    "translation": "请选择时区",
+    "description": "Error under the timezone field when nothing valid is chosen"
   },
   "wYMNAQyCIN": {
     "source": "{minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}} ago",

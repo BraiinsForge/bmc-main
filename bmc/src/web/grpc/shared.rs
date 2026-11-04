@@ -22,14 +22,36 @@
 use bmc_grpc::google::rpc::BadRequest;
 use bmc_grpc::google::rpc::bad_request::FieldViolation;
 use bmc_grpc::web::NumberFormat;
+use bmc_intl::{Intl, format_message};
 use buffa::{EnumValue, MessageName as _};
 use chrono::NaiveTime;
 use connectrpc::{ConnectError, ErrorDetail};
 use tracing::warn;
 
 use super::GrpcError;
+use crate::BmcManager;
+use crate::manager::BmcState;
 
 pub type ParseOutput<T> = (Option<T>, FieldViolations);
+
+/// The device's setup state, when `allows` lets the call run in it.
+/// Otherwise the call is refused with `refusal`, and the state it met is logged.
+pub(crate) async fn require_state(
+    manager: &impl BmcManager,
+    allows: fn(BmcState) -> bool,
+    refusal: impl FnOnce() -> String,
+) -> Result<BmcState, ConnectError> {
+    let state = manager
+        .network_manager()
+        .provisioning()
+        .device_state()
+        .await;
+    if allows(state) {
+        return Ok(state);
+    }
+    warn!("Call refused in device state {state}");
+    Err(ConnectError::failed_precondition(refusal()))
+}
 
 pub fn unchecked_field_violations_status() -> ConnectError {
     ConnectError::internal("Unchecked field violations")
@@ -45,6 +67,14 @@ pub(crate) fn violation(
         description: description.into(),
         ..Default::default()
     }
+}
+
+pub(crate) fn missing_value(intl: &Intl) -> String {
+    format_message!(
+        intl,
+        default_message: "Missing value!",
+        description: "Error under a required form field left empty",
+    )
 }
 
 /// `error` carrying `violations` as a `google.rpc.BadRequest` detail.
@@ -108,12 +138,17 @@ pub fn parse_hhmm_to_naive_time(input: &str) -> Result<NaiveTime, ConnectError> 
 }
 
 pub(crate) fn try_from_number_format(
+    intl: &Intl,
     value: EnumValue<NumberFormat>,
 ) -> Result<bmc_shared_utils::number_format::NumberFormat, FieldViolation> {
     match value.as_known().unwrap_or(NumberFormat::Unspecified) {
         NumberFormat::Unspecified => Err(violation(
             "number_format",
-            "number_format cannot be unspecified",
+            format_message!(
+                intl,
+                default_message: "Choose a number format",
+                description: "Error under the number format field when nothing is chosen",
+            ),
         )),
         NumberFormat::SpaceGroupCommaDecimal => {
             Ok(bmc_shared_utils::number_format::NumberFormat::SpaceGroupCommaDecimal)

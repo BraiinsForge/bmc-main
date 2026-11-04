@@ -51,6 +51,7 @@ use tracing::{error, warn};
 
 use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
 use super::initial_setup::{try_from_date_time, try_from_time_format};
+use super::intl::intl;
 use super::language::{listed_tag, save_language};
 use super::network::bad_request;
 use super::shared::{
@@ -357,11 +358,12 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_time_format(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetTimeFormatRequest>,
     ) -> ServiceResult<Empty> {
-        let time_system = try_from_time_format(request.time_format)
-            .map_err(|violation| bad_request(vec![violation]))?;
+        let intl = intl(&ctx);
+        let time_system = try_from_time_format(&intl, request.time_format)
+            .map_err(|violation| bad_request(&intl, vec![violation]))?;
 
         let mut config = self.config_handle.write().await;
 
@@ -377,11 +379,12 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_number_format(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetNumberFormatRequest>,
     ) -> ServiceResult<Empty> {
-        let number_format = try_from_number_format(request.number_format)
-            .map_err(|violation| bad_request(vec![violation]))?;
+        let intl = intl(&ctx);
+        let number_format = try_from_number_format(&intl, request.number_format)
+            .map_err(|violation| bad_request(&intl, vec![violation]))?;
 
         let mut config = self.config_handle.write().await;
         config.set_number_format(number_format);
@@ -396,11 +399,12 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_date_format(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetDateFormatRequest>,
     ) -> ServiceResult<Empty> {
-        let date_format = try_from_date_time(request.date_format)
-            .map_err(|violation| bad_request(vec![violation]))?;
+        let intl = intl(&ctx);
+        let date_format = try_from_date_time(&intl, request.date_format)
+            .map_err(|violation| bad_request(&intl, vec![violation]))?;
 
         let mut config = self.config_handle.write().await;
         config.set_date_format(date_format);

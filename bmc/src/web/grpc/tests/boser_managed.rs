@@ -86,7 +86,10 @@ impl session::Manager for StubSessionManager {
 
     const SESSION_TIMEOUT: u32 = 0;
 
-    async fn login(&self, _password: &str) -> Result<Cookie<'static>, Self::Error> {
+    async fn login(
+        &self,
+        _password: &str,
+    ) -> Result<Cookie<'static>, session::LoginError<Self::Error>> {
         unimplemented!("{UNREACHABLE}")
     }
 

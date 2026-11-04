@@ -25,13 +25,16 @@ use bmc_grpc::web::{
     ChangePasswordRequest, CreatePasswordRequest, GetTimezoneListResponse, GetTimezoneResponse,
     RemovePasswordRequest, SetTimezoneRequest, SystemService as GrpcSystemService,
 };
+use bmc_intl::{Intl, format_message};
 use bmc_shared_time::time::Timezone;
 use buffa_types::google::protobuf::{BoolValue, Empty};
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use std::sync::Arc;
 use tracing::{error, warn};
 
-use super::shared::invalid_field;
+use super::intl::intl;
+use super::network::bad_request;
+use super::shared::{invalid_field, violation};
 use crate::{BmcManager, session::Manager as SessionManager, web::session::extract_session};
 
 #[derive(Clone)]
@@ -55,6 +58,15 @@ where
             session_manager,
         }
     }
+}
+
+fn wrong_current_password(intl: &Intl, field: &str) -> ConnectError {
+    let description = format_message!(
+        intl,
+        default_message: "Incorrect current password!",
+        description: "Error under the current password field when changing or removing the password",
+    );
+    bad_request(intl, vec![violation(field, description)])
 }
 
 impl<T, S> GrpcSystemService for SystemService<T, S>
@@ -128,10 +140,7 @@ where
             })?;
 
         if !is_current_password_correct {
-            return Err(invalid_field(
-                "current_password",
-                "Incorrect current password",
-            ));
+            return Err(wrong_current_password(&intl(&ctx), "current_password"));
         }
 
         self.manager
@@ -151,7 +160,7 @@ where
 
     async fn remove_password(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, RemovePasswordRequest>,
     ) -> ServiceResult<Empty> {
         let is_current_password_correct = self
@@ -164,7 +173,7 @@ where
             })?;
 
         if !is_current_password_correct {
-            return Err(invalid_field("password", "Incorrect current password"));
+            return Err(wrong_current_password(&intl(&ctx), "password"));
         }
 
         self.manager.set_password(None).await.map_err(|err| {
@@ -243,5 +252,44 @@ pub(crate) fn into_grpc_timezone(timezone: &Timezone) -> bmc_grpc::web::Timezone
         id: timezone.iana().to_owned(),
         label: timezone.iana().to_owned(),
         offset: timezone.offset().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::web::grpc::intl::asking_for;
+    use crate::web::grpc::tests::field_violations;
+    use bmc_intl::Language;
+
+    fn described(intl: &Intl) -> Vec<(String, String)> {
+        field_violations(&wrong_current_password(intl, "current_password"))
+            .into_iter()
+            .map(|violation| (violation.field, violation.description))
+            .collect()
+    }
+
+    #[test]
+    fn a_wrong_current_password_marks_its_field_in_english() {
+        let english = bmc_intl::shared_formatter(Language::EN);
+        assert_eq!(
+            described(&english),
+            [(
+                "current_password".to_owned(),
+                "Incorrect current password!".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_request_asking_for_chinese_has_the_wrong_current_password_marked_in_it() {
+        let [(field, description)] = described(&asking_for("zh"))
+            .try_into()
+            .expect("BUG: one field is marked");
+        assert_eq!(field, "current_password");
+        assert_ne!(
+            description, "Incorrect current password!",
+            "worded in English"
+        );
     }
 }
