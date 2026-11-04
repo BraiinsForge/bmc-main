@@ -18,22 +18,38 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { format } from 'd3-format';
+import { formatLocale } from 'd3-format';
+import { NumberFormat } from '@/proto/gen/web/shared_pb';
 
-// SI-prefixed, up to 4 significant figures, trailing zeros trimmed.
-// Decimal scale (1 kB = 1000 B).
-const fmt = format('.4~s');
+// The decimal mark the device writes its figures with (`NumberFormat` in `bmc-shared/utils`).
+// Only the decimal: the `.4~s` format has no `,` flag, so its figures are never grouped.
+const DECIMAL_MARKS: Record<NumberFormat, string> = {
+    [NumberFormat.UNSPECIFIED]: ',',
+    [NumberFormat.SPACE_GROUP_COMMA_DECIMAL]: ',',
+    [NumberFormat.COMMA_GROUP_DOT_DECIMAL]: '.',
+    [NumberFormat.DOT_GROUP_COMMA_DECIMAL]: ',',
+    [NumberFormat.SPACE_GROUP_DOT_DECIMAL]: '.',
+};
 
 /**
- * Format a byte count as a human-readable string with an SI unit.
+ * Format a byte count as a human-readable string with an SI unit, by the given preference.
  *
- * `1_500n` → `"1.5 kB"`, `348_000_000` → `"348 MB"`, `500` → `"500 B"`.
+ * With a dot decimal: `1_500n` → `"1.5 kB"`, `348_000_000` → `"348 MB"`, `500` → `"500 B"`.
  * Accepts `bigint` (the wire type for `uint64` byte fields) or `number`;
  * non-finite input returns `placeholder`.
  */
-export function formatBytes(bytes: bigint | number, placeholder = '—'): string {
+export function formatBytes(bytes: bigint | number, numberFormat: NumberFormat, placeholder = '—'): string {
     const n = Number(bytes);
     if (!Number.isFinite(n)) return placeholder;
+
+    // SI-prefixed, up to 4 significant figures, trailing zeros trimmed.
+    // Decimal scale (1 kB = 1000 B).
+    const fmt = formatLocale({
+        decimal: DECIMAL_MARKS[numberFormat],
+        thousands: '',
+        grouping: [3],
+        currency: ['', ''],
+    }).format('.4~s');
 
     // d3 SI output is a (possibly signed) number ending in at most one prefix
     // letter (k/M/G/…). Split off that letter and keep everything else verbatim,

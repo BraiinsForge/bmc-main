@@ -27,6 +27,7 @@ import cn from 'clsx';
 import css from './FileUploader.scss';
 
 import { formatBytes } from '@/lib/format';
+import { useStore } from '@/store';
 import { InlineNotification } from '../InlineNotification';
 
 export interface FileUploaderProps {
@@ -42,6 +43,7 @@ export interface FileUploaderProps {
 export function FileUploader(props: FileUploaderProps) {
     const { id, accept, onChange } = props;
     const { formatMessage } = useIntl();
+    const numberFormat = useStore(x => x.formats.number);
     const inputRef = useRef<HTMLInputElement>(null);
     const [dragOver, setDragOver] = useState(false);
     const [chosen, setChosen] = useState<null | { file: File; invalid: boolean }>(null);
@@ -128,7 +130,7 @@ export function FileUploader(props: FileUploaderProps) {
                 <div className={cn(css.file, chosen.invalid && css.invalid)}>
                     <div className={css.name} title={chosen.file.name}>
                         <span children={chosen.file.name} />
-                        <span className={css.size} children={formatBytes(chosen.file.size)} />
+                        <span className={css.size} children={formatBytes(chosen.file.size, numberFormat)} />
                     </div>
                     <span className={css.actions}>
                         <button

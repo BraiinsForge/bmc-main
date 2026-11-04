@@ -41,6 +41,21 @@ interface SessionInfo {
     isAuthenticated: null | boolean;
     hasPassword: null | boolean;
 }
+// The device's preferences for writing dates, times and figures.
+export interface Formats {
+    date: pb.DateFormat;
+    time: pb.TimeFormat;
+    number: pb.NumberFormat;
+}
+
+// The device's own defaults (`DateFormat`, `TimeSystem` and `NumberFormat` in `bmc-shared`),
+// until a session reads its preferences.
+const DEVICE_FORMATS: Formats = {
+    date: pb.DateFormat.DD_MM_YYYY_DOT,
+    time: pb.TimeFormat.TIME_FORMAT_24_HOUR,
+    number: pb.NumberFormat.SPACE_GROUP_COMMA_DECIMAL,
+};
+
 interface State {
     sessionInfo: SessionInfo;
     hardwareCapabilities: Capabilities;
@@ -57,6 +72,7 @@ interface State {
     isSavingLanguage: boolean;
     // English until the page's language is spoken, before the first render.
     locale: Locale;
+    formats: Formats;
 }
 
 // Capabilities exist only after `boot()`; the public `state` hides that gap.
@@ -75,6 +91,7 @@ class Store {
         unspokenLanguage: null,
         isSavingLanguage: false,
         locale: { tag: SOURCE_LOCALE },
+        formats: DEVICE_FORMATS,
     });
     #setState<Key extends keyof StoreState>(
         key: Key,
@@ -109,6 +126,62 @@ class Store {
     /** Unlike `state`, readable before `boot()`. */
     get isSavingLanguage(): boolean {
         return this.#state.isSavingLanguage;
+    }
+    /** Unlike `state`, readable before `boot()`. */
+    get formats(): Formats {
+        return this.#state.formats;
+    }
+
+    #generalSettingsAbort = pb.abort.get();
+    #generalSettingsGeneration = 0;
+    #latestGeneralSettingsRead: null | Promise<pb.GeneralSettingsDataResponse> = null;
+    /**
+     * Read the device's general settings and take its formatting preferences
+     * from them, an unspecified one taking the device's default.
+     *
+     * A later call wins, and a read it overtakes resolves with its answer,
+     * so every caller gets the newest settings.
+     * Throws when the newest read fails.
+     * The store owns the read, so leaving the page that asked does not drop it.
+     */
+    readGeneralSettings = (): Promise<pb.GeneralSettingsDataResponse> => {
+        const { signal } = this.#generalSettingsAbort.replace();
+        const generation = ++this.#generalSettingsGeneration;
+        const read = (async (): Promise<pb.GeneralSettingsDataResponse> => {
+            try {
+                const d = await pb.rpc.config.getGeneralSettingsData({}, { signal });
+                if (!signal.aborted) {
+                    this.#setFormats(d);
+                    return d;
+                }
+            } catch ($) {
+                if (!signal.aborted) throw $;
+            }
+            const newer = this.#latestGeneralSettingsRead;
+            if (!newer || this.#generalSettingsGeneration === generation) throw signal.reason;
+            return newer;
+        })();
+        this.#latestGeneralSettingsRead = read;
+        return read;
+    };
+
+    /**
+     * `readGeneralSettings`, failing quietly: preferences that fail to load stay as they were.
+     */
+    loadFormats = async (): Promise<void> => {
+        try {
+            await this.readGeneralSettings();
+        } catch ($) {
+            if (!pb.abort.is($)) console.warn('No formatting preferences', $);
+        }
+    };
+
+    #setFormats(d: pb.GeneralSettingsDataResponse): void {
+        this.#setState('formats', {
+            date: d.dateFormat || DEVICE_FORMATS.date,
+            time: d.timeFormat || DEVICE_FORMATS.time,
+            number: d.numberFormat || DEVICE_FORMATS.number,
+        });
     }
 
     #listeners = new Set<Listener<any>>();
@@ -177,6 +250,11 @@ class Store {
                 console.log(error);
                 console.groupEnd();
             }
+
+            // Before the session is published, so a page
+            // it opens renders by them from the start.
+            await this.loadFormats();
+            if (signal.aborted) return;
         }
 
         this.#setState('sessionInfo', res);
@@ -277,6 +355,11 @@ export function useStore<Res>(getter: (store: Store) => Res) {
 
     useEffect(() => {
         const x = store.subscribe(s => setState(getter(s)));
+
+        // The store may have changed between the render
+        // that read it and this subscription.
+        setState(getter(store));
+
         return x.unsubscribe;
     });
 

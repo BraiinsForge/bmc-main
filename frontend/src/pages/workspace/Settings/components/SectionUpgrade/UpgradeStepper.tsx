@@ -26,6 +26,7 @@ import { Progressbar, Percentage, Tick, InlineLoading } from '@/components';
 import C from '@/styles/colors';
 import { formatBytes } from '@/lib/format';
 import { assertUnreachable } from '@/lib/ts';
+import { useStore } from '@/store';
 import css from './UpgradeStepper.scss';
 
 export type UpgradeShape = 'firmware' | 'package' | 'combined';
@@ -230,6 +231,7 @@ function ActiveDetail({
     startTime: number;
 }) {
     const { formatMessage } = useIntl();
+    const numberFormat = useStore(x => x.formats.number);
     const bytes = step.isDownload ? download : null;
     const total = bytes?.totalBytes != null ? Number(bytes.totalBytes) : null;
 
@@ -239,12 +241,15 @@ function ActiveDetail({
         return (
             <>
                 <Progressbar
-                    label={<Percentage value={percentage} upperValueBound={100} round={0} />}
+                    label={<Percentage value={percentage} lowerValueBound={-1} upperValueBound={100} round={0} />}
                     labelPosition="top-left"
                     valueUpperBound={100}
                     values={[{ value: percentage, color: C.accentViolet, animate: true }]}
                 />
-                <div className={css.sub} children={`${formatBytes(downloaded)} / ${formatBytes(total)}`} />
+                <div
+                    className={css.sub}
+                    children={`${formatBytes(downloaded, numberFormat)} / ${formatBytes(total, numberFormat)}`}
+                />
             </>
         );
     }
@@ -257,7 +262,7 @@ function ActiveDetail({
                 const text = bytes
                     ? formatMessage(
                           { defaultMessage: '{done} downloaded' },
-                          { done: formatBytes(Number(bytes.downloadedBytes)) },
+                          { done: formatBytes(Number(bytes.downloadedBytes), numberFormat) },
                       )
                     : formatMessage({ defaultMessage: '{elapsed}s elapsed' }, { elapsed });
                 return <span className={css.sub} children={text} />;

@@ -133,7 +133,7 @@ class View extends Component<Props> {
                         </div>
                     ),
                     name: x.name,
-                    createdAt: <Datetime value={x.createdAt} format="%d.%m.%Y %H:%M" />,
+                    createdAt: <Datetime value={x.createdAt} />,
                     actions: (
                         <ButtonGroup spaced>
                             {editButton}

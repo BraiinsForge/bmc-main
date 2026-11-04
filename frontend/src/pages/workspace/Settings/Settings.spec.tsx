@@ -843,6 +843,204 @@ describe('Settings automatic updates (BDK-926)', () => {
     });
 });
 
+describe('Settings formatting preferences', () => {
+    afterEach(() => {
+        rstest.restoreAllMocks();
+    });
+
+    const current = pb.create(pb.GeneralSettingsDataResponseSchema, {
+        timeFormat: pb.TimeFormat.TIME_FORMAT_24_HOUR,
+        dateFormat: pb.DateFormat.DD_MM_YYYY_DOT,
+        numberFormat: pb.NumberFormat.SPACE_GROUP_COMMA_DECIMAL,
+    });
+
+    async function pick(open: null | string, option: string): Promise<void> {
+        renderPage('#general');
+        await advance(300);
+        if (open) {
+            fireEvent.click(screen.getByText(open));
+            await advance(0);
+        }
+        fireEvent.click(screen.getByText(option));
+        await advance(300);
+    }
+
+    test.each([
+        ['time', 'setTimeFormat', null, '12-hour', { timeFormat: pb.TimeFormat.TIME_FORMAT_12_HOUR }],
+        ['date', 'setDateFormat', 'DD.MM.YYYY', 'M/D/YYYY', { dateFormat: pb.DateFormat.M_D_YYYY_SLASH }],
+        [
+            'number',
+            'setNumberFormat',
+            '1 234 567,89',
+            '1,234,567.89',
+            { numberFormat: pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL },
+        ],
+    ] as const)('a %s preference is read once again after its save', async (_case, setter, open, option, saved) => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: deckSystemWire() });
+        store.boot();
+        Reflect.deleteProperty(window, 'SYSTEM');
+        const order: string[] = [];
+        let held = current;
+        registerMocks(pb.services.ConfigurationService, {
+            getGeneralSettingsData: () => {
+                order.push('read');
+                return held;
+            },
+            [setter]: () => {
+                order.push('save');
+                held = pb.create(pb.GeneralSettingsDataResponseSchema, { ...current, ...saved });
+                return {};
+            },
+        });
+
+        await pick(open, option);
+
+        expect(order.slice(order.indexOf('save'))).toEqual(['save', 'read']);
+        expect(store.formats).toEqual({
+            date: held.dateFormat,
+            time: held.timeFormat,
+            number: held.numberFormat,
+        });
+    });
+
+    test('a read that fails after the page is left raises no toast on the next page', async () => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: deckSystemWire() });
+        store.boot();
+        Reflect.deleteProperty(window, 'SYSTEM');
+        rstest.spyOn(console, 'warn').mockImplementation(() => {});
+        const read = rstest
+            .spyOn(pb.rpc.config, 'getGeneralSettingsData')
+            .mockImplementation(
+                () =>
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new ConnectError('unreachable', Code.Unavailable)), 1_000),
+                    ),
+            );
+        const view = render(pageTree('#general'));
+        // Past the page's debounced mount,
+        // so the read is on its way when the page is left.
+        await advance(300);
+        expect(read, 'the page has started its read').toHaveBeenCalled();
+
+        view.rerender(pageTree('#general', false));
+        await advance(2_000);
+
+        expect(screen.queryByText(/unreachable/)).toBeNull();
+    });
+
+    test('a page left before it starts loading reads nothing', async () => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: deckSystemWire() });
+        store.boot();
+        Reflect.deleteProperty(window, 'SYSTEM');
+        const read = rstest.spyOn(pb.rpc.config, 'getGeneralSettingsData').mockResolvedValue(current);
+        const view = render(pageTree('#general'));
+        await advance(50);
+
+        view.rerender(pageTree('#general', false));
+        await advance(1_000);
+
+        expect(read).not.toHaveBeenCalled();
+    });
+
+    test('two saves whose reads back both fail report the failure once', async () => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: deckSystemWire() });
+        store.boot();
+        Reflect.deleteProperty(window, 'SYSTEM');
+        let reads = 0;
+        rstest.spyOn(pb.rpc.config, 'getGeneralSettingsData').mockImplementation((_req, opts) => {
+            reads += 1;
+            if (reads === 1) return Promise.resolve(current);
+            return new Promise((_, reject) => {
+                const timer = setTimeout(() => reject(new ConnectError('unreachable', Code.Unavailable)), 500);
+                opts?.signal?.addEventListener('abort', () => {
+                    clearTimeout(timer);
+                    reject(opts.signal?.reason);
+                });
+            });
+        });
+        registerMocks(pb.services.ConfigurationService, {
+            setDateFormat: () => ({}),
+            setNumberFormat: () => ({}),
+        });
+        renderPage('#general');
+        await advance(300);
+
+        // The second save's read back overtakes the first's while it is still on its way.
+        fireEvent.click(screen.getByText('DD.MM.YYYY'));
+        await advance(0);
+        fireEvent.click(screen.getByText('M/D/YYYY'));
+        await advance(100);
+        fireEvent.click(screen.getByText('1 234 567,89'));
+        await advance(0);
+        fireEvent.click(screen.getByText('1,234,567.89'));
+        await advance(2_000);
+
+        expect(reads, 'each save read the settings back').toBe(3);
+        expect(screen.getAllByText(/unreachable/)).toHaveLength(1);
+    });
+
+    test('leaving the page while a save is read back still updates the formats, as the store owns the read', async () => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: deckSystemWire() });
+        store.boot();
+        Reflect.deleteProperty(window, 'SYSTEM');
+        let held = current;
+        registerMocks(pb.services.ConfigurationService, {
+            getGeneralSettingsData: ({ conf }) => {
+                // Only the read after the save is slow,
+                // so the page can be left while it is on its way.
+                if (held !== current) conf({ delay: 1_000 });
+                return held;
+            },
+            setDateFormat: () => {
+                held = pb.create(pb.GeneralSettingsDataResponseSchema, {
+                    ...current,
+                    dateFormat: pb.DateFormat.M_D_YYYY_SLASH,
+                });
+                return {};
+            },
+        });
+        const page = renderPage('#general');
+        await advance(300);
+        fireEvent.click(screen.getByText('DD.MM.YYYY'));
+        await advance(0);
+        fireEvent.click(screen.getByText('M/D/YYYY'));
+        await advance(100);
+
+        page.unmount();
+        await advance(2_000);
+
+        expect(store.formats.date).toBe(pb.DateFormat.M_D_YYYY_SLASH);
+    });
+
+    test('a save that fails still reads what the device holds into the formats', async () => {
+        rstest.useFakeTimers();
+        Object.assign(window, { SYSTEM: deckSystemWire() });
+        store.boot();
+        Reflect.deleteProperty(window, 'SYSTEM');
+        let held = current;
+        registerMocks(pb.services.ConfigurationService, {
+            getGeneralSettingsData: () => held,
+            setDateFormat: () => {
+                // The device took it, but the answer was lost on the way back.
+                held = pb.create(pb.GeneralSettingsDataResponseSchema, {
+                    ...current,
+                    dateFormat: pb.DateFormat.M_D_YYYY_SLASH,
+                });
+                throw new ConnectError('the link dropped', Code.Unavailable);
+            },
+        });
+
+        await pick('DD.MM.YYYY', 'M/D/YYYY');
+
+        expect(store.formats.date).toBe(pb.DateFormat.M_D_YYYY_SLASH);
+    });
+});
+
 describe('Settings language picker', () => {
     afterEach(() => {
         rstest.restoreAllMocks();

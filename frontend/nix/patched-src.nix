@@ -29,12 +29,15 @@ pkgs.stdenv.mkDerivation {
 
   # Nested under `frontend/` rather than sitting at the root: `justfile`
   # imports `../common.justfile`, which has to exist beside it,
-  # and the specs read the en-XA pack's web catalog from `../assets`.
+  # the specs read the en-XA pack's web catalog from `../assets`,
+  # and the device's date and number tables from `../bmc-shared`.
   installPhase = ''
-    mkdir -p $out/frontend $out/assets/intl/pseudo/en-XA
+    mkdir -p $out/frontend $out/assets/intl/pseudo/en-XA $out/bmc-shared/time/src $out/bmc-shared/utils/src
     cp -r $src/. -t $out/frontend
     cp ${../../common.justfile} $out/common.justfile
     cp ${../../assets/intl/pseudo/en-XA/web.json} $out/assets/intl/pseudo/en-XA/web.json
+    cp ${../../bmc-shared/time/src/time.rs} $out/bmc-shared/time/src/time.rs
+    cp ${../../bmc-shared/utils/src/number_format.rs} $out/bmc-shared/utils/src/number_format.rs
   '';
 
   # dependencies used for automatic shebang patching in fixupPhase

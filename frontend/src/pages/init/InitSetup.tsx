@@ -29,7 +29,7 @@ import { dnsJoin, dnsSplit } from '@/lib/format';
 import { setState } from '@/lib/react';
 import type { Capabilities } from '@/lib/system';
 import { assertUnreachable } from '@/lib/ts';
-import { useStore } from '@/store';
+import { store, useStore } from '@/store';
 
 // Components
 import { InlineNotificationsGroup } from '@/components';
@@ -156,8 +156,15 @@ class View extends Component<Props, State> {
     #leaveSetup = (): void => {
         const { protocol, staticAddress } = this.state.data.values;
         const destination = postSetupDestination(this.props.capabilities, { protocol, staticAddress }, window.location);
-        if ('url' in destination) window.location.replace(destination.url);
-        else this.props.navigate(destination.route, { replace: true });
+        if ('url' in destination) {
+            window.location.replace(destination.url);
+            return;
+        }
+
+        // The page stays loaded, so it reads the preferences the form saved.
+        // A device that now wants a password refuses this, and its login reads them instead.
+        void store.loadFormats();
+        this.props.navigate(destination.route, { replace: true });
     };
 
     #buildNetworkConfig = (): pb.NetworkConfig => {

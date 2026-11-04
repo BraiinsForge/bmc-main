@@ -67,6 +67,19 @@ describe('UpgradeStepper', () => {
         expect(screen.getByText('6 MB / 24 MB')).toBeTruthy();
     });
 
+    test("the byte bar writes its figures by the device's number format", () => {
+        const fixture = fixtures['firmware / downloading'];
+        renderStepper({ ...fixture, download: { ...fixture.download, downloadedBytes: 1_500_000n } });
+        expect(screen.getByText('1,5 MB / 24 MB')).toBeTruthy();
+    });
+
+    test('a download that has not started yet reads 0%', () => {
+        const fixture = fixtures['firmware / downloading'];
+        renderStepper({ ...fixture, download: { ...fixture.download, downloadedBytes: 0n } });
+        expect(screen.getByText('0')).toBeTruthy();
+        expect(screen.queryByText('< 0.01')).toBeNull();
+    });
+
     test('a non-download step renders the indeterminate spinner, not a byte bar', () => {
         renderStepper(fixtures['combined / pkg-build']);
         expect(screen.getByText(/\d+s elapsed/)).toBeTruthy();

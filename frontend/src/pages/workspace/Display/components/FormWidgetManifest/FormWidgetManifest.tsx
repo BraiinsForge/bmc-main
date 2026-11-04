@@ -30,7 +30,7 @@ import { hasItemErrors, isMisbound, itemErrorsOf } from '../../fn';
 
 import { ParamField } from '@/components/ParamField';
 import { BoundDropdown, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
-import { AccountIcon, Datetime, ModalCustom, Button, InlineNotification, Link, Markdown } from '@/components';
+import { AccountIcon, Date, ModalCustom, Button, InlineNotification, Link, Markdown } from '@/components';
 import { Calendar as IconCalendar } from '@carbon/react/icons';
 import { WidgetName } from '../WidgetName';
 import css from '../shared.scss';
@@ -79,7 +79,7 @@ function accountOption(icon: pb.Icon | undefined, plainId?: string) {
                 </div>
                 <div className={css.accountElementDate}>
                     <IconCalendar size={16} />
-                    <Datetime value={account.createdAt} format="%d.%m.%Y" />
+                    <Date value={account.createdAt} />
                 </div>
             </div>
         );

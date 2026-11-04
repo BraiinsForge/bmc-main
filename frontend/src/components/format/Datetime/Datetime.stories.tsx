@@ -38,6 +38,5 @@ Datetime.args = {
     value: Math.floor(value.valueOf() / 1e3),
     format: '%d.%m.%Y %H:%M:%S',
     placeholder: '---',
-    seconds: false,
     tzname: 'UTC',
 } as DatetimeProps;

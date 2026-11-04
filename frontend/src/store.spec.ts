@@ -21,8 +21,9 @@
 import { afterEach, describe, expect, rstest, test } from '@rstest/core';
 
 import { ConnectError, Code } from '@connectrpc/connect';
+import { cleanup, renderHook } from '@testing-library/react/pure';
 
-import { store } from '@/store';
+import { store, useStore } from '@/store';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
@@ -318,6 +319,84 @@ describe('store.setSetupLanguage', () => {
     });
 });
 
+describe('store.readGeneralSettings', () => {
+    afterEach(() => {
+        mocks.clear();
+        rstest.restoreAllMocks();
+        rstest.useRealTimers();
+    });
+
+    /** Answers the n-th read with `answers[n]`: its date after its delay, or a failure at once. */
+    function answerReads(answers: Array<{ delay: number; date: pb.DateFormat } | 'fail'>): () => number {
+        let reads = 0;
+        const methods: Partial<ServiceMocks<typeof pb.ConfigurationService>> = {
+            getGeneralSettingsData: ({ conf }) => {
+                const answer = answers[Math.min(reads, answers.length - 1)];
+                reads += 1;
+                if (answer === 'fail') throw new ConnectError('unreachable', Code.Unavailable);
+                conf({ delay: answer.delay });
+                return pb.create(pb.GeneralSettingsDataResponseSchema, { dateFormat: answer.date });
+            },
+        };
+        mocks.service(pb.ConfigurationService, methods as ServiceMocks<typeof pb.ConfigurationService>);
+        return () => reads;
+    }
+
+    test('a read overtaken by a later one resolves with the later answer', async () => {
+        rstest.useFakeTimers();
+        answerReads([
+            { delay: 1_000, date: pb.DateFormat.M_D_YYYY_SLASH },
+            { delay: 10, date: pb.DateFormat.YYYY_MM_DD_DASH },
+        ]);
+
+        const earlier = store.readGeneralSettings();
+        const later = store.readGeneralSettings();
+        const settled = Promise.all([earlier, later]);
+        await rstest.advanceTimersByTimeAsync(2_000);
+
+        const [first, second] = await settled;
+        expect(first.dateFormat, 'the overtaken read is not left empty-handed').toBe(pb.DateFormat.YYYY_MM_DD_DASH);
+        expect(second.dateFormat).toBe(pb.DateFormat.YYYY_MM_DD_DASH);
+        expect(store.formats.date).toBe(pb.DateFormat.YYYY_MM_DD_DASH);
+    });
+
+    test('a read overtaken by a later one that fails rejects with its failure', async () => {
+        rstest.useFakeTimers();
+        answerReads([{ delay: 1_000, date: pb.DateFormat.M_D_YYYY_SLASH }, 'fail']);
+
+        const earlier = store.readGeneralSettings();
+        const later = store.readGeneralSettings();
+        const settled = Promise.allSettled([earlier, later]);
+        await rstest.advanceTimersByTimeAsync(2_000);
+
+        const [first, second] = await settled;
+        expect(first.status, 'the overtaken read does not resolve with nothing').toBe('rejected');
+        expect(second.status).toBe('rejected');
+        if (first.status === 'rejected') expect(pb.abort.is(first.reason), 'it carries the failure').toBe(false);
+    });
+
+    test('in a chain of three reads, every caller gets the newest answer', async () => {
+        rstest.useFakeTimers();
+        answerReads([
+            { delay: 1_000, date: pb.DateFormat.M_D_YYYY_SLASH },
+            { delay: 500, date: pb.DateFormat.DD_MM_YYYY_SLASH },
+            { delay: 10, date: pb.DateFormat.YYYY_MM_DD_DASH },
+        ]);
+
+        const reads = [store.readGeneralSettings(), store.readGeneralSettings(), store.readGeneralSettings()];
+        const settled = Promise.all(reads);
+        await rstest.advanceTimersByTimeAsync(2_000);
+
+        const answers = await settled;
+        expect(answers.map(answer => answer.dateFormat)).toEqual([
+            pb.DateFormat.YYYY_MM_DD_DASH,
+            pb.DateFormat.YYYY_MM_DD_DASH,
+            pb.DateFormat.YYYY_MM_DD_DASH,
+        ]);
+        expect(store.formats.date).toBe(pb.DateFormat.YYYY_MM_DD_DASH);
+    });
+});
+
 describe('store.loadLanguages', () => {
     afterEach(() => {
         mocks.clear();
@@ -345,5 +424,181 @@ describe('store.loadLanguages', () => {
 
         expect(requests).toBe(2);
         expect(store.languages.map(x => x.tag)).toEqual(['zh']);
+    });
+});
+
+describe('useStore', () => {
+    afterEach(cleanup);
+
+    test('a change between the first render and its subscription is not missed', () => {
+        store.setHardwareCapabilities(deckCapabilities({ productName: 'before' }));
+        let changed = false;
+
+        const { result } = renderHook(() => {
+            const productName = useStore(x => x.state.hardwareCapabilities.productName);
+            if (!changed) {
+                changed = true;
+                store.setHardwareCapabilities(deckCapabilities({ productName: 'after' }));
+            }
+            return productName;
+        });
+
+        expect(result.current).toBe('after');
+    });
+});
+
+describe('store.formats', () => {
+    type GeneralSettingsMock = ServiceMocks<typeof pb.ConfigurationService>['getGeneralSettingsData'];
+
+    function answerSettings(getGeneralSettingsData: GeneralSettingsMock): void {
+        const methods: Partial<ServiceMocks<typeof pb.ConfigurationService>> = { getGeneralSettingsData };
+        mocks.service(pb.ConfigurationService, methods as ServiceMocks<typeof pb.ConfigurationService>);
+    }
+
+    const settings = (dateFormat: pb.DateFormat, timeFormat: pb.TimeFormat, numberFormat: pb.NumberFormat) =>
+        pb.create(pb.GeneralSettingsDataResponseSchema, { dateFormat, timeFormat, numberFormat });
+
+    const preferred = settings(
+        pb.DateFormat.M_D_YYYY_SLASH,
+        pb.TimeFormat.TIME_FORMAT_12_HOUR,
+        pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL,
+    );
+    const preferredFormats = {
+        date: pb.DateFormat.M_D_YYYY_SLASH,
+        time: pb.TimeFormat.TIME_FORMAT_12_HOUR,
+        number: pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL,
+    };
+
+    afterEach(() => {
+        mocks.clear();
+        rstest.restoreAllMocks();
+    });
+
+    test("are read from the device's settings", async () => {
+        answerSettings(() => preferred);
+
+        await store.loadFormats();
+
+        expect(store.formats).toEqual(preferredFormats);
+    });
+
+    test("an unspecified one keeps the device's default", async () => {
+        answerSettings(() =>
+            settings(pb.DateFormat.UNSPECIFIED, pb.TimeFormat.TIME_FORMAT_UNSPECIFIED, pb.NumberFormat.UNSPECIFIED),
+        );
+
+        await store.loadFormats();
+
+        expect(store.formats).toEqual({
+            date: pb.DateFormat.DD_MM_YYYY_DOT,
+            time: pb.TimeFormat.TIME_FORMAT_24_HOUR,
+            number: pb.NumberFormat.SPACE_GROUP_COMMA_DECIMAL,
+        });
+    });
+
+    test('a load that fails leaves them as they were', async () => {
+        answerSettings(() => preferred);
+        await store.loadFormats();
+        answerSettings(() => {
+            throw new ConnectError('the link dropped', Code.Unavailable);
+        });
+        rstest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await store.loadFormats();
+
+        expect(store.formats).toEqual(preferredFormats);
+    });
+
+    test('a later load wins over one still loading', async () => {
+        answerSettings(({ conf }) => {
+            conf({ delay: 20 });
+            return settings(
+                pb.DateFormat.YYYY_MM_DD_DOT,
+                pb.TimeFormat.TIME_FORMAT_24_HOUR,
+                pb.NumberFormat.DOT_GROUP_COMMA_DECIMAL,
+            );
+        });
+        const earlier = store.loadFormats();
+        answerSettings(() => preferred);
+
+        await store.loadFormats();
+        await earlier;
+
+        expect(store.formats).toEqual(preferredFormats);
+    });
+
+    function answerSession(isAuthenticated: boolean): void {
+        const auth: Partial<ServiceMocks<typeof pb.AuthenticationService>> = {
+            isAuthenticated: () => ({ value: isAuthenticated }),
+        };
+        const system: Partial<ServiceMocks<typeof pb.SystemService>> = {
+            hasPassword: () => ({ value: true }),
+        };
+        mocks.service(pb.AuthenticationService, auth as ServiceMocks<typeof pb.AuthenticationService>);
+        mocks.service(pb.SystemService, system as ServiceMocks<typeof pb.SystemService>);
+    }
+
+    test.each([
+        ['a session check that finds a session reads them', true, 1],
+        ['a session check that finds none reads nothing', false, 0],
+    ])('%s', async (_case, isAuthenticated, reads) => {
+        answerSession(isAuthenticated);
+        const load = rstest.spyOn(store, 'loadFormats').mockResolvedValue();
+
+        await store.fetchSessionInfo();
+
+        expect(load).toHaveBeenCalledTimes(reads);
+    });
+
+    test('a session checked again reads them again, as at a login after the session was lost', async () => {
+        answerSession(true);
+        const load = rstest.spyOn(store, 'loadFormats').mockResolvedValue();
+        await store.fetchSessionInfo();
+
+        await store.fetchSessionInfo();
+
+        expect(load).toHaveBeenCalledTimes(2);
+    });
+
+    test('a found session is published with them already read', async () => {
+        store.setHardwareCapabilities(deckCapabilities());
+        answerSession(true);
+        const before = store.state.sessionInfo;
+        const expected = {
+            date: pb.DateFormat.YYYY_M_D_SLASH,
+            time: pb.TimeFormat.TIME_FORMAT_24_HOUR,
+            number: pb.NumberFormat.SPACE_GROUP_DOT_DECIMAL,
+        };
+        answerSettings(({ conf }) => {
+            conf({ delay: 20 });
+            return settings(expected.date, expected.time, expected.number);
+        });
+        let atPublish: unknown = null;
+        const { unsubscribe } = store.subscribe(s => {
+            if (s.state.sessionInfo !== before) atPublish ??= s.formats;
+        });
+
+        await store.fetchSessionInfo();
+        unsubscribe();
+
+        expect(atPublish).toEqual(expected);
+    });
+
+    test('a later session check wins over one still reading them', async () => {
+        store.setHardwareCapabilities(deckCapabilities());
+        answerSession(true);
+        answerSettings(({ conf }) => {
+            conf({ delay: 20 });
+            return preferred;
+        });
+        const earlier = store.fetchSessionInfo();
+        // Past the earlier check's session answers, to where it waits on the preferences.
+        await new Promise(resolve => setTimeout(resolve, 5));
+        answerSession(false);
+
+        await store.fetchSessionInfo();
+        await earlier;
+
+        expect(store.state.sessionInfo.isAuthenticated).toBe(false);
     });
 });

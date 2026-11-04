@@ -96,6 +96,7 @@ function renderPage() {
 afterEach(() => {
     cleanup();
     mocks.clear();
+    rstest.restoreAllMocks();
     Object.defineProperty(window, 'location', { configurable: true, value: REAL_LOCATION });
 });
 
@@ -124,6 +125,20 @@ describe('InitSetup', () => {
         expect(screen.queryByText('Mining Pool')).toBeNull();
     });
 
+    test('a display device leaving the setup has the store read what the form saved', async () => {
+        installMocks(
+            deck,
+            rstest.fn(() => ({})),
+        );
+        const load = rstest.spyOn(store, 'loadFormats').mockResolvedValue();
+        renderPage();
+
+        await screen.findByText('Time, Date and Regional Settings');
+        fireEvent.click(screen.getByRole('button', { name: 'Save and Continue' }));
+
+        await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+    });
+
     test('saving a miner sends the pool and network and leaves for the site root', async () => {
         let received: pb.SettingsRequest | undefined;
         const setupDevice: SetupDeviceMock = ({ req }) => {
@@ -132,6 +147,7 @@ describe('InitSetup', () => {
         };
         installMocks(miner, setupDevice);
         const replace = stubReplace();
+        const load = rstest.spyOn(store, 'loadFormats').mockResolvedValue();
         renderPage();
 
         await screen.findByDisplayValue(POOL_URL);
@@ -142,6 +158,7 @@ describe('InitSetup', () => {
         expect(received?.hostname).toBe(HOSTNAME);
         expect(received?.network?.protocol.case).toBe('dhcp');
         await waitFor(() => expect(replace).toHaveBeenCalledWith('/'));
+        expect(load, 'a full reload reads them at boot').not.toHaveBeenCalled();
     });
 
     test('a failed settings load holds the form behind a Retry that reloads it', async () => {

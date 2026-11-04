@@ -51,6 +51,7 @@ import css from './SectionUpgrade.scss';
 import { assertUnreachable } from '@/lib/ts';
 import { getTimestamp } from '@/lib/time';
 import { formatBytes, formatDuration } from '@/lib/format';
+import { useStore } from '@/store';
 import { PackageChanges } from './PackageChanges';
 import { UpgradeStepper, type UpgradeStepperProps } from './UpgradeStepper';
 
@@ -98,6 +99,7 @@ export interface SectionUpgradeProps {
 }
 interface Props extends SectionUpgradeProps {
     intl: IntlShape;
+    numberFormat: pb.NumberFormat;
 }
 
 interface State {
@@ -306,7 +308,7 @@ class View extends Component<Props, State> {
         // surfaced on the offer so the size is known before committing.
         const offer = status?.kind === 'upgrade-available' ? status.upgradeInfo : null;
         const downloadBytes = (offer?.firmware?.fileSizeBytes ?? 0n) + (offer?.packages?.downloadSizeBytes ?? 0n);
-        const downloadSize = downloadBytes > 0n ? formatBytes(downloadBytes) : null;
+        const downloadSize = downloadBytes > 0n ? formatBytes(downloadBytes, this.props.numberFormat) : null;
 
         let statusMessage: ReactNode;
         let control: ReactNode;
@@ -524,5 +526,6 @@ class View extends Component<Props, State> {
 
 export function SectionUpgrade(props: SectionUpgradeProps) {
     const intl = useIntl();
-    return <View {...props} intl={intl} />;
+    const numberFormat = useStore(x => x.formats.number);
+    return <View {...props} intl={intl} numberFormat={numberFormat} />;
 }

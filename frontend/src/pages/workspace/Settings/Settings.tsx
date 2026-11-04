@@ -274,7 +274,10 @@ class View extends Component<Props, State> {
     }
 
     componentDidMount = () => this.#mount();
-    componentWillUnmount = () => pb.abort.all(this);
+    componentWillUnmount = () => {
+        this.#mount.cancel();
+        pb.abort.all(this);
+    };
     #isTabAvailable = (tab: Tab): boolean => isTabAvailable(tab, this.props.capabilities);
 
     #mount = debounce(() => {
@@ -384,12 +387,16 @@ class View extends Component<Props, State> {
     // General
     //
 
+    // The store's read ignores this signal.
+    // It only tells whether this call is still
+    // the page's latest, so its outcome is the page's to show.
     private generalFetchAbort = pb.abort.get();
     #generalFetch = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
+        const { signal } = this.generalFetchAbort.replace();
         try {
-            const { signal } = this.generalFetchAbort.replace();
-            const d = await pb.rpc.config.getGeneralSettingsData({}, { signal });
+            const d = await store.readGeneralSettings();
+            if (signal.aborted) return;
             this.setState(s => ({
                 values: {
                     ...s.values,
@@ -432,7 +439,7 @@ class View extends Component<Props, State> {
                 },
             }));
         } catch ($) {
-            if (pb.abort.is($)) return;
+            if (pb.abort.is($) || signal.aborted) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load general settings!' });
@@ -526,6 +533,7 @@ class View extends Component<Props, State> {
             error ||= formatMessage({ defaultMessage: 'Failed to save SecondsInStatusbar' });
             void this.#setFieldAttr('timeFormat', 'errors', [error]);
         } finally {
+            // An aborted or dropped save may still have landed on the device.
             await this.#generalFetch();
             void this.#setField('timeFormat', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
@@ -576,6 +584,7 @@ class View extends Component<Props, State> {
             message ||= formatMessage({ defaultMessage: 'Failed to save DateFormat' });
             toast.error(message);
         } finally {
+            // An aborted or dropped save may still have landed on the device.
             await this.#generalFetch();
             void this.#setField('dateFormat', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }
@@ -741,6 +750,7 @@ class View extends Component<Props, State> {
             message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
             toast.error(message);
         } finally {
+            // An aborted or dropped save may still have landed on the device.
             await this.#generalFetch();
             void this.#setField('numberFormat', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }

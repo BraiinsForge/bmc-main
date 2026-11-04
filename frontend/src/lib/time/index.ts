@@ -20,7 +20,7 @@
 // the grant above.
 
 import type { Timestamp as PbTimestamp } from '@/proto';
-import { TimeFormat } from '@/proto/gen/web/shared_pb';
+import { DateFormat, TimeFormat } from '@/proto/gen/web/shared_pb';
 import { isPlainObject } from 'es-toolkit';
 import { timeFormat } from 'd3-time-format';
 
@@ -68,6 +68,31 @@ export function formatAlarmTime(time24: string, format: TimeFormat): string {
 /** Parse a user-entered alarm time string back to 24h "HH:MM" for the backend. */
 export function parseAlarmTime(input: string, format: TimeFormat): string {
     return format === TimeFormat.TIME_FORMAT_12_HOUR ? time12to24(input) : input;
+}
+
+// The layouts the device writes its dates in (`DateFormat` in `bmc-shared/time`), in `d3-time-format`'s notation.
+const DATE_LAYOUTS: Record<DateFormat, string> = {
+    [DateFormat.UNSPECIFIED]: '%d.%m.%Y',
+    [DateFormat.DD_MM_YYYY_DOT]: '%d.%m.%Y',
+    [DateFormat.DD_MM_YYYY_SLASH]: '%d/%m/%Y',
+    [DateFormat.D_M_YYYY_SLASH]: '%-d/%-m/%Y',
+    [DateFormat.M_D_YYYY_SLASH]: '%-m/%-d/%Y',
+    [DateFormat.DD_MM_YYYY_DASH]: '%d-%m-%Y',
+    [DateFormat.YYYY_M_D_SLASH]: '%Y/%-m/%-d',
+    [DateFormat.YYYY_MM_DD_DOT]: '%Y.%m.%d',
+    [DateFormat.YYYY_MM_DD_DASH]: '%Y-%m-%d',
+};
+
+export function dateLayout(format: DateFormat): string {
+    return DATE_LAYOUTS[format];
+}
+
+/**
+ * The device clock's layout (`TimeSystem` in `bmc-shared/time`), the hour padded in both forms.
+ * The alarm form keeps its unpadded `h:MM AM`, the shape people type a time in.
+ */
+export function timeLayout(format: TimeFormat): string {
+    return format === TimeFormat.TIME_FORMAT_12_HOUR ? '%I:%M %p' : '%H:%M';
 }
 
 type GetTimestamp = (offset?: null | number, date?: Date | number) => number;

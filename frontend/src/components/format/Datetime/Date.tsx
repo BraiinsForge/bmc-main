@@ -18,9 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { dateLayout } from '@/lib/time';
+import { useStore } from '@/store';
+
 import { Datetime, type DatetimeProps } from './Datetime';
 
-export type DateProps = Omit<DatetimeProps, 'format' | 'tzname' | 'seconds'>;
+export type DateProps = Omit<DatetimeProps, 'format' | 'tzname'>;
 export function Date(props: DateProps) {
-    return <Datetime {...props} tzname="UTC" format="%d.%m.%Y" />;
+    const format = useStore(x => dateLayout(x.formats.date));
+    return <Datetime {...props} tzname="UTC" format={format} />;
 }

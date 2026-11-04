@@ -19,12 +19,25 @@
 // the grant above.
 
 import { afterEach, describe, expect, rstest, test } from '@rstest/core';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react/pure';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react/pure';
 import { IntlProvider } from 'react-intl';
+
+import * as pb from '@/proto';
+import { mocks } from '@/proto/transport';
+import type { ServiceMocks } from '@/lib/proto';
+import { store } from '@/store';
 
 import { FileUploader } from './FileUploader';
 
 const ID = 'uploader';
+
+async function preferNumbers(numberFormat: pb.NumberFormat): Promise<void> {
+    const methods: Partial<ServiceMocks<typeof pb.ConfigurationService>> = {
+        getGeneralSettingsData: () => pb.create(pb.GeneralSettingsDataResponseSchema, { numberFormat }),
+    };
+    mocks.service(pb.ConfigurationService, methods as ServiceMocks<typeof pb.ConfigurationService>);
+    await store.loadFormats();
+}
 
 function renderUploader(onChange = rstest.fn()) {
     render(<IntlProvider locale="en" children={<FileUploader id={ID} accept={['.nar']} onChange={onChange} />} />);
@@ -48,7 +61,24 @@ describe('FileUploader', () => {
 
         expect(onChange).toHaveBeenLastCalledWith(file);
         expect(element(ID).parentElement?.textContent).toContain('hello.nar');
-        expect(element(ID).parentElement?.textContent).toContain('1.5 kB');
+        expect(element(ID).parentElement?.textContent).toContain('1,5 kB');
+    });
+
+    describe("by the device's number format", () => {
+        afterEach(async () => {
+            await act(() => preferNumbers(pb.NumberFormat.SPACE_GROUP_COMMA_DECIMAL));
+            mocks.clear();
+        });
+
+        test('a shown size follows a change of it', async () => {
+            renderUploader();
+            const file = new File(['x'.repeat(1500)], 'hello.nar');
+            fireEvent.change(element(`${ID}-input`), { target: { files: [file] } });
+
+            await act(() => preferNumbers(pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL));
+
+            expect(element(ID).parentElement?.textContent).toContain('1.5 kB');
+        });
     });
 
     test('an extension is matched regardless of case', () => {
