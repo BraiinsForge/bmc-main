@@ -11,4 +11,4 @@ browsers:
 
 # Walk the web UI at ORIGIN, shooting every page and tab into `.tmp/web-probe`, in `--language TAG` if given.
 walk ORIGIN *ARGS:
-    PLAYWRIGHT_BROWSERS_PATH="$(just --justfile {{ quote(source_file()) }} browsers)" {{ NIX_DEV }} uv run python -m web_probe "$@"
+    PLAYWRIGHT_BROWSERS_PATH="$(just --justfile {{ quote(source_file()) }} browsers)" {{ NIX_DEV }} uv run python -u -m web_probe "$@"

@@ -20,14 +20,17 @@
 
 """Walk the device's web UI: log in, switch language, shoot every page and tab it leads to."""
 
+import sys
 from contextlib import nullcontext
 from pathlib import Path
+from typing import TextIO
 
 import tyro
 from bmc_tui import console
+from playwright.sync_api import Error as PlaywrightError
 from tyro.conf import Positional
 
-from web_probe.browser import BrowsersMissing, Unreachable, open_probe
+from web_probe.browser import BrowsersMissing, Probe, Unreachable, open_probe, read_failure
 from web_probe.device import (
     LOGIN_PATH,
     LanguageStuck,
@@ -62,42 +65,76 @@ def walk(
         out: where the shots go, one PNG per page or tab
     """
     with open_probe(origin) as probe:
-        log_in(probe, password)
-        offered = offered_languages(probe)
-        if offered:
-            print(f"offered languages: {', '.join(offered)}")
-        else:
-            print("no languages offered: the device lacks its i18n marker (/etc/bmc/i18n)")
-        if language is not None and language not in offered:
-            print(f"{language} is not offered, nothing walked")
+        last_shot: Path | None = None
+        try:
+            log_in(probe, password)
+            offered = offered_languages(probe)
+            if offered:
+                print(f"offered languages: {', '.join(offered)}")
+            else:
+                print("no languages offered: the device lacks its i18n marker (/etc/bmc/i18n)")
+            if language is not None and language not in offered:
+                console.error(f"{console.lit(language)} is not offered, nothing walked")
+                return 1
+            with nullcontext() if language is None else speaking(probe, language):
+                for path, last_shot in shoot_pages(probe, out):
+                    print(f"{path} -> {last_shot}")
+                if login := shoot_login(probe, out):
+                    last_shot = login
+                    print(f"{LOGIN_PATH} -> {login}")
+        except (
+            PlaywrightError,
+            Unreachable,
+            LoginRefused,
+            LoginStalled,
+            LanguageUnknown,
+            TabsMissing,
+        ) as error:
+            _report_failure(probe, error, last_shot)
             return 1
-        with nullcontext() if language is None else speaking(probe, language):
-            for path, shot in shoot_pages(probe, out):
-                print(f"{path} -> {shot}")
-            if login := shoot_login(probe, out):
-                print(f"{LOGIN_PATH} -> {login}")
-        errors = [entry for entry in probe.console() if entry.kind == "error"]
-        print(f"console errors: {len(errors)}")
-        for entry in errors:
-            print(f"  {entry.text}")
+        _report_console_errors(probe, sys.stdout)
     return 0
+
+
+def _report_console_errors(probe: Probe, file: TextIO) -> None:
+    errors = [entry for entry in probe.console() if entry.kind == "error"]
+    print(f"console errors: {len(errors)}", file=file)
+    for entry in errors:
+        print(f"  {entry.text}", file=file)
+
+
+def _detail(key: str, value: str) -> None:
+    console.console.print(f"[dim]{key}:[/dim] {console.lit(value)}", highlight=False)
+
+
+def _report_failure(probe: Probe, error: Exception, last_shot: Path | None) -> None:
+    """Why the walk stopped and how far it got, in place of a traceback, all on stderr,
+    so that a redirect cannot part the failure from its details.
+    The page it stopped on is not asked for: setting a switched language back has left it."""
+    failure = read_failure(str(error))
+    console.error(f"the walk failed: {console.lit(failure.reason)}")
+    _detail("last shot", str(last_shot) if last_shot else "none")
+    if failure.waiting_for:
+        _detail("waiting for", failure.waiting_for)
+        _detail("resolved to", failure.resolved_to or "nothing")
+    for state in failure.states:
+        _detail("state", state)
+    for blocker in failure.blocked_by:
+        _detail("blocked by", blocker)
+    if failure.log and not failure.waiting_for:
+        console.cmd_output("\n".join(failure.log))
+    _report_console_errors(probe, sys.stderr)
 
 
 def main() -> None:
     try:
         code = tyro.cli(walk)
-    except LanguageStuck as error:
+    except (BrowsersMissing, LanguageStuck) as error:
         console.error(console.lit(error))
         code = 1
-    except (
-        BrowsersMissing,
-        Unreachable,
-        LoginRefused,
-        LoginStalled,
-        LanguageUnknown,
-        TabsMissing,
-    ) as error:
-        print(error)
+    except PlaywrightError as error:
+        # Only the browser's own start and stop fail outside the walk's report.
+        console.error(f"the browser failed: {console.lit(read_failure(error.message).reason)}")
         code = 1
     raise SystemExit(code)
 

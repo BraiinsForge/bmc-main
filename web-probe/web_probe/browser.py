@@ -42,6 +42,12 @@ _BROWSERS = "PLAYWRIGHT_BROWSERS_PATH"
 # The URLs come back serialised by it, so splitting them cannot disagree with it.
 _RESOLVED_HREFS = "anchors => anchors.map(anchor => anchor.href)"
 
+_WAITING_FOR = "waiting for "
+_WAITING_FOR_ELEMENT = "waiting for element"
+_RESOLVED_TO = " resolved to "
+_NOT_READY = "element is not "
+_BLOCKS = " intercepts pointer events"
+
 
 def _same_origin(url: SplitResult, other: SplitResult) -> bool:
     return (url.scheme, url.netloc) == (other.scheme, other.netloc)
@@ -69,6 +75,43 @@ class ConsoleEntry:
 
     kind: str
     text: str
+
+
+@dataclass(frozen=True)
+class Failure:
+    """A browser failure read from Playwright's message: its reason and its call log,
+    with what the action waited for, what that resolved to, the states that kept it waiting
+    and what stood in its way, where the log says."""
+
+    reason: str
+    log: list[str]
+    waiting_for: str | None
+    resolved_to: str | None
+    states: list[str]
+    blocked_by: list[str]
+
+
+def read_failure(message: str) -> Failure:
+    """`message` as a `Failure`: its first line is the failure, the rest the retries' call log,
+    which repeats itself per retry, so each state and blocker comes once."""
+    reason, *log = message.splitlines()
+    steps = [line.strip().removeprefix("- ") for line in log]
+    waits = (
+        step.removeprefix(_WAITING_FOR)
+        for step in steps
+        if step.startswith(_WAITING_FOR) and not step.startswith(_WAITING_FOR_ELEMENT)
+    )
+    resolved = (step.split(_RESOLVED_TO)[1] for step in steps if _RESOLVED_TO in step)
+    states = (step for step in steps if step.startswith(_NOT_READY))
+    blockers = (step.removesuffix(_BLOCKS) for step in steps if step.endswith(_BLOCKS))
+    return Failure(
+        reason=reason,
+        log=log,
+        waiting_for=next(waits, None),
+        resolved_to=next(resolved, None),
+        states=list(dict.fromkeys(states)),
+        blocked_by=list(dict.fromkeys(blockers)),
+    )
 
 
 class Probe:
