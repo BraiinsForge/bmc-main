@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 
 const BOSER_TOKEN_PATH: &str = "run/boser-api.token";
+const CRONTAB_PATH: &str = "etc/crontabs/root";
 
 fn data_dir(subdir: impl AsRef<Path>) -> &'static str {
     let path = dirs::data_local_dir()
@@ -94,8 +95,8 @@ pub struct Config {
     #[clap(long, default_value = data_dir("sounds"))]
     pub sounds_dir: PathBuf,
     /// Path to a main crontab file
-    #[clap(long, default_value = None)]
-    pub crontab_path: Option<PathBuf>,
+    #[clap(long, default_value = CRONTAB_PATH)]
+    pub crontab_path: PathBuf,
     /// Path to directory containing widget packages
     #[clap(long, default_value = "./result-widgets")]
     pub widgets_path: PathBuf,
@@ -151,7 +152,7 @@ impl From<Config> for Configuration {
             default_volume_pct: value.default_volume_pct,
             default_night_mode_volume_pct: value.default_night_mode_volume_pct,
             sounds_dir: value.sounds_dir,
-            crontab_path: value.crontab_path,
+            crontab_path: Some(value.mockfs_path.join(value.crontab_path)),
             widgets_paths: vec![value.widgets_path],
             capture_widget_output: false,
             nix_servers_config_path: value.mockfs_path.join("etc/nix-upgrade/servers.json"),
@@ -196,6 +197,34 @@ mod tests {
         assert_eq!(
             configuration.boser_token_path,
             Path::new("/var/run/boser-api.token")
+        );
+    }
+
+    #[test]
+    fn crontab_defaults_under_mockfs() {
+        let config = Config::parse_from(["bmc-mock", "--mockfs-path", "/tmp/bmc-mock"]);
+        let configuration: Configuration = config.into();
+
+        assert_eq!(
+            configuration.crontab_path.as_deref(),
+            Some(Path::new("/tmp/bmc-mock/etc/crontabs/root"))
+        );
+    }
+
+    #[test]
+    fn absolute_crontab_override_stays_absolute() {
+        let config = Config::parse_from([
+            "bmc-mock",
+            "--mockfs-path",
+            "/tmp/bmc-mock",
+            "--crontab-path",
+            "/var/spool/cron/root",
+        ]);
+        let configuration: Configuration = config.into();
+
+        assert_eq!(
+            configuration.crontab_path.as_deref(),
+            Some(Path::new("/var/spool/cron/root"))
         );
     }
 }
