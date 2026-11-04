@@ -57,8 +57,9 @@
     composes: vertical flex from 'styles/layout.scss';
     padding: mini-units(2) mini-units(2) mini-units(5);
 
+    // No z-index: it would put the whole form on one side of the sticky footer,
+    // with either the rows painted over Save or Save cutting off open menus.
     position: relative;
-    z-index: 2;
 }
 
 .footer {

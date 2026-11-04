@@ -38,10 +38,9 @@
 }
 
 .progress {
-    position: relative;
-    z-index: 10;
-
-    margin-top: calc(mini-units(-2) - 1px) !important;
+    // Sits right under the header's border, as overlapping it would take a z-index,
+    // and that paints the stepper over the header when the form scrolls.
+    margin-top: mini-units(-2) !important;
     user-select: none;
 
     .disabledTab {
