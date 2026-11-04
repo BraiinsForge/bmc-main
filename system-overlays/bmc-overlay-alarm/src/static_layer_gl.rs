@@ -66,10 +66,8 @@ fn stop_button() -> (f64, f64) {
         .tree
         .element_bounds(STOP_ALARM_KEY)
         .expect("BUG: the alarm draws its stop button");
-    (
-        f64::from(button.x + button.w / 2.0),
-        f64::from(button.y + button.h / 2.0),
-    )
+    let (x, y) = button.centre();
+    (f64::from(x), f64::from(y))
 }
 
 #[test]

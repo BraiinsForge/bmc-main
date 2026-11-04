@@ -47,9 +47,9 @@ pub(super) fn scissor_box(
     height_px: i32,
 ) -> (i32, i32, i32, i32) {
     let left = ((rect.x * dpi).floor() as i32).clamp(0, width_px);
-    let right = (((rect.x + rect.w) * dpi).ceil() as i32).clamp(left, width_px);
+    let right = ((rect.right() * dpi).ceil() as i32).clamp(left, width_px);
     let top = ((rect.y * dpi).floor() as i32).clamp(0, height_px);
-    let bottom = (((rect.y + rect.h) * dpi).ceil() as i32).clamp(top, height_px);
+    let bottom = ((rect.bottom() * dpi).ceil() as i32).clamp(top, height_px);
     (left, height_px - bottom, right - left, bottom - top)
 }
 

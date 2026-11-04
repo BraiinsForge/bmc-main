@@ -267,7 +267,7 @@ fn outlines_cover_the_modal_frame_once_per_capture_frame() {
         "the body's boxes carry its viewport"
     );
     assert!(
-        body_clips.iter().all(|clip| clip.y >= header.y + header.h),
+        body_clips.iter().all(|clip| clip.y >= header.bottom()),
         "the body is seen below the header, got {body_clips:?} under {header:?}"
     );
 }

@@ -84,10 +84,27 @@ impl Rect {
         Self { x, y, w, h }
     }
 
+    /// The x past the rectangle's right edge.
+    #[must_use]
+    pub fn right(&self) -> f32 {
+        self.x + self.w
+    }
+
+    /// The y past the rectangle's bottom edge.
+    #[must_use]
+    pub fn bottom(&self) -> f32 {
+        self.y + self.h
+    }
+
+    #[must_use]
+    pub fn centre(&self) -> (f32, f32) {
+        (self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+
     /// Check if a point is inside the rectangle.
     #[must_use]
     pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
+        px >= self.x && py >= self.y && px < self.right() && py < self.bottom()
     }
 
     /// Area for hit-test specificity (smaller area = more specific target).
@@ -98,10 +115,12 @@ impl Rect {
 
     /// Grow `self` to include `rect`
     pub fn union(&mut self, rect: Rect) {
-        let &Rect { x, y, w, h } = &rect;
-        let (x1, y1) = ((self.x + self.w).max(x + w), (self.y + self.h).max(y + h));
-        self.x = self.x.min(x);
-        self.y = self.y.min(y);
+        let (x1, y1) = (
+            self.right().max(rect.right()),
+            self.bottom().max(rect.bottom()),
+        );
+        self.x = self.x.min(rect.x);
+        self.y = self.y.min(rect.y);
         self.w = x1 - self.x;
         self.h = y1 - self.y;
     }
@@ -109,10 +128,10 @@ impl Rect {
     /// Whether the two rectangles share any area.
     #[must_use]
     pub fn overlaps(&self, other: Rect) -> bool {
-        self.x < other.x + other.w
-            && other.x < self.x + self.w
-            && self.y < other.y + other.h
-            && other.y < self.y + self.h
+        self.x < other.right()
+            && other.x < self.right()
+            && self.y < other.bottom()
+            && other.y < self.bottom()
     }
 
     /// The area the two rectangles share, if any.
@@ -120,8 +139,8 @@ impl Rect {
     pub fn intersection(&self, other: Rect) -> Option<Rect> {
         self.overlaps(other).then(|| {
             let (x, y) = (self.x.max(other.x), self.y.max(other.y));
-            let right = (self.x + self.w).min(other.x + other.w);
-            let bottom = (self.y + self.h).min(other.y + other.h);
+            let right = self.right().min(other.right());
+            let bottom = self.bottom().min(other.bottom());
             Rect::new(x, y, right - x, bottom - y)
         })
     }
@@ -222,6 +241,13 @@ impl<I: Iterator<Item = Rect>> CoalesceIterExt for I {}
 #[cfg(test)]
 mod tests {
     use super::{Coalesce, Rect};
+
+    #[test]
+    fn the_far_edges_and_the_centre_follow_the_size() {
+        let rect = Rect::new(10.0, 20.0, 30.0, 40.0);
+        assert_eq!((rect.right(), rect.bottom()), (40.0, 60.0));
+        assert_eq!(rect.centre(), (25.0, 40.0));
+    }
 
     #[test]
     fn intersection_is_the_shared_area() {

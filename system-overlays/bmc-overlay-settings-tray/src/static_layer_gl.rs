@@ -69,17 +69,15 @@ fn on_track(fraction: f32) -> (f64, f64) {
     let slider = bounds_of(BMM101, ui::BRIGHTNESS_SLIDER_KEY);
     (
         f64::from(slider.x + slider.w * fraction),
-        f64::from(slider.y + slider.h / 2.0),
+        f64::from(slider.centre().1),
     )
 }
 
 /// The centre of the Deck tray's restart button.
 fn on_restart() -> (f64, f64) {
     let button = bounds_of(DECK, ui::RESTART_KEY);
-    (
-        f64::from(button.x + button.w / 2.0),
-        f64::from(button.y + button.h / 2.0),
-    )
+    let (x, y) = button.centre();
+    (f64::from(x), f64::from(y))
 }
 
 /// The tray's render state and the view it draws, its frames stamped by the run's clock.

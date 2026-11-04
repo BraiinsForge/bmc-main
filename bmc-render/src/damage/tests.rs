@@ -330,7 +330,7 @@ fn damage_uses_the_active_transition_easing_after_the_definition_changes() {
     let (_, eased) = crate::animation::easing_extremes(Easing::EaseOutBack);
     let overshoot = 40.0 * (eased - 1.0);
     assert!(
-        rect.x + rect.w >= 230.0 + overshoot,
+        rect.right() >= 230.0 + overshoot,
         "the bound must reach {overshoot}px past the target's right edge, got {rect:?}"
     );
     assert!(
@@ -416,7 +416,7 @@ fn a_scaled_arc_transition_scales_its_stroke_margin_too() {
 
     // Half-extent: (radius + recorded stroke / 2) x 2 = (50 + 20) x 2.
     assert!(
-        rect.x <= 60.0 && rect.x + rect.w >= 340.0,
+        rect.x <= 60.0 && rect.right() >= 340.0,
         "the 2x ring at its thickest reaches 140px from the centre, got {rect:?}"
     );
 }
@@ -774,7 +774,7 @@ fn scaled_sliver(from: f32, to: f32) -> Rect {
 }
 
 fn covers(rect: Rect, x: (f32, f32), y: (f32, f32)) -> bool {
-    rect.x <= x.0 && rect.x + rect.w >= x.1 && rect.y <= y.0 && rect.y + rect.h >= y.1
+    rect.x <= x.0 && rect.right() >= x.1 && rect.y <= y.0 && rect.bottom() >= y.1
 }
 
 #[test]
@@ -816,7 +816,7 @@ fn a_shrinking_icon_covers_its_content_pulled_towards_the_box_centre() {
 fn a_shrinking_icon_stays_on_its_own_side_of_the_box_centre() {
     let rect = scaled_sliver(1.0, 0.5);
     assert!(
-        rect.x > 120.0 && rect.y + rect.h < 180.0,
+        rect.x > 120.0 && rect.bottom() < 180.0,
         "the sliver never crosses x 170 or y 130 at 0.5x..1x, nor its margin x 120 or y 180: {rect:?}"
     );
 }
@@ -892,7 +892,7 @@ fn a_letterboxed_clock_hand_damages_its_sweep_not_its_square() {
         .expect("BUG: a hand is bounded");
 
     assert!(
-        tight.x <= 317.0 && tight.x + tight.w >= 321.0 && tight.y <= 42.0,
+        tight.x <= 317.0 && tight.right() >= 321.0 && tight.y <= 42.0,
         "covers the hand at rest: {tight:?}"
     );
     assert!(

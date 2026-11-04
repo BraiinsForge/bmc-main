@@ -833,7 +833,7 @@ fn run_unified_capture(
                              available elements: [{available}]"
                         )
                     })?;
-                    let (cx, cy) = (b.x + b.w / 2.0, b.y + b.h / 2.0);
+                    let (cx, cy) = b.centre();
                     runtime.push_touch_event(TouchEvent::Down { x: cx, y: cy });
                     tick_one_frame(
                         &mut runtime,
@@ -868,7 +868,7 @@ fn run_unified_capture(
                              available elements: [{available}]"
                         )
                     })?;
-                    let (cx, cy) = (b.x + b.w / 2.0, b.y + b.h / 2.0);
+                    let (cx, cy) = b.centre();
                     let steps = 5;
                     let step_delta = *delta as f32 / 5.0;
                     runtime.push_touch_event(TouchEvent::Down { x: cx, y: cy });
@@ -924,7 +924,7 @@ fn run_unified_capture(
                              available elements: [{available}]"
                         )
                     })?;
-                    let cy = b.y + b.h / 2.0;
+                    let cy = b.centre().1;
                     let start_x = b.x + from * b.w;
                     let end_x = b.x + to * b.w;
                     runtime.push_touch_event(TouchEvent::Down { x: start_x, y: cy });

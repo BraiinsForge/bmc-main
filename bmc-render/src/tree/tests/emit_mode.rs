@@ -44,7 +44,7 @@ fn the_dynamic_half_ignores_an_overlap_no_pixel_shows() {
     let mut painted = DynamicHalf::default();
     let row = Rect::new(0.0, 10.3, 100.0, 33.0);
     painted.add(row);
-    let bottom = row.y + row.h;
+    let bottom = row.bottom();
     let next_top = f32::from_bits(bottom.to_bits() - 1);
     assert!(
         !painted.covers(Rect::new(0.0, next_top, 100.0, 33.0)),

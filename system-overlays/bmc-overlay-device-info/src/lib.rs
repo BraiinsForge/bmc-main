@@ -2397,10 +2397,8 @@ mod tests {
             .render_state
             .element_bounds(&ui::language_key(language))
             .unwrap_or_else(|| panic!("{language} has no chip on screen"));
-        (
-            f64::from(rect.x + rect.w / 2.0),
-            f64::from(rect.y + rect.h / 2.0),
-        )
+        let (x, y) = rect.centre();
+        (f64::from(x), f64::from(y))
     }
 
     /// The offered languages a fresh render lays out a chip for.
@@ -2600,10 +2598,7 @@ mod tests {
                 .element_bounds(&ui::language_key(language))
                 .unwrap_or_else(|| panic!("{language} has no chip"));
             assert!(
-                rect.x >= 0.0
-                    && rect.y >= 0.0
-                    && rect.x + rect.w <= width
-                    && rect.y + rect.h <= height,
+                rect.x >= 0.0 && rect.y >= 0.0 && rect.right() <= width && rect.bottom() <= height,
                 "{rect:?} is off the panel"
             );
         }

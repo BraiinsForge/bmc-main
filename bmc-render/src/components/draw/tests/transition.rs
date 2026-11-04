@@ -562,10 +562,7 @@ fn every_arc_a_transition_paints_lands_inside_its_damage() {
         for event in &renderer.events {
             for (x, y) in painted_arc_outline(event) {
                 assert!(
-                    x >= damage.x
-                        && x <= damage.x + damage.w
-                        && y >= damage.y
-                        && y <= damage.y + damage.h,
+                    x >= damage.x && x <= damage.right() && y >= damage.y && y <= damage.bottom(),
                     "({x}, {y}) of {event:?} falls outside {damage:?}"
                 );
             }

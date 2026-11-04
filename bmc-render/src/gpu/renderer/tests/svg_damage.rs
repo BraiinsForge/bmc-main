@@ -254,7 +254,7 @@ fn assert_contained_at(
     let outside: Vec<_> = lit(&pixels)
         .filter(|&(x, y)| {
             let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
-            x < damage.x || x > damage.x + damage.w || y < damage.y || y > damage.y + damage.h
+            x < damage.x || x > damage.right() || y < damage.y || y > damage.bottom()
         })
         .collect();
     assert!(
@@ -373,10 +373,7 @@ fn a_spike_at_femtovgs_join_cap_stays_inside_its_damage() {
             let outside: Vec<_> = lit(&pixels)
                 .filter(|&(x, y)| {
                     let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
-                    x < damage.x
-                        || x > damage.x + damage.w
-                        || y < damage.y
-                        || y > damage.y + damage.h
+                    x < damage.x || x > damage.right() || y < damage.y || y > damage.bottom()
                 })
                 .collect();
             assert!(

@@ -120,10 +120,8 @@ fn a_flag_press_on_the_language_switch_paints_as_a_full_paint_does() {
         let chip = state
             .element_bounds(&language_key(picked))
             .expect("BUG: the switch lays out a chip per language");
-        let (x, y) = (
-            f64::from(chip.x + chip.w / 2.0),
-            f64::from(chip.y + chip.h / 2.0),
-        );
+        let (x, y) = chip.centre();
+        let (x, y) = (f64::from(x), f64::from(y));
         state.push_touch(TouchEvent::Down { id: 0, x, y });
         paint_speaking(run, &mut state, &setup, Some(spoken), FrameKind::Fresh);
         assert!(

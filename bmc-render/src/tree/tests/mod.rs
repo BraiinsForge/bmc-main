@@ -571,8 +571,8 @@ fn within(outer: &[crate::interaction::Rect], inner: crate::interaction::Rect) -
     outer.iter().any(|o| {
         o.x <= inner.x
             && o.y <= inner.y
-            && o.x + o.w >= inner.x + inner.w
-            && o.y + o.h >= inner.y + inner.h
+            && o.right() >= inner.right()
+            && o.bottom() >= inner.bottom()
     })
 }
 

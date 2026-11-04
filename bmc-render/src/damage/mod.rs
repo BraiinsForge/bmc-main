@@ -180,7 +180,7 @@ impl Transform {
         if (lo - 1.0).abs() + (hi - 1.0).abs() == 0.0 {
             return self.apply(painted, canvas_w, canvas_h);
         }
-        let (cx, cy) = (leaf.x + leaf.w / 2.0, leaf.y + leaf.h / 2.0);
+        let (cx, cy) = leaf.centre();
         if lo >= 0.0 {
             let about_centre = |factor: f32| {
                 Rect::new(
@@ -200,12 +200,8 @@ impl Transform {
             };
             return placed.apply(reached, canvas_w, canvas_h);
         }
-        let half_w = (painted.x - cx)
-            .abs()
-            .max((painted.x + painted.w - cx).abs());
-        let half_h = (painted.y - cy)
-            .abs()
-            .max((painted.y + painted.h - cy).abs());
+        let half_w = (painted.x - cx).abs().max((painted.right() - cx).abs());
+        let half_h = (painted.y - cy).abs().max((painted.bottom() - cy).abs());
         let mirrored = Rect::new(cx - half_w, cy - half_h, 2.0 * half_w, 2.0 * half_h);
         self.apply(mirrored, canvas_w, canvas_h)
     }
@@ -262,9 +258,9 @@ fn swept_bounds(rect: Rect, pivot: (f32, f32), from: f32, to: f32) -> Rect {
     let (start, end) = (from.min(to), from.max(to));
     let corners = [
         (rect.x, rect.y),
-        (rect.x + rect.w, rect.y),
-        (rect.x, rect.y + rect.h),
-        (rect.x + rect.w, rect.y + rect.h),
+        (rect.right(), rect.y),
+        (rect.x, rect.bottom()),
+        (rect.right(), rect.bottom()),
     ];
     let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
     let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
@@ -530,10 +526,10 @@ pub(crate) fn canvas_draw_damage(
     let y = (canvas.y + local.y - FRINGE_SLACK).floor().max(canvas.y);
     let right = (canvas.x + local.x + local.w + FRINGE_SLACK)
         .ceil()
-        .min(canvas.x + canvas.w);
+        .min(canvas.right());
     let bottom = (canvas.y + local.y + local.h + FRINGE_SLACK)
         .ceil()
-        .min(canvas.y + canvas.h);
+        .min(canvas.bottom());
     // Clipped away is not unboundable: reporting it as such would damage the
     // whole canvas every frame for a draw that paints nothing.
     if right > x && bottom > y {

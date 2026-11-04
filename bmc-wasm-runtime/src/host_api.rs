@@ -2389,8 +2389,8 @@ mod tests {
             assert!(
                 damage.iter().any(|d| d.x <= stale.x
                     && d.y <= stale.y
-                    && d.x + d.w >= stale.x + stale.w
-                    && d.y + d.h >= stale.y + stale.h),
+                    && d.right() >= stale.right()
+                    && d.bottom() >= stale.bottom()),
                 "{stale:?} is left out of the damage span {damage:?}"
             );
         }
