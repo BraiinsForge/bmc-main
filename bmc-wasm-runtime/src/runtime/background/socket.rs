@@ -25,7 +25,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use bmc_wasm_protocol::SocketId;
+use bmc_wasm_protocol::{SocketId, WsHostClose};
 use wasmi::Caller;
 
 use crate::host_api::{ActiveSocket, HostState, SocketEvent, SocketOutbound, WsEvent, WsOutbound};
@@ -116,6 +116,21 @@ pub(in crate::runtime) fn build_tls_client_config(
     Ok(config)
 }
 
+/// How long a WebSocket waits on each step of connecting:
+/// each address it dials, and each read or write of the handshake.
+/// The thread reads the widget's close only once the handshake is done,
+/// so this is what frees a thread dialled to a peer that stops answering.
+/// A peer that trickles the handshake out, or a host with several addresses, can take longer.
+/// The write timeout stays set afterwards, so a send the peer leaves unread that long ends the socket as 1006.
+pub(in crate::runtime) const WS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Bounds on one WebSocket connection.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::runtime) struct WsLimits {
+    pub max_message_bytes: usize,
+    pub handshake_timeout: Duration,
+}
+
 /// Background thread for a single WebSocket connection.
 ///
 /// `url` is dialled and may carry substituted secrets, so it is never logged;
@@ -127,12 +142,19 @@ pub(in crate::runtime) fn ws_background_thread(
     url: &str,
     log_url: &str,
     headers: &[(String, String)],
+    limits: WsLimits,
     event_tx: std::sync::mpsc::Sender<WsEvent>,
     msg_rx: std::sync::mpsc::Receiver<WsOutbound>,
 ) {
     use tungstenite::Message;
     use tungstenite::http::Request;
-    use tungstenite::protocol::CloseFrame;
+    use tungstenite::protocol::frame::coding::CloseCode;
+    use tungstenite::protocol::{CloseFrame, WebSocketConfig};
+
+    let WsLimits {
+        max_message_bytes,
+        handshake_timeout,
+    } = limits;
 
     let uri: tungstenite::http::Uri = match url.parse() {
         Ok(u) => u,
@@ -164,7 +186,7 @@ pub(in crate::runtime) fn ws_background_thread(
         }
     };
 
-    let tcp = match dial(&uri) {
+    let tcp = match dial(&uri, handshake_timeout) {
         Ok(tcp) => tcp,
         Err(reason) => {
             tracing::error!(ws_id, url = %log_url, "WS connect failed: {reason}");
@@ -172,16 +194,28 @@ pub(in crate::runtime) fn ws_background_thread(
             return;
         }
     };
+    let prepared = tcp
+        .set_read_timeout(Some(handshake_timeout))
+        .and_then(|()| tcp.set_write_timeout(Some(handshake_timeout)));
+    if let Err(e) = prepared {
+        tracing::warn!(ws_id, "WS handshake timeout not set: {e}");
+    }
+    let config = WebSocketConfig {
+        max_message_size: Some(max_message_bytes),
+        max_frame_size: Some(max_message_bytes),
+        ..WebSocketConfig::default()
+    };
     // One handshake on the dialled stream: a redirect fails it instead of being followed,
     // so the socket never leaves the host the egress pin judged.
-    let (mut socket, _response) = match tungstenite::client(request, tcp) {
-        Ok(pair) => pair,
-        Err(e) => {
-            tracing::error!(ws_id, url = %log_url, "WS handshake failed: {e}");
-            let _ = event_tx.send(WsEvent::Close(1006));
-            return;
-        }
-    };
+    let (mut socket, _response) =
+        match tungstenite::client::client_with_config(request, tcp, Some(config)) {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::error!(ws_id, url = %log_url, "WS handshake failed: {e}");
+                let _ = event_tx.send(WsEvent::Close(1006));
+                return;
+            }
+        };
 
     let _ = socket
         .get_ref()
@@ -206,6 +240,7 @@ pub(in crate::runtime) fn ws_background_thread(
                         reason: "".into(),
                     }));
                     let _ = event_tx.send(WsEvent::Close(code.unwrap_or(1000)));
+                    await_peer_close(&mut socket);
                     return;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -237,6 +272,17 @@ pub(in crate::runtime) fn ws_background_thread(
             Err(tungstenite::Error::Io(ref e))
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(tungstenite::Error::Capacity(e)) => {
+                tracing::warn!(ws_id, "WS message over {max_message_bytes} bytes: {e}");
+                let _ = socket.close(Some(CloseFrame {
+                    code: CloseCode::Size,
+                    reason: "".into(),
+                }));
+                let _ = socket.flush();
+                let _ = event_tx.send(WsEvent::HostClosed(WsHostClose::MessageTooLarge));
+                await_peer_close(&mut socket);
+                return;
+            }
             Err(e) => {
                 tracing::warn!(ws_id, "WS read error: {e}");
                 break;
@@ -248,12 +294,34 @@ pub(in crate::runtime) fn ws_background_thread(
     tracing::info!(ws_id, "WS background thread exiting");
 }
 
+/// How long a socket the host closes waits for the peer's close frame before dropping the stream.
+const WS_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Wait out the closing handshake after sending our close frame, up to [`WS_CLOSE_TIMEOUT`].
+///
+/// Dropped at once, the stream would meet the peer's close frame already closed,
+/// and the kernel would answer it with a reset, which can discard our close frame
+/// before the peer reads it.
+fn await_peer_close(socket: &mut tungstenite::WebSocket<std::net::TcpStream>) {
+    let deadline = std::time::Instant::now() + WS_CLOSE_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        match socket.read() {
+            Ok(tungstenite::Message::Close(_)) => return,
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(ref e))
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(_) => return,
+        }
+    }
+}
+
 /// Open the TCP connection a `ws://` URI names.
 ///
 /// Dialled here rather than by `tungstenite::connect`,
 /// which logs the URI it dials and names it in its errors,
 /// and the URI dialled here may carry substituted secrets.
-fn dial(uri: &tungstenite::http::Uri) -> Result<std::net::TcpStream, String> {
+fn dial(uri: &tungstenite::http::Uri, timeout: Duration) -> Result<std::net::TcpStream, String> {
     use std::net::ToSocketAddrs as _;
 
     // No TLS is built in, and `tungstenite::client` would run a cleartext handshake against a `wss://` port.
@@ -270,7 +338,7 @@ fn dial(uri: &tungstenite::http::Uri) -> Result<std::net::TcpStream, String> {
 
     let tcp = addrs
         .into_iter()
-        .find_map(|addr| std::net::TcpStream::connect(addr).ok())
+        .find_map(|addr| std::net::TcpStream::connect_timeout(&addr, timeout).ok())
         .ok_or_else(|| "unable to connect".to_owned())?;
     // As `tungstenite::connect` does: a frame goes out whole, so Nagle only delays it.
     tcp.set_nodelay(true).map_err(|e| e.to_string())?;
@@ -528,8 +596,26 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
 mod tests {
     use std::net::TcpListener;
     use std::sync::mpsc;
+    use std::time::Duration;
 
-    use super::{TlsVerificationMode, build_tls_client_config, dial, ws_background_thread};
+    use tungstenite::Message;
+    use tungstenite::protocol::frame::coding::CloseCode;
+
+    use super::{
+        TlsVerificationMode, WS_HANDSHAKE_TIMEOUT, WsEvent, WsHostClose, WsLimits,
+        build_tls_client_config, dial, ws_background_thread,
+    };
+
+    const LIMITS: WsLimits = WsLimits {
+        max_message_bytes: 1024,
+        handshake_timeout: WS_HANDSHAKE_TIMEOUT,
+    };
+
+    fn loopback_listener() -> (TcpListener, std::net::SocketAddr) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        (listener, addr)
+    }
 
     #[test]
     fn tls_client_config_builds_for_both_modes() {
@@ -538,13 +624,57 @@ mod tests {
     }
 
     #[test]
+    fn a_message_over_the_limit_is_a_host_close_and_tells_the_peer_1009() {
+        const LIMIT: usize = LIMITS.max_message_bytes;
+        let (listener, addr) = loopback_listener();
+        let server = std::thread::spawn(move || {
+            let (tcp, _) = listener.accept().expect("BUG: accept test client");
+            let mut socket = tungstenite::accept(tcp).expect("BUG: accept the handshake");
+            for len in [LIMIT, LIMIT + 1] {
+                socket
+                    .send(Message::text("x".repeat(len)))
+                    .expect("BUG: send a test message");
+            }
+            loop {
+                match socket.read() {
+                    Ok(Message::Close(frame)) => return frame.map(|frame| frame.code),
+                    Ok(_) => {}
+                    Err(_) => return None,
+                }
+            }
+        });
+
+        let (event_tx, event_rx) = mpsc::channel();
+        let (_msg_tx, msg_rx) = mpsc::channel();
+        let url = format!("ws://{addr}/");
+        ws_background_thread(1, &url, &url, &[], LIMITS, event_tx, msg_rx);
+
+        let events: Vec<WsEvent> = event_rx.try_iter().collect();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [
+                    WsEvent::Open,
+                    WsEvent::Message(text),
+                    WsEvent::HostClosed(WsHostClose::MessageTooLarge),
+                ] if text.len() == LIMIT
+            ),
+            "a message at the limit arrives, the one over it closes the socket: {events:?}"
+        );
+        assert_eq!(
+            server.join().expect("BUG: the test server panicked"),
+            Some(CloseCode::Size),
+            "the peer is told why"
+        );
+    }
+
+    #[test]
     #[expect(
         clippy::result_large_err,
         reason = "tungstenite's handshake callback must return its own ErrorResponse"
     )]
     fn the_host_header_carries_no_userinfo() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
-        let addr = listener.local_addr().expect("BUG: local addr");
+        let (listener, addr) = loopback_listener();
         let server = std::thread::spawn(move || {
             let (tcp, _) = listener.accept().expect("BUG: accept test client");
             let mut host = None;
@@ -567,7 +697,7 @@ mod tests {
         let (msg_tx, msg_rx) = mpsc::channel();
         drop(msg_tx);
         let url = format!("ws://user:s3cr3t@{addr}/");
-        ws_background_thread(1, &url, &url, &[], event_tx, msg_rx);
+        ws_background_thread(1, &url, &url, &[], LIMITS, event_tx, msg_rx);
 
         assert_eq!(
             server.join().expect("BUG: the test server panicked"),
@@ -577,13 +707,37 @@ mod tests {
     }
 
     #[test]
+    fn a_peer_that_never_answers_the_handshake_frees_the_thread() {
+        let (listener, addr) = loopback_listener();
+        let limits = WsLimits {
+            handshake_timeout: Duration::from_millis(200),
+            ..LIMITS
+        };
+        let (event_tx, event_rx) = mpsc::channel();
+        let (_msg_tx, msg_rx) = mpsc::channel();
+        let url = format!("ws://{addr}/");
+        let thread = std::thread::spawn(move || {
+            ws_background_thread(1, &url, &url, &[], limits, event_tx, msg_rx);
+        });
+        let (_silent, _) = listener.accept().expect("BUG: accept test client");
+
+        assert!(
+            matches!(
+                event_rx.recv_timeout(Duration::from_secs(5)),
+                Ok(WsEvent::Close(1006))
+            ),
+            "a handshake nobody answers must fail within its timeout",
+        );
+        thread.join().expect("BUG: the socket thread panicked");
+    }
+
+    #[test]
     fn a_dialled_stream_sends_without_delay() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
-        let addr = listener.local_addr().expect("BUG: local addr");
+        let (_listener, addr) = loopback_listener();
         let uri = format!("ws://{addr}/")
             .parse()
             .expect("BUG: a loopback URI parses");
-        let tcp = dial(&uri).expect("BUG: the listener accepts");
+        let tcp = dial(&uri, WS_HANDSHAKE_TIMEOUT).expect("BUG: the listener accepts");
         assert!(
             tcp.nodelay().expect("BUG: read TCP_NODELAY"),
             "a frame goes out whole, so Nagle would only delay it",

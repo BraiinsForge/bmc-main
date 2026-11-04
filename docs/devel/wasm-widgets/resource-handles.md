@@ -91,7 +91,9 @@ The borrowed handle stays usable after that, but does nothing: a write or a send
 
 When the peer closes a socket or a WebSocket, the callback gets `SocketEvent::Closed` or `WsEvent::Close`, and the
 stored handle reaches nothing from then on. A WebSocket the host closes, or refuses to open, gets `WsEvent::HostClosed`
-instead, and ends the same way. Clear or replace it there, so a stored `Some` keeps meaning connected.
+instead, and ends the same way. Clear or replace it there, so a stored `Some` keeps meaning connected. A message over
+the host's cap, 4 MiB by default (`max_websocket_message_bytes`), is one such close: the widget gets
+`WsEvent::HostClosed(WsHostClose::MessageTooLarge)`, and the peer a 1009.
 
 Several handles of one kind can share a callback. To find the one an event belongs to, compare the argument with the
 stored handles.

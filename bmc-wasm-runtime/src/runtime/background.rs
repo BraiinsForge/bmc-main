@@ -30,5 +30,6 @@ pub use fetch::FetchAgent;
 pub(super) use fetch::{Redirects, do_fetch};
 pub(super) use http::http_listener_thread;
 pub(super) use socket::{
-    TlsVerificationMode, host_tls_connect_impl, tcp_background_thread, ws_background_thread,
+    TlsVerificationMode, WS_HANDSHAKE_TIMEOUT, WsLimits, host_tls_connect_impl,
+    tcp_background_thread, ws_background_thread,
 };

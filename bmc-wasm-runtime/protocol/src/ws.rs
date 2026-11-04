@@ -75,6 +75,8 @@ pub enum WsHostClose {
     /// The account behind a credential the socket spent changed.
     /// A new socket spends the account as it now is.
     AccountChanged,
+    /// The peer sent a message larger than the host accepts.
+    MessageTooLarge,
 }
 
 /// The close code a widget older than [`WS_HOST_CLOSE_PROTOCOL`](crate::version::WS_HOST_CLOSE_PROTOCOL)
@@ -89,6 +91,7 @@ impl WsHostClose {
         match self {
             Self::Credential => 1,
             Self::AccountChanged => 2,
+            Self::MessageTooLarge => 3,
         }
     }
 
@@ -98,6 +101,7 @@ impl WsHostClose {
         match raw {
             1 => Some(Self::Credential),
             2 => Some(Self::AccountChanged),
+            3 => Some(Self::MessageTooLarge),
             _ => None,
         }
     }
@@ -122,7 +126,11 @@ mod tests {
 
     #[test]
     fn round_trips_every_reason() {
-        for reason in [WsHostClose::Credential, WsHostClose::AccountChanged] {
+        for reason in [
+            WsHostClose::Credential,
+            WsHostClose::AccountChanged,
+            WsHostClose::MessageTooLarge,
+        ] {
             assert_eq!(WsHostClose::from_wire(reason.to_wire()), Some(reason));
         }
     }
@@ -130,6 +138,6 @@ mod tests {
     #[test]
     fn an_unnamed_value_is_no_reason() {
         assert_eq!(WsHostClose::from_wire(0), None);
-        assert_eq!(WsHostClose::from_wire(3), None);
+        assert_eq!(WsHostClose::from_wire(4), None);
     }
 }

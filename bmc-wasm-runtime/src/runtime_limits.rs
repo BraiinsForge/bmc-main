@@ -50,6 +50,11 @@ pub struct RuntimeResourceLimits {
     pub max_http_listeners: usize,
     /// Maximum image-decode jobs in flight (background decode threads).
     pub max_image_decodes: usize,
+    /// Largest message or frame a WebSocket accepts.
+    ///
+    /// A larger one closes the socket with 1009 instead of being buffered whole,
+    /// as the reader would otherwise hold up to tungstenite's 64 MiB default.
+    pub max_websocket_message_bytes: usize,
     /// Maximum active periodic timers.
     pub max_timers: usize,
     /// Shortest period a timer may run at.
@@ -71,6 +76,7 @@ impl Default for RuntimeResourceLimits {
             max_udp_broadcasts: 4,
             max_http_listeners: 2,
             max_image_decodes: 1,
+            max_websocket_message_bytes: 4 * 1024 * 1024,
             max_timers: 4,
             min_timer_period_ms: DEFAULT_MIN_TIMER_PERIOD_MS,
         }
@@ -94,6 +100,7 @@ mod tests {
         assert!(limits.max_udp_broadcasts > 0);
         assert!(limits.max_http_listeners > 0);
         assert!(limits.max_image_decodes > 0);
+        assert!(limits.max_websocket_message_bytes > 0);
         assert!(limits.max_timers > 0);
     }
 }

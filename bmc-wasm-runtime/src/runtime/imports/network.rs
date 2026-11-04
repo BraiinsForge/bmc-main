@@ -41,9 +41,9 @@ use crate::host_api::{
 };
 
 use super::super::background::{
-    Redirects, TlsVerificationMode, do_fetch, host_tls_connect_impl, http_listener_thread,
-    mdns_browse_thread, ssdp_search_thread, tcp_background_thread, udp_broadcast_thread,
-    ws_background_thread,
+    Redirects, TlsVerificationMode, WS_HANDSHAKE_TIMEOUT, WsLimits, do_fetch,
+    host_tls_connect_impl, http_listener_thread, mdns_browse_thread, ssdp_search_thread,
+    tcp_background_thread, udp_broadcast_thread, ws_background_thread,
 };
 use super::super::memory::{
     parse_headers, read_bytes, read_optional_bytes, read_string, write_to_wasm,
@@ -520,12 +520,17 @@ fn register_ws_connect_import(linker: &mut Linker<HostState>) -> Result<()> {
                 },
             );
             let ws_id_wire = ws_id.to_wire();
+            let limits = WsLimits {
+                max_message_bytes: state.resource_limits.max_websocket_message_bytes,
+                handshake_timeout: WS_HANDSHAKE_TIMEOUT,
+            };
             std::thread::spawn(move || {
                 ws_background_thread(
                     ws_id_wire,
                     &dialled_url,
                     &url,
                     &dialled_headers,
+                    limits,
                     event_tx,
                     msg_rx,
                 );

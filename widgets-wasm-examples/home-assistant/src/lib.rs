@@ -156,6 +156,7 @@ fn on_ha_event(ws: &Ws, event: &WsEvent) {
             let reason = match reason {
                 WsHostClose::Credential => "its credential",
                 WsHostClose::AccountChanged => "an account change",
+                WsHostClose::MessageTooLarge => "a message over its size limit",
             };
             connection_lost(fmt!("WebSocket closed by the host for {}", reason));
         }
