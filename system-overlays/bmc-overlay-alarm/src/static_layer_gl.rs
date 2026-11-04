@@ -18,6 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use std::time::Duration;
+
 use bmc_render::renderer::test_support::ShapingRecorder;
 use bmc_system_overlay::gl_check::{
     CAPTURED, GlRun, REUSED, assert_layered_run_matches_full_paint,
@@ -34,6 +36,7 @@ fn view() -> AlarmView {
         period: "AM".to_owned(),
         label: "Wake up".to_owned(),
         snooze_allowed: true,
+        rings: RingMotion::Ripple,
     }
 }
 
@@ -76,6 +79,32 @@ fn stop_button() -> (f64, f64) {
     (f64::from(x), f64::from(y))
 }
 
+/// Replays painted while the first ring fades in and starts to grow.
+const RINGING_REPLAYS: usize = 24;
+
+#[test]
+fn the_rings_paint_as_a_full_paint_does_over_the_reused_layer() {
+    let outcomes = assert_layered_run_matches_full_paint(SIZE, |run| {
+        // The first frame advances the animations through the rings' hidden start,
+        // so the replays after it show the first ring.
+        let clock_start = run
+            .now()
+            .checked_sub(Duration::from_millis(RING_HIDDEN_MS.into()))
+            .expect("BUG: the run's clock starts well after boot");
+        let mut state = AlarmRenderState::new(clock_start);
+        paint(run, &mut state, FrameKind::Fresh);
+        for _ in 0..RINGING_REPLAYS {
+            paint(run, &mut state, FrameKind::AnimationOnly);
+        }
+    });
+    let Some(outcomes) = outcomes else { return };
+    assert_eq!(
+        outcomes,
+        [[CAPTURED].as_slice(), &[REUSED; RINGING_REPLAYS]].concat(),
+        "the rings move without disturbing the static layer"
+    );
+}
+
 #[test]
 fn a_stop_press_paints_as_a_full_paint_does() {
     let (x, y) = stop_button();
@@ -109,6 +138,25 @@ fn a_stop_press_paints_as_a_full_paint_does() {
     );
 }
 
+/// The alarm without its rings, whose damage covers the whole surface on every frame.
+fn without_rings(mut tree: Node) -> Node {
+    let Node::Column(_, children) = &mut tree else {
+        panic!("BUG: the alarm's root is a column");
+    };
+    let rings = children.remove(0);
+    assert!(
+        matches!(
+            rings,
+            Node::Canvas {
+                touch_key: None,
+                ..
+            }
+        ),
+        "BUG: the rings are the alarm's first child"
+    );
+    tree
+}
+
 /// A square moved on every rebuild gives the alarm's replays damage that spans both buffers.
 #[test]
 fn moving_damage_on_the_alarm_paints_as_a_full_paint_does() {
@@ -116,6 +164,6 @@ fn moving_damage_on_the_alarm_paints_as_a_full_paint_does() {
     let _ = assert_moving_damage_matches_full_paint(
         SIZE,
         |_| (),
-        |()| build_alarm_ui_tree(&view(), SIZE, &intl),
+        |()| without_rings(build_alarm_ui_tree(&view(), SIZE, &intl)),
     );
 }

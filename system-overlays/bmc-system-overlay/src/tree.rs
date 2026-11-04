@@ -30,7 +30,7 @@
 //! When the host keeps the target such a frame paints into,
 //! it repaints only the regions that moved.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bmc_render::FrameTimings;
 use bmc_render::partition::static_layer::{AssetGeneration, MissPolicy, StaticLayerCache};
@@ -140,8 +140,9 @@ pub struct TreeUi {
     /// What [`Self::prepare_target`] told the host the next frame may find in its target.
     target: TargetContents,
     warned_unkeyed: bool,
-    /// The instant the last frame's animations advanced to.
-    last_render: Instant,
+    /// The instant the last frame's animations advanced to;
+    /// `None` starts them from the next frame.
+    last_render: Option<Instant>,
     #[cfg(any(test, feature = "test-support"))]
     replayed_last_frame: bool,
     /// Fails the next walk once its layer is planned, as no real tree makes taffy fail.
@@ -166,7 +167,7 @@ impl TreeUi {
             layered: LayeredTree::new(overlay_layer()),
             target: TargetContents::Cleared,
             warned_unkeyed: false,
-            last_render: now,
+            last_render: Some(now),
             #[cfg(any(test, feature = "test-support"))]
             replayed_last_frame: false,
             #[cfg(test)]
@@ -242,9 +243,11 @@ impl TreeUi {
             layering,
             now,
         } = frame;
-        let delta_ms = u32::try_from(now.saturating_duration_since(self.last_render).as_millis())
-            .unwrap_or(u32::MAX);
-        self.last_render = now;
+        let since_last = self
+            .last_render
+            .map_or(Duration::ZERO, |last| now.saturating_duration_since(last));
+        let delta_ms = u32::try_from(since_last.as_millis()).unwrap_or(u32::MAX);
+        self.last_render = Some(now);
         self.render_after(kind, layering, size, delta_ms, renderer, intl, build)
     }
 
@@ -306,6 +309,16 @@ impl TreeUi {
     pub fn clear(&mut self) {
         self.cached = None;
         self.fail();
+    }
+
+    /// [`Self::clear`], and start every animation and transition over from the next frame.
+    /// The layer keeps its owner, so the next capture overwrites it,
+    /// and touches carry on, so a tap under way still lands.
+    pub fn restart(&mut self) {
+        self.clear();
+        self.walk.animation_states.clear();
+        self.walk.transition_states.clear();
+        self.last_render = None;
     }
 
     /// Free the static layer in `renderer` and capture again from the next frame,

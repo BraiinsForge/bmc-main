@@ -252,6 +252,18 @@ ssh root@192.168.1.2 'touch /etc/bmc/i18n'   # on
 ssh root@192.168.1.2 'rm /etc/bmc/i18n'      # off
 ```
 
+### Turning the alarm's ring animation on
+
+Until the animation is approved, the rings behind a ringing alarm stand still. The marker file
+`/etc/bmc/alarm-animation` makes them ripple out from the centre, and removing it stands them still again. The overlay
+reads it each time an alarm rings, so the next alarm follows without a restart. A factory reset removes it; a sysupgrade
+keeps it.
+
+```sh
+ssh root@192.168.1.2 'touch /etc/bmc/alarm-animation'   # ripple
+ssh root@192.168.1.2 'rm /etc/bmc/alarm-animation'      # still
+```
+
 ### Measuring the widget host before and after a change
 
 Comparing `bmc-wasm-host` memory or startup against master follows the procedure and scripts in

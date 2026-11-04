@@ -32,7 +32,7 @@ use std::time::Instant;
 
 use bmc_gallery::prelude::*;
 
-use bmc_overlay_alarm::{AlarmRenderState, AlarmView, render_alarm};
+use bmc_overlay_alarm::{AlarmRenderState, AlarmView, RingMotion, render_alarm};
 use bmc_overlay_device_info::{
     DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Link, Uplinks, render_device_info,
 };
@@ -1037,6 +1037,11 @@ fn settings_tray_screens(ctx: &mut SceneCtx, ui: &mut Ui, stage: TrayStage) {
 #[scene]
 fn alarm(ctx: &mut SceneCtx, ui: &mut Ui) {
     let flat = ctx.toggle("Flat backdrop", false);
+    let rings = if ctx.toggle("Animated rings", false) {
+        RingMotion::Ripple
+    } else {
+        RingMotion::Still
+    };
 
     ui.heading("Alarm");
     ui.label("with label, snooze allowed");
@@ -1049,6 +1054,7 @@ fn alarm(ctx: &mut SceneCtx, ui: &mut Ui) {
                 period: String::new(),
                 label: "Wake up".to_owned(),
                 snooze_allowed: true,
+                rings,
             },
             &ALARM_LABEL_RENDER_STATE,
             flat,
@@ -1066,6 +1072,7 @@ fn alarm(ctx: &mut SceneCtx, ui: &mut Ui) {
                 period: String::new(),
                 label: String::new(),
                 snooze_allowed: false,
+                rings,
             },
             &ALARM_NO_LABEL_RENDER_STATE,
             flat,
@@ -1083,6 +1090,7 @@ fn alarm(ctx: &mut SceneCtx, ui: &mut Ui) {
                 period: "PM".to_owned(),
                 label: "Wake up".to_owned(),
                 snooze_allowed: true,
+                rings,
             },
             &ALARM_12H_RENDER_STATE,
             flat,

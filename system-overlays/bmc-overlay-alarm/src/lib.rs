@@ -25,15 +25,19 @@
 //! dismisses, or the compositor reports the alarm stopped. Snooze/dismiss taps
 //! are sent back over the same protocol.
 
+use std::num::NonZeroU16;
+use std::path::PathBuf;
 use std::time::Instant;
 use std::vec;
 
 use bmc_intl::{Intl, format_message};
+use bmc_render::animation::apply_easing;
 use bmc_render::renderer::Renderer;
 use bmc_render::ui::{
-    ArcCap, ArcFill, ArcSegments, BLACK, Color, CrossAlign, Draw, Fill, FontFamily, FontWeight,
-    GRAY_30, Interpolation, Node, ORANGE_30, ORANGE_40, ORANGE_50, PathPaint, PropsData,
-    TRANSPARENT, TextAlign, TextStyle, VerticalAlign, WHITE, col, fixed_height, row, text,
+    AnimProperty, ArcCap, ArcFill, ArcSegments, BLACK, Color, CrossAlign, Draw, Easing, Fill,
+    FontFamily, FontWeight, GRAY_30, Interpolation, LoopMode, Node, ORANGE_30, ORANGE_40,
+    ORANGE_50, PathPaint, PropsData, TRANSPARENT, TextAlign, TextStyle, VerticalAlign, WHITE, col,
+    fixed_height, row, text,
 };
 use bmc_system_overlay::{
     AlarmRequest, Anchor, FrameKind, InputRegion, Layer, LayerConfig, OverlayFrame,
@@ -44,6 +48,9 @@ use bmc_system_overlay::{
 /// the `TreeResult::clicks` lookup so `render` and the click handler agree.
 const STOP_ALARM_KEY: &str = "stop_alarm_button";
 const SNOOZE_ALARM_KEY: &str = "snooze_alarm_button";
+
+/// The rings ripple only while this file exists, until the animation is approved.
+const RIPPLE_MARKER: &str = "/etc/bmc/alarm-animation";
 
 /// The firing alarm currently shown, as delivered by the `alarm_ringing` event.
 #[derive(Debug)]
@@ -57,6 +64,7 @@ struct Ring {
     label: String,
     /// Whether the alarm may be snoozed; `false` hides the snooze button.
     snooze_allowed: bool,
+    motion: RingMotion,
 }
 
 /// Keeps context for UI rendering.
@@ -90,6 +98,8 @@ pub struct AlarmOverlay {
     dirty: bool,
     /// UI rendering context.
     render_state: AlarmRenderState,
+    /// Read at each ring, so creating or removing it takes effect from the next alarm.
+    ripple_marker: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +111,17 @@ pub struct AlarmView {
     pub label: String,
     /// Whether the snooze button is shown; `false` renders stop-only.
     pub snooze_allowed: bool,
+    /// Whether the rings behind the alarm ripple or stand still.
+    pub rings: RingMotion,
+}
+
+/// How the rings behind the alarm move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RingMotion {
+    /// The rings ripple out from the centre.
+    Ripple,
+    /// The rings stand still.
+    Still,
 }
 
 /// A 400×100 alarm action button: a solid `fill` background, an optional 1px
@@ -192,19 +213,118 @@ fn draw_outline_circle(cx: f32, cy: f32, r: f32, color: Color) -> Draw {
     }
 }
 
-fn background_rings(background_size: (u32, u32)) -> Node {
-    /// Concentric decorative rings behind the alarm content, outer edge fading out.
-    /// `(opacity, radius_px)` on the 480×1280 firing screen; each ring is larger
-    /// than the 480px width, so only its top and bottom arcs are visible.
-    const RINGS: [(f32, f32); 4] = [(1.0, 350.0), (0.8, 425.0), (0.6, 500.0), (0.4, 575.0)];
+/// Ring radius, in percent of the screen's longer side, at which a ring is fully opaque.
+const RING_OPAQUE_AT_PCT: u16 = 25;
+/// Ring radius, in percent of the screen's longer side, at which a ring has faded out.
+const RING_VANISH_AT_PCT: u16 = 50;
+/// Time a ring takes to fade in, ending at `RING_OPAQUE_AT_PCT`.
+const RING_FADE_IN_MS: NonZeroU16 = NonZeroU16::new(300).expect("BUG: a fade-in takes time");
+/// Time from the alarm showing to the first ring starting to fade in.
+const RING_HIDDEN_MS: u16 = 1_500;
+/// Time a ring takes from starting to fade in to vanishing.
+const RING_LOOP_MS: NonZeroU16 = NonZeroU16::new(3_000).expect("BUG: a loop takes time");
+const _: () = assert!(
+    RING_FADE_IN_MS.get() < RING_LOOP_MS.get(),
+    "a ring must fade in before its loop ends"
+);
+const _: () = assert!(
+    RING_OPAQUE_AT_PCT < RING_VANISH_AT_PCT,
+    "a ring must turn opaque before it vanishes"
+);
+const _: () = assert!(
+    RING_HIDDEN_MS.checked_add(RING_LOOP_MS.get()).is_some(),
+    "the last ring's delay, under a loop past the hidden start, must fit a u16"
+);
+const RING_COUNT: NonZeroU16 = NonZeroU16::new(4).expect("BUG: the ripple has a ring");
+/// Rings spawn evenly through one loop.
+#[expect(clippy::integer_division, reason = "precision not needed")]
+const RING_SPAWN_INTERVAL_MS: u16 = RING_LOOP_MS.get() / RING_COUNT.get();
+
+/// How a ring's radius grows, and its opacity fades out with it.
+const RING_GROWTH: Easing = Easing::EaseOut;
+/// How a ring fades in, ending opaque at `RING_OPAQUE_AT_PCT`.
+const RING_FADE_IN: Easing = Easing::EaseIn;
+
+/// One ring of the ripple, spawned `spawn_ms` after the first one.
+///
+/// A ring grows out from where it appears, about a fifth of the screen's longer side,
+/// slowing down,
+/// transparent until it fades in over `RING_FADE_IN_MS`,
+/// opaque at `RING_OPAQUE_AT_PCT`,
+/// then fading out to gone by `RING_VANISH_AT_PCT`.
+///
+/// Each fade overshoots 1 over the loop and the renderer clamps it,
+/// so their product is the fade-in, then the fade-out.
+/// Until the ring spawns, the fade-in holds its `from` of 0 and hides it.
+/// The fade-out shares the growth's easing, which keeps it linear in the radius.
+/// `Scale` widens the 1px stroke with the radius.
+fn ripple_ring(cx: f32, cy: f32, longer_side: f32, spawn_ms: u16) -> Draw {
+    let appear_radius = longer_side * appear_at_pct() / 100.0;
+    let start_ms = RING_HIDDEN_MS + spawn_ms;
+    draw_outline_circle(cx, cy, appear_radius, ORANGE_40)
+        .animate_delayed(
+            AnimProperty::Scale,
+            1.0,
+            f32::from(RING_VANISH_AT_PCT) / appear_at_pct(),
+            u32::from(RING_LOOP_MS.get()),
+            start_ms,
+            RING_GROWTH,
+            LoopMode::Forever,
+        )
+        .animate_delayed(
+            AnimProperty::Alpha,
+            0.0,
+            1.0 / apply_easing(RING_FADE_IN, RING_FADE_IN_SHARE),
+            u32::from(RING_LOOP_MS.get()),
+            start_ms,
+            RING_FADE_IN,
+            LoopMode::Forever,
+        )
+        .animate_delayed(
+            AnimProperty::Alpha,
+            1.0 / (1.0 - opaque_progress()),
+            0.0,
+            u32::from(RING_LOOP_MS.get()),
+            start_ms,
+            RING_GROWTH,
+            LoopMode::Forever,
+        )
+}
+
+/// The share of a loop a ring spends fading in.
+const RING_FADE_IN_SHARE: f32 = RING_FADE_IN_MS.get() as f32 / RING_LOOP_MS.get() as f32;
+
+/// How far through its growth a ring is when it turns opaque.
+fn opaque_progress() -> f32 {
+    apply_easing(RING_GROWTH, RING_FADE_IN_SHARE)
+}
+
+/// Ring radius, in percent of the screen's longer side, at which a ring starts fading in:
+/// far enough in that `RING_FADE_IN_MS` of growth ends at `RING_OPAQUE_AT_PCT`.
+fn appear_at_pct() -> f32 {
+    let progress = opaque_progress();
+    (f32::from(RING_OPAQUE_AT_PCT) - progress * f32::from(RING_VANISH_AT_PCT)) / (1.0 - progress)
+}
+
+fn background_rings(background_size: (u32, u32), motion: RingMotion) -> Node {
+    /// `(opacity, radius_px)` of the still rings on the 480×1280 firing screen;
+    /// each ring is larger than the 480px width, so only its top and bottom arcs are visible.
+    const STILL_RINGS: [(f32, f32); 4] = [(1.0, 350.0), (0.8, 425.0), (0.6, 500.0), (0.4, 575.0)];
 
     #[expect(clippy::cast_precision_loss)]
     let (w, h) = (background_size.0 as f32, background_size.1 as f32);
 
-    let draws = RINGS
-        .into_iter()
-        .map(|(opacity, r)| draw_outline_circle(w / 2.0, h / 2.0, r, ORANGE_40.with_alpha(opacity)))
-        .collect();
+    let draws = match motion {
+        RingMotion::Ripple => (0..RING_COUNT.get())
+            .map(|ring| ripple_ring(w / 2.0, h / 2.0, w.max(h), ring * RING_SPAWN_INTERVAL_MS))
+            .collect(),
+        RingMotion::Still => STILL_RINGS
+            .into_iter()
+            .map(|(opacity, r)| {
+                draw_outline_circle(w / 2.0, h / 2.0, r, ORANGE_40.with_alpha(opacity))
+            })
+            .collect(),
+    };
 
     Node::Canvas {
         props: PropsData {
@@ -356,7 +476,7 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32), intl: &Intl) -> N
             ..Default::default()
         },
         [
-            background_rings(size),
+            background_rings(size, view.rings),
             fixed_height(62.0),
             label_node,
             fixed_height(32.0),
@@ -412,6 +532,7 @@ impl AlarmOverlay {
             pending: Vec::new(),
             dirty: false,
             render_state: AlarmRenderState::new(now),
+            ripple_marker: PathBuf::from(RIPPLE_MARKER),
         }
     }
 }
@@ -437,11 +558,19 @@ impl SystemOverlay for AlarmOverlay {
     }
 
     fn on_alarm_ring(&mut self, time: &str, period: &str, label: &str, snooze_allowed: bool) {
+        // Every ring starts the rings from their hidden start, however long the overlay waited
+        // and however bmc's stop and ring for a replacing alarm were batched.
+        self.render_state.tree.restart();
         self.ringing = Some(Ring {
             time: time.to_owned(),
             period: period.to_owned(),
             label: label.to_owned(),
             snooze_allowed,
+            motion: if self.ripple_marker.exists() {
+                RingMotion::Ripple
+            } else {
+                RingMotion::Still
+            },
         });
         self.dirty = true;
     }
@@ -491,6 +620,7 @@ impl SystemOverlay for AlarmOverlay {
             period: ring.period.clone(),
             label: ring.label.clone(),
             snooze_allowed: ring.snooze_allowed,
+            rings: ring.motion,
         };
 
         let output = render_alarm(
@@ -517,10 +647,12 @@ impl SystemOverlay for AlarmOverlay {
 
 #[cfg(test)]
 mod tests {
-    use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
+    use std::time::Duration;
+
+    use bmc_render::partition::test_support::move_dynamic_content;
     use bmc_render::partition::tree_static_key;
-    use bmc_render::renderer::test_support::ShapingRecorder;
-    use bmc_system_overlay::Language;
+    use bmc_render::renderer::test_support::{DrawnArc, ShapingRecorder};
+    use bmc_system_overlay::{Language, Layering};
 
     use super::*;
     use bmc_system_overlay::layer_check::assert_release_frees_the_layer;
@@ -533,20 +665,69 @@ mod tests {
             period: "AM".to_owned(),
             label: "Wake up".to_owned(),
             snooze_allowed: true,
+            rings: RingMotion::Ripple,
         }
     }
 
-    fn render(state: &mut AlarmRenderState, frame: FrameKind) {
-        let mut recorder = ShapingRecorder::new(480.0, 1280.0);
-        let english = bmc_intl::formatter(Language::default());
-        let _ = render_alarm(
+    /// An overlay built at `built_at` whose rings ripple, as the marker exists.
+    fn rippling_overlay(built_at: Instant) -> AlarmOverlay {
+        AlarmOverlay {
+            ripple_marker: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+            ..AlarmOverlay::new(built_at)
+        }
+    }
+
+    /// The first frame of `overlay` ringing.
+    fn first_ring_frame(mut overlay: AlarmOverlay) -> ShapingRecorder {
+        overlay.on_alarm_ring("7:30", "AM", "Wake up", true);
+        let mut recorder = recorder();
+        let _ = overlay.render(
             &mut recorder,
-            SIZE,
-            state,
-            &view(),
-            &english,
-            OverlayFrame::unlayered(frame),
+            OverlayViewport::rectangular(SIZE.0, SIZE.1),
+            &bmc_intl::formatter(Language::default()),
+            FrameKind::Fresh,
         );
+        recorder
+    }
+
+    #[test]
+    fn without_the_marker_the_rings_stand_still() {
+        let overlay = AlarmOverlay {
+            ripple_marker: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("no-such-marker"),
+            ..AlarmOverlay::new(Instant::now())
+        };
+        let rings: Vec<_> = first_ring_frame(overlay)
+            .arcs
+            .iter()
+            .map(|arc| arc.radius)
+            .collect();
+        assert_eq!(
+            rings,
+            [350.0, 425.0, 500.0, 575.0],
+            "the still rings show at once"
+        );
+    }
+
+    fn visible_arcs(recorder: &ShapingRecorder) -> Vec<&DrawnArc> {
+        recorder
+            .arcs
+            .iter()
+            .filter(|arc| !matches!(arc.fill, ArcFill::Solid(color) if color.alpha() == 0))
+            .collect()
+    }
+
+    /// A recorder the size of the test screen.
+    #[expect(clippy::cast_precision_loss, reason = "the test screen fits f32")]
+    fn recorder() -> ShapingRecorder {
+        ShapingRecorder::new(SIZE.0 as f32, SIZE.1 as f32)
+    }
+
+    /// Render the test alarm's `frame` into a fresh recorder and hand it back.
+    fn render(state: &mut AlarmRenderState, frame: OverlayFrame) -> ShapingRecorder {
+        let mut recorder = recorder();
+        let english = bmc_intl::formatter(Language::default());
+        let _ = render_alarm(&mut recorder, SIZE, state, &view(), &english, frame);
+        recorder
     }
 
     #[test]
@@ -557,7 +738,7 @@ mod tests {
         let drawn_in = |language| {
             let mut overlay = AlarmOverlay::new(Instant::now());
             overlay.on_alarm_ring("7:30", "AM", "", true);
-            let mut recorder = ShapingRecorder::new(480.0, 1280.0);
+            let mut recorder = recorder();
             let _ = overlay.render(
                 &mut recorder,
                 OverlayViewport::rectangular(SIZE.0, SIZE.1),
@@ -580,10 +761,64 @@ mod tests {
     }
 
     #[test]
+    fn rings_start_hidden_however_long_the_overlay_waited() {
+        let an_hour_ago = Instant::now()
+            .checked_sub(Duration::from_secs(3_600))
+            .expect("BUG: the test runs well after boot");
+        let recorder = first_ring_frame(rippling_overlay(an_hour_ago));
+        let visible = visible_arcs(&recorder);
+        assert!(visible.is_empty(), "the rings showed at once: {visible:?}");
+    }
+
+    /// The hosted overlay unmaps behind a presentation fence,
+    /// so `on_hidden` and the renderer release run a frame or two after the stop.
+    /// bmc announces a new alarm's `Started` right after the old one's `Stopped`,
+    /// so a ring can land in that window.
+    #[test]
+    fn a_ring_inside_the_hide_fence_strands_no_layer() {
+        let english = bmc_intl::formatter(Language::default());
+        let viewport = OverlayViewport::rectangular(SIZE.0, SIZE.1);
+        let mut layers = recorder().with_static_layers();
+        let mut overlay = rippling_overlay(Instant::now());
+
+        overlay.on_alarm_ring("7:00", "AM", "First", true);
+        let now = Instant::now();
+        let _ = overlay.tick(now);
+        let _ = overlay.render(&mut layers, viewport, &english, FrameKind::Fresh);
+
+        overlay.on_alarm_stop();
+        let now = now + Duration::from_millis(5);
+        assert!(!overlay.tick(now).visible, "the stop hides the overlay");
+
+        // The fence has not resolved: neither `on_hidden` nor a release has run.
+        overlay.on_alarm_ring("7:05", "AM", "Second", true);
+        let now = now + Duration::from_millis(20);
+        assert!(overlay.tick(now).visible, "the ring cancels the hide");
+        let _ = overlay.render(&mut layers, viewport, &english, FrameKind::Fresh);
+        assert_eq!(
+            layers.static_layer_owners().len(),
+            1,
+            "the restarted rings paint over the first ring's layer: {:?}",
+            layers.static_layer_owners()
+        );
+
+        overlay.on_hidden();
+        overlay.release_renderer_resources(&mut layers);
+        assert!(
+            layers.static_layer_owners().is_empty(),
+            "the release frees every layer: {:?}",
+            layers.static_layer_owners()
+        );
+    }
+
+    #[test]
     fn an_animation_only_frame_replays_the_alarm_tree() {
         let mut state = AlarmRenderState::new(Instant::now());
-        render(&mut state, FrameKind::Fresh);
-        render(&mut state, FrameKind::AnimationOnly);
+        render(&mut state, OverlayFrame::unlayered(FrameKind::Fresh));
+        render(
+            &mut state,
+            OverlayFrame::unlayered(FrameKind::AnimationOnly),
+        );
         assert!(state.tree.replayed_last_frame());
     }
 
@@ -605,11 +840,14 @@ mod tests {
     #[test]
     fn hiding_drops_the_alarm_tree() {
         let mut state = AlarmRenderState::new(Instant::now());
-        render(&mut state, FrameKind::Fresh);
+        render(&mut state, OverlayFrame::unlayered(FrameKind::Fresh));
         let mut overlay = AlarmOverlay::new(Instant::now());
         overlay.render_state = state;
         overlay.on_hidden();
-        render(&mut overlay.render_state, FrameKind::AnimationOnly);
+        render(
+            &mut overlay.render_state,
+            OverlayFrame::unlayered(FrameKind::AnimationOnly),
+        );
         assert!(!overlay.render_state.tree.replayed_last_frame());
     }
 
@@ -630,15 +868,124 @@ mod tests {
         );
     }
 
-    /// The alarm does not animate yet, so it gains a spinner to move.
     #[test]
-    fn the_static_key_holds_when_only_dynamic_content_moves() {
-        let mut tree =
-            build_alarm_ui_tree(&view(), SIZE, &bmc_intl::formatter(Language::default()));
-        assert!(add_animated_draw(&mut tree), "the alarm has no canvas");
+    fn the_static_key_holds_when_only_the_rings_move() {
+        let tree = build_alarm_ui_tree(&view(), SIZE, &bmc_intl::formatter(Language::default()));
         let mut moved = tree.clone();
-        assert!(move_dynamic_content(&mut moved) > 0);
+        assert!(
+            move_dynamic_content(&mut moved) > 0,
+            "the rings must animate"
+        );
         assert_eq!(static_key(&tree), static_key(&moved));
+    }
+
+    /// The `(radius, opacity)` of every ring drawn `elapsed_ms` after the alarm appeared.
+    fn drawn_rings_at(elapsed_ms: u64) -> Vec<(f32, f32)> {
+        let start = Instant::now();
+        let mut state = AlarmRenderState::new(start);
+        let frame = OverlayFrame {
+            kind: FrameKind::Fresh,
+            layering: Layering::Unlayered,
+            now: start + Duration::from_millis(elapsed_ms),
+        };
+        render(&mut state, frame)
+            .arcs
+            .iter()
+            .map(|arc| {
+                let ArcFill::Solid(color) = arc.fill else {
+                    panic!("BUG: the rings are solid");
+                };
+                (arc.radius, f32::from(color.alpha()) / 255.0)
+            })
+            .collect()
+    }
+
+    fn rings_at(elapsed_ms: u64) -> Vec<(f32, f32)> {
+        drawn_rings_at(elapsed_ms)
+            .into_iter()
+            .filter(|&(_, opacity)| opacity > 0.0)
+            .collect()
+    }
+
+    fn assert_near(actual: f32, expected: f32, tolerance: f32, what: &str) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "{what}: {actual} is not within {tolerance} of {expected}"
+        );
+    }
+
+    /// The radius of a ring at `pct` percent of the test screen's longer side.
+    #[expect(clippy::cast_precision_loss, reason = "the test screen fits f32")]
+    fn radius_at(pct: f32) -> f32 {
+        SIZE.0.max(SIZE.1) as f32 * pct / 100.0
+    }
+
+    /// Milliseconds into a ring's first loop after `share` of the loop.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a share of a loop is a short positive span"
+    )]
+    fn first_loop_ms(share: f32) -> u64 {
+        u64::from(RING_HIDDEN_MS) + (share * f32::from(RING_LOOP_MS.get())).round() as u64
+    }
+
+    /// The `(radius, opacity)` of the first ring, which is drawn first.
+    fn first_ring_at(elapsed_ms: u64) -> (f32, f32) {
+        drawn_rings_at(elapsed_ms)[0]
+    }
+
+    #[test]
+    fn a_ring_appears_between_the_centre_and_its_opaque_radius() {
+        let appear = appear_at_pct();
+        assert!(
+            appear > 0.0 && appear < f32::from(RING_OPAQUE_AT_PCT),
+            "a ring appearing at {appear} % would scale by a negative or infinite factor: \
+             shorten RING_FADE_IN_MS or bring RING_OPAQUE_AT_PCT closer to RING_VANISH_AT_PCT"
+        );
+    }
+
+    #[test]
+    fn no_ring_shows_before_the_first_appears() {
+        assert_eq!(rings_at(u64::from(RING_HIDDEN_MS) - 1), vec![]);
+    }
+
+    #[test]
+    fn the_first_ring_turns_opaque_at_its_opaque_radius() {
+        let (radius, opacity) = first_ring_at(first_loop_ms(RING_FADE_IN_SHARE));
+        assert_near(radius, radius_at(RING_OPAQUE_AT_PCT.into()), 0.5, "radius");
+        assert_near(opacity, 1.0, 0.02, "opacity");
+    }
+
+    #[test]
+    fn a_ring_fades_out_in_step_with_its_radius() {
+        let (radius, opacity) = first_ring_at(first_loop_ms(0.5));
+        let opaque = radius_at(RING_OPAQUE_AT_PCT.into());
+        let vanish = radius_at(RING_VANISH_AT_PCT.into());
+        let left = (vanish - radius) / (vanish - opaque);
+        assert_near(opacity, left, 0.01, "opacity");
+    }
+
+    #[test]
+    fn a_ring_vanishes_at_its_vanish_radius() {
+        let (radius, opacity) = first_ring_at(first_loop_ms(1.0) - 10);
+        assert_near(radius, radius_at(RING_VANISH_AT_PCT.into()), 1.0, "radius");
+        assert_near(opacity, 0.0, 0.01, "opacity");
+    }
+
+    #[test]
+    fn every_later_loop_fades_in_again() {
+        let second_loop = first_loop_ms(1.0 + RING_FADE_IN_SHARE / 2.0);
+        let (_, opacity) = first_ring_at(second_loop);
+        assert_near(opacity, 0.25, 0.03, "opacity halfway through the fade-in");
+    }
+
+    #[test]
+    fn every_ring_shows_once_the_ripple_is_running() {
+        assert_eq!(
+            rings_at(first_loop_ms(3.1)).len(),
+            usize::from(RING_COUNT.get())
+        );
     }
 
     #[test]

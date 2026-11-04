@@ -81,6 +81,16 @@ pub struct DrawnRect {
     pub h: f32,
 }
 
+/// One recorded [`RenderShapes::stroke_arc`] call.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnArc {
+    pub cx: f32,
+    pub cy: f32,
+    pub radius: f32,
+    pub width: f32,
+    pub fill: ArcFill,
+}
+
 /// Stands in for a successful load: the tag turns resident without a payload.
 fn register<Id, M>(reservations: &mut TagReservations<Id, (), M>, tag: &str, meta: M) -> Option<Id>
 where
@@ -99,6 +109,7 @@ pub struct ShapingRecorder {
     pub rects: Vec<DrawnRect>,
     pub rounded_rects: Vec<DrawnRect>,
     pub strokes: Vec<DrawnRect>,
+    pub arcs: Vec<DrawnArc>,
     /// How many times a frame was cleared after it began.
     pub clears: usize,
     font_system: cosmic_text::FontSystem,
@@ -132,6 +143,7 @@ impl ShapingRecorder {
             rects: Vec::new(),
             rounded_rects: Vec::new(),
             strokes: Vec::new(),
+            arcs: Vec::new(),
             clears: 0,
             font_system: build_font_system(Fonts::shared()),
             layouts: ParagraphLayoutCache::new(),
@@ -263,16 +275,23 @@ impl RenderShapes for ShapingRecorder {
 
     fn stroke_arc(
         &mut self,
-        _cx: f32,
-        _cy: f32,
-        _radius: f32,
+        cx: f32,
+        cy: f32,
+        radius: f32,
         _start_angle: f32,
         _end_angle: f32,
-        _width: f32,
-        _fill: &ArcFill,
+        width: f32,
+        fill: &ArcFill,
         _segments: &ArcSegments,
         _cap: ArcCap,
     ) {
+        self.arcs.push(DrawnArc {
+            cx,
+            cy,
+            radius,
+            width,
+            fill: *fill,
+        });
     }
 
     fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, _border_width: f32, _color: Color) {

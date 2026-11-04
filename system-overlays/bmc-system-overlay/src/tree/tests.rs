@@ -255,6 +255,21 @@ fn a_pending_touch_builds_a_new_tree() {
 }
 
 #[test]
+fn a_restart_keeps_a_pending_touch() {
+    let mut ui = TreeUi::default();
+    ui.push_touch(TouchEvent::Down {
+        id: 0,
+        x: 75.0,
+        y: 10.0,
+    });
+    ui.restart();
+    assert!(
+        ui.walk.interaction.has_pending_events(),
+        "a tap under way must survive a restart"
+    );
+}
+
+#[test]
 fn clear_drops_the_cached_tree() {
     let mut ui = TreeUi::default();
     let mut builds = 0;
@@ -273,12 +288,11 @@ fn a_running_animation_is_reported_on_replay() {
     assert_eq!(replayed.outcome().next, NextFrame::Replay);
 }
 
-#[test]
-fn a_frame_advances_animations_by_the_time_since_the_last() {
+/// A canvas with one arc rotating forever.
+fn rotating() -> Node {
     use bmc_render::tree::{AnimationDef, Draw};
     use bmc_render::ui::{AnimProperty, Easing, LoopMode};
-    use std::time::{Duration, Instant};
-    let rotating = || Node::Canvas {
+    Node::Canvas {
         props: PropsData::default(),
         touch_key: None,
         draws: vec![Draw::Modified {
@@ -305,31 +319,58 @@ fn a_frame_advances_animations_by_the_time_since_the_last() {
                 cap: bmc_render::ui::ArcCap::Round,
             }),
         }],
-    };
-    let t0 = Instant::now();
-    let mut ui = TreeUi::new(t0);
-    for ms in [40, 100] {
-        let frame = super::OverlayFrame {
-            kind: FrameKind::Fresh,
-            layering: Layering::Unlayered,
-            now: t0 + Duration::from_millis(ms),
-        };
-        ui.render(
-            frame,
-            (100, 20),
-            &mut TestRenderer::default(),
-            &english(),
-            rotating,
-        )
-        .expect("BUG: render must succeed");
     }
-    let elapsed: Vec<u32> = ui
-        .walk
+}
+
+/// Render [`rotating`] as a fresh frame at `now`.
+fn render_rotating_at(ui: &mut TreeUi, now: std::time::Instant) {
+    let frame = super::OverlayFrame {
+        kind: FrameKind::Fresh,
+        layering: Layering::Unlayered,
+        now,
+    };
+    ui.render(
+        frame,
+        (100, 20),
+        &mut TestRenderer::default(),
+        &english(),
+        rotating,
+    )
+    .expect("BUG: render must succeed");
+}
+
+fn animation_elapsed_ms(ui: &TreeUi) -> Vec<u32> {
+    ui.walk
         .animation_states
         .values()
         .map(|s| s.elapsed_ms)
-        .collect();
-    assert_eq!(elapsed, [100]);
+        .collect()
+}
+
+#[test]
+fn a_frame_advances_animations_by_the_time_since_the_last() {
+    use std::time::{Duration, Instant};
+    let t0 = Instant::now();
+    let mut ui = TreeUi::new(t0);
+    for ms in [40, 100] {
+        render_rotating_at(&mut ui, t0 + Duration::from_millis(ms));
+    }
+    assert_eq!(animation_elapsed_ms(&ui), [100]);
+}
+
+#[test]
+fn a_restart_starts_every_animation_over() {
+    use std::time::{Duration, Instant};
+    let t0 = Instant::now();
+    let mut ui = TreeUi::new(t0);
+    render_rotating_at(&mut ui, t0 + Duration::from_millis(400));
+    ui.restart();
+    render_rotating_at(&mut ui, t0 + Duration::from_millis(1_000));
+    assert_eq!(
+        animation_elapsed_ms(&ui),
+        [0],
+        "the first frame after a restart starts the animation from its beginning"
+    );
 }
 
 #[test]
