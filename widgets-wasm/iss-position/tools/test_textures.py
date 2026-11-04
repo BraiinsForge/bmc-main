@@ -23,10 +23,11 @@
 
 Run with `just test`, or: uv run --project tools pytest tools
 
-Deliberately outside `just validate` and the GitLab pipeline:
+Deliberately outside `just validate` and the per-push GitLab pipeline:
 this covers one contained asset pipeline, hand-regenerated and seldom touched,
 so a job on every push buys little.
-`nix build .#checks.<system>.iss-texture-tools` runs it when a gate is wanted.
+The nightly `flake-check-full` job runs it with every other flake check,
+and `nix build .#checks.<system>.iss-texture-tools` runs it when a gate is wanted.
 """
 
 import io

@@ -407,6 +407,24 @@ deck-runtime-closure:
   script:
     - nix build -L .#deck-runtime-closure --no-link
 
+flake-check-full:
+  stage: regression
+  # No `needs`: waiting for the earlier stages reuses their outputs, keeping peak builder disk down.
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      # A failed earlier stage must not cost the night's result for the checks no other job names.
+      when: always
+    - when: manual
+      allow_failure: true
+  tags: [nix]
+  # A merge to master must not auto-cancel the nightly run.
+  interruptible: false
+  timeout: 6h
+  script:
+    # `command` bypasses the `nix` function of the runner's pre-build script, which adds `-L`:
+    # full build logs overflow the 4 MiB job log limit and cut off the failures at the end.
+    - command nix flake check --keep-going
+
 ############################
 ######## Apps Stage ########
 ############################

@@ -404,7 +404,7 @@ in
     touch $out
   '';
 
-  # Deliberately not a pipeline job — see tools/test_textures.py for why.
+  # Deliberately no pipeline job of its own — see tools/test_textures.py for why.
   # Kept as a check so the suite has one reproducible run without a local venv.
   iss-texture-tools = pkgs.runCommand "iss-texture-tools"
     {
