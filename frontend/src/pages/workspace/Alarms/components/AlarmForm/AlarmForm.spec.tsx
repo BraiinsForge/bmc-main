@@ -19,12 +19,23 @@
 // the grant above.
 
 import { afterEach, describe, expect, test } from '@rstest/core';
-import { cleanup, render, screen } from '@testing-library/react/pure';
+import { act, cleanup, render, screen } from '@testing-library/react/pure';
 import { IntlProvider } from 'react-intl';
 
 import * as pb from '@/proto';
+import { mocks } from '@/proto/transport';
+import type { ServiceMocks } from '@/lib/proto';
+import { store } from '@/store';
 
 import { AlarmForm } from './AlarmForm';
+
+async function preferFirstDay(firstDayOfWeek: pb.Weekday): Promise<void> {
+    const methods: Partial<ServiceMocks<typeof pb.ConfigurationService>> = {
+        getGeneralSettingsData: () => pb.create(pb.GeneralSettingsDataResponseSchema, { firstDayOfWeek }),
+    };
+    mocks.service(pb.ConfigurationService, methods as ServiceMocks<typeof pb.ConfigurationService>);
+    await store.loadFormats();
+}
 
 const noop = () => {};
 
@@ -44,6 +55,31 @@ function renderForm(timeFormat = pb.TimeFormat.TIME_FORMAT_24_HOUR) {
         </IntlProvider>,
     );
 }
+
+const dayButtons = () =>
+    screen.getAllByRole('button', { name: /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/ }).map(x => x.textContent);
+
+describe('<AlarmForm /> day buttons', () => {
+    afterEach(async () => {
+        await act(() => preferFirstDay(pb.Weekday.MONDAY));
+        cleanup();
+        mocks.clear();
+    });
+
+    test('start on Monday by default', () => {
+        renderForm();
+
+        expect(dayButtons()).toEqual(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+    });
+
+    test("follow a change of the device's first day", async () => {
+        renderForm();
+
+        await act(() => preferFirstDay(pb.Weekday.SUNDAY));
+
+        expect(dayButtons()).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+    });
+});
 
 describe('<AlarmForm /> on a 12-hour clock', () => {
     afterEach(cleanup);

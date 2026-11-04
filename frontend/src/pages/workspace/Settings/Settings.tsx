@@ -675,6 +675,7 @@ class View extends Component<Props, State> {
             message ||= formatMessage({ defaultMessage: 'Failed to save firs week day' });
             toast.error(message);
         } finally {
+            // An aborted or dropped save may still have landed on the device.
             await this.#generalFetch();
             void this.#setField('firstDayOfWeek', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
         }

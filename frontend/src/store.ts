@@ -41,19 +41,21 @@ interface SessionInfo {
     isAuthenticated: null | boolean;
     hasPassword: null | boolean;
 }
-// The device's preferences for writing dates, times and figures.
+// The device's preferences for writing dates, times, figures and weekdays.
 export interface Formats {
     date: pb.DateFormat;
     time: pb.TimeFormat;
     number: pb.NumberFormat;
+    firstDay: pb.Weekday;
 }
 
-// The device's own defaults (`DateFormat`, `TimeSystem` and `NumberFormat` in `bmc-shared`),
+// The device's own defaults (`DateFormat`, `TimeSystem`, `NumberFormat` and `WeekDay` in `bmc-shared`),
 // until a session reads its preferences.
 const DEVICE_FORMATS: Formats = {
     date: pb.DateFormat.DD_MM_YYYY_DOT,
     time: pb.TimeFormat.TIME_FORMAT_24_HOUR,
     number: pb.NumberFormat.SPACE_GROUP_COMMA_DECIMAL,
+    firstDay: pb.Weekday.MONDAY,
 };
 
 interface State {
@@ -181,6 +183,7 @@ class Store {
             date: d.dateFormat || DEVICE_FORMATS.date,
             time: d.timeFormat || DEVICE_FORMATS.time,
             number: d.numberFormat || DEVICE_FORMATS.number,
+            firstDay: d.firstDayOfWeek || DEVICE_FORMATS.firstDay,
         });
     }
 

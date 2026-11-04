@@ -852,6 +852,7 @@ describe('Settings formatting preferences', () => {
         timeFormat: pb.TimeFormat.TIME_FORMAT_24_HOUR,
         dateFormat: pb.DateFormat.DD_MM_YYYY_DOT,
         numberFormat: pb.NumberFormat.SPACE_GROUP_COMMA_DECIMAL,
+        firstDayOfWeek: pb.Weekday.MONDAY,
     });
 
     async function pick(open: null | string, option: string): Promise<void> {
@@ -875,6 +876,7 @@ describe('Settings formatting preferences', () => {
             '1,234,567.89',
             { numberFormat: pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL },
         ],
+        ['first day', 'setFirstDayOfWeek', 'Monday', 'Sunday', { firstDayOfWeek: pb.Weekday.SUNDAY }],
     ] as const)('a %s preference is read once again after its save', async (_case, setter, open, option, saved) => {
         rstest.useFakeTimers();
         Object.assign(window, { SYSTEM: deckSystemWire() });
@@ -901,6 +903,7 @@ describe('Settings formatting preferences', () => {
             date: held.dateFormat,
             time: held.timeFormat,
             number: held.numberFormat,
+            firstDay: held.firstDayOfWeek,
         });
     });
 

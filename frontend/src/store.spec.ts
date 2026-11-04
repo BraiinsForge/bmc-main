@@ -455,18 +455,24 @@ describe('store.formats', () => {
         mocks.service(pb.ConfigurationService, methods as ServiceMocks<typeof pb.ConfigurationService>);
     }
 
-    const settings = (dateFormat: pb.DateFormat, timeFormat: pb.TimeFormat, numberFormat: pb.NumberFormat) =>
-        pb.create(pb.GeneralSettingsDataResponseSchema, { dateFormat, timeFormat, numberFormat });
+    const settings = (
+        dateFormat: pb.DateFormat,
+        timeFormat: pb.TimeFormat,
+        numberFormat: pb.NumberFormat,
+        firstDayOfWeek: pb.Weekday,
+    ) => pb.create(pb.GeneralSettingsDataResponseSchema, { dateFormat, timeFormat, numberFormat, firstDayOfWeek });
 
     const preferred = settings(
         pb.DateFormat.M_D_YYYY_SLASH,
         pb.TimeFormat.TIME_FORMAT_12_HOUR,
         pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL,
+        pb.Weekday.SUNDAY,
     );
     const preferredFormats = {
         date: pb.DateFormat.M_D_YYYY_SLASH,
         time: pb.TimeFormat.TIME_FORMAT_12_HOUR,
         number: pb.NumberFormat.COMMA_GROUP_DOT_DECIMAL,
+        firstDay: pb.Weekday.SUNDAY,
     };
 
     afterEach(() => {
@@ -484,7 +490,12 @@ describe('store.formats', () => {
 
     test("an unspecified one keeps the device's default", async () => {
         answerSettings(() =>
-            settings(pb.DateFormat.UNSPECIFIED, pb.TimeFormat.TIME_FORMAT_UNSPECIFIED, pb.NumberFormat.UNSPECIFIED),
+            settings(
+                pb.DateFormat.UNSPECIFIED,
+                pb.TimeFormat.TIME_FORMAT_UNSPECIFIED,
+                pb.NumberFormat.UNSPECIFIED,
+                pb.Weekday.UNSPECIFIED,
+            ),
         );
 
         await store.loadFormats();
@@ -493,6 +504,7 @@ describe('store.formats', () => {
             date: pb.DateFormat.DD_MM_YYYY_DOT,
             time: pb.TimeFormat.TIME_FORMAT_24_HOUR,
             number: pb.NumberFormat.SPACE_GROUP_COMMA_DECIMAL,
+            firstDay: pb.Weekday.MONDAY,
         });
     });
 
@@ -516,6 +528,7 @@ describe('store.formats', () => {
                 pb.DateFormat.YYYY_MM_DD_DOT,
                 pb.TimeFormat.TIME_FORMAT_24_HOUR,
                 pb.NumberFormat.DOT_GROUP_COMMA_DECIMAL,
+                pb.Weekday.WEDNESDAY,
             );
         });
         const earlier = store.loadFormats();
@@ -568,10 +581,11 @@ describe('store.formats', () => {
             date: pb.DateFormat.YYYY_M_D_SLASH,
             time: pb.TimeFormat.TIME_FORMAT_24_HOUR,
             number: pb.NumberFormat.SPACE_GROUP_DOT_DECIMAL,
+            firstDay: pb.Weekday.WEDNESDAY,
         };
         answerSettings(({ conf }) => {
             conf({ delay: 20 });
-            return settings(expected.date, expected.time, expected.number);
+            return settings(expected.date, expected.time, expected.number, expected.firstDay);
         });
         let atPublish: unknown = null;
         const { unsubscribe } = store.subscribe(s => {

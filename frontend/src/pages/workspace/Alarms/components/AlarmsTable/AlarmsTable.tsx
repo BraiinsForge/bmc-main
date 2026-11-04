@@ -26,6 +26,7 @@ import { formatAlarmTime } from '@/lib/time';
 
 // App
 import * as pb from '@/proto';
+import { useStore } from '@/store';
 
 // Components
 import { Button, ButtonGroup, DataTable, type DataTableHeader, type DataTableRow, Toggle } from '@/components';
@@ -47,6 +48,7 @@ export interface AlarmsTableProps {
 }
 interface Props extends AlarmsTableProps {
     intl: IntlShape;
+    firstDay: pb.Weekday;
 }
 
 class View extends Component<Props> {
@@ -95,7 +97,7 @@ class View extends Component<Props> {
         ];
     };
     #getRows = (): Array<DataTableRow<TableCol>> => {
-        const { data, timeFormat, onToggle, onEdit, onDelete, intl } = this.props;
+        const { data, timeFormat, firstDay, onToggle, onEdit, onDelete, intl } = this.props;
         const { formatMessage } = intl;
 
         return data.map<DataTableRow<TableCol>>(alarm => {
@@ -115,7 +117,7 @@ class View extends Component<Props> {
                     ),
                     time: <strong children={formatAlarmTime(time, timeFormat)} />,
                     label: <span children={name} className={css.labelWrapper} />,
-                    repeat: pb.weekdayListToString(intl, repeat),
+                    repeat: pb.weekdayListToString(intl, repeat, firstDay),
                     sound: sound?.name ?? '--',
                     snooze: pb.alarmSnoozeOptionsToString(intl, snoozeOptions),
                     actions: (
@@ -170,5 +172,6 @@ class View extends Component<Props> {
 
 export function AlarmsTable(props: AlarmsTableProps) {
     const intl = useIntl();
-    return <View {...props} intl={intl} />;
+    const firstDay = useStore(x => x.formats.firstDay);
+    return <View {...props} intl={intl} firstDay={firstDay} />;
 }

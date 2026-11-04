@@ -27,6 +27,7 @@ import { toast } from '@/lib/toast';
 // App
 import * as pb from '@/proto';
 import AppContext, { type AppContextType } from '@/context';
+import { useStore } from '@/store';
 
 // Components
 import { SoundOption } from '../SoundOption';
@@ -50,6 +51,7 @@ export interface AlarmFormProps {
 }
 export interface Props extends AlarmFormProps {
     intl: IntlShape;
+    firstDay: pb.Weekday;
 }
 
 interface State {
@@ -204,7 +206,7 @@ class View extends Component<Props, State> {
                 <CarbonFormField className={css.fullWidth} labelText={formatMessage({ defaultMessage: 'Repeat' })}>
                     <div
                         className={css.rowDays}
-                        children={pb.weekdayOptionsAll.map(x => {
+                        children={pb.weekdaysFrom(this.props.firstDay).map(x => {
                             const key = pb.Weekday[x];
                             const label = pb.weekdayToString(intl, x);
                             const active: boolean = repeat.value?.includes(x) ?? false;
@@ -300,7 +302,8 @@ class View extends Component<Props, State> {
 }
 export function AlarmForm(props: AlarmFormProps) {
     const intl = useIntl();
-    return <View {...props} intl={intl} />;
+    const firstDay = useStore(x => x.formats.firstDay);
+    return <View {...props} intl={intl} firstDay={firstDay} />;
 }
 
 function soundOptionElement(item: null | pb.SoundInfo) {

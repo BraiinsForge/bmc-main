@@ -26,7 +26,7 @@ import { useIntl, type IntlShape, FormattedMessage } from 'react-intl';
 import { useNavigate } from 'react-router';
 
 import { URLS } from '@/constants';
-import { useStore } from '@/store';
+import { store, useStore } from '@/store';
 import type { Capabilities } from '@/lib/system';
 import { alarmsAvailable } from '@/lib/capabilities';
 import { getID } from '@/lib/form';
@@ -501,7 +501,7 @@ export class View extends Component<Props, State> {
                             </tr>
                             <tr>
                                 <FormattedMessage tagName="th" defaultMessage="Repeat" />
-                                <td children={pb.weekdayListToString(intl, d.repeat)} />
+                                <td children={pb.weekdayListToString(intl, d.repeat, store.formats.firstDay)} />
                             </tr>
                             <tr>
                                 <FormattedMessage tagName="th" defaultMessage="Sound" />

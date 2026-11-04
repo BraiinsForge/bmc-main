@@ -111,6 +111,10 @@ export const weekdayOptionsWeek: Array<Exclude<pb.Weekday, 0>> = [
     pb.Weekday.FRIDAY,
 ];
 export const weekdayOptionsWeekend: Array<Exclude<pb.Weekday, 0>> = [pb.Weekday.SATURDAY, pb.Weekday.SUNDAY];
+export function weekdaysFrom(first: pb.Weekday): Array<Exclude<pb.Weekday, 0>> {
+    const start = Math.max(0, (weekdayOptionsAll as pb.Weekday[]).indexOf(first));
+    return [...weekdayOptionsAll.slice(start), ...weekdayOptionsAll.slice(0, start)];
+}
 export function weekdayToString(intl: IntlShape, x?: Maybe<pb.Weekday>, long?: boolean): null;
 export function weekdayToString(intl: IntlShape, x: Exclude<pb.Weekday, 0>, long?: boolean): string;
 export function weekdayToString(intl: IntlShape, x?: null | pb.Weekday, long?: boolean) {
@@ -147,7 +151,7 @@ export function weekdayToString(intl: IntlShape, x?: null | pb.Weekday, long?: b
             assertUnreachable(x, 'weekday');
     }
 }
-export function weekdayListToString(intl: IntlShape, x: Maybe<pb.Weekday[]>): null | string {
+export function weekdayListToString(intl: IntlShape, x: Maybe<pb.Weekday[]>, first: pb.Weekday): null | string {
     if (!x) return null;
 
     const { formatMessage } = intl;
@@ -156,8 +160,8 @@ export function weekdayListToString(intl: IntlShape, x: Maybe<pb.Weekday[]>): nu
     if (isEqual(unique, weekdayOptionsAll)) return formatMessage({ defaultMessage: 'All days' });
     if (isEqual(unique, weekdayOptionsWeek)) return formatMessage({ defaultMessage: 'Weekdays' });
     if (isEqual(unique, weekdayOptionsWeekend)) return formatMessage({ defaultMessage: 'Weekends' });
-    return unique
-        .toSorted()
+    return weekdaysFrom(first)
+        .filter(x => unique.includes(x))
         .map(x => weekdayToString(intl, x))
         .join(', ');
 }
