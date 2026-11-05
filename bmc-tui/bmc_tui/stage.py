@@ -32,6 +32,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from contextvars import ContextVar
 from typing import ParamSpec, cast, get_type_hints
@@ -142,7 +143,7 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
     )
 
 
-def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
+def entrypoint(main: Callable[..., None], *, name: str | None = None) -> Callable[..., None]:
     """Wrap a script's `main`: parse CLI args from its dataclass parameter via
     tyro (auto `--help`, usage-on-error), run it, turn an `Abort` into a rendered
     error plus `exit 1`, and Ctrl-C into a clean exit. A failed subprocess is
@@ -150,7 +151,11 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
     and the default exception message drops it. Anything unexpected gets a
     readable rich traceback rather than a raw dump. Call-sites stay bare
     top-to-bottom statements.
+
+    Its finished alert calls it `name`, or else by its module.
+    A script started with `python -m` has to pass one, its module being `__main__`.
     """
+    title = name or main.__module__.rsplit(".", 1)[-1]
     _ = install_rich_traceback(show_locals=True, width=120)
     threading.excepthook = _thread_excepthook
     params = list(inspect.signature(main).parameters.values())
@@ -159,13 +164,15 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
     @functools.wraps(main)
     def wrapped(argv: list[str] | None = None) -> None:
         console.mark_run_start()
+        started = time.monotonic()
         try:
             if args_type is None:
                 main()
             else:
                 # tyro's overloads take a `TypeForm[OutT]`, which basedpyright leaves unsolved.
                 main(tyro.cli(args_type, args=argv))  # pyright: ignore[reportAny]
-            console.alert(f"{main.__module__.rsplit('.', 1)[-1]} finished", level="success")
+            took = console.human_duration(time.monotonic() - started)
+            console.alert(f"{title} finished", body=f"took {took}", level="success")
         except Abort as e:
             console.error(e.hint)
             console.alert("run failed", body=e.hint, level="error")

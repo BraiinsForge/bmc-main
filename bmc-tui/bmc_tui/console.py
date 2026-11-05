@@ -193,14 +193,21 @@ def ok(msg: str) -> None:
     line(f"[green]✓[/green] {msg}", highlight=False)
 
 
+def _diagnostics() -> Console:
+    """Where warnings and errors go: stderr, unless both streams share a terminal.
+    There `out` owns any live display, and its next repaint erases what another console wrote.
+    Asked of the streams, as `Console.is_terminal` says yes to a redirect under `FORCE_COLOR`."""
+    return out if sys.stdout.isatty() and sys.stderr.isatty() else console
+
+
 def warn(msg: str) -> None:
     """Print a warning."""
-    console.print(f"[yellow]⚠[/yellow] {msg}", highlight=False)
+    _diagnostics().print(f"[yellow]⚠[/yellow] {msg}", highlight=False)
 
 
 def error(msg: str) -> None:
     """Print an error (literals in `msg` may use console.lit)."""
-    console.print(f"[red]✗[/red] {msg}", highlight=False)
+    _diagnostics().print(f"[red]✗[/red] {msg}", highlight=False)
 
 
 def kv(key: str, value: str) -> None:
@@ -230,6 +237,17 @@ def human_size(num_bytes: int) -> str:
     return f"{size:.1f} TiB"
 
 
+def human_duration(seconds: float) -> str:
+    """Human-readable duration in its two largest units, e.g. ``4 min 12 s``."""
+    minutes, whole_seconds = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours} h {minutes} min"
+    if minutes:
+        return f"{minutes} min {whole_seconds} s"
+    return f"{whole_seconds} s"
+
+
 def cmd_output(text: str) -> None:
     """Print command output (indented, dimmed) to stderr, keeping it on the
     same stream as the error header it explains — a redirect must not split
@@ -237,7 +255,7 @@ def cmd_output(text: str) -> None:
     not parse as rich markup — and auto-highlighting is off so lines stay
     uniform dim, not piecemeal-styled."""
     for line in text.rstrip().splitlines():
-        console.print(f" [dim]{escape(line)}[/dim]", highlight=False)
+        _diagnostics().print(f" [dim]{escape(line)}[/dim]", highlight=False)
 
 
 def spinner(msg: str) -> Status:

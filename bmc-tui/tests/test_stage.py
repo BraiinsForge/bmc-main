@@ -24,9 +24,11 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
+from bmc_tui import console
 from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, entrypoint, require, stage
 
 # ── guard verbs ──────────────────────────────────────────────────────────────
@@ -136,6 +138,59 @@ def test_entrypoint_parses_args_and_runs() -> None:
 
     main(["--device", "1.2.3.4", "--force"])
     assert seen == {"device": "1.2.3.4", "force": True}
+
+
+class _Alerts:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.summaries: list[str] = []
+        self.bodies: list[str | None] = []
+        monkeypatch.setattr(console, "alert", self.alert)
+
+    def alert(self, summary: str, *, body: str | None = None, level: str = "info") -> None:
+        _ = level
+        self.summaries.append(summary)
+        self.bodies.append(body)
+
+
+def test_the_finished_alert_says_how_long_the_run_took(monkeypatch: pytest.MonkeyPatch) -> None:
+    alerts = _Alerts(monkeypatch)
+    clock = iter((10.0, 262.0))
+    monkeypatch.setattr("bmc_tui.stage.time", SimpleNamespace(monotonic=lambda: next(clock)))
+
+    @entrypoint
+    def main() -> None:
+        pass
+
+    main()
+
+    assert alerts.bodies == ["took 4 min 12 s"]
+
+
+def test_the_finished_alert_names_the_module_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    alerts = _Alerts(monkeypatch)
+
+    @entrypoint
+    def main() -> None:
+        pass
+
+    main()
+
+    assert alerts.summaries == ["test_stage finished"]
+
+
+def test_a_given_name_replaces_the_module_of_a_script_run_with_dash_m(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alerts = _Alerts(monkeypatch)
+
+    def main() -> None:
+        pass
+
+    main.__module__ = "__main__"
+
+    entrypoint(main, name="intl sweep")()
+
+    assert alerts.summaries == ["intl sweep finished"]
 
 
 def test_entrypoint_aborts_with_exit_1() -> None:

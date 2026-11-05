@@ -24,7 +24,9 @@ import io
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import override
 
 import pytest
 from rich.console import Console, RenderableType
@@ -32,7 +34,7 @@ from rich.live import Live
 from rich.prompt import IntPrompt
 
 from bmc_tui import console
-from bmc_tui.console import human_size, lit
+from bmc_tui.console import human_duration, human_size, lit
 from tests import stubs
 
 
@@ -41,6 +43,21 @@ def _rendered(renderable: RenderableType | None) -> str:
     buf = io.StringIO()
     Console(file=buf, width=100, no_color=True).print(renderable)
     return buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("seconds", "shown"),
+    [
+        (0.2, "0 s"),
+        (59.4, "59 s"),
+        (59.6, "1 min 0 s"),
+        (252, "4 min 12 s"),
+        (3_599.6, "1 h 0 min"),
+        (3_780, "1 h 3 min"),
+    ],
+)
+def test_human_duration_shows_its_two_largest_units(seconds: float, shown: str) -> None:
+    assert human_duration(seconds) == shown
 
 
 def test_human_size_bytes() -> None:
@@ -78,6 +95,73 @@ def test_live_scrollback_bounds_the_raw_tail() -> None:
         assert len(live.tail) == console.SCROLLBACK_TAIL
         assert live.tail[0] == f"line {overshoot - console.SCROLLBACK_TAIL}"
         assert live.tail[-1] == f"line {overshoot - 1}"
+
+
+class _Stream(io.StringIO):
+    def __init__(self, *, terminal: bool) -> None:
+        super().__init__()
+        self._terminal: bool = terminal
+
+    @override
+    def isatty(self) -> bool:
+        return self._terminal
+
+
+def _streams(
+    monkeypatch: pytest.MonkeyPatch, *, stdout_terminal: bool, stderr_terminal: bool
+) -> tuple[_Stream, _Stream]:
+    stdout = _Stream(terminal=stdout_terminal)
+    stderr = _Stream(terminal=stderr_terminal)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    monkeypatch.setattr(console, "out", Console(file=stdout))
+    monkeypatch.setattr(console, "console", Console(file=stderr))
+    return stdout, stderr
+
+
+@pytest.mark.parametrize("report", [console.warn, console.error, console.cmd_output])
+def test_a_report_under_a_live_region_goes_through_the_console_that_owns_it(
+    monkeypatch: pytest.MonkeyPatch, report: Callable[[str], None]
+) -> None:
+    stdout, stderr = _streams(monkeypatch, stdout_terminal=True, stderr_terminal=True)
+
+    with console.live_scrollback(log_path=Path("/tmp/flash.log")):
+        report("the report")
+
+    assert "the report" in stdout.getvalue()
+    assert stderr.getvalue() == ""
+
+
+@pytest.mark.parametrize(
+    ("stdout_terminal", "stderr_terminal"), [(False, False), (True, False), (False, True)]
+)
+@pytest.mark.parametrize("report", [console.warn, console.error, console.cmd_output])
+def test_a_report_stays_on_stderr_unless_both_streams_are_terminals(
+    monkeypatch: pytest.MonkeyPatch,
+    report: Callable[[str], None],
+    stdout_terminal: bool,
+    stderr_terminal: bool,
+) -> None:
+    stdout, stderr = _streams(
+        monkeypatch, stdout_terminal=stdout_terminal, stderr_terminal=stderr_terminal
+    )
+
+    report("the report")
+
+    assert "the report" in stderr.getvalue()
+    assert stdout.getvalue() == ""
+
+
+def test_a_redirected_stderr_stays_there_under_force_color(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    stdout, stderr = _streams(monkeypatch, stdout_terminal=True, stderr_terminal=False)
+
+    console.warn("the report")
+
+    assert "the report" in stderr.getvalue()
+    assert stdout.getvalue() == ""
 
 
 def test_the_realization_note_does_not_outlive_its_phase() -> None:
