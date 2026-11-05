@@ -18,6 +18,8 @@ the other documents go deeper on individual topics.
 - [Display Geometry](display-geometry.md) — the widget's viewport and the display around it.
 - [Timers](timers.md) — periodic background work, on screen or off.
 - [Resource Handles](resource-handles.md) — the handles that keep background work alive.
+- [Home Assistant client](../../../widgets-wasm/lib/home-assistant/README.md) — the library a widget talks to Home
+  Assistant through.
 
 ## Previews
 
