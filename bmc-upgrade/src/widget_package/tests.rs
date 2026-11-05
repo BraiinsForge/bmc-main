@@ -20,7 +20,7 @@
 
 use super::fixtures::*;
 use super::*;
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use nix_archive::nar::{CaseHack, restore};
 
 /// Unpack `tree` the way the device does and validate it.
@@ -64,9 +64,10 @@ fn a_wrapper_that_differs_from_the_template_in_any_byte_is_refused() {
         template.replacen("exec /run", "exec\\\n/run", 1),
         template.replace(" \\\n    ", " "),
         format!("{template}\n"),
-        format!(
-            "#!/bin/sh\nexec /run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm /nix/store/x/example.wasm \"$@\"\n"
-        ),
+        formatdoc! {r#"
+            #!/bin/sh
+            exec /run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm /nix/store/x/example.wasm "$@"
+        "#},
     ];
     for wrapper in cases {
         let mut dir = widget_dir("example", "1.0.0");
@@ -580,9 +581,11 @@ fn a_wrapper_naming_this_major_another_way_is_not_a_protocol_mismatch() {
 #[test]
 fn a_wrapper_with_a_second_command_is_refused() {
     let mut dir = widget_dir("example", "1.0.0");
-    let two_commands = format!(
-        "#!/bin/sh\nrm -rf /\nexec /run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm \"${{0%/*}}/../lib/wasm/example.wasm\" --asset-root \"${{0%/*}}/../lib/assets\" \"$@\"\n"
-    );
+    let two_commands = formatdoc! {r#"
+        #!/bin/sh
+        rm -rf /
+        exec /run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm "${{0%/*}}/../lib/wasm/example.wasm" --asset-root "${{0%/*}}/../lib/assets" "$@"
+    "#};
     set(&mut dir, "bin/example", executable(two_commands.as_bytes()));
     assert!(
         matches!(
@@ -628,9 +631,10 @@ fn a_wrapper_split_on_what_sh_does_not_split_on_is_refused() {
             &mut dir,
             "bin/example",
             executable(
-                format!(
-                    "#!/bin/sh\nexec{separator}/run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm \"${{0%/*}}/../lib/wasm/example.wasm\" --asset-root \"${{0%/*}}/../lib/assets\" \"$@\"\n"
-                )
+                formatdoc! {r#"
+                    #!/bin/sh
+                    exec{separator}/run/current-profile/bin/bmc-wasm-thin-v{PROTOCOL_MAJOR} --wasm "${{0%/*}}/../lib/wasm/example.wasm" --asset-root "${{0%/*}}/../lib/assets" "$@"
+                "#}
                 .as_bytes(),
             ),
         );
