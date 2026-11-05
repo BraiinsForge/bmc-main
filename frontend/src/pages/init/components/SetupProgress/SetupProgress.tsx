@@ -33,7 +33,7 @@ export function SetupProgress(props: { step: keyof typeof STEP_INDEX }) {
     const { formatMessage } = useIntl();
 
     return (
-        <ProgressIndicator currentIndex={STEP_INDEX[props.step]} className={css.progress}>
+        <ProgressIndicator currentIndex={STEP_INDEX[props.step]} spaceEqually className={css.progress}>
             <ProgressStep
                 label={formatMessage({
                     defaultMessage: 'Wi-Fi Settings',
