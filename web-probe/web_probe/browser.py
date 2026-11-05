@@ -143,7 +143,7 @@ class Probe:
     def shot(self, file: Path) -> Path:
         """The whole page, scrolled length included, as a PNG at `file`."""
         file.parent.mkdir(parents=True, exist_ok=True)
-        _ = self.page.screenshot(path=file, full_page=True)
+        _ = self.page.screenshot(path=file, full_page=True, animations="disabled")
         return file
 
     def links(self) -> list[str]:
@@ -200,7 +200,8 @@ def open_probe(origin: str, *, width: int = 1280, height: int = 800) -> Generato
     if not os.environ.get(_BROWSERS):
         raise BrowsersMissing(f"{_BROWSERS} is unset, `just web-probe::browsers` prints its value")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        # A walk's Ctrl-C still has to set the device's language back, which takes the browser.
+        browser = playwright.chromium.launch(handle_sigint=False)
         try:
             page = browser.new_page(viewport={"width": width, "height": height})
             yield Probe(page, origin)

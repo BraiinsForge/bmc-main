@@ -33,10 +33,13 @@ from tyro.conf import Positional
 from web_probe.browser import BrowsersMissing, Probe, Unreachable, open_probe, read_failure
 from web_probe.device import (
     LOGIN_PATH,
+    EditorUnreached,
+    Interrupted,
     LanguageStuck,
     LanguageUnknown,
     LoginRefused,
     LoginStalled,
+    SceneLeft,
     TabsMissing,
     log_in,
     offered_languages,
@@ -46,6 +49,7 @@ from web_probe.device import (
 )
 
 SHOTS = Path(".tmp/web-probe")
+EXIT_INTERRUPTED = 130
 
 
 def walk(
@@ -57,6 +61,7 @@ def walk(
     """Log in, switch language if asked, and shoot every page and tab the UI leads to, whole.
 
     The language is the device's own setting, so a switched one is switched back after.
+    To reach the combined-scene editor, the walk creates a scene on the device and deletes it after.
 
     Args:
         origin: where the web UI answers, such as `http://localhost:6070`
@@ -73,26 +78,34 @@ def walk(
                 print(f"offered languages: {', '.join(offered)}")
             else:
                 print("no languages offered: the device lacks its i18n marker (/etc/bmc/i18n)")
+
             if language is not None and language not in offered:
                 console.error(f"{console.lit(language)} is not offered, nothing walked")
                 return 1
+
             with nullcontext() if language is None else speaking(probe, language):
                 for path, last_shot in shoot_pages(probe, out):
                     print(f"{path} -> {last_shot}")
                 if login := shoot_login(probe, out):
                     last_shot = login
                     print(f"{LOGIN_PATH} -> {login}")
+        except Interrupted as error:
+            console.error(console.lit(error))
+            return EXIT_INTERRUPTED
         except (
             PlaywrightError,
             Unreachable,
             LoginRefused,
             LoginStalled,
             LanguageUnknown,
+            EditorUnreached,
+            SceneLeft,
             TabsMissing,
         ) as error:
             _report_failure(probe, error, last_shot)
             return 1
         _report_console_errors(probe, sys.stdout)
+
     return 0
 
 
@@ -114,15 +127,20 @@ def _report_failure(probe: Probe, error: Exception, last_shot: Path | None) -> N
     failure = read_failure(str(error))
     console.error(f"the walk failed: {console.lit(failure.reason)}")
     _detail("last shot", str(last_shot) if last_shot else "none")
+
     if failure.waiting_for:
         _detail("waiting for", failure.waiting_for)
         _detail("resolved to", failure.resolved_to or "nothing")
+
     for state in failure.states:
         _detail("state", state)
+
     for blocker in failure.blocked_by:
         _detail("blocked by", blocker)
+
     if failure.log and not failure.waiting_for:
         console.cmd_output("\n".join(failure.log))
+
     _report_console_errors(probe, sys.stderr)
 
 
@@ -136,6 +154,10 @@ def main() -> None:
         # Only the browser's own start and stop fail outside the walk's report.
         console.error(f"the browser failed: {console.lit(read_failure(error.message).reason)}")
         code = 1
+    except KeyboardInterrupt:
+        console.error("the walk was interrupted")
+        code = EXIT_INTERRUPTED
+
     raise SystemExit(code)
 
 

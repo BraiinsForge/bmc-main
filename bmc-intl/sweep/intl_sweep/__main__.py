@@ -26,7 +26,9 @@ Run from the repository root, as `just intl::sweep` does.
 
 import os
 import shutil
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,11 +38,16 @@ from bmc_tui.stage import Abort, entrypoint, stage
 from playwright.sync_api import Error as PlaywrightError
 from web_probe.browser import BrowsersMissing, Unreachable, open_probe
 from web_probe.device import (
+    LOGIN_PATH,
+    EditorUnreached,
+    Interrupted,
     LanguageStuck,
     LanguageUnknown,
     LoginRefused,
     LoginStalled,
+    SceneLeft,
     TabsMissing,
+    current_language,
     in_setup,
     log_in,
     offered_languages,
@@ -49,6 +56,7 @@ from web_probe.device import (
     speaking,
 )
 
+EXIT_INTERRUPTED = 130
 LANGUAGE = "en-XA"
 SCRATCH = Path(".tmp")
 SWEEP = SCRATCH / "intl-sweep"
@@ -115,7 +123,8 @@ def capture(recipe: str, out: Path, log: Path, phase: str) -> None:
 
 @stage("the overlays")
 def overlays() -> str:
-    capture("capture.toml", GALLERY, LOGS / "overlays.log", "capturing the overlays' recipe")
+    with a_step("capturing the overlays' recipe"):
+        capture("capture.toml", GALLERY, LOGS / "overlays.log", "capturing the overlays' recipe")
     return f"shots under {console.lit(GALLERY)}"
 
 
@@ -130,43 +139,123 @@ def widgets() -> str:
     for index, (name, recipe) in enumerate(recipes, start=1):
         phase = f"{name} ({index} of {len(recipes)})"
         try:
-            capture(str(recipe), WIDGETS / name, LOGS / f"widget-{name}.log", phase)
+            with a_step("capturing", name):
+                capture(str(recipe), WIDGETS / name, LOGS / f"widget-{name}.log", phase)
         except Abort as failure:
             console.error(failure.hint)
             failed.append(name)
 
     if failed:
         raise Abort(f"{len(failed)} of {len(recipes)} recipes failed: {', '.join(failed)}")
-    return f"{len(recipes)} recipes, shots under {console.lit(WIDGETS)}"
+    return f"{console.lit(len(recipes))} recipes, shots under {console.lit(WIDGETS)}"
 
 
 @stage("the web")
 def web(url: str, password: str) -> str:
     try:
         return _walk_web(url, password)
+    except Interrupted as error:
+        console.error(console.lit(error))
+        raise SystemExit(EXIT_INTERRUPTED) from error
     except BrowsersMissing as error:
         raise Abort(f"{error} - run the sweep as `just intl::sweep`, which sets it") from error
     except Unreachable as error:
         raise Abort(f"{error} - is the web UI running at {url}?") from error
     except LoginRefused as error:
         raise Abort(f"{error} - pass the device's password with --password") from error
-    except (LoginStalled, LanguageUnknown, LanguageStuck, TabsMissing) as error:
+    except (
+        LoginStalled,
+        LanguageUnknown,
+        LanguageStuck,
+        EditorUnreached,
+        SceneLeft,
+        TabsMissing,
+    ) as error:
         raise Abort(str(error)) from error
     except PlaywrightError as error:
         raise Abort(f"the web walk failed: {error.message.splitlines()[0]}") from error
 
 
+class Steps:
+    """A stage's steps: the current one on the live spinner, each ended one left in the output."""
+
+    def __init__(self, phase: Callable[[str], None]) -> None:
+        self._phase: Callable[[str], None] = phase
+        self._current: str | None = None
+        self._started: float = 0.0
+
+    def start(self, name: str, value: str | None = None) -> None:
+        """Begin the step `name`, of the exact `value` if it has one.
+        The two stay apart as the spinner shows text as it is, and the output styles the value."""
+        self.finish()
+        self._current = name if value is None else f"{name} {console.lit(value)}"
+        self._started = time.monotonic()
+        self._phase(name if value is None else f"{name} {value}")
+
+    def finish(self) -> None:
+        if self._current is not None:
+            console.ok(self._timed())
+            self._current = None
+
+    def fail(self) -> None:
+        if self._current is not None:
+            console.error(self._timed())
+            self._current = None
+
+    def _timed(self) -> str:
+        return f"{self._current} ({console.lit(f'{time.monotonic() - self._started:.1f} s')})"
+
+
+@contextmanager
+def steps_of(phase: Callable[[str], None]) -> Generator[Steps]:
+    steps = Steps(phase)
+    try:
+        yield steps
+    except BaseException:
+        steps.fail()
+        raise
+    steps.finish()
+
+
+@contextmanager
+def a_step(name: str, value: str | None = None) -> Generator[None]:
+    """One step around a command that runs its own live display, so it needs no spinner here."""
+
+    def spinner_is_the_commands(_phase: str) -> None:
+        pass
+
+    with steps_of(spinner_is_the_commands) as steps:
+        steps.start(name, value)
+        yield
+
+
 def _walk_web(url: str, password: str) -> str:
     out = SWEEP / "web"
-    with open_probe(url) as probe:
+    log = LOGS / "web.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        log.open("w", encoding="utf-8") as file,
+        console.live_scrollback(log_path=log) as live,
+        steps_of(live.phase) as steps,
+        open_probe(url) as probe,
+    ):
+
+        def shot_taken(path: str, shot: Path) -> None:
+            line = f"{path} -> {shot}"
+            _ = file.write(f"{line}\n")
+            live.echo(line)
+
+        steps.start("opening the web UI")
         if in_setup(probe):
             shot = probe.shot(out / "setup.png")
             return (
                 f"the device is being set up, its first page is at {console.lit(shot)}."
                 f" The wizard's steps are not walked, and it speaks English, not {LANGUAGE}"
             )
+        steps.start("logging in")
         log_in(probe, password)
 
+        steps.start("reading the device's languages")
         # Aborted, not skipped: `--url` asked for the web, and a passing run would hide its absence.
         offered = offered_languages(probe)
         if not offered:
@@ -181,12 +270,27 @@ def _walk_web(url: str, password: str) -> str:
             )
             raise Abort(msg)
 
+        # `speaking` leaves such a device alone, so no step may claim to have switched it.
+        switches = current_language(probe) != LANGUAGE
+        if switches:
+            steps.start("switching the device to", LANGUAGE)
         with speaking(probe, LANGUAGE):
-            shots = [shot for _, shot in shoot_pages(probe, out)]
+            # The side navigation is clicked through before the first page is shot.
+            steps.start("finding the pages")
+            shots: list[Path] = []
+            for path, shot in shoot_pages(probe, out):
+                if not shots:
+                    steps.start("capturing the pages")
+                shots.append(shot)
+                shot_taken(path, shot)
+            steps.start("capturing the login page")
             if login := shoot_login(probe, out):
                 shots.append(login)
+                shot_taken(LOGIN_PATH, login)
+            if switches:
+                steps.start("setting the device's language back")
 
-    return f"{len(shots)} shots under {console.lit(out)}"
+    return f"{console.lit(len(shots))} shots under {console.lit(out)}"
 
 
 def main(args: Sweep) -> None:
@@ -203,4 +307,4 @@ def main(args: Sweep) -> None:
 
 
 if __name__ == "__main__":
-    entrypoint(main)()
+    entrypoint(main, name="intl sweep")()

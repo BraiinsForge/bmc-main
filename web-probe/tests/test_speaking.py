@@ -27,7 +27,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from web_probe import device
 from web_probe.browser import Probe
-from web_probe.device import LanguageStuck, LanguageUnknown, speaking
+from web_probe.device import Interrupted, LanguageStuck, LanguageUnknown, speaking
 
 # `speaking` reaches the page only through the picker calls `Picker` stands in for.
 PROBE = cast(Probe, object())
@@ -41,17 +41,21 @@ class Picker:
         language: str | None,
         *,
         setting_back_fails: bool = False,
+        setting_back_interrupted: bool = False,
         switch_times_out: bool = False,
     ) -> None:
         self.language: str | None = language
         self.picked: list[str] = []
         self._setting_back_fails: bool = setting_back_fails
+        self._setting_back_interrupted: bool = setting_back_interrupted
         self._switch_times_out: bool = switch_times_out
 
     def current(self, _probe: Probe) -> str | None:
         return self.language
 
     def pick(self, _probe: Probe, tag: str) -> None:
+        if self._setting_back_interrupted and self.picked:
+            raise KeyboardInterrupt
         if self._setting_back_fails and self.picked:
             msg = "the picker is gone"
             raise PlaywrightError(msg)
@@ -130,18 +134,51 @@ def test_a_failure_setting_the_language_back_leaves_the_blocks_own_error_and_say
     with pytest.raises(RuntimeError, match="the walk failed"), speaking(PROBE, "en-XA"):
         raise RuntimeError("the walk failed")
 
-    said = capsys.readouterr().err
-    assert "en-XA" in said
-    assert "en-US" in said
+    assert "language back to en-US failed" in capsys.readouterr().err
 
 
-def test_a_failure_setting_the_language_back_after_a_clean_block_names_both_languages(
+def test_a_failure_setting_the_language_back_after_a_clean_block_says_what_failed_and_why(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _ = installed(monkeypatch, Picker("en-US", setting_back_fails=True))
 
     with (
-        pytest.raises(LanguageStuck, match=r"may still speak en-XA.*back to en-US.*picker is gone"),
+        pytest.raises(LanguageStuck, match=r"language back to en-US failed: the picker is gone"),
         speaking(PROBE, "en-XA"),
     ):
         pass
+
+
+def test_an_interrupt_setting_the_language_back_after_a_clean_block_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ = installed(monkeypatch, Picker("en-US", setting_back_interrupted=True))
+
+    with (
+        pytest.raises(Interrupted, match="interrupted while setting the device's language back"),
+        speaking(PROBE, "en-XA"),
+    ):
+        pass
+
+
+def test_a_second_interrupt_setting_the_language_back_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ = installed(monkeypatch, Picker("en-US", setting_back_interrupted=True))
+
+    with (
+        pytest.raises(Interrupted, match="interrupted while setting the device's language back"),
+        speaking(PROBE, "en-XA"),
+    ):
+        raise KeyboardInterrupt
+
+
+def test_an_interrupt_in_the_block_with_the_language_set_back_stays_plain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    picker = installed(monkeypatch, Picker("en-US"))
+
+    with pytest.raises(KeyboardInterrupt), speaking(PROBE, "en-XA"):
+        raise KeyboardInterrupt
+
+    assert picker.language == "en-US"

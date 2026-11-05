@@ -1231,6 +1231,7 @@ class View extends Component<Props, State> {
                         onClick={this.#sceneAddChooseKind}
                     />
                     <CombinedSceneMenuAction
+                        id={$('add-combined')}
                         capabilities={this.props.hardwareCapabilities}
                         label={formatMessage({ defaultMessage: 'Combined Scene' })}
                         onClick={this.#sceneAddCombined}
@@ -1259,6 +1260,7 @@ class View extends Component<Props, State> {
                         />
                         {runningWidgets ? (
                             <div
+                                id={$('capacity')}
                                 className={css.capacity}
                                 children={intl.formatMessage(
                                     { defaultMessage: 'Running widgets: {running} / {maximum}' },
@@ -1295,12 +1297,13 @@ class View extends Component<Props, State> {
 }
 
 export function CombinedSceneMenuAction(props: {
+    id?: string;
     capabilities: Capabilities;
     label: string;
     onClick: () => void;
 }): null | ReactElement {
     if (!fn.combinedSceneAvailable(props.capabilities)) return null;
-    return <MenuItem label={props.label} className={css.addMenuButton} onClick={props.onClick} />;
+    return <MenuItem id={props.id} label={props.label} className={css.addMenuButton} onClick={props.onClick} />;
 }
 
 // `OverflowMenu` clones its child with menu-item props; taking only `children` drops them

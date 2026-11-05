@@ -876,6 +876,7 @@ class View extends Component<Props, State> {
                         </div>
                         {runningWidgets ? (
                             <div
+                                id={$('capacity')}
                                 className={css.capacity}
                                 children={intl.formatMessage(
                                     { defaultMessage: 'Running widgets: {running} / {maximum}' },
