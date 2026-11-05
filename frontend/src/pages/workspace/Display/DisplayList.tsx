@@ -209,7 +209,7 @@ class View extends Component<Props, State> {
             try {
                 return await call({ timeoutMs: fn.SCENE_WRITE_TIMEOUT_MS });
             } catch ($) {
-                throw fn.explainTimeout($, this.props.intl);
+                throw fn.explainTimeout(this.props.intl, $);
             }
         });
     }
@@ -294,7 +294,7 @@ class View extends Component<Props, State> {
             return accounts;
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList(fn.explainTimeout($, this.props.intl));
+            let msg = pb.collectAllErrorsAsFormattedList(fn.explainTimeout(this.props.intl, $));
             msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
             toast.error(msg);
         }
@@ -543,7 +543,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             // Neither call above carries a client abort signal,
             // so Canceled is a server failure to be shown and cleaned up like any other.
-            let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            let msg = fn.runningWidgetLimitErrorMessage(this.props.intl, $);
             msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to add manifest widget!' });
 
@@ -605,7 +605,7 @@ class View extends Component<Props, State> {
                         sceneId: sceneID,
                         position: { row: 0, col: 0 },
                         size: pb.WidgetSize.FULL,
-                        params: fn.fitStoredParams(manifest, originalParams),
+                        params: fn.fitStoredParams(this.props.intl, manifest, originalParams),
                         credentialBindings: await this.#withoutDeletedAccounts(credentialBindings, options),
                     },
                     options,
@@ -638,7 +638,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
             if (this.state.manifestForm.sceneID !== sceneId) return;
-            const msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            const msg = fn.runningWidgetLimitErrorMessage(this.props.intl, $);
             if (msg) {
                 const closeResult = await this.#openDialogCancel();
                 if (closeResult === DialogCloseResult.CleanupFailed) return;
@@ -685,7 +685,7 @@ class View extends Component<Props, State> {
         const { manifestForm } = this.state;
         const { manifest, sceneID, widgetID, params } = manifestForm;
         if (!manifest || !widgetID) return;
-        const built = fn.buildFieldValues(manifest, params);
+        const built = fn.buildFieldValues(this.props.intl, manifest, params);
         if (!built.ok) {
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
             return;
@@ -734,7 +734,7 @@ class View extends Component<Props, State> {
             s => {
                 const def = s.manifestForm.manifest?.params.find(p => p.key === key);
                 const errors = def
-                    ? fn.revalidateField(s.manifestForm.errors, def, value)
+                    ? fn.revalidateField(this.props.intl, s.manifestForm.errors, def, value)
                     : fn.clearFieldError(s.manifestForm.errors, key);
                 return {
                     manifestForm: {
@@ -772,7 +772,7 @@ class View extends Component<Props, State> {
             return;
         }
 
-        const built = fn.buildFieldValues(manifest, params);
+        const built = fn.buildFieldValues(this.props.intl, manifest, params);
         if (!built.ok) {
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
             return;
@@ -955,7 +955,7 @@ class View extends Component<Props, State> {
                 scenes: s.scenes.map(x => (x.id === id ? { ...x, enabled: value } : x)),
             }));
         } catch ($) {
-            let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            let msg = fn.runningWidgetLimitErrorMessage(this.props.intl, $);
             msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update widget state!' });
             toast.error(msg);
@@ -1007,7 +1007,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             this.setState(s => ({ scenes: s.scenes.filter(scene => scene.id !== optimisticId) }));
 
-            let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            let msg = fn.runningWidgetLimitErrorMessage(this.props.intl, $);
             msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to clone the widget!' });
             toast.error(msg);

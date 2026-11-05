@@ -230,6 +230,11 @@
     "source": "Passwords must match!",
     "translation": "两次输入的密码必须一致！"
   },
+  "2lkkIt/sQZ": {
+    "source": "Value is required",
+    "translation": "此字段为必填项",
+    "description": "Error under a widget setting left empty"
+  },
   "2m+pAldxBC": {
     "source": "Finishing up…",
     "translation": "即将完成…"
@@ -384,6 +389,11 @@
     "source": "Edit Combined Scene",
     "translation": "编辑组合场景"
   },
+  "6FbHMkvF2I": {
+    "source": "{count, plural, one {Must be at least {count} character} other {Must be at least {count} characters}}",
+    "translation": "{count, plural, other {至少需要 {count} 个字符}}",
+    "description": "Error under a widget text setting shorter than allowed; count is its fewest characters"
+  },
   "6RFmTPnch5": {
     "source": "Your system and packages are up to date",
     "translation": "您的系统和软件包已是最新版本"
@@ -457,6 +467,11 @@
     "translation": "密码",
     "description": "Login page, the label of the device's web password field"
   },
+  "96/QJ8EYrn": {
+    "source": "Not an integer",
+    "translation": "不是整数",
+    "description": "Error under a whole-number widget setting holding a fraction"
+  },
   "9BBNEzxnNi": {
     "source": "Metric (km, kg)",
     "translation": "公制（km、kg）"
@@ -512,6 +527,11 @@
   "AYXyukWL5P": {
     "source": "Downloading",
     "translation": "正在下载"
+  },
+  "AgR+F5BSo4": {
+    "source": "{count, plural, one {Must have at most {count} item} other {Must have at most {count} items}}",
+    "translation": "{count, plural, other {最多只能有 {count} 项}}",
+    "description": "Error under a widget list setting with too many rows; count is its most rows"
   },
   "AhQdiCzbWT": {
     "source": "If you forget this password, you'll need to reset the device to regain access.",
@@ -666,10 +686,20 @@
     "source": "{name} was upgraded from {previous} to {version}.",
     "translation": "{name} 已从 {previous} 升级到 {version}。"
   },
+  "EOpapZmbDd": {
+    "source": "Repeats item {position}",
+    "translation": "与第 {position} 项重复",
+    "description": "Error on a row of a widget list setting that must not repeat; position is the number of the earlier equal row"
+  },
   "EXPh3I0MA0": {
     "source": "Copy to clipboard",
     "translation": "复制到剪贴板",
     "description": "Tooltip and screen-reader name of a button copying a value"
+  },
+  "Ek0Bt0UR7I": {
+    "source": "Must be at least {min}",
+    "translation": "不能小于 {min}",
+    "description": "Error under a numeric widget setting below its lowest value; min is a number"
   },
   "Ev6SEFBkdw": {
     "source": "New Password",
@@ -931,6 +961,11 @@
     "source": "Failed to load sound settings!",
     "translation": "加载声音设置失败！"
   },
+  "MhtSyAVGz8": {
+    "source": "{count, plural, one {Must have at least {count} item} other {Must have at least {count} items}}",
+    "translation": "{count, plural, other {至少需要 {count} 项}}",
+    "description": "Error under a widget list setting with too few rows; count is its fewest rows"
+  },
   "Mirphk5bbO": {
     "source": "Network Configuration",
     "translation": "网络配置"
@@ -963,6 +998,11 @@
     "source": "Alarm has been successfully toggled.",
     "translation": "闹钟状态已切换。"
   },
+  "Nnva2ngVn/": {
+    "source": "Must be at most {max} bytes",
+    "translation": "最多 {max} 个字节",
+    "description": "Error under a widget text setting too long to store; max is always 1024"
+  },
   "NqihMEPE7t": {
     "source": "{widget} could not go there and is back in place.",
     "translation": "{widget} 无法放到该位置，已回到原处。",
@@ -983,6 +1023,11 @@
   "O6TzPNzw67": {
     "source": "Verifying packages",
     "translation": "正在校验软件包"
+  },
+  "OIfOdhUGU7": {
+    "source": "{count, plural, one {Must be at most {count} character} other {Must be at most {count} characters}}",
+    "translation": "{count, plural, other {最多 {count} 个字符}}",
+    "description": "Error under a widget text setting longer than allowed; count is its most characters"
   },
   "OLVyHLE2VH": {
     "source": "WEP",
@@ -1038,6 +1083,11 @@
     "source": "Success",
     "translation": "成功",
     "description": "Screen-reader name of a success notification's icon"
+  },
+  "P3nj3Hx6B1": {
+    "source": "Same as item {position}",
+    "translation": "与第 {position} 项相同",
+    "description": "Error on a row of a widget list setting whose identifying fields repeat; position is the number of the earlier row"
   },
   "P6PLpip+L0": {
     "source": "Join",
@@ -1547,6 +1597,11 @@
     "source": "Turn off the screen after a period of inactivity during night mode. Touch to wake.",
     "translation": "夜间模式期间，一段时间无操作后关闭屏幕。触摸即可唤醒。"
   },
+  "gOsAMMep1e": {
+    "source": "Not a number",
+    "translation": "不是数字",
+    "description": "Error under a numeric widget setting holding something other than a number"
+  },
   "gnJyZ1YE4o": {
     "source": "No “Display widget” yet",
     "translation": "尚无“显示小组件”"
@@ -1917,6 +1972,11 @@
   "re9SasmZF8": {
     "source": "Password is not set!",
     "translation": "尚未设置密码！"
+  },
+  "rgjVof+QF8": {
+    "source": "Must be at most {max}",
+    "translation": "不能大于 {max}",
+    "description": "Error under a numeric widget setting above its highest value; max is a number"
   },
   "ris6V67rM0": {
     "source": "Connected Accounts",

@@ -19,6 +19,7 @@
 // the grant above.
 
 import { useState } from 'react';
+import { useIntl } from 'react-intl';
 import { action } from 'storybook/actions';
 
 import * as pb from '@/proto';
@@ -466,7 +467,8 @@ function ListCell({ definition, invalid }: { definition: pb.ManifestParamDefinit
     const [value, setValue] = useState<FormifiedValue>(() => defaultFormifiedValue(definition));
     const isObjectList =
         definition.kind.case === 'paramArray' && definition.kind.value.items?.kind.case === 'paramObject';
-    const parsed = parseFormifiedValue(definition, value);
+    const intl = useIntl();
+    const parsed = parseFormifiedValue(intl, definition, value);
     const live = parsed.ok ? undefined : parsed;
     return (
         <div className={cn(css.cell, isObjectList && css.wide)}>

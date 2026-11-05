@@ -159,7 +159,7 @@ class View extends Component<Props, State> {
             try {
                 return await call({ timeoutMs: fn.SCENE_WRITE_TIMEOUT_MS });
             } catch ($) {
-                throw fn.explainTimeout($, this.props.intl);
+                throw fn.explainTimeout(this.props.intl, $);
             }
         });
     }
@@ -214,7 +214,7 @@ class View extends Component<Props, State> {
             return accounts;
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList(fn.explainTimeout($, this.props.intl));
+            let msg = pb.collectAllErrorsAsFormattedList(fn.explainTimeout(this.props.intl, $));
             msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
             toast.error(msg);
         }
@@ -293,7 +293,7 @@ class View extends Component<Props, State> {
             }
         } catch ($) {
             if (pb.abort.is($)) return;
-            const msg = fn.runningWidgetLimitErrorMessage($, intl);
+            const msg = fn.runningWidgetLimitErrorMessage(intl, $);
             if (msg) {
                 this.setState({ previewRejected: true }, this.#goBack);
                 toast.error(msg);
@@ -516,7 +516,7 @@ class View extends Component<Props, State> {
                 ),
             ));
         } catch ($) {
-            let msg = fn.runningWidgetLimitErrorMessage($, intl);
+            let msg = fn.runningWidgetLimitErrorMessage(intl, $);
             msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to add widget!' });
             toast.error(msg);
@@ -588,7 +588,7 @@ class View extends Component<Props, State> {
         const { sceneId } = this.props;
         const { widgetID, position, size, params, manifest } = this.state.manifestForm;
         if (!widgetID || !manifest) return;
-        const built = fn.buildFieldValues(manifest, params);
+        const built = fn.buildFieldValues(this.props.intl, manifest, params);
         if (!built.ok) {
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
             return;
@@ -646,7 +646,7 @@ class View extends Component<Props, State> {
             s => {
                 const def = s.manifestForm.manifest?.params.find(p => p.key === key);
                 const errors = def
-                    ? fn.revalidateField(s.manifestForm.errors, def, value)
+                    ? fn.revalidateField(this.props.intl, s.manifestForm.errors, def, value)
                     : fn.clearFieldError(s.manifestForm.errors, key);
                 return {
                     manifestForm: {
@@ -699,7 +699,7 @@ class View extends Component<Props, State> {
             return;
         }
 
-        const built = fn.buildFieldValues(manifest, params);
+        const built = fn.buildFieldValues(this.props.intl, manifest, params);
         if (!built.ok) {
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
             return;
@@ -786,7 +786,7 @@ class View extends Component<Props, State> {
                         sceneId: this.props.sceneId,
                         position: undo.position,
                         size: undo.size,
-                        params: fn.fitStoredParams(manifest, undo.params),
+                        params: fn.fitStoredParams(this.props.intl, manifest, undo.params),
                         credentialBindings: await this.#withoutDeletedAccounts(credentialBindings, options),
                     },
                     options,

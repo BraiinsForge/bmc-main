@@ -42,7 +42,7 @@ import { itemKind, parseFormifiedValue, type ParseFailure } from '@/components/P
 import * as C from './const';
 import type { WidgetOrPlaceholder, WidgetsOccupandyMap, WidgetsWithPlaceholders } from './const';
 
-export function runningWidgetLimitErrorMessage(error: unknown, intl: IntlShape): null | string {
+export function runningWidgetLimitErrorMessage(intl: IntlShape, error: unknown): null | string {
     if (ConnectError.from(error).code !== Code.ResourceExhausted) return null;
     return intl.formatMessage({ defaultMessage: 'Running widget limit reached.' });
 }
@@ -60,7 +60,7 @@ export const SCENE_WRITE_TIMEOUT_MS = 30_000;
  * `error` as it was, unless it is a timeout,
  * which gets a message the page can show as it is.
  */
-export function explainTimeout(error: unknown, intl: IntlShape): unknown {
+export function explainTimeout(intl: IntlShape, error: unknown): unknown {
     if (ConnectError.from(error).code !== Code.DeadlineExceeded) return error;
     const message = intl.formatMessage({ defaultMessage: "The device didn't answer in time." });
     return new ConnectError(message, Code.DeadlineExceeded);
@@ -404,12 +404,13 @@ function withFailure(errors: ParamsFormErrors, key: string, failure: ParseFailur
 }
 
 export function revalidateField(
+    intl: IntlShape,
     errors: null | ParamsFormErrors,
     def: pb.ManifestParamDefinition,
     value: FormifiedValue,
 ): null | ParamsFormErrors {
     const cleared = clearFieldError(errors, def.key);
-    const r = parseFormifiedValue(def, value);
+    const r = parseFormifiedValue(intl, def, value);
     if (r.ok) return cleared;
     return withFailure(cleared ?? { global: [], fields: {} }, def.key, r);
 }
@@ -472,6 +473,7 @@ export function widgetParamsToFormifiedState(
 }
 
 export function buildFieldValues(
+    intl: IntlShape,
     manifest: pb.WidgetManifest,
     params: FormifiedParams,
 ): { ok: true; value: pb.FieldValues } | { ok: false; errors: ParamsFormErrors } {
@@ -479,7 +481,7 @@ export function buildFieldValues(
     let errors: null | ParamsFormErrors = null;
     for (const def of manifest.params) {
         const raw = Object.hasOwn(params, def.key) ? params[def.key] : defaultFormifiedValue(def);
-        const r = parseFormifiedValue(def, raw);
+        const r = parseFormifiedValue(intl, def, raw);
         if (r.ok) fields[def.key] = r.value;
         else errors = withFailure(errors ?? { global: [], fields: {} }, def.key, r);
     }
@@ -493,7 +495,7 @@ export function buildFieldValues(
  * The server refuses an update that names an undeclared key or leaves a declared one out,
  * so a key the manifest dropped is left out and one it added takes its default.
  */
-export function fitStoredParams(manifest: pb.WidgetManifest, stored: pb.FieldValues): pb.FieldValues {
+export function fitStoredParams(intl: IntlShape, manifest: pb.WidgetManifest, stored: pb.FieldValues): pb.FieldValues {
     const fields: Record<string, pb.FieldValue> = {};
     for (const def of manifest.params) {
         // A proto map is a plain object,
@@ -502,7 +504,7 @@ export function fitStoredParams(manifest: pb.WidgetManifest, stored: pb.FieldVal
             fields[def.key] = stored.fields[def.key];
             continue;
         }
-        const fallback = parseFormifiedValue(def, defaultFormifiedValue(def));
+        const fallback = parseFormifiedValue(intl, def, defaultFormifiedValue(def));
         if (fallback.ok) fields[def.key] = fallback.value;
     }
     return pb.create(pb.FieldValuesSchema, { fields });

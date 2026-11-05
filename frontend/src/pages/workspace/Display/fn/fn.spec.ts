@@ -34,12 +34,12 @@ import {
     getValidDropSlots,
     defaultFormifiedValue,
     widgetParamsToFormifiedState,
-    buildFieldValues,
-    fitStoredParams,
+    buildFieldValues as buildFieldValuesIn,
+    fitStoredParams as fitStoredParamsIn,
     hasItemErrors,
     itemErrorsOf,
     clearFieldError,
-    revalidateField,
+    revalidateField as revalidateFieldIn,
     type ParamsFormErrors,
     credentialBindingsValid,
     credentialBindingsFor,
@@ -47,10 +47,22 @@ import {
     explainTimeout,
 } from './fn';
 import { Code, ConnectError } from '@connectrpc/connect';
-import { fakeIntlProp } from '@/mocks/intl';
-import { listItem, type ListItem } from '@/components/ParamField/value';
-import { parseFormifiedValue } from '@/components/ParamField/parse';
+import { fakeIntlProp, pseudoIntl } from '@/mocks/intl';
+import { listItem, type ListItem, type FieldValue } from '@/components/ParamField/value';
+import { parseFormifiedValue as parseFormifiedValueIn } from '@/components/ParamField/parse';
 import { paramDef } from './test-helpers';
+
+const parseFormifiedValue = (def: pb.ManifestParamDefinition, raw: FieldValue) =>
+    parseFormifiedValueIn(fakeIntlProp, def, raw);
+const buildFieldValues = (manifest: pb.WidgetManifest, params: Parameters<typeof buildFieldValuesIn>[2]) =>
+    buildFieldValuesIn(fakeIntlProp, manifest, params);
+const fitStoredParams = (manifest: pb.WidgetManifest, stored: pb.FieldValues) =>
+    fitStoredParamsIn(fakeIntlProp, manifest, stored);
+const revalidateField = (
+    errors: null | ParamsFormErrors,
+    def: pb.ManifestParamDefinition,
+    value: Parameters<typeof revalidateFieldIn>[3],
+) => revalidateFieldIn(fakeIntlProp, errors, def, value);
 
 const emptyParams = pb.create(pb.FieldValuesSchema, { fields: {} });
 
@@ -814,6 +826,45 @@ function rows(...values: string[]): ListItem[] {
 }
 
 describe('parseFormifiedValue', () => {
+    test.each([
+        ['required', paramDef('paramString'), ''],
+        ['too many bytes', paramDef('paramString'), 'x'.repeat(1025)],
+        ['too few characters', paramDef('paramString', 'k', false, { minLength: 2 }), 'x'],
+        ['too many characters', paramDef('paramString', 'k', false, { maxLength: 1 }), 'xx'],
+        ['not a number', paramDef('paramDouble'), 'abc'],
+        ['not an integer', paramDef('paramInteger'), '1.5'],
+        ['below the lowest', paramDef('paramInteger', 'k', false, { min: 5 }), '3'],
+        ['above the highest', paramDef('paramInteger', 'k', false, { max: 5 }), '9'],
+        ['too few rows', countsDef({ minItems: 1 }), rows()],
+        ['too many rows', countsDef({ maxItems: 1 }), rows('1', '2')],
+    ] as const)('an error of %s goes through the catalog', (_case, def, raw) => {
+        const r = parseFormifiedValueIn(pseudoIntl, def, raw);
+        if (r.ok || !r.error) throw new Error('the value parsed');
+        const english = parseFormifiedValue(def, raw);
+        if (english.ok) throw new Error('the value parsed');
+        expect(r.error).not.toBe(english.error);
+    });
+    test.each([
+        ['a whole row', 'Repeats item 1', { uniqueItems: { case: 'whole', value: {} } }],
+        [
+            'the identifying fields',
+            'Same as item 1',
+            { uniqueItems: { case: 'by', value: { keys: ['label', 'url'] } } },
+        ],
+    ])('an error of %s repeating goes through the catalog', (_case, english, unique) => {
+        const repeated = [listItem({ label: 'a', url: 'b' }), listItem({ label: 'a', url: 'b' })];
+        const r = parseFormifiedValueIn(pseudoIntl, linksDef(unique), repeated);
+        if (r.ok) throw new Error('the value parsed');
+        expect(r.items?.[1]?.error).toBeTruthy();
+        expect(r.items?.[1]?.error).not.toBe(english);
+    });
+    test('a limit of one is worded in the singular', () => {
+        const characters = parseFormifiedValue(paramDef('paramString', 'k', false, { maxLength: 1 }), 'xx');
+        const items = parseFormifiedValue(countsDef({ maxItems: 1 }), rows('1', '2'));
+        if (characters.ok || items.ok) throw new Error('the value parsed');
+        expect(characters.error).toBe('Must be at most 1 character');
+        expect(items.error).toBe('Must have at most 1 item');
+    });
     test('paramString required, null → error', () => {
         const r = parseFormifiedValue(paramDef('paramString'), null);
         expect(r.ok).toBe(false);
@@ -1434,12 +1485,12 @@ describe('credential bindings', () => {
 
 describe('explainTimeout', () => {
     test('a timeout gets a message the page can show as it is', () => {
-        const explained = explainTimeout(new ConnectError('deadline exceeded', Code.DeadlineExceeded), fakeIntlProp);
+        const explained = explainTimeout(fakeIntlProp, new ConnectError('deadline exceeded', Code.DeadlineExceeded));
         expect(ConnectError.from(explained).rawMessage).toBe("The device didn't answer in time.");
     });
 
     test('any other error passes through unchanged', () => {
         const refused = new ConnectError('refused', Code.FailedPrecondition);
-        expect(explainTimeout(refused, fakeIntlProp)).toBe(refused);
+        expect(explainTimeout(fakeIntlProp, refused)).toBe(refused);
     });
 });

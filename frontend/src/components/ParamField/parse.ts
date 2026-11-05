@@ -19,6 +19,7 @@
 // the grant above.
 
 import invariant from 'invariant';
+import type { IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
 import { assertUnreachable, ownValue } from '@/lib/ts';
@@ -65,9 +66,19 @@ function isObjectValue(v: ListItem['value']): v is ObjectValue {
     return typeof v === 'object' && v !== null;
 }
 
-const ERR_REQUIRED = 'Value is required';
-const ERR_NOT_NUMBER = 'Not a number';
-const ERR_NOT_INTEGER = 'Not an integer';
+function requiredError(intl: IntlShape): string {
+    return intl.formatMessage({
+        defaultMessage: 'Value is required',
+        description: 'Error under a widget setting left empty',
+    });
+}
+
+function notNumberError(intl: IntlShape): string {
+    return intl.formatMessage({
+        defaultMessage: 'Not a number',
+        description: 'Error under a numeric widget setting holding something other than a number',
+    });
+}
 
 // The wire field is `int32`; protobuf's encoder throws on anything past it.
 const INT32_MIN = -2_147_483_648;
@@ -77,39 +88,49 @@ const INT32_MAX = 2_147_483_647;
 const MAX_STRING_BYTES = 1024;
 const utf8 = new TextEncoder();
 
-export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: FieldValue): ParseResult {
+export function parseFormifiedValue(intl: IntlShape, def: pb.ManifestParamDefinition, raw: FieldValue): ParseResult {
     if (def.kind.case === 'paramArray') {
         invariant(Array.isArray(raw), `list param "${def.key}" holds a non-list value`);
         return parseList(
+            intl,
             def.kind.value,
             raw.map(row => row.value),
         );
     }
     invariant(!Array.isArray(raw), `scalar param "${def.key}" holds a list value`);
-    return parseScalar(def.kind, raw, def.isOptional);
+    return parseScalar(intl, def.kind, raw, def.isOptional);
 }
 
-function parseScalar(kind: ScalarKind, raw: ScalarValue, isOptional: boolean): ScalarParseResult {
+function parseScalar(intl: IntlShape, kind: ScalarKind, raw: ScalarValue, isOptional: boolean): ScalarParseResult {
     switch (kind.case) {
         case 'paramString': {
             if (raw === null || raw === '') {
                 if (isOptional) return { ok: true, value: nullValue() };
-                return { ok: false, error: ERR_REQUIRED };
+                return { ok: false, error: requiredError(intl) };
             }
-            if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
+            if (typeof raw !== 'string') return { ok: false, error: requiredError(intl) };
             if (utf8.encode(raw).length > MAX_STRING_BYTES)
-                return { ok: false, error: `Must be at most ${MAX_STRING_BYTES} bytes` };
+                return {
+                    ok: false,
+                    error: intl.formatMessage(
+                        {
+                            defaultMessage: 'Must be at most {max} bytes',
+                            description: 'Error under a widget text setting too long to store; max is always 1024',
+                        },
+                        { max: MAX_STRING_BYTES },
+                    ),
+                };
 
-            const error = lengthError(raw, kind.value);
+            const error = lengthError(intl, raw, kind.value);
             if (error) return { ok: false, error };
             return { ok: true, value: stringValue(raw) };
         }
         case 'paramTimezone': {
             if (raw === null || raw === '') {
                 if (isOptional) return { ok: true, value: nullValue() };
-                return { ok: false, error: ERR_REQUIRED };
+                return { ok: false, error: requiredError(intl) };
             }
-            if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
+            if (typeof raw !== 'string') return { ok: false, error: requiredError(intl) };
             return { ok: true, value: stringValue(raw) };
         }
         case 'paramInteger':
@@ -118,16 +139,44 @@ function parseScalar(kind: ScalarKind, raw: ScalarValue, isOptional: boolean): S
             const inner = kind.value;
             if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
                 if (isOptional) return { ok: true, value: nullValue() };
-                return { ok: false, error: ERR_REQUIRED };
+                return { ok: false, error: requiredError(intl) };
             }
-            if (typeof raw !== 'string') return { ok: false, error: ERR_NOT_NUMBER };
+            if (typeof raw !== 'string') return { ok: false, error: notNumberError(intl) };
             const n = Number(raw.trim());
-            if (!Number.isFinite(n)) return { ok: false, error: ERR_NOT_NUMBER };
-            if (wantInt && !Number.isInteger(n)) return { ok: false, error: ERR_NOT_INTEGER };
+            if (!Number.isFinite(n)) return { ok: false, error: notNumberError(intl) };
+            if (wantInt && !Number.isInteger(n))
+                return {
+                    ok: false,
+                    error: intl.formatMessage({
+                        defaultMessage: 'Not an integer',
+                        description: 'Error under a whole-number widget setting holding a fraction',
+                    }),
+                };
             const min = inner.min ?? (wantInt ? INT32_MIN : undefined);
             const max = inner.max ?? (wantInt ? INT32_MAX : undefined);
-            if (min !== undefined && n < min) return { ok: false, error: `Must be at least ${min}` };
-            if (max !== undefined && n > max) return { ok: false, error: `Must be at most ${max}` };
+            if (min !== undefined && n < min)
+                return {
+                    ok: false,
+                    error: intl.formatMessage(
+                        {
+                            defaultMessage: 'Must be at least {min}',
+                            description: 'Error under a numeric widget setting below its lowest value; min is a number',
+                        },
+                        { min },
+                    ),
+                };
+            if (max !== undefined && n > max)
+                return {
+                    ok: false,
+                    error: intl.formatMessage(
+                        {
+                            defaultMessage: 'Must be at most {max}',
+                            description:
+                                'Error under a numeric widget setting above its highest value; max is a number',
+                        },
+                        { max },
+                    ),
+                };
             return { ok: true, value: wantInt ? integerValue(n) : doubleValue(n) };
         }
         case 'paramBoolean':
@@ -139,25 +188,49 @@ function parseScalar(kind: ScalarKind, raw: ScalarValue, isOptional: boolean): S
     }
 }
 
-function characterCount(n: number): string {
-    return n === 1 ? '1 character' : `${n} characters`;
-}
-
 // Counts code points as the server does; `.length` counts UTF-16 units, an emoji as two.
-function lengthError(s: string, { minLength, maxLength }: pb.ParamString): string | undefined {
+function lengthError(intl: IntlShape, s: string, { minLength, maxLength }: pb.ParamString): string | undefined {
     const length = [...s].length;
-    if (minLength !== undefined && length < minLength) return `Must be at least ${characterCount(minLength)}`;
-    if (maxLength !== undefined && length > maxLength) return `Must be at most ${characterCount(maxLength)}`;
+    if (minLength !== undefined && length < minLength)
+        return intl.formatMessage(
+            {
+                defaultMessage:
+                    '{count, plural, one {Must be at least {count} character} other {Must be at least {count} characters}}',
+                description: 'Error under a widget text setting shorter than allowed; count is its fewest characters',
+            },
+            { count: minLength },
+        );
+    if (maxLength !== undefined && length > maxLength)
+        return intl.formatMessage(
+            {
+                defaultMessage:
+                    '{count, plural, one {Must be at most {count} character} other {Must be at most {count} characters}}',
+                description: 'Error under a widget text setting longer than allowed; count is its most characters',
+            },
+            { count: maxLength },
+        );
     return undefined;
 }
 
-function itemCount(n: number): string {
-    return n === 1 ? '1 item' : `${n} items`;
-}
-
-function countError(count: number, array: pb.ParamArray): string | undefined {
-    if (count < array.minItems) return `Must have at least ${itemCount(array.minItems)}`;
-    if (count > array.maxItems) return `Must have at most ${itemCount(array.maxItems)}`;
+function countError(intl: IntlShape, count: number, array: pb.ParamArray): string | undefined {
+    if (count < array.minItems)
+        return intl.formatMessage(
+            {
+                defaultMessage:
+                    '{count, plural, one {Must have at least {count} item} other {Must have at least {count} items}}',
+                description: 'Error under a widget list setting with too few rows; count is its fewest rows',
+            },
+            { count: array.minItems },
+        );
+    if (count > array.maxItems)
+        return intl.formatMessage(
+            {
+                defaultMessage:
+                    '{count, plural, one {Must have at most {count} item} other {Must have at most {count} items}}',
+                description: 'Error under a widget list setting with too many rows; count is its most rows',
+            },
+            { count: array.maxItems },
+        );
     return undefined;
 }
 
@@ -180,7 +253,7 @@ function sameIdentity(a: pb.FieldValue[], b: pb.FieldValue[]): boolean {
 
 // A single repeated key is reported at its field;
 // a whole or composite repeat once at the row, with the fields it covers marked.
-function repeatErrors(array: pb.ParamArray, values: pb.FieldValue[]): Array<RowError | undefined> {
+function repeatErrors(intl: IntlShape, array: pb.ParamArray, values: pb.FieldValue[]): Array<RowError | undefined> {
     const { uniqueItems } = array;
 
     const keys = uniqueItems.case === 'by' ? uniqueItems.value.keys : undefined;
@@ -189,25 +262,45 @@ function repeatErrors(array: pb.ParamArray, values: pb.FieldValue[]): Array<RowE
     return identities.map((identity, i) => {
         const first = identities.findIndex(earlier => sameIdentity(earlier, identity));
         if (first === i) return undefined;
-        if (!keys) return { error: `Repeats item ${first + 1}` };
-        const error = `Same as item ${first + 1}`;
+        const position = first + 1;
+        if (!keys)
+            return {
+                error: intl.formatMessage(
+                    {
+                        defaultMessage: 'Repeats item {position}',
+                        description:
+                            'Error on a row of a widget list setting that must not repeat; position is the number of the earlier equal row',
+                    },
+                    { position },
+                ),
+            };
+        const error = intl.formatMessage(
+            {
+                defaultMessage: 'Same as item {position}',
+                description:
+                    'Error on a row of a widget list setting whose identifying fields repeat; position is the number of the earlier row',
+            },
+            { position },
+        );
         const [only, ...more] = keys;
         if (only !== undefined && more.length === 0) return { fields: { [only]: error } };
         return { error, markedFields: keys };
     });
 }
 
-function parseList(array: pb.ParamArray, raw: Array<ListItem['value']>): ParseResult {
-    const error = countError(raw.length, array);
+function parseList(intl: IntlShape, array: pb.ParamArray, raw: Array<ListItem['value']>): ParseResult {
+    const error = countError(intl, raw.length, array);
     // As on the server: past the bound, only the count is reported.
     if (raw.length > array.maxItems) return { ok: false, error };
 
     const kind = itemKind(array);
-    const parsed = raw.map(value => parseItem(kind, value));
+    const parsed = raw.map(value => parseItem(intl, kind, value));
     const values = parsed.flatMap(r => (r.ok ? [r.value] : []));
 
     let items = parsed.map(r => (r.ok ? undefined : r.error));
-    if (array.uniqueItems.case !== undefined && values.length === parsed.length) items = repeatErrors(array, values);
+    if (array.uniqueItems.case !== undefined && values.length === parsed.length) {
+        items = repeatErrors(intl, array, values);
+    }
 
     if (error || items.some(Boolean)) return { ok: false, error, items };
 
@@ -217,21 +310,21 @@ function parseList(array: pb.ParamArray, raw: Array<ListItem['value']>): ParseRe
     };
 }
 
-function parseItem(kind: pb.ArrayItemKind['kind'], raw: ListItem['value']): ItemParseResult {
+function parseItem(intl: IntlShape, kind: pb.ArrayItemKind['kind'], raw: ListItem['value']): ItemParseResult {
     if (kind.case === 'paramObject') {
         invariant(isObjectValue(raw), 'an object list row holds a scalar');
-        return parseObject(kind.value, raw);
+        return parseObject(intl, kind.value, raw);
     }
     invariant(!isObjectValue(raw), 'a scalar list row holds an object');
-    const r = parseScalar(kind, raw, false);
+    const r = parseScalar(intl, kind, raw, false);
     return r.ok ? r : { ok: false, error: { error: r.error } };
 }
 
-function parseObject(object: pb.ParamObject, raw: ObjectValue): ItemParseResult {
+function parseObject(intl: IntlShape, object: pb.ParamObject, raw: ObjectValue): ItemParseResult {
     const fields: Record<string, pb.FieldValue> = {};
     const errors: Record<string, string> = {};
     for (const field of object.fields) {
-        const r = parseScalar(field.kind, ownValue(raw, field.key) ?? null, field.isOptional);
+        const r = parseScalar(intl, field.kind, ownValue(raw, field.key) ?? null, field.isOptional);
         if (r.ok) fields[field.key] = r.value;
         else errors[field.key] = r.error;
     }
