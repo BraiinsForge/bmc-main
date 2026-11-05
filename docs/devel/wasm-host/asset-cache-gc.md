@@ -45,7 +45,7 @@ is published there.
 
 Each host owns one **GC-root file** in a sibling directory:
 
-```
+```text
 /mnt/data/bmc/widget-gc-roots/sdk-v<major>.<minor>.<patch>
 ```
 
@@ -107,7 +107,7 @@ drive `WasmWidgetRuntime` directly and never enter `run_loop`).
 
 Publishing is immediate, so it can be checked without waiting:
 
-```
+```sh
 ls -la /mnt/data/bmc/widget-gc-roots/ && cat /mnt/data/bmc/widget-gc-roots/sdk-v*
 ```
 

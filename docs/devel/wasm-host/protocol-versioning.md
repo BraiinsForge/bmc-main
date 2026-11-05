@@ -40,7 +40,7 @@ root file.
 
 ### Host-side check
 
-```
+```text
 Engine + Module → FemtoVgRenderer → HostState → Store → Linker → instantiate → check_protocol_version() → render/init
 ```
 
@@ -78,13 +78,13 @@ the sentinel return — is pinned by `bmc-wasm-runtime/tests/bitmap_sample_abi.r
 
 ### Key files
 
-| File                                       | Role                                                                                       |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `bmc-wasm-runtime/protocol/src/version.rs` | `PROTOCOL_VERSION` constant, export name, pack/unpack helpers                              |
-| `bmc-wasm-runtime/sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_init()` — auto-exported from every widget                          |
-| `bmc-wasm-runtime/src/runtime/backend.rs`  | `check_protocol_version()` — calls export after instantiation; `protocol_version()` getter |
-| `bmc-wasm-runtime/src/runtime/imports/`    | `Linker` registrations for the `env.host_*` surface, including inert stubs                 |
-| `bmc-wasm-runtime/src/bin/testbed/main.rs` | Prints the widget's protocol version on the first build                                    |
+| File                                       | Role                                                              |
+| ------------------------------------------ | ----------------------------------------------------------------- |
+| `bmc-wasm-runtime/protocol/src/version.rs` | `PROTOCOL_VERSION` constant, export name, pack/unpack helpers     |
+| `bmc-wasm-runtime/sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_init()` — auto-exported from every widget |
+| `bmc-wasm-runtime/src/runtime/backend.rs`  | `check_protocol_version()`, `protocol_version()` getter           |
+| `bmc-wasm-runtime/src/runtime/imports/`    | `Linker` registrations for `env.host_*`, including inert stubs    |
+| `bmc-wasm-runtime/src/bin/testbed/main.rs` | Prints the widget's protocol version on the first build           |
 
 ## Phase 2: multi-version hosting (future)
 
