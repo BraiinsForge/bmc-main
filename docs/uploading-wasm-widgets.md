@@ -90,6 +90,8 @@ major the host keeps running widgets built against an older SDK, apart from the 
 Don't have users search a binary or the host log for a version string. That text is not a stable interface: it has
 changed between releases, so a search can come back empty for a widget that loaded fine.
 
+SDK 0.2.0 renames `SDK_VERSION` to `PROTOCOL_VERSION`.
+
 ## Create and install the archive
 
 After assembling the package root and its files, dump the directory that holds `lib/` as a NAR:
