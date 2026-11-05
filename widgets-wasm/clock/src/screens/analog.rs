@@ -308,3 +308,33 @@ pub(crate) fn push_hands_and_centre(
         palette.centre_stroke,
     ));
 }
+
+#[cfg(test)]
+mod tests {
+    use bmc_wasm_sdk::wasm_test;
+
+    use super::HandAngles;
+
+    #[wasm_test]
+    fn the_second_hand_crosses_twelve_by_the_short_arc() {
+        let mut angles = HandAngles::default();
+        let before = angles.sweep_second(59);
+        let after = angles.sweep_second(0);
+        assert!(
+            (after - before - 6.0_f32.to_radians()).abs() < 1e-4,
+            "a wrap back to 0 would sweep the hand the long way round: {before} -> {after}"
+        );
+    }
+
+    #[wasm_test]
+    fn ticking_past_twelve_never_turns_the_second_hand_back() {
+        let mut angles = HandAngles::default();
+        let ticks: Vec<f32> = (0..120)
+            .map(|tick| angles.sweep_second(tick % 60))
+            .collect();
+        assert!(
+            ticks.windows(2).all(|pair| pair[1] > pair[0]),
+            "the host lerps between submitted angles, so a drop reads as a backward sweep"
+        );
+    }
+}
