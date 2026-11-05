@@ -27,8 +27,9 @@ import { Form, getID, type iField } from '@/lib/form';
 
 // Components
 import { Layout } from '../Layout';
-import { ButtonSwitch, FieldSet, Field, LogoHeaderMiner, Button, PasswordInput, ProgressStep } from '@/components';
-import { ProgressIndicator, TextInput } from '@carbon/react';
+import { SetupProgress } from '../SetupProgress';
+import { ButtonSwitch, FieldSet, Field, LogoHeaderMiner, Button, PasswordInput } from '@/components';
+import { TextInput } from '@carbon/react';
 import {
     LocalizationFields,
     type LocalizationFieldsProps,
@@ -138,10 +139,7 @@ export function MiningSetup(props: MiningSetupProps) {
             ]}
             className={css.layout}
         >
-            <ProgressIndicator currentIndex={1} className={css.progress}>
-                <ProgressStep label="Wi-Fi Settings" />
-                <ProgressStep label="Initial Setup" className={css.disabledTab} />
-            </ProgressIndicator>
+            <SetupProgress step="device" />
 
             <h1 className={css.title} children={formatMessage({ defaultMessage: 'Device Setup' })} />
             <p

@@ -734,11 +734,6 @@
     "source": "Top level navigation",
     "translation": "[Ŧǿǿƥ ŀḗḗṽḗḗŀ ƞȧȧṽīɠȧȧŧīǿǿƞ]"
   },
-  "GY/wZiv0so": {
-    "source": "Initial Setup",
-    "translation": "[Īƞīŧīȧȧŀ Şḗḗŧŭŭƥ]",
-    "description": "Second step of the setup progress, on the next page"
-  },
   "GYoIyTRzA5": {
     "source": "Configure Widget",
     "translation": "[Ƈǿǿƞƒīɠŭŭřḗḗ Ẇīḓɠḗḗŧ]"
@@ -1069,6 +1064,11 @@
     "source": "Alarm has been deleted.",
     "translation": "[Ȧŀȧȧřḿ ħȧȧş ƀḗḗḗḗƞ ḓḗḗŀḗḗŧḗḗḓ.]"
   },
+  "Q0V8x685mi": {
+    "source": "Initial Setup",
+    "translation": "[Īƞīŧīȧȧŀ Şḗḗŧŭŭƥ]",
+    "description": "Second step of the progress at the top of the setup pages: setting up the device"
+  },
   "Q4tXfw4c63": {
     "source": "Passwords have to match!",
     "translation": "[Ƥȧȧşşẇǿǿřḓş ħȧȧṽḗḗ ŧǿǿ ḿȧȧŧƈħ!]"
@@ -1320,11 +1320,6 @@
   "ZK1d6fQ6/I": {
     "source": "SSID",
     "translation": "[ŞŞĪḒ]"
-  },
-  "ZZ05qSfooj": {
-    "source": "Wi-Fi Settings",
-    "translation": "[Ẇī-Ƒī Şḗḗŧŧīƞɠş]",
-    "description": "First step of the setup progress, the one on this page"
   },
   "ZeyseXFIms": {
     "source": "Decrement number",
@@ -1764,6 +1759,11 @@
   "nFzA0isnPs": {
     "source": "Applying",
     "translation": "[Ȧƥƥŀẏīƞɠ]"
+  },
+  "nGX/+mOBx0": {
+    "source": "Wi-Fi Settings",
+    "translation": "[Ẇī-Ƒī Şḗḗŧŧīƞɠş]",
+    "description": "First step of the progress at the top of the setup pages: connecting to Wi-Fi"
   },
   "nRcPOLhC3o": {
     "source": "Accounts not loaded",

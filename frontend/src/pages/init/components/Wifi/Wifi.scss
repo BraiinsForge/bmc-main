@@ -34,17 +34,6 @@
     user-select: none;
 }
 
-.progress {
-    // Sits right under the header's border, as overlapping it would take a z-index,
-    // and that paints the stepper over the header when the form scrolls.
-    margin-block-start: mini-units(-2);
-    user-select: none;
-
-    .disabledTab {
-        pointer-events: none;
-    }
-}
-
 .links {
     composes: selfStretch horizontal center justified from 'styles/layout.scss';
     user-select: none;

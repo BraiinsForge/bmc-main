@@ -25,8 +25,8 @@ import { Form, getID } from '@/lib/form';
 
 // Components
 import { Layout } from '../Layout';
-import { LogoHeader, Button, ProgressStep } from '@/components';
-import { ProgressIndicator } from '@carbon/react';
+import { SetupProgress } from '../SetupProgress';
+import { LogoHeader, Button } from '@/components';
 import {
     LocalizationFields,
     type LocalizationFieldsProps,
@@ -70,10 +70,7 @@ export function Setup(props: SetupProps) {
             ]}
             className={css.layout}
         >
-            <ProgressIndicator currentIndex={1} className={css.progress}>
-                <ProgressStep label="Wi-Fi Settings" />
-                <ProgressStep label="Initial Setup" className={css.disabledTab} />
-            </ProgressIndicator>
+            <SetupProgress step="device" />
 
             <h1 className={css.title} children={formatMessage({ defaultMessage: 'Device Setup' })} />
             <p

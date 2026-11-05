@@ -28,12 +28,12 @@ import * as pb from '@/proto';
 // Components
 import { Layout } from '../Layout';
 import { DoneScene } from './DoneScene';
+import { SetupProgress } from '../SetupProgress';
 import { Renew as IconReload } from '@carbon/react/icons';
-import { Button, Dropdown, LogoHeaderMiner, LogoHeader, ProgressStep, WifiNetworkLine } from '@/components';
+import { Button, Dropdown, LogoHeaderMiner, LogoHeader, WifiNetworkLine } from '@/components';
 import {
     // biome-ignore lint/style/noRestrictedImports: ours navigates through the router, and the Wi-Fi setup entry has none
     Link,
-    ProgressIndicator,
     TextInput,
 } from '@carbon/react';
 
@@ -111,14 +111,6 @@ class View extends Component<Props, State> {
             skipToEthernet: formatMessage({
                 defaultMessage: 'Skip (use Ethernet)',
                 description: 'Link under the Wi-Fi list to continue the setup on a cable instead',
-            }),
-            wifiSettingsStep: formatMessage({
-                defaultMessage: 'Wi-Fi Settings',
-                description: 'First step of the setup progress, the one on this page',
-            }),
-            initialSetupStep: formatMessage({
-                defaultMessage: 'Initial Setup',
-                description: 'Second step of the setup progress, on the next page',
             }),
         };
     }
@@ -379,10 +371,7 @@ class View extends Component<Props, State> {
                 }
                 footer={footer}
             >
-                <ProgressIndicator currentIndex={0} className={css.progress}>
-                    <ProgressStep label={txt.wifiSettingsStep} />
-                    <ProgressStep label={txt.initialSetupStep} className={css.disabledTab} />
-                </ProgressIndicator>
+                <SetupProgress step="wifi" />
                 {content}
             </Layout>
         );

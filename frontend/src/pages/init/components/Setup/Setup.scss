@@ -37,17 +37,6 @@
     user-select: none;
 }
 
-.progress {
-    // Sits right under the header's border, as overlapping it would take a z-index,
-    // and that paints the stepper over the header when the form scrolls.
-    margin-top: mini-units(-2) !important;
-    user-select: none;
-
-    .disabledTab {
-        pointer-events: none;
-    }
-}
-
 //
 // Generic utils
 //
