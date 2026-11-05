@@ -133,8 +133,8 @@ shown after a firmware update restarts.
 
 ### [Device Language](device-language.md)
 
-The language the device speaks on its own screens and in its web UI, chosen in the web UI's settings or on its own
-screen during the first setup. Behind a marker file until the designs are approved.
+The language the device speaks on its own screens and in its web UI, chosen in the web UI's settings, on its setup
+pages, or on its own screen during the first setup. Behind a marker file until the designs are approved.
 
 ### [Physical Buttons](physical-buttons.md)
 
