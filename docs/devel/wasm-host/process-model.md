@@ -98,8 +98,8 @@ it is routing identity for the configured instance, not an authentication creden
 
 The wire format lives in `bmc-wasm-thin-protocol`:
 
-each frame is a 2-byte LE `bmc_wasm_thin_protocol::PROTOCOL_VERSION` + 4-byte LE length + bincode-encoded payload
-(HelloMsg / AckMsg), capped at 128 KiB. The Hello::Load frame additionally carries one Wayland fd via SCM_RIGHTS.
+each frame is a 2-byte LE `bmc_wasm_thin_protocol::FRAME_VERSION` + 4-byte LE length + bincode-encoded payload (HelloMsg
+/ AckMsg), capped at 128 KiB. The Hello::Load frame additionally carries one Wayland fd via SCM_RIGHTS.
 
 After `Ack::Ok`, no more control messages are sent. The host watches the socket for EOF or hangup; the thin watches it
 for EOF or hangup as a signal that the host is gone.

@@ -25,8 +25,8 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use bmc_wasm_thin_protocol::{
-    AckDecoder, AckMsg, HelloMsg, HelloReceiveStatus, HelloReceiver, MAX_FRAME_LEN,
-    PROTOCOL_VERSION, recv_hello_with_fd, send_hello_with_fd, write_ack,
+    AckDecoder, AckMsg, FRAME_VERSION, HelloMsg, HelloReceiveStatus, HelloReceiver, MAX_FRAME_LEN,
+    recv_hello_with_fd, send_hello_with_fd, write_ack,
 };
 use serial_test::serial;
 
@@ -188,7 +188,7 @@ fn nonblocking_receiver_retains_fd_across_fragmented_header_and_body() {
         wasm_path: "/path/to/widget.wasm".into(),
         asset_root: Some("/path/to/assets".into()),
     };
-    let frame = build_frame_bytes(PROTOCOL_VERSION, &expected);
+    let frame = build_frame_bytes(FRAME_VERSION, &expected);
     let mut decoder = HelloReceiver::new();
 
     raw_sendmsg_with_fd(&sender, &frame[..3], wayland.as_fd());
@@ -232,7 +232,7 @@ fn eof_mid_frame_closes_the_retained_fd() {
     let target = fd_target(wayland.as_raw_fd());
     let baseline = open_fd_count_for_target(&target);
     let frame = build_frame_bytes(
-        PROTOCOL_VERSION,
+        FRAME_VERSION,
         &HelloMsg::Load {
             widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
             wasm_path: "/path/to/widget.wasm".into(),
@@ -297,7 +297,7 @@ fn oversize_frame_is_rejected_before_alloc() {
 
     let oversize_len: u32 = MAX_FRAME_LEN + 1;
     let mut payload: Vec<u8> = Vec::with_capacity(FRAME_HEADER_LEN);
-    payload.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+    payload.extend_from_slice(&FRAME_VERSION.to_le_bytes());
     payload.extend_from_slice(&oversize_len.to_le_bytes());
 
     raw_sendmsg_with_fd(&sender, &payload, fd_a.as_fd());
@@ -319,7 +319,7 @@ fn hello_without_scm_rights_is_protocol_error() {
 
     let (sender, receiver) = pair();
     let frame = build_frame_bytes(
-        PROTOCOL_VERSION,
+        FRAME_VERSION,
         &HelloMsg::Load {
             widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
             wasm_path: "/x".into(),
@@ -347,7 +347,7 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
     let extra_target = fd_target(extra_a.as_raw_fd());
 
     let payload = build_frame_bytes(
-        PROTOCOL_VERSION,
+        FRAME_VERSION,
         &HelloMsg::Load {
             widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
             wasm_path: "/x".into(),
@@ -423,7 +423,7 @@ fn hello_with_wrong_version_is_rejected_before_payload() {
     raw_sendmsg_with_fd(&a, &frame, dummy.as_fd());
 
     let err = recv_hello_with_fd(&b).expect_err("must reject bogus version");
-    assert!(err.to_string().contains("protocol version"), "got {err}");
+    assert!(err.to_string().contains("frame version"), "got {err}");
 }
 
 #[test]
@@ -433,7 +433,7 @@ fn ack_decoder_rejects_runaway_input() {
     // Feed a header that claims a body almost as large as MAX_FRAME_LEN, then drip bytes until
     // the decoder's buffer-cap check trips.
     let oversize: u32 = MAX_FRAME_LEN;
-    let mut header = PROTOCOL_VERSION.to_le_bytes().to_vec();
+    let mut header = FRAME_VERSION.to_le_bytes().to_vec();
     header.extend_from_slice(&oversize.to_le_bytes());
     dec.push(&header)
         .expect("BUG: AckDecoder must accept the frame header");
@@ -456,7 +456,7 @@ fn ack_decoder_rejects_runaway_input() {
 fn ack_decoder_rejects_oversize_frame_len() {
     let mut dec = AckDecoder::new();
     let oversize: u32 = MAX_FRAME_LEN + 1;
-    let mut header = PROTOCOL_VERSION.to_le_bytes().to_vec();
+    let mut header = FRAME_VERSION.to_le_bytes().to_vec();
     header.extend_from_slice(&oversize.to_le_bytes());
     let err = dec
         .push(&header)
@@ -471,5 +471,5 @@ fn ack_decoder_rejects_wrong_version() {
     let mut header = 0xFFFF_u16.to_le_bytes().to_vec();
     header.extend_from_slice(&0_u32.to_le_bytes());
     let err = dec.push(&header).expect_err("wrong version must reject");
-    assert!(err.to_string().contains("protocol version"), "got {err}");
+    assert!(err.to_string().contains("frame version"), "got {err}");
 }

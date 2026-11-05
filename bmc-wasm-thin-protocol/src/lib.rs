@@ -26,7 +26,7 @@ use std::io::{self, Write};
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const FRAME_VERSION: u16 = 3;
 const FRAME_HEADER_LEN: usize = 6; // u16 version + u32 frame_len, both little-endian
 pub const MAX_FRAME_LEN: u32 = 128 * 1024; // upper bound that bounds peer memory commitment
 
@@ -115,7 +115,7 @@ fn build_frame<E: bincode::Encode>(payload: &E) -> io::Result<Vec<u8>> {
         ));
     }
     let mut frame = Vec::with_capacity(FRAME_HEADER_LEN + body.len());
-    frame.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+    frame.extend_from_slice(&FRAME_VERSION.to_le_bytes());
     frame.extend_from_slice(&frame_len.to_le_bytes());
     frame.extend_from_slice(&body);
     Ok(frame)
@@ -300,10 +300,10 @@ impl HelloReceiver {
 
     fn decode_header(&mut self) -> io::Result<()> {
         let version = u16::from_le_bytes([self.frame[0], self.frame[1]]);
-        if version != PROTOCOL_VERSION {
+        if version != FRAME_VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("protocol version mismatch: expected {PROTOCOL_VERSION}, got {version}"),
+                format!("frame version mismatch: expected {FRAME_VERSION}, got {version}"),
             ));
         }
         let frame_len =
@@ -384,12 +384,10 @@ impl AckDecoder {
 
         if self.expected.is_none() && self.buf.len() >= FRAME_HEADER_LEN {
             let version = u16::from_le_bytes([self.buf[0], self.buf[1]]);
-            if version != PROTOCOL_VERSION {
+            if version != FRAME_VERSION {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!(
-                        "protocol version mismatch: expected {PROTOCOL_VERSION}, got {version}"
-                    ),
+                    format!("frame version mismatch: expected {FRAME_VERSION}, got {version}"),
                 ));
             }
             let frame_len =
