@@ -20,7 +20,7 @@
 // the grant above.
 
 import { Fragment, useCallback, useState, useRef } from 'react';
-import { useIntl } from 'react-intl';
+import { type IntlShape, useIntl } from 'react-intl';
 import { mergeRefs } from '@/lib/react';
 
 // App
@@ -87,12 +87,32 @@ interface ViewProps extends CombinedSceneViewProps {
 }
 
 /**
+ * A placed widget as its buttons and drag announcements name it.
+ * Widgets told apart only by their subname, such as the Miner Info variants,
+ * would otherwise share one name.
+ */
+function widgetLabel(intl: IntlShape, widget: Maybe<pb.Widget>, manifests: pb.ManifestLookup): string {
+    const title = pb.widgetTitle(widget, manifests) || pb.notAvailable(intl);
+    const subname = manifests.get(widget?.config?.widgetUid ?? '')?.subname;
+    if (!subname) return title;
+    return intl.formatMessage(
+        {
+            defaultMessage: '{name} {subname}',
+            description:
+                "A widget's name followed by its variant, naming its buttons in the scene editor, such as Miner Info Geek",
+        },
+        { name: title, subname },
+    );
+}
+
+/**
  * Just the visual view with DnD shit delegated
  * to the wrapper component to somewhat simplify
  * the code of this.
  * */
 function View(props: ViewProps) {
-    const notAvailable = pb.notAvailable(useIntl());
+    const intl = useIntl();
+    const notAvailable = pb.notAvailable(intl);
     const {
         widgets,
         manifests,
@@ -137,6 +157,7 @@ function View(props: ViewProps) {
 
                     const widget = w as pb.Widget;
                     const title = pb.widgetTitle(widget, manifests) || notAvailable;
+                    const name = widgetLabel(intl, widget, manifests);
 
                     return (
                         <Widget
@@ -147,6 +168,7 @@ function View(props: ViewProps) {
                             position={pos}
                             // Content
                             title={title}
+                            name={name}
                             subtitle={pb.widgetDescription(widget, manifests)}
                             // Modification
                             validDropSlots={validDropSlots}
@@ -171,6 +193,7 @@ interface WidgetProps {
     placeholder?: boolean;
 
     // Existing widget attributes
+    name?: string; // What its buttons are named after
     onEdit?(): void;
     onDelete?(): void;
 
@@ -190,6 +213,7 @@ function Widget(props: WidgetProps) {
         position,
         size,
         placeholder,
+        name,
         onEdit,
         onDelete,
 
@@ -202,7 +226,8 @@ function Widget(props: WidgetProps) {
     const { row, col } = position;
 
     const $ = getID('combined', 'scene', 'widget', id).get;
-    const intl = useIntl();
+    const { formatMessage } = useIntl();
+
     const ref = useRef<null | HTMLDivElement>(null);
     const handleAdd = useCallback(() => {
         if (onAdd) onAdd(fn.pos(row, col));
@@ -229,7 +254,7 @@ function Widget(props: WidgetProps) {
             getStartRect: () => ref?.current?.getBoundingClientRect() ?? null,
         } satisfies DraggableData,
         attributes: {
-            roleDescription: intl.formatMessage({
+            roleDescription: formatMessage({
                 defaultMessage: 'movable widget',
                 description:
                     "Screen-reader role read after a widget's move handle in the scene editor, in place of 'button'",
@@ -264,6 +289,32 @@ function Widget(props: WidgetProps) {
     const gridAreaName: string = `r${row + 1}c${col + 1}`;
     const gridArea = `${gridAreaName} / ${gridAreaName} / span ${fn.WIDGET_SIZE_TO_SPAN[size || pb.WidgetSize.SMALL].rows} / span ${fn.WIDGET_SIZE_TO_SPAN[size || pb.WidgetSize.SMALL].cols}`;
 
+    const widget = name ?? '';
+    const moveLabel = formatMessage(
+        {
+            defaultMessage: 'Move {widget}',
+            description:
+                "Name and tooltip of a widget's move handle in the scene editor, widget is the widget's name with its variant when it has one",
+        },
+        { widget },
+    );
+    const editLabel = formatMessage(
+        {
+            defaultMessage: 'Edit {widget}',
+            description:
+                "Name and tooltip of a widget's settings button in the scene editor, widget is the widget's name with its variant when it has one",
+        },
+        { widget },
+    );
+    const removeLabel = formatMessage(
+        {
+            defaultMessage: 'Remove {widget}',
+            description:
+                "Name and tooltip of a widget's remove button in the scene editor, widget is the widget's name with its variant when it has one",
+        },
+        { widget },
+    );
+
     return (
         <div
             ref={mergeRefs($drop.setNodeRef, $drag.setNodeRef, ref)}
@@ -284,11 +335,14 @@ function Widget(props: WidgetProps) {
                     key={`move-${$drag.isDragging}`}
                     placement="bottom"
                     delayShow={800}
-                    content={intl.formatMessage({ defaultMessage: 'Move Widget' })}
+                    content={moveLabel}
                     render={r => (
                         <div
                             {...$drag.listeners}
                             {...$drag.attributes}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={moveLabel}
                             // We have to "disable" the tooltips when DnD is active to prevent visual glitching
                             ref={disableTooltips ? null : r}
                             className={css.widgetDragHandle}
@@ -306,13 +360,14 @@ function Widget(props: WidgetProps) {
                     key={`edit-${$drag.isDragging}`}
                     placement="bottom"
                     delayShow={800}
-                    content={intl.formatMessage({ defaultMessage: 'Edit Widget' })}
+                    content={editLabel}
                     render={r => (
                         <button
                             // We have to "disable" the tooltips when DnD is active to prevent visual glitching
                             ref={disableTooltips ? null : r}
                             id={$('edit')}
                             type="button"
+                            aria-label={editLabel}
                             className={css.widgetEditButton}
                             onClick={onEdit}
                         >
@@ -329,13 +384,14 @@ function Widget(props: WidgetProps) {
                     key={`remove-${$drag.isDragging}`}
                     placement="bottom"
                     delayShow={800}
-                    content={intl.formatMessage({ defaultMessage: 'Remove Widget' })}
+                    content={removeLabel}
                     render={r => (
                         <button
                             // We have to "disable" the tooltips when DnD is active to prevent visual glitching
                             ref={disableTooltips ? null : r}
                             id={$('delete')}
                             type="button"
+                            aria-label={removeLabel}
                             className={css.widgetDeleteButton}
                             onClick={onDelete}
                         >
@@ -350,6 +406,10 @@ function Widget(props: WidgetProps) {
                     <button
                         id={$('add')}
                         type="button"
+                        aria-label={formatMessage({
+                            defaultMessage: 'Add Widget',
+                            description: 'Screen-reader name of the button on a free slot in the scene editor',
+                        })}
                         className={css.widgetAddButton}
                         onClick={handleAdd}
                         disabled={addDisabled}
@@ -380,14 +440,12 @@ export function CombinedSceneView(props: CombinedSceneViewProps) {
     const sensors = useSensors(useSensor(PointerSensor));
     const { formatMessage } = intl;
     // The slots have no names to announce, so only the widget is named and a move over slots stays quiet.
-    const widgetName = (id: UniqueIdentifier): string => {
-        return (
-            pb.widgetTitle(
-                widgets.find(w => w.id === id),
-                manifests,
-            ) ?? pb.notAvailable(intl)
+    const widgetName = (id: UniqueIdentifier): string =>
+        widgetLabel(
+            intl,
+            widgets.find(w => w.id === id),
+            manifests,
         );
-    };
 
     const announcements: Announcements = {
         onDragStart: ({ active }) => {
@@ -499,6 +557,7 @@ export function CombinedSceneView(props: CombinedSceneViewProps) {
                         position={activeWidget.position}
                         size={activeWidget.size}
                         title={pb.widgetTitle(activeWidget, manifests) ?? pb.notAvailable(intl)}
+                        name={widgetLabel(intl, activeWidget, manifests)}
                         subtitle={pb.widgetDescription(activeWidget, manifests)}
                     />
                 ) : null}

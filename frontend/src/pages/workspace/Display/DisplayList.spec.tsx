@@ -625,6 +625,22 @@ test("names a scene's drag handle and buttons after the scene", async () => {
     }
 });
 
+test('adding a combined scene announces a scene, not a widget', async () => {
+    store.setHardwareCapabilities(deckCapabilities({ combinedScenesSupported: true }));
+    registerMocks(pb.services.SceneManagementService, {
+        addCombinedScene: () => ({ value: 'C' }),
+    });
+    renderPage();
+    await flush();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add New' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Combined Scene' }));
+    await flush();
+
+    expect(document.body.textContent).toContain('Combined Scene Added');
+    expect(document.body.textContent).not.toContain('Display Widget Added');
+});
+
 describe('scene write timeouts', () => {
     test('a timed-out clone tells the user it timed out', async () => {
         registerMocks(pb.services.SceneManagementService, {

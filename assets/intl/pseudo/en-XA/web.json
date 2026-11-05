@@ -92,10 +92,6 @@
     "source": "{name} {version} was already installed.",
     "translation": "[{name} {version} ẇȧȧş ȧȧŀřḗḗȧȧḓẏ īƞşŧȧȧŀŀḗḗḓ.]"
   },
-  "/j7GSsWreI": {
-    "source": "Remove Widget",
-    "translation": "[Řḗḗḿǿǿṽḗḗ Ẇīḓɠḗḗŧ]"
-  },
   "/p/SkEUoHw": {
     "source": "Picked up {widget}.",
     "translation": "[Ƥīƈķḗḗḓ ŭŭƥ {widget}.]",
@@ -781,6 +777,11 @@
     "translation": "[Ƞǿǿŧīƒīƈȧȧŧīǿǿƞş]",
     "description": "Screen-reader name of the corner region where the app's brief notifications appear"
   },
+  "GnnH9SIN7A": {
+    "source": "Combined scene has been successfully added.",
+    "translation": "[Ƈǿǿḿƀīƞḗḗḓ şƈḗḗƞḗḗ ħȧȧş ƀḗḗḗḗƞ şŭŭƈƈḗḗşşƒŭŭŀŀẏ ȧȧḓḓḗḗḓ.]",
+    "description": "Toast message after adding a new, still empty combined scene to the display"
+  },
   "GretYfMDAh": {
     "source": "Current Password",
     "translation": "[Ƈŭŭřřḗḗƞŧ Ƥȧȧşşẇǿǿřḓ]"
@@ -879,10 +880,6 @@
   "Jbgu7fFUrf": {
     "source": "Upgrade info not available!",
     "translation": "[Ŭƥɠřȧȧḓḗḗ īƞƒǿǿ ƞǿǿŧ ȧȧṽȧȧīŀȧȧƀŀḗḗ!]"
-  },
-  "JeVWXz9ma9": {
-    "source": "Edit Widget",
-    "translation": "[Ḗḓīŧ Ẇīḓɠḗḗŧ]"
   },
   "JkSSY7O18o": {
     "source": "Configure your mining pool and network to get your miner online.",
@@ -1106,6 +1103,11 @@
     "source": "Failed to save LED notifications night mode setting!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş ƞīɠħŧ ḿǿǿḓḗḗ şḗḗŧŧīƞɠ!]"
   },
+  "PxzAu9yIoV": {
+    "source": "Add Widget",
+    "translation": "[Ȧḓḓ Ẇīḓɠḗḗŧ]",
+    "description": "Screen-reader name of the button on a free slot in the scene editor"
+  },
   "Py189GY9df": {
     "source": "Security",
     "translation": "[Şḗḗƈŭŭřīŧẏ]"
@@ -1164,10 +1166,6 @@
     "source": "Weekends",
     "translation": "[Ẇḗḗḗḗķḗḗƞḓş]"
   },
-  "Rix4MaINp4": {
-    "source": "Move Widget",
-    "translation": "[Ḿǿǿṽḗḗ Ẇīḓɠḗḗŧ]"
-  },
   "Ro7cbvfVzK": {
     "source": "Do you really want to reboot the device?",
     "translation": "[Ḓǿǿ ẏǿǿŭŭ řḗḗȧȧŀŀẏ ẇȧȧƞŧ ŧǿǿ řḗḗƀǿǿǿǿŧ ŧħḗḗ ḓḗḗṽīƈḗḗ?]"
@@ -1219,9 +1217,19 @@
     "source": "This field is required",
     "translation": "[Ŧħīş ƒīḗḗŀḓ īş řḗḗɋŭŭīřḗḗḓ]"
   },
+  "TegfEqa1ff": {
+    "source": "Edit {widget}",
+    "translation": "[Ḗḓīŧ {widget}]",
+    "description": "Name and tooltip of a widget's settings button in the scene editor, widget is the widget's name with its variant when it has one"
+  },
   "TwyMauNL3r": {
     "source": "Account",
     "translation": "[Ȧƈƈǿǿŭŭƞŧ]"
+  },
+  "U8zyoPTDWu": {
+    "source": "Move {widget}",
+    "translation": "[Ḿǿǿṽḗḗ {widget}]",
+    "description": "Name and tooltip of a widget's move handle in the scene editor, widget is the widget's name with its variant when it has one"
   },
   "UILcXulI13": {
     "source": "Unit system changed",
@@ -1868,6 +1876,11 @@
     "source": "Ethernet Network",
     "translation": "[Ḗŧħḗḗřƞḗḗŧ Ƞḗḗŧẇǿǿřķ]"
   },
+  "p5raJU0put": {
+    "source": "Remove {widget}",
+    "translation": "[Řḗḗḿǿǿṽḗḗ {widget}]",
+    "description": "Name and tooltip of a widget's remove button in the scene editor, widget is the widget's name with its variant when it has one"
+  },
   "p7VmgosJJM": {
     "source": "Time format changed",
     "translation": "[Ŧīḿḗḗ ƒǿǿřḿȧȧŧ ƈħȧȧƞɠḗḗḓ]"
@@ -2056,6 +2069,11 @@
   "tHi5lfQuKw": {
     "source": "Failed to toggle alarm!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŧǿǿɠɠŀḗḗ ȧȧŀȧȧřḿ!]"
+  },
+  "tN+OD5TZik": {
+    "source": "{name} {subname}",
+    "translation": "[{name} {subname}]",
+    "description": "A widget's name followed by its variant, naming its buttons in the scene editor, such as Miner Info Geek"
   },
   "tW6rkQ3J7V": {
     "source": "{item} dropped at position {position} of {count}.",
@@ -2253,6 +2271,11 @@
   "yLMog6i2hb": {
     "source": "Latest packages version:",
     "translation": "[Ŀȧȧŧḗḗşŧ ƥȧȧƈķȧȧɠḗḗş ṽḗḗřşīǿǿƞ:]"
+  },
+  "yOLkqNvsFh": {
+    "source": "Combined Scene Added",
+    "translation": "[Ƈǿǿḿƀīƞḗḗḓ Şƈḗḗƞḗḗ Ȧḓḓḗḗḓ]",
+    "description": "Toast title after adding a new, still empty combined scene to the display"
   },
   "yR5aTqCnaJ": {
     "source": "Your packages version:",

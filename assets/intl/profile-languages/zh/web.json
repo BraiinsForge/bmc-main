@@ -92,10 +92,6 @@
     "source": "{name} {version} was already installed.",
     "translation": "{name} {version} 此前已安装。"
   },
-  "/j7GSsWreI": {
-    "source": "Remove Widget",
-    "translation": "移除小组件"
-  },
   "/p/SkEUoHw": {
     "source": "Picked up {widget}.",
     "translation": "已拿起 {widget}。",
@@ -781,6 +777,11 @@
     "translation": "通知",
     "description": "Screen-reader name of the corner region where the app's brief notifications appear"
   },
+  "GnnH9SIN7A": {
+    "source": "Combined scene has been successfully added.",
+    "translation": "组合场景已添加。",
+    "description": "Toast message after adding a new, still empty combined scene to the display"
+  },
   "GretYfMDAh": {
     "source": "Current Password",
     "translation": "当前密码"
@@ -879,10 +880,6 @@
   "Jbgu7fFUrf": {
     "source": "Upgrade info not available!",
     "translation": "升级信息不可用！"
-  },
-  "JeVWXz9ma9": {
-    "source": "Edit Widget",
-    "translation": "编辑小组件"
   },
   "JkSSY7O18o": {
     "source": "Configure your mining pool and network to get your miner online.",
@@ -1106,6 +1103,11 @@
     "source": "Failed to save LED notifications night mode setting!",
     "translation": "保存夜间模式 LED 通知设置失败！"
   },
+  "PxzAu9yIoV": {
+    "source": "Add Widget",
+    "translation": "添加小组件",
+    "description": "Screen-reader name of the button on a free slot in the scene editor"
+  },
   "Py189GY9df": {
     "source": "Security",
     "translation": "安全"
@@ -1164,10 +1166,6 @@
     "source": "Weekends",
     "translation": "周末"
   },
-  "Rix4MaINp4": {
-    "source": "Move Widget",
-    "translation": "移动小组件"
-  },
   "Ro7cbvfVzK": {
     "source": "Do you really want to reboot the device?",
     "translation": "确定要重启设备吗？"
@@ -1219,9 +1217,19 @@
     "source": "This field is required",
     "translation": "此字段为必填项"
   },
+  "TegfEqa1ff": {
+    "source": "Edit {widget}",
+    "translation": "编辑“{widget}”",
+    "description": "Name and tooltip of a widget's settings button in the scene editor, widget is the widget's name with its variant when it has one"
+  },
   "TwyMauNL3r": {
     "source": "Account",
     "translation": "账户"
+  },
+  "U8zyoPTDWu": {
+    "source": "Move {widget}",
+    "translation": "移动“{widget}”",
+    "description": "Name and tooltip of a widget's move handle in the scene editor, widget is the widget's name with its variant when it has one"
   },
   "UILcXulI13": {
     "source": "Unit system changed",
@@ -1868,6 +1876,11 @@
     "source": "Ethernet Network",
     "translation": "以太网"
   },
+  "p5raJU0put": {
+    "source": "Remove {widget}",
+    "translation": "移除“{widget}”",
+    "description": "Name and tooltip of a widget's remove button in the scene editor, widget is the widget's name with its variant when it has one"
+  },
   "p7VmgosJJM": {
     "source": "Time format changed",
     "translation": "时间格式已更改"
@@ -2056,6 +2069,11 @@
   "tHi5lfQuKw": {
     "source": "Failed to toggle alarm!",
     "translation": "切换闹钟状态失败！"
+  },
+  "tN+OD5TZik": {
+    "source": "{name} {subname}",
+    "translation": "{name}（{subname}）",
+    "description": "A widget's name followed by its variant, naming its buttons in the scene editor, such as Miner Info Geek"
   },
   "tW6rkQ3J7V": {
     "source": "{item} dropped at position {position} of {count}.",
@@ -2253,6 +2271,11 @@
   "yLMog6i2hb": {
     "source": "Latest packages version:",
     "translation": "最新软件包版本："
+  },
+  "yOLkqNvsFh": {
+    "source": "Combined Scene Added",
+    "translation": "已添加组合场景",
+    "description": "Toast title after adding a new, still empty combined scene to the display"
   },
   "yR5aTqCnaJ": {
     "source": "Your packages version:",

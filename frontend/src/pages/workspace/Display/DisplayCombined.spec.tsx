@@ -227,7 +227,7 @@ describe('running widget limit', () => {
 
         await screen.findByText('Running widgets: 55 / 56');
         clickAddSlot(container);
-        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Clock' }));
 
         await waitFor(() => expect(document.body.textContent).toContain(LIMIT_MESSAGE));
         expect(screen.queryByRole('dialog', { name: 'Configure Widget' })).toBeNull();
@@ -278,7 +278,7 @@ describe('dialog session lifecycle', () => {
 
         await screen.findByText('Running widgets: 0 / 56');
         clickAddSlot(container);
-        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Clock' }));
 
         await waitFor(() =>
             expect(document.body.textContent).toContain('Widget added, but its settings could not be opened.'),
@@ -291,7 +291,7 @@ describe('dialog session lifecycle', () => {
 
         await screen.findByText('Running widgets: 0 / 56');
         clickAddSlot(container);
-        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Clock' }));
         await waitFor(() => expect(modalIsOpen(MANIFEST_MODAL_ID)).toBe(true));
         closeManifestEditor();
         await settle();
@@ -327,7 +327,7 @@ describe('dialog session lifecycle', () => {
 
         await screen.findByText('Running widgets: 0 / 56');
         clickAddSlot(container);
-        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Clock' }));
         fireEvent.change(await waitFor(() => elementById(COUNT_INPUT_ID)), { target: { value: '8' } });
         await waitFor(() => expect(previewRequested).toBe(true));
         closeManifestEditor();
@@ -343,7 +343,7 @@ describe('dialog session lifecycle', () => {
 
         await screen.findByText('Running widgets: 0 / 56');
         clickAddSlot(container);
-        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Clock' }));
         await clickManifestDone();
         await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
 
@@ -378,12 +378,12 @@ describe('dialog session lifecycle', () => {
     async function addSaveThenRefuse(container: HTMLElement, refusalText: string): Promise<void> {
         await screen.findByText('Running widgets: 0 / 56');
         clickAddSlot(container);
-        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Clock' }));
         await clickManifestDone();
         await waitFor(() => expect(document.body.textContent).toContain('Widget updated!'));
 
         clickAddSlot(container);
-        fireEvent.click(await screen.findByRole('button', { name: /Clock/ }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Clock' }));
         await waitFor(() => expect(document.body.textContent).toContain(refusalText));
 
         closePicker();
@@ -903,7 +903,7 @@ describe('editing a placed widget', () => {
             closeManifestEditor();
             await settle();
             clickAddSlot(document.body);
-            fireEvent.click(await screen.findByRole('button', { name: /Pool Stats/ }));
+            fireEvent.click(await screen.findByRole('button', { name: 'Pool Stats' }));
             await settle();
             previewHeld.resolve();
 

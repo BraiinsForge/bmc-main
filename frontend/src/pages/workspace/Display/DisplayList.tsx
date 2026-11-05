@@ -559,7 +559,18 @@ class View extends Component<Props, State> {
         try {
             const response = await this.#sceneWrite(options => pb.rpc.scenes.addCombinedScene({}, options));
             navigate(URLS.pages.display.combined.getHref(response.value), { replace: false });
-            this.#notifySceneAdded();
+            toast.success(
+                intl.formatMessage({
+                    defaultMessage: 'Combined scene has been successfully added.',
+                    description: 'Toast message after adding a new, still empty combined scene to the display',
+                }),
+                {
+                    title: intl.formatMessage({
+                        defaultMessage: 'Combined Scene Added',
+                        description: 'Toast title after adding a new, still empty combined scene to the display',
+                    }),
+                },
+            );
         } catch ($) {
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= intl.formatMessage({ defaultMessage: 'Failed to add scene!' });
