@@ -308,6 +308,8 @@ class View extends Component<Props, State> {
                     <p className={css.note} children={txt.selectWifiNote} />
 
                     <div
+                        id={$('networks')}
+                        aria-busy={isLoading}
                         className={css.netList}
                         children={
                             isLoading
@@ -319,7 +321,12 @@ class View extends Component<Props, State> {
                     />
 
                     <div className={css.links}>
-                        <Link className={css.link} children={txt.otherNetworks} onClick={this.#manualEntryActivate} />
+                        <Link
+                            id={$('other-networks')}
+                            className={css.link}
+                            children={txt.otherNetworks}
+                            onClick={this.#manualEntryActivate}
+                        />
                         <Link className={css.link} children={txt.refresh} onClick={onReload} renderIcon={IconReload} />
                         {this.props.onSkip ? (
                             <Link

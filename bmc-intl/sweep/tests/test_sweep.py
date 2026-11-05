@@ -31,7 +31,7 @@ import pytest
 from bmc_tui import console
 from bmc_tui.stage import Abort
 from rich.text import Text
-from web_probe.device import Interrupted, SceneLeft
+from web_probe.device import Interrupted, SceneLeft, SetupLanguageMissing, SetupSwitchMissing
 
 from intl_sweep.__main__ import (
     EXIT_INTERRUPTED,
@@ -157,6 +157,29 @@ def test_a_scene_that_failed_to_delete_stays_a_failure(monkeypatch: pytest.Monke
         web("http://deck", "root")
 
 
+@pytest.mark.parametrize(
+    ("refusal", "told"),
+    [
+        (
+            SetupSwitchMissing("no language switch"),
+            "no language switch, the device lacks its i18n marker",
+        ),
+        (
+            SetupLanguageMissing("en-XA not offered"),
+            "en-XA not offered, the device lacks its pack",
+        ),
+    ],
+)
+def test_setup_pages_that_cannot_be_switched_abort_with_what_the_device_lacks(
+    monkeypatch: pytest.MonkeyPatch, refusal: Exception, told: str
+) -> None:
+    _ = Said(monkeypatch)
+    walking_raises(monkeypatch, refusal)
+
+    with pytest.raises(Abort, match=re.escape(told)):
+        web("http://deck", "root")
+
+
 class Device:
     """What the web stage finds at the URL it walks, and what it was asked to do there."""
 
@@ -183,6 +206,7 @@ class Device:
             ("speaking", self.speaking),
             ("shoot_pages", self.pages),
             ("shoot_login", self.login),
+            ("shoot_setup", self.setup_pages),
         ):
             monkeypatch.setattr(f"intl_sweep.__main__.{name}", stand_in)
 
@@ -212,8 +236,9 @@ class Device:
     def login(self, _probe: object, _out: Path) -> None:
         return None
 
-    def shot(self, file: Path) -> Path:
-        return file
+    def setup_pages(self, _probe: object, out: Path, _tag: str) -> Iterator[tuple[str, Path]]:
+        yield "/init_connect", out / "init_connect.png"
+        yield "/init_connect#wifi", out / "init_connect_wifi.png"
 
 
 def steps_told(said: Said) -> list[str]:
@@ -238,15 +263,16 @@ def test_a_walk_tells_each_step_it_took(monkeypatch: pytest.MonkeyPatch, tmp_pat
     ]
 
 
-def test_a_device_in_setup_is_not_told_as_logged_into(
+def test_a_device_in_setup_has_its_setup_pages_captured_and_is_not_logged_into(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     said = Said(monkeypatch)
     _ = Device(monkeypatch, tmp_path, in_setup=True)
 
-    _ = _walk_web("http://deck", "root")
+    result = _walk_web("http://deck", "root")
 
-    assert steps_told(said) == ["opening the web UI"]
+    assert steps_told(said) == ["opening the web UI", "capturing the setup pages"]
+    assert Text.from_markup(result).plain.startswith("captured 2 of the setup's views")
 
 
 def test_a_device_offering_no_languages_fails_at_reading_them_not_at_logging_in(

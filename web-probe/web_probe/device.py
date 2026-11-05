@@ -24,7 +24,7 @@ Elements are found by the ids the frontend derives from its form paths (`getID`)
 by `data-tab`, by their roles and by ARIA relations, which no language changes, never by wording.
 """
 
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -40,7 +40,20 @@ LOGIN_PATH = "/login"
 SETTINGS_PATH = "/settings"
 # The Wi-Fi wizard of a device at factory defaults or reconfiguring its Wi-Fi,
 # and the device setup of one whose setup is pending.
-SETUP_PATHS = ("/init_connect", "/init_setup")
+_CONNECT_PATH = "/init_connect"
+SETUP_PATHS = (_CONNECT_PATH, "/init_setup")
+_SETUP_LANGUAGE = "#initial-setup-language"
+_SETUP_CONTINUE = "#initial-setup-welcome-continue"
+_SETUP_NETWORKS = '#initial-setup-wifi-networks[aria-busy="false"]'
+_SETUP_NETWORK = '#initial-setup-wifi-networks [role~="button"]'
+_SETUP_OTHER_NETWORKS = "#initial-setup-wifi-other-networks"
+_SETUP_PASSWORD_FORM = "#initial-setup-wifi-selected-network-dropdown"
+_SETUP_MANUAL_FORM = "#initial-setup-wifi-manual-ssid"
+_SETUP_BACK = "#initial-setup-wifi-back"
+_SCAN_WIFI = ".InitialSetupService/ScanWifi"
+# The setup page scrolls inside itself past the viewport's height,
+# which a full-page shot misses, so the viewport is what has to fit the form.
+_SETUP_SHOT_HEIGHT = 1_600
 
 # A login the device answers does so well within this.
 LOGIN_TIMEOUT_MS = 10_000
@@ -96,6 +109,14 @@ class LanguageUnknown(Exception):  # noqa: N818  names what happened, as `Timeou
 
 class TabsMissing(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
     """The settings page shows no tabs, so all but its first section would go unseen."""
+
+
+class SetupSwitchMissing(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
+    """The setup pages show no language switch, so they cannot be shot in the walk's language."""
+
+
+class SetupLanguageMissing(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
+    """The setup pages' language switch does not offer the walk's language."""
 
 
 class LanguageStuck(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
@@ -205,6 +226,14 @@ def speaking(probe: Probe, tag: str) -> Generator[None]:
             " pick one in its settings first"
         )
         raise LanguageUnknown(msg)
+    with _switched(probe, tag, before, set_language):
+        yield
+
+
+@contextmanager
+def _switched(
+    probe: Probe, tag: str, before: str, pick: Callable[[Probe, str], None]
+) -> Generator[None]:
     if before == tag:
         yield
         return
@@ -212,26 +241,97 @@ def speaking(probe: Probe, tag: str) -> Generator[None]:
     try:
         # Inside the `try`: the switch can fail waiting
         # for the page after the device took it.
-        set_language(probe, tag)
+        pick(probe, tag)
         yield
     except BaseException:
         # The block's own error explains the failure.
         # One from setting the language back must not replace it, nor go unsaid.
         try:
-            _set_language_back(probe, before)
+            _set_language_back(probe, before, pick)
         except LanguageStuck as stuck:
             console.error(console.lit(stuck))
         raise
-    _set_language_back(probe, before)
+    _set_language_back(probe, before, pick)
 
 
-def _set_language_back(probe: Probe, before: str) -> None:
+def _set_language_back(probe: Probe, before: str, pick: Callable[[Probe, str], None]) -> None:
     doing = f"setting the device's language back to {before}"
     try:
         with _while(doing):
-            set_language(probe, before)
+            pick(probe, before)
     except (PlaywrightError, Unreachable) as error:
         raise LanguageStuck(f"{doing} failed: {str(error).splitlines()[0]}") from error
+
+
+def shoot_setup(probe: Probe, out: Path, tag: str) -> Iterator[tuple[str, Path]]:
+    """The setup pages a device in setup shows without its setup changing, in `tag`.
+    The Wi-Fi setup shows its list of networks and both its forms, left unsent,
+    and the device setup its unsent form, as sending either would change the device."""
+    viewport = probe.page.viewport_size
+    assert viewport is not None, "BUG: `open_probe` always opens its page with a viewport"
+    probe.page.set_viewport_size({"width": viewport["width"], "height": _SETUP_SHOT_HEIGHT})
+    probe.visit("/")
+    path = probe.path()
+    before = _setup_language(probe)
+    if before is None:
+        raise SetupSwitchMissing("the setup pages show no language switch")
+    if tag not in _setup_languages(probe):
+        raise SetupLanguageMissing(f"the setup pages' language switch does not offer {tag}")
+
+    with _switched(probe, tag, before, _set_setup_language):
+        yield path, probe.shot(out / shot_name(path))
+        if path == _CONNECT_PATH:
+            # The list is not busy for the moment before its scan starts, so the answer comes first.
+            with probe.page.expect_response(_is_scan_wifi):
+                probe.page.click(_SETUP_CONTINUE)
+            probe.page.locator(_SETUP_NETWORKS).wait_for()
+            shown = f"{path}#wifi"
+            yield shown, probe.shot(out / shot_name(shown))
+            yield from _shoot_wifi_forms(probe, out, path)
+
+
+def _shoot_wifi_forms(probe: Probe, out: Path, path: str) -> Iterator[tuple[str, Path]]:
+    """The Wi-Fi setup's forms, each opened from the list and left by its back button unsent."""
+    network = probe.page.locator(_SETUP_NETWORK).first
+    if network.count() == 0:
+        console.warn("the Wi-Fi setup listed no network, so its password form went unseen")
+    else:
+        network.click()
+        probe.page.locator(_SETUP_PASSWORD_FORM).wait_for()
+        shown = f"{path}#wifi-password"
+        yield shown, probe.shot(out / shot_name(shown))
+        probe.page.click(_SETUP_BACK)
+        probe.page.locator(_SETUP_NETWORKS).wait_for()
+
+    probe.page.click(_SETUP_OTHER_NETWORKS)
+    probe.page.locator(_SETUP_MANUAL_FORM).wait_for()
+    shown = f"{path}#wifi-manual"
+    yield shown, probe.shot(out / shot_name(shown))
+    probe.page.click(_SETUP_BACK)
+    probe.page.locator(_SETUP_NETWORKS).wait_for()
+
+
+def _is_scan_wifi(response: Response) -> bool:
+    return response.url.endswith(_SCAN_WIFI)
+
+
+def _setup_language(probe: Probe) -> str | None:
+    shown = probe.page.locator(f"{_SETUP_LANGUAGE} [lang]")
+    return shown.first.get_attribute("lang") if shown.count() else None
+
+
+def _setup_languages(probe: Probe) -> list[str]:
+    probe.page.click(_SETUP_LANGUAGE)
+    options = probe.page.locator('[role="option"] [lang]').all()
+    tags = [tag for option in options if (tag := option.get_attribute("lang"))]
+    probe.page.keyboard.press("Escape")
+    return tags
+
+
+def _set_setup_language(probe: Probe, tag: str) -> None:
+    probe.page.click(_SETUP_LANGUAGE)
+    probe.page.click(f'[role="option"] [lang="{tag}"]')
+    _ = probe.page.wait_for_selector(f'html[lang="{tag}"]', state="attached")
 
 
 def pages(probe: Probe) -> Iterator[str]:

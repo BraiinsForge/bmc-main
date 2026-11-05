@@ -46,6 +46,8 @@ from web_probe.device import (
     LoginRefused,
     LoginStalled,
     SceneLeft,
+    SetupLanguageMissing,
+    SetupSwitchMissing,
     TabsMissing,
     current_language,
     in_setup,
@@ -53,6 +55,7 @@ from web_probe.device import (
     offered_languages,
     shoot_login,
     shoot_pages,
+    shoot_setup,
     speaking,
 )
 
@@ -63,6 +66,13 @@ SWEEP = SCRATCH / "intl-sweep"
 LOGS = SWEEP / "logs"
 GALLERY = SWEEP / "gallery"
 WIDGETS = SWEEP / "widgets"
+NO_MARKER = "the device lacks its i18n marker (/etc/bmc/i18n)"
+NO_PACK = (
+    "the device lacks its pack. Install it with"
+    " `nix run .#deck -- deploy --device <ip> --packages language-en-xa`,"
+    " then restart bmc (`/etc/init.d/bmc-compositor restart`), which reads packs only"
+    " as it starts. On the mock, `just fe::serve` loads it."
+)
 
 
 @dataclass(frozen=True)
@@ -163,6 +173,10 @@ def web(url: str, password: str) -> str:
         raise Abort(f"{error} - is the web UI running at {url}?") from error
     except LoginRefused as error:
         raise Abort(f"{error} - pass the device's password with --password") from error
+    except SetupSwitchMissing as error:
+        raise Abort(f"{error}, {NO_MARKER}, or its languages failed to load") from error
+    except SetupLanguageMissing as error:
+        raise Abort(f"{error}, {NO_PACK}") from error
     except (
         LoginStalled,
         LanguageUnknown,
@@ -247,10 +261,15 @@ def _walk_web(url: str, password: str) -> str:
 
         steps.start("opening the web UI")
         if in_setup(probe):
-            shot = probe.shot(out / "setup.png")
+            steps.start("capturing the setup pages")
+            setup_shots = 0
+            for path, shot in shoot_setup(probe, out, LANGUAGE):
+                setup_shots += 1
+                shot_taken(path, shot)
             return (
-                f"the device is being set up, its first page is at {console.lit(shot)}."
-                f" The wizard's steps are not walked, and it speaks English, not {LANGUAGE}"
+                f"captured {console.lit(setup_shots)} of the setup's views"
+                f" under {console.lit(out)}, its forms left unsent,"
+                " as sending one would change the device"
             )
         steps.start("logging in")
         log_in(probe, password)
@@ -259,16 +278,9 @@ def _walk_web(url: str, password: str) -> str:
         # Aborted, not skipped: `--url` asked for the web, and a passing run would hide its absence.
         offered = offered_languages(probe)
         if not offered:
-            raise Abort("no languages offered, the device lacks its i18n marker (/etc/bmc/i18n)")
-
+            raise Abort(f"no languages offered, {NO_MARKER}")
         if LANGUAGE not in offered:
-            msg = (
-                f"{LANGUAGE} is not offered, the device lacks its pack. Install it with"
-                " `nix run .#deck -- deploy --device <ip> --packages language-en-xa`,"
-                " then restart bmc (`/etc/init.d/bmc-compositor restart`), which reads packs only"
-                " as it starts. On the mock, `just fe::serve` loads it."
-            )
-            raise Abort(msg)
+            raise Abort(f"{LANGUAGE} is not offered, {NO_PACK}")
 
         # `speaking` leaves such a device alone, so no step may claim to have switched it.
         switches = current_language(probe) != LANGUAGE
