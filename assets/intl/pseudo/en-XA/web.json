@@ -632,6 +632,11 @@
     "source": "Sound Volume in Night Mode",
     "translation": "[Şǿǿŭŭƞḓ Ṽǿǿŀŭŭḿḗḗ īƞ Ƞīɠħŧ Ḿǿǿḓḗḗ]"
   },
+  "F7akc/J70u": {
+    "source": "Package update available",
+    "translation": "[Ƥȧȧƈķȧȧɠḗḗ ŭŭƥḓȧȧŧḗḗ ȧȧṽȧȧīŀȧȧƀŀḗḗ]",
+    "description": "Settings upgrade notice title when an update rebuilds packages without changing any package version"
+  },
   "FC0AP4JIua": {
     "source": "Thu",
     "translation": "[Ŧħŭŭ]"

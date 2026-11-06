@@ -100,6 +100,13 @@ const packageUpgradeInfo: pb.CheckForUpgradeResponse = {
             },
             {
                 $typeName: 'braiins.bmc.web.PackageChange',
+                name: 'metronome-widget',
+                category: 'widget',
+                versionFrom: '0.9.2',
+                versionTo: '0.9.2',
+            },
+            {
+                $typeName: 'braiins.bmc.web.PackageChange',
                 name: 'weather-widget',
                 category: 'widget',
                 versionTo: '2.0.0',
@@ -116,6 +123,41 @@ const packageUpgradeInfo: pb.CheckForUpgradeResponse = {
                 $typeName: 'braiins.bmc.web.PackageChange',
                 name: 'nix-support',
                 versionTo: '0.3.0',
+            },
+        ],
+    },
+    disruption: UpgradeDisruption.APP_RESTART,
+};
+
+const packagesRebuiltInfo: pb.CheckForUpgradeResponse = {
+    $typeName: 'braiins.bmc.web.CheckForUpgradeResponse',
+    upgradeId: 'upgrade-packages-1',
+    packages: {
+        $typeName: 'braiins.bmc.web.PackageUpgradePlan',
+        bmcVersion: '24.09.4',
+        downloadSizeBytes: 12_000_000n,
+        bmcChangelog: '## Braiins Deck 24.09.4\n\n- rebuild every package against the updated toolchain',
+        changes: [
+            {
+                $typeName: 'braiins.bmc.web.PackageChange',
+                name: 'bmc',
+                category: 'core',
+                versionFrom: '24.09.4',
+                versionTo: '24.09.4',
+            },
+            {
+                $typeName: 'braiins.bmc.web.PackageChange',
+                name: 'clock-widget',
+                category: 'widget',
+                versionFrom: '1.5.0',
+                versionTo: '1.5.0',
+            },
+            {
+                $typeName: 'braiins.bmc.web.PackageChange',
+                name: 'weather-widget',
+                category: 'widget',
+                versionFrom: '2.0.0',
+                versionTo: '2.0.0',
             },
         ],
     },
@@ -144,6 +186,10 @@ export function UpgradeAvailable(args: SectionUpgradeProps) {
 
 export function PackagesAvailable(args: SectionUpgradeProps) {
     return <Component {...args} status={{ kind: 'upgrade-available', upgradeInfo: packageUpgradeInfo }} />;
+}
+
+export function PackagesRebuilt(args: SectionUpgradeProps) {
+    return <Component {...args} status={{ kind: 'upgrade-available', upgradeInfo: packagesRebuiltInfo }} />;
 }
 
 export function UpgradingFirmware(args: SectionUpgradeProps) {

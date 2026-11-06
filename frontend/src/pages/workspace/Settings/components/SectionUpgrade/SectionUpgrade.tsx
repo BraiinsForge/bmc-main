@@ -343,6 +343,22 @@ class View extends Component<Props, State> {
 
             case 'upgrade-available': {
                 const { upgradeId, firmware, packages } = status.upgradeInfo;
+                // A rebuilt package keeps its version. The offer still installs it,
+                // but only a package whose version moves is worth a row.
+                const versionChanges = packages?.changes.filter(x => x.versionFrom !== x.versionTo) ?? [];
+                const packagesTitle = versionChanges.length
+                    ? formatMessage(
+                          {
+                              defaultMessage:
+                                  '{count, plural, one {{count} package update available} other {{count} package updates available}}',
+                          },
+                          { count: versionChanges.length },
+                      )
+                    : formatMessage({
+                          defaultMessage: 'Package update available',
+                          description:
+                              'Settings upgrade notice title when an update rebuilds packages without changing any package version',
+                      });
                 statusMessage = [
                     firmware ? (
                         <InlineNotification
@@ -361,16 +377,9 @@ class View extends Component<Props, State> {
                             kind="info"
                             theme="inverse"
                             hideCloseButton
-                            title={formatMessage(
-                                {
-                                    defaultMessage:
-                                        '{count, plural, one {{count} package update available} other {{count} package updates available}}',
-                                },
-                                { count: packages.changes.length },
-                            )}
-                        >
-                            <PackageChanges changes={packages.changes} />
-                        </InlineNotification>
+                            title={packagesTitle}
+                            children={versionChanges.length ? <PackageChanges changes={versionChanges} /> : null}
+                        />
                     ) : null,
                     errors?.length ? this.#renderInlineNotificationError(errors, 'error-upgrade-available') : null,
                 ];

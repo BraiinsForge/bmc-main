@@ -632,6 +632,11 @@
     "source": "Sound Volume in Night Mode",
     "translation": "夜间模式音量"
   },
+  "F7akc/J70u": {
+    "source": "Package update available",
+    "translation": "有软件包更新可用",
+    "description": "Settings upgrade notice title when an update rebuilds packages without changing any package version"
+  },
   "FC0AP4JIua": {
     "source": "Thu",
     "translation": "周四"
