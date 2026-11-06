@@ -40,7 +40,7 @@ use connectrpc::{
 };
 use futures::stream::StreamExt;
 use indexmap::IndexMap;
-use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
+use tokio::sync::{Mutex, Notify, RwLock, RwLockReadGuard};
 use tokio::time;
 use tokio_stream::wrappers::IntervalStream;
 use uuid::Uuid;
@@ -420,6 +420,11 @@ fn parse_update_widget_shape(
     }
 }
 
+/// How long `remove_scene` waits for a preview of that scene to end before refusing.
+/// A client that closed its preview looks live until the server sees the stream drop.
+/// That took under 40 ms on the mock. The margin is for a slower Deck, which is unmeasured.
+const PREVIEW_RELEASE_WAIT: Duration = Duration::from_secs(2);
+
 #[derive(Clone)]
 pub(crate) struct SceneManagementService {
     widget_registry: Arc<WidgetRegistry>,
@@ -438,6 +443,8 @@ pub(crate) struct SceneManagementService {
     /// order; without it tokio's write-preferring `RwLock` can deadlock
     /// under a queued config writer.
     preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
+    /// Signalled by `PreviewGuard` once it has released `preview_scene_id`.
+    preview_released: Arc<Notify>,
 }
 
 impl SceneManagementService {
@@ -458,7 +465,25 @@ impl SceneManagementService {
             capabilities,
             led_coordinator,
             preview_scene_id,
+            preview_released: Arc::new(Notify::new()),
         }
+    }
+
+    /// Returns once `scene_id` is not being previewed, or after [`PREVIEW_RELEASE_WAIT`].
+    /// Holds no lock while waiting, as the release itself needs `preview_scene_id`.
+    async fn wait_for_preview_release(&self, scene_id: scene::SceneId) {
+        let wait = async {
+            loop {
+                // Hears `notify_waiters` from creation, so a release during the check still wakes it.
+                let released = self.preview_released.notified();
+                if self.preview_scene_id.lock().await.as_ref() != Some(&scene_id) {
+                    return;
+                }
+                released.await;
+            }
+        };
+        // The caller re-checks under its locks, so running out of time needs no handling here.
+        let _ = time::timeout(PREVIEW_RELEASE_WAIT, wait).await;
     }
 
     /// Hold a package reload off this edit, or refuse the edit once a gate
@@ -1313,6 +1338,7 @@ struct PreviewGuard {
     coordinator: Arc<Coordinator>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
+    preview_released: Arc<Notify>,
     led_coordinator: LedCoordinatorHandle,
 }
 
@@ -1322,6 +1348,7 @@ impl Drop for PreviewGuard {
         let coordinator = Arc::clone(&self.coordinator);
         let config_handle = Arc::clone(&self.config_handle);
         let preview_scene_id = Arc::clone(&self.preview_scene_id);
+        let preview_released = Arc::clone(&self.preview_released);
         tokio::spawn(async move {
             let mut preview = preview_scene_id.lock().await;
             let stop = {
@@ -1340,6 +1367,7 @@ impl Drop for PreviewGuard {
             coordinator.refresh_scene_cycling(config.scenes());
             // Release after restoration so a successor cannot pin before it.
             preview.take();
+            preview_released.notify_waiters();
         });
     }
 }
@@ -1735,6 +1763,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let id = Uuid::parse_str(request.value)
             .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
         let scene_id_key = scene::SceneId::from(id);
+        self.wait_for_preview_release(scene_id_key).await;
 
         let _edit = self.begin_scene_edit().await?;
         let preview = self.preview_scene_id.lock().await;
@@ -1797,6 +1826,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             coordinator: Arc::clone(&self.coordinator),
             config_handle: Arc::clone(&self.config_handle),
             preview_scene_id: Arc::clone(&self.preview_scene_id),
+            preview_released: Arc::clone(&self.preview_released),
             led_coordinator: self.led_coordinator.clone(),
         };
         if scene_was_disabled {
@@ -5829,6 +5859,90 @@ mod tests {
                 .scenes()
                 .contains_key(&fixture.scene_id)
         );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn removing_a_previewed_scene_waits_for_its_client_to_leave() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let stream = start_preview(&fixture).await;
+        let started = time::Instant::now();
+
+        let service = fixture.service.clone();
+        let scene_id = fixture.scene_id.to_string();
+        let removal = tokio::spawn(async move {
+            remove_scene(&service, &scene_id)
+                .await
+                .map(|_| ())
+                .map_err(|status| status.code)
+        });
+        time::sleep(Duration::from_millis(100)).await;
+        drop(stream);
+
+        removal
+            .await
+            .expect("BUG: the removal task must not panic")
+            .expect("removal must succeed once the preview has ended");
+        assert!(
+            started.elapsed() < PREVIEW_RELEASE_WAIT,
+            "the end of the preview must end the wait, not its limit",
+        );
+        assert!(
+            !fixture
+                .config
+                .read()
+                .await
+                .scenes()
+                .contains_key(&fixture.scene_id)
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn removing_a_scene_still_previewed_is_refused_after_the_wait() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let stream = start_preview(&fixture).await;
+        let started = time::Instant::now();
+
+        let status = remove_scene(&fixture.service, &fixture.scene_id.to_string())
+            .await
+            .expect_err("a live preview must keep its scene");
+
+        assert_eq!(status.code, ErrorCode::FailedPrecondition);
+        assert!(
+            started.elapsed() >= PREVIEW_RELEASE_WAIT,
+            "a client that just left must get the whole wait to be seen leaving",
+        );
+        assert!(
+            fixture
+                .config
+                .read()
+                .await
+                .scenes()
+                .contains_key(&fixture.scene_id)
+        );
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn removing_another_scene_does_not_wait_for_the_preview() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let stream = start_preview(&fixture).await;
+        let started = time::Instant::now();
+
+        let status = remove_scene(&fixture.service, &Uuid::new_v4().to_string())
+            .await
+            .expect_err("BUG: an unknown scene cannot be removed");
+
+        assert_eq!(status.code, ErrorCode::NotFound);
+        assert!(
+            started.elapsed() < PREVIEW_RELEASE_WAIT,
+            "only a preview of the removed scene is worth waiting for",
+        );
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
         fixture.coordinator.shutdown_widget_manager().await;
     }
 
