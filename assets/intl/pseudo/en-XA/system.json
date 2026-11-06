@@ -19,6 +19,11 @@
     "translation": "[Ŧħḗḗ şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ ḿŭŭşŧ ƀḗḗ ƀḗḗŧẇḗḗḗḗƞ {min} ȧȧƞḓ {max}.]",
     "description": "Error when a sound volume is out of range; min and max are whole numbers"
   },
+  "/+zXctfkgA": {
+    "source": "This device does not support combined scenes.",
+    "translation": "[Ŧħīş ḓḗḗṽīƈḗḗ ḓǿǿḗḗş ƞǿǿŧ şŭŭƥƥǿǿřŧ ƈǿǿḿƀīƞḗḗḓ şƈḗḗƞḗḗş.]",
+    "description": "Error when using a combined scene on a device whose screen has no slots"
+  },
   "//NWDATvZK": {
     "source": "Your {device_name} is connected!",
     "translation": "[Ẏǿǿŭŭř {device_name} īş ƈǿǿƞƞḗḗƈŧḗḗḓ!]",
@@ -28,6 +33,11 @@
     "source": "Check the Ethernet cable",
     "translation": "[Ƈħḗḗƈķ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ]",
     "description": "Device-info line under the no-network title, asking to check the wired connection"
+  },
+  "/63gzLr1BA": {
+    "source": "This widget does not support that size.",
+    "translation": "[Ŧħīş ẇīḓɠḗḗŧ ḓǿǿḗḗş ƞǿǿŧ şŭŭƥƥǿǿřŧ ŧħȧȧŧ şīẑḗḗ.]",
+    "description": "Error when placing a widget at a size it cannot draw itself in"
   },
   "/CqPTduXiE": {
     "source": "This is only available at the device settings step of the setup.",
@@ -58,6 +68,11 @@
     "source": "Initial Setup",
     "translation": "[Īƞīŧīȧȧŀ Şḗḗŧŭŭƥ]",
     "description": "Device-info eyebrow above every first-boot setup screen"
+  },
+  "0AXETv06DQ": {
+    "source": "Failed to save the widgets!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ẇīḓɠḗḗŧş!]",
+    "description": "Error when the device could not store a change to its widgets and scenes"
   },
   "0CxHW8Ps7w": {
     "source": "The password for {ssid} was rejected.",
@@ -244,10 +259,20 @@
     "translation": "[Ƈǿǿŀǿǿř īş řḗḗɋŭŭīřḗḗḓ ƒǿǿř ŧħīş ḗḗƒƒḗḗƈŧ ŧẏƥḗḗ.]",
     "description": "Error on the LED test page when the chosen light effect needs a color and none is given"
   },
+  "C9S9Si98Va": {
+    "source": "Invalid ID!",
+    "translation": "[Īƞṽȧȧŀīḓ ĪḒ!]",
+    "description": "Error on a form field holding a malformed ID"
+  },
   "Cc6ld21VRG": {
     "source": "Failed to set the display brightness!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ ḓīşƥŀȧȧẏ ƀřīɠħŧƞḗḗşş!]",
     "description": "Error when the device could not apply the screen brightness setting"
+  },
+  "D9c6K7VMVn": {
+    "source": "Another scene is already being previewed.",
+    "translation": "[Ȧƞǿǿŧħḗḗř şƈḗḗƞḗḗ īş ȧȧŀřḗḗȧȧḓẏ ƀḗḗīƞɠ ƥřḗḗṽīḗḗẇḗḗḓ.]",
+    "description": "Error when opening a scene's settings while another scene's are open"
   },
   "DShSOKnbDN": {
     "source": "Must be at least {min}",
@@ -319,6 +344,11 @@
     "translation": "[Ŧǿǿ ȧȧƈƈḗḗşş ŧħḗḗ ƈǿǿƞŧřǿǿŀş, ĪƤ ȧȧƞḓ Ẇī-Ƒī īƞƒǿǿ, <b>şẇīƥḗḗ ḓǿǿẇƞ</b>]",
     "description": "Device-info connect screen, corner hint; <b> marks the gesture that opens the settings tray, drawn bold, and may go wherever the sentence needs it"
   },
+  "G6sIhVSHoo": {
+    "source": "The widget does not fit in that slot.",
+    "translation": "[Ŧħḗḗ ẇīḓɠḗḗŧ ḓǿǿḗḗş ƞǿǿŧ ƒīŧ īƞ ŧħȧȧŧ şŀǿǿŧ.]",
+    "description": "Error when placing a widget in a combined scene past the screen's edge"
+  },
   "GX3xtlUQ6P": {
     "source": "Could not reach Braiins Pool, so this token is unverified.",
     "translation": "[Ƈǿǿŭŭŀḓ ƞǿǿŧ řḗḗȧȧƈħ Ɓřȧȧīīƞş Ƥǿǿǿǿŀ, şǿǿ ŧħīş ŧǿǿķḗḗƞ īş ŭŭƞṽḗḗřīƒīḗḗḓ.]",
@@ -369,6 +399,11 @@
     "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ şƞǿǿǿǿẑḗḗ ḓŭŭřȧȧŧīǿǿƞ]",
     "description": "Error under an alarm's snooze duration field when nothing is chosen"
   },
+  "IyPL5sYhJO": {
+    "source": "Choose a transition effect",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ŧřȧȧƞşīŧīǿǿƞ ḗḗƒƒḗḗƈŧ]",
+    "description": "Error when saving widget cycling with no transition between widgets"
+  },
   "JaclmV/9sO": {
     "source": "Must be an absolute path",
     "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧƞ ȧȧƀşǿǿŀŭŭŧḗḗ ƥȧȧŧħ]",
@@ -414,6 +449,11 @@
     "translation": "[Ŀīƞḗḗ {line}: ȧȧ ẇīŀḓƈȧȧřḓ ƞḗḗḗḗḓş ȧȧ ḓǿǿḿȧȧīƞ řīɠħŧ ȧȧƒŧḗḗř \"*.\".]",
     "description": "Error under an account's allowed hosts list; line is the entry's line number"
   },
+  "LloWt957Ez": {
+    "source": "This slot does not exist!",
+    "translation": "[Ŧħīş şŀǿǿŧ ḓǿǿḗḗş ƞǿǿŧ ḗḗẋīşŧ!]",
+    "description": "Error on a widget's row or column in a combined scene"
+  },
   "LmOJe5rX2r": {
     "source": "Wi-Fi Connection",
     "translation": "[Ẇī-Ƒī Ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
@@ -439,6 +479,11 @@
     "translation": "[Ŀīƞḗḗ {line}: ǿǿƞŀẏ \":ƥǿǿřŧ\" ḿȧȧẏ ƒǿǿŀŀǿǿẇ ŧħḗḗ \"]\".]",
     "description": "Error under an account's allowed hosts list; line is the entry's line number, port is written as it must be typed"
   },
+  "N2MV6RUHdn": {
+    "source": "Scene not found!",
+    "translation": "[Şƈḗḗƞḗḗ ƞǿǿŧ ƒǿǿŭŭƞḓ!]",
+    "description": "Error when a scene no longer exists on the device"
+  },
   "N2SWYpiACP": {
     "source": "Must be an object",
     "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧƞ ǿǿƀĵḗḗƈŧ]",
@@ -459,6 +504,11 @@
     "translation": "[Ȧƈŧīṽȧȧŧīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
     "description": "Upgrade overlay title while the new packages are switched in"
   },
+  "OmR2aYaKW7": {
+    "source": "This widget is not installed.",
+    "translation": "[Ŧħīş ẇīḓɠḗḗŧ īş ƞǿǿŧ īƞşŧȧȧŀŀḗḗḓ.]",
+    "description": "Error when adding or editing a widget whose package is gone from the device"
+  },
   "P8lT7FDrGZ": {
     "source": "Starting Wi-Fi setup…",
     "translation": "[Şŧȧȧřŧīƞɠ Ẇī-Ƒī şḗḗŧŭŭƥ…]",
@@ -473,6 +523,11 @@
     "source": "Failed to schedule the alarm!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şƈħḗḗḓŭŭŀḗḗ ŧħḗḗ ȧȧŀȧȧřḿ!]",
     "description": "Error when the device could not set up an alarm to ring at its time"
+  },
+  "PwCjWKN6cR": {
+    "source": "A full screen widget cannot be resized.",
+    "translation": "[Ȧ ƒŭŭŀŀ şƈřḗḗḗḗƞ ẇīḓɠḗḗŧ ƈȧȧƞƞǿǿŧ ƀḗḗ řḗḗşīẑḗḗḓ.]",
+    "description": "Error when changing the size of a full screen scene's widget"
   },
   "PwddTctIJq": {
     "source": "Ethernet is not connected, so Wi-Fi setup is required.",
@@ -498,6 +553,11 @@
     "source": "Connecting to Wi-Fi...",
     "translation": "[Ƈǿǿƞƞḗḗƈŧīƞɠ ŧǿǿ Ẇī-Ƒī...]",
     "description": "Device-info screen title while the device joins a Wi-Fi network"
+  },
+  "ROOuiaa8x5": {
+    "source": "Failed to apply the settings to the widget!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ȧȧƥƥŀẏ ŧħḗḗ şḗḗŧŧīƞɠş ŧǿǿ ŧħḗḗ ẇīḓɠḗḗŧ!]",
+    "description": "Error when a running widget did not take its changed settings"
   },
   "Rh2wsuyizL": {
     "source": "Invalid URL!",
@@ -543,6 +603,11 @@
     "source": "This credential type already sets where its secret may go.",
     "translation": "[Ŧħīş ƈřḗḗḓḗḗƞŧīȧȧŀ ŧẏƥḗḗ ȧȧŀřḗḗȧȧḓẏ şḗḗŧş ẇħḗḗřḗḗ īŧş şḗḗƈřḗḗŧ ḿȧȧẏ ɠǿǿ.]",
     "description": "Error under an account's allowed hosts list on a credential type whose hosts are fixed"
+  },
+  "THxf/nn+kP": {
+    "source": "Another widget is already in that slot.",
+    "translation": "[Ȧƞǿǿŧħḗḗř ẇīḓɠḗḗŧ īş ȧȧŀřḗḗȧȧḓẏ īƞ ŧħȧȧŧ şŀǿǿŧ.]",
+    "description": "Error when placing a widget in a combined scene over another one"
   },
   "TK0DK0guj4": {
     "source": "Incorrect current password!",
@@ -599,10 +664,20 @@
     "translation": "[ŞḖŦŬƤ]",
     "description": "Settings tray, short badge in capitals beside the Wi-Fi setup network's name; five characters or fewer"
   },
+  "V+CNTuUhBO": {
+    "source": "This position is past the end of the list!",
+    "translation": "[Ŧħīş ƥǿǿşīŧīǿǿƞ īş ƥȧȧşŧ ŧħḗḗ ḗḗƞḓ ǿǿƒ ŧħḗḗ ŀīşŧ!]",
+    "description": "Error when moving a scene to a position its list does not have"
+  },
   "V+YnZmrE3v": {
     "source": "Reconfigure Wi-Fi",
     "translation": "[Řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī]",
     "description": "Device-info eyebrow above the setup screens while a device redoes its Wi-Fi"
+  },
+  "VH1ha1g3d5": {
+    "source": "This device does not support that transition effect.",
+    "translation": "[Ŧħīş ḓḗḗṽīƈḗḗ ḓǿǿḗḗş ƞǿǿŧ şŭŭƥƥǿǿřŧ ŧħȧȧŧ ŧřȧȧƞşīŧīǿǿƞ ḗḗƒƒḗḗƈŧ.]",
+    "description": "Error when saving widget cycling with a transition this firmware does not know"
   },
   "VmKfjKuzX9": {
     "source": "This operation is managed by Boser on this platform.",
@@ -629,6 +704,11 @@
     "translation": "[Īƞṽȧȧŀīḓ ȧȧŀȧȧřḿ ĪḒ!]",
     "description": "Error when a request names an alarm by an identifier that is malformed"
   },
+  "WavM3uFvMw": {
+    "source": "A full screen widget cannot be removed from its scene.",
+    "translation": "[Ȧ ƒŭŭŀŀ şƈřḗḗḗḗƞ ẇīḓɠḗḗŧ ƈȧȧƞƞǿǿŧ ƀḗḗ řḗḗḿǿǿṽḗḗḓ ƒřǿǿḿ īŧş şƈḗḗƞḗḗ.]",
+    "description": "Error when removing the only widget of a full screen scene"
+  },
   "WjT+LdMYru": {
     "source": "Some of the fields are invalid.",
     "translation": "[Şǿǿḿḗḗ ǿǿƒ ŧħḗḗ ƒīḗḗŀḓş ȧȧřḗḗ īƞṽȧȧŀīḓ.]",
@@ -648,6 +728,11 @@
     "source": "Line {line}: the \"[\" is never closed.",
     "translation": "[Ŀīƞḗḗ {line}: ŧħḗḗ \"[\" īş ƞḗḗṽḗḗř ƈŀǿǿşḗḗḓ.]",
     "description": "Error under an account's allowed hosts list; line is the entry's line number"
+  },
+  "XbKUxAW12P": {
+    "source": "This device does not support that size.",
+    "translation": "[Ŧħīş ḓḗḗṽīƈḗḗ ḓǿǿḗḗş ƞǿǿŧ şŭŭƥƥǿǿřŧ ŧħȧȧŧ şīẑḗḗ.]",
+    "description": "Error on a widget's size when the request names a size this firmware does not know"
   },
   "Xj08Iy+sHN": {
     "source": "Failed to save the boot sound setting!",
@@ -669,10 +754,20 @@
     "translation": "[Ĵǿǿīƞ ŧħīş ƞḗḗŧẇǿǿřķ ƒřǿǿḿ ẏǿǿŭŭř ƥħǿǿƞḗḗ ŧǿǿ řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī.]",
     "description": "Settings tray, hint under the setup network's name"
   },
+  "YMraklGAiK": {
+    "source": "Too many widgets are running. The limit is {max}.",
+    "translation": "[Ŧǿǿǿǿ ḿȧȧƞẏ ẇīḓɠḗḗŧş ȧȧřḗḗ řŭŭƞƞīƞɠ. Ŧħḗḗ ŀīḿīŧ īş {max}.]",
+    "description": "Error when enabling more widgets than the device runs at once; max is a whole number"
+  },
   "YhMJTmrA8+": {
     "source": "Line {line}: brackets can only open an IPv6 literal.",
     "translation": "[Ŀīƞḗḗ {line}: ƀřȧȧƈķḗḗŧş ƈȧȧƞ ǿǿƞŀẏ ǿǿƥḗḗƞ ȧȧƞ ĪƤṽ6 ŀīŧḗḗřȧȧŀ.]",
     "description": "Error under an account's allowed hosts list; line is the entry's line number, a literal is an address written out in full"
+  },
+  "YiRzWk65sa": {
+    "source": "Widget not found!",
+    "translation": "[Ẇīḓɠḗḗŧ ƞǿǿŧ ƒǿǿŭŭƞḓ!]",
+    "description": "Error when a widget no longer exists on the device"
   },
   "Z+u4emuLEZ": {
     "source": "This is only available while the device is being set up.",
@@ -723,6 +818,11 @@
     "source": "Invalid sound!",
     "translation": "[Īƞṽȧȧŀīḓ şǿǿŭŭƞḓ!]",
     "description": "Error under an alarm's sound field when the device does not have the chosen sound"
+  },
+  "awfSZJ0erv": {
+    "source": "Choose a widget size",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ẇīḓɠḗḗŧ şīẑḗḗ]",
+    "description": "Error on a widget's size left unset"
   },
   "bFKhQ/MiVz": {
     "source": "Downloading packages",
@@ -784,6 +884,11 @@
     "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ƞŭŭḿƀḗḗř ƒǿǿřḿȧȧŧ]",
     "description": "Error under the number format field when nothing is chosen"
   },
+  "dFlsxt2mAB": {
+    "source": "This device does not support that size.",
+    "translation": "[Ŧħīş ḓḗḗṽīƈḗḗ ḓǿǿḗḗş ƞǿǿŧ şŭŭƥƥǿǿřŧ ŧħȧȧŧ şīẑḗḗ.]",
+    "description": "Error when placing a widget at a size the display has no slot for"
+  },
   "dcysy6W8xK": {
     "source": "Restart",
     "translation": "[Řḗḗşŧȧȧřŧ]",
@@ -818,6 +923,11 @@
     "source": "This value has no type!",
     "translation": "[Ŧħīş ṽȧȧŀŭŭḗḗ ħȧȧş ƞǿǿ ŧẏƥḗḗ!]",
     "description": "Error on a widget setting sent without saying what kind of value it is"
+  },
+  "fzqEOaNvki": {
+    "source": "{count, plural, one {The duration must be at least {count} second.} other {The duration must be at least {count} seconds.}}",
+    "translation": "[{count, plural, one {Ŧħḗḗ ḓŭŭřȧȧŧīǿǿƞ ḿŭŭşŧ ƀḗḗ ȧȧŧ ŀḗḗȧȧşŧ {count} şḗḗƈǿǿƞḓ.} other {Ŧħḗḗ ḓŭŭřȧȧŧīǿǿƞ ḿŭŭşŧ ƀḗḗ ȧȧŧ ŀḗḗȧȧşŧ {count} şḗḗƈǿǿƞḓş.}}]",
+    "description": "Error when setting how long a scene shows; count is the fewest seconds allowed"
   },
   "gVSC85AlCJ": {
     "source": "Could not connect. Please try again.",
@@ -1024,6 +1134,11 @@
     "translation": "[Ṽḗḗřīƒẏīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
     "description": "Upgrade overlay title while the downloaded packages are checked"
   },
+  "pQ5VQ3c/uI": {
+    "source": "Invalid widget ID!",
+    "translation": "[Īƞṽȧȧŀīḓ ẇīḓɠḗḗŧ ĪḒ!]",
+    "description": "Error for a request naming a widget by a malformed ID"
+  },
   "pQLGOoIQLO": {
     "source": "The alarm name must be at most {max} bytes long.",
     "translation": "[Ŧħḗḗ ȧȧŀȧȧřḿ ƞȧȧḿḗḗ ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {max} ƀẏŧḗḗş ŀǿǿƞɠ.]",
@@ -1034,10 +1149,20 @@
     "translation": "[{max, plural, one {Ŭşḗḗ ȧȧŧ ḿǿǿşŧ {max} ƈħȧȧřȧȧƈŧḗḗř} other {Ŭşḗḗ ȧȧŧ ḿǿǿşŧ {max} ƈħȧȧřȧȧƈŧḗḗřş}}]",
     "description": "Error under the device's hostname field when the name is too long, max is always 253"
   },
+  "pV73uM/iLx": {
+    "source": "This scene is being previewed, so it cannot be removed.",
+    "translation": "[Ŧħīş şƈḗḗƞḗḗ īş ƀḗḗīƞɠ ƥřḗḗṽīḗḗẇḗḗḓ, şǿǿ īŧ ƈȧȧƞƞǿǿŧ ƀḗḗ řḗḗḿǿǿṽḗḗḓ.]",
+    "description": "Error when removing a scene whose settings are open somewhere"
+  },
   "pmgW8kKAju": {
     "source": "Night Mode: Off",
     "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ: Ǿƒƒ]",
     "description": "Settings tray, label under the night mode button while inactive"
+  },
+  "q04io6RENt": {
+    "source": "This account is of a different type!",
+    "translation": "[Ŧħīş ȧȧƈƈǿǿŭŭƞŧ īş ǿǿƒ ȧȧ ḓīƒƒḗḗřḗḗƞŧ ŧẏƥḗḗ!]",
+    "description": "Error under a widget's account picker when the account does not fit the widget"
   },
   "q3XYt4GmCB": {
     "source": "Failed to remove the alarm!",
@@ -1058,6 +1183,11 @@
     "source": "Couldn't start Wi-Fi setup",
     "translation": "[Ƈǿǿŭŭŀḓƞ'ŧ şŧȧȧřŧ Ẇī-Ƒī şḗḗŧŭŭƥ]",
     "description": "Settings tray notice title when Wi-Fi setup did not start in time"
+  },
+  "rFhSMy8WRC": {
+    "source": "The widgets are being set up. Try again in a moment.",
+    "translation": "[Ŧħḗḗ ẇīḓɠḗḗŧş ȧȧřḗḗ ƀḗḗīƞɠ şḗḗŧ ŭŭƥ. Ŧřẏ ȧȧɠȧȧīƞ īƞ ȧȧ ḿǿǿḿḗḗƞŧ.]",
+    "description": "Error when changing widgets or scenes while widget packages reload"
   },
   "rHLTOTnSlM": {
     "source": "Failed to save the first day of the week!",
@@ -1083,6 +1213,11 @@
     "source": "Unknown field!",
     "translation": "[Ŭƞķƞǿǿẇƞ ƒīḗḗŀḓ!]",
     "description": "Error on a field a widget list row does not have"
+  },
+  "sOq1xNYBhl": {
+    "source": "Account not found!",
+    "translation": "[Ȧƈƈǿǿŭŭƞŧ ƞǿǿŧ ƒǿǿŭŭƞḓ!]",
+    "description": "Error under a widget's account picker when the chosen account is gone"
   },
   "sXHuW30/mg": {
     "source": "Failed to check whether a password is set!",
@@ -1134,6 +1269,11 @@
     "translation": "[{minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}} {seconds, plural, one {{seconds} şḗḗƈǿǿƞḓ} other {{seconds} şḗḗƈǿǿƞḓş}} ȧȧɠǿǿ]",
     "description": "Relative time label for a moment behind, minutes and seconds spelled out; both are whole numbers"
   },
+  "x4mevTHQAW": {
+    "source": "Invalid scene ID!",
+    "translation": "[Īƞṽȧȧŀīḓ şƈḗḗƞḗḗ ĪḒ!]",
+    "description": "Error for a request naming a scene by a malformed ID"
+  },
   "xCLk12kuRj": {
     "source": "Problem Occurred",
     "translation": "[Ƥřǿǿƀŀḗḗḿ Ǿƈƈŭŭřřḗḗḓ]",
@@ -1148,6 +1288,11 @@
     "source": "Could not verify the credential.",
     "translation": "[Ƈǿǿŭŭŀḓ ƞǿǿŧ ṽḗḗřīƒẏ ŧħḗḗ ƈřḗḗḓḗḗƞŧīȧȧŀ.]",
     "description": "Error above the account form when the device could not check the token with its service, which may well be fine"
+  },
+  "xNe7wQhyYg": {
+    "source": "A full screen widget cannot be moved.",
+    "translation": "[Ȧ ƒŭŭŀŀ şƈřḗḗḗḗƞ ẇīḓɠḗḗŧ ƈȧȧƞƞǿǿŧ ƀḗḗ ḿǿǿṽḗḗḓ.]",
+    "description": "Error when changing the position of a full screen scene's widget"
   },
   "xyfII58PwR": {
     "source": "Login to continue",
@@ -1164,10 +1309,20 @@
     "translation": "[Ŧħḗḗ řḗḗşŧȧȧřŧ ƈǿǿḿḿȧȧƞḓ ƒȧȧīŀḗḗḓ]",
     "description": "Settings tray notice, under its title when the restart is declined: the device's reboot call failed"
   },
+  "yFW+ftEArY": {
+    "source": "The widget cycling settings are missing!",
+    "translation": "[Ŧħḗḗ ẇīḓɠḗḗŧ ƈẏƈŀīƞɠ şḗḗŧŧīƞɠş ȧȧřḗḗ ḿīşşīƞɠ!]",
+    "description": "Error when saving widget cycling with no settings in the request"
+  },
   "yRA94B7J/1": {
     "source": "Must be at most {max}",
     "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {max}]",
     "description": "Error under a numeric widget setting; max is a number"
+  },
+  "zF8tS/n8Wb": {
+    "source": "This widget does not use this account!",
+    "translation": "[Ŧħīş ẇīḓɠḗḗŧ ḓǿǿḗḗş ƞǿǿŧ ŭŭşḗḗ ŧħīş ȧȧƈƈǿǿŭŭƞŧ!]",
+    "description": "Error for an account given to a widget that has no use for it"
   },
   "zKG/OxShA+": {
     "source": "This device already has a password. Change it instead of creating a new one.",

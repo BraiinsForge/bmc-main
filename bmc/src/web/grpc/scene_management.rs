@@ -20,6 +20,7 @@
 // the grant above.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Display;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +28,7 @@ use std::time::Duration;
 use bmc_field_schema::{MissingValues, UnreadableValue};
 use bmc_grpc::web;
 use bmc_grpc::web::SceneManagementService as GrpcSceneManagementService;
-use bmc_intl::Intl;
+use bmc_intl::{Intl, format_message};
 use bmc_widget_manifest::{
     ArrayParam, BooleanParam, CredentialKey, DoubleParam, EnumControl, IntegerParam, ListItems,
     ObjectParam, ParamDefinition, ParamKind, RowUniqueness, ScalarField, ScalarKind, StringParam,
@@ -54,9 +55,10 @@ use crate::data::{Account, AccountId, SceneCycling, SceneCyclingTransition};
 use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene;
 use crate::secret_store::SecretStoreHandle;
-use crate::web::grpc::GrpcError;
 use crate::web::grpc::intl::intl;
-use crate::web::grpc::shared::{FieldViolations, violation_message, with_violations};
+use crate::web::grpc::shared::{
+    FieldViolations, bad_request, internal_error, missing_value, unchecked_field, violation_message,
+};
 use crate::widget::coordinator::{PendingWidgetRegistration, WidgetStopBatch};
 use crate::widget::{Coordinator, WidgetRegistry};
 
@@ -178,11 +180,86 @@ impl From<&HardwareCapabilities> for PlatformDescriptor {
     }
 }
 
-fn reject_combined_when_no_slot_grid(caps: &HardwareCapabilities) -> Result<(), ConnectError> {
+fn invalid_scene_id(intl: &Intl, input: &str) -> ConnectError {
+    tracing::warn!("Invalid scene ID {input:?}");
+    ConnectError::invalid_argument(format_message!(
+        intl,
+        default_message: "Invalid scene ID!",
+        description: "Error for a request naming a scene by a malformed ID",
+    ))
+}
+
+fn invalid_widget_id(intl: &Intl, input: &str) -> ConnectError {
+    tracing::warn!("Invalid widget ID {input:?}");
+    ConnectError::invalid_argument(format_message!(
+        intl,
+        default_message: "Invalid widget ID!",
+        description: "Error for a request naming a widget by a malformed ID",
+    ))
+}
+
+fn scene_not_found(intl: &Intl, id: impl Display) -> ConnectError {
+    tracing::warn!("Scene {id} not found");
+    ConnectError::not_found(format_message!(
+        intl,
+        default_message: "Scene not found!",
+        description: "Error when a scene no longer exists on the device",
+    ))
+}
+
+fn widget_not_found(intl: &Intl, id: impl Display) -> ConnectError {
+    tracing::warn!("Widget {id} not found");
+    ConnectError::not_found(format_message!(
+        intl,
+        default_message: "Widget not found!",
+        description: "Error when a widget no longer exists on the device",
+    ))
+}
+
+fn widget_not_installed(intl: &Intl) -> ConnectError {
+    ConnectError::failed_precondition(format_message!(
+        intl,
+        default_message: "This widget is not installed.",
+        description: "Error when adding or editing a widget whose package is gone from the device",
+    ))
+}
+
+fn size_not_supported(intl: &Intl) -> ConnectError {
+    ConnectError::failed_precondition(format_message!(
+        intl,
+        default_message: "This device does not support that size.",
+        description: "Error when placing a widget at a size the display has no slot for",
+    ))
+}
+
+fn widget_lacks_size(intl: &Intl, widget_type: impl Display) -> ConnectError {
+    tracing::warn!("Widget {widget_type} does not support the requested size");
+    ConnectError::failed_precondition(format_message!(
+        intl,
+        default_message: "This widget does not support that size.",
+        description: "Error when placing a widget at a size it cannot draw itself in",
+    ))
+}
+
+fn cycle_duration_too_short(intl: &Intl) -> ConnectError {
+    ConnectError::invalid_argument(format_message!(
+        intl,
+        default_message: "{count, plural, one {The duration must be at least {count} second.} other {The duration must be at least {count} seconds.}}",
+        description: "Error when setting how long a scene shows; count is the fewest seconds allowed",
+        values: { count: scene::Scene::MIN_CYCLE_DURATION.as_secs() },
+    ))
+}
+
+fn reject_combined_when_no_slot_grid(
+    intl: &Intl,
+    caps: &HardwareCapabilities,
+) -> Result<(), ConnectError> {
     if caps.slot_grid.is_none() {
-        return Err(ConnectError::failed_precondition(
-            "combined scenes are not supported on this hardware",
-        ));
+        return Err(ConnectError::failed_precondition(format_message!(
+            intl,
+            default_message: "This device does not support combined scenes.",
+            description: "Error when using a combined scene on a device whose screen has no slots",
+        )));
     }
     Ok(())
 }
@@ -226,59 +303,94 @@ pub(crate) fn supported_sizes_for_constraints(
 
 /// Wrap FieldViolations into InvalidArgument + BadRequest details. Callers
 /// must check `is_empty()` themselves — this builds the error unconditionally.
-fn bad_request_status(violations: FieldViolations) -> ConnectError {
-    with_violations(
-        ConnectError::invalid_argument(GrpcError::BadRequest.to_string()),
-        violations.into(),
-    )
+fn bad_request_status(intl: &Intl, violations: FieldViolations) -> ConnectError {
+    bad_request(intl, violations.into())
 }
 
-fn live_params_status(error: &crate::compositor::CompositorError) -> ConnectError {
-    ConnectError::internal(format!("failed to push live params to widget: {error}"))
+fn live_params_status(intl: &Intl, error: &crate::compositor::CompositorError) -> ConnectError {
+    tracing::warn!("Failed to push live params to a widget: {error}");
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "Failed to apply the settings to the widget!",
+        description: "Error when a running widget did not take its changed settings",
+    ))
 }
 
-fn parse_uuid_field(s: &str, path: &str, violations: &mut FieldViolations) -> Option<Uuid> {
+fn parse_uuid_field(
+    intl: &Intl,
+    s: &str,
+    path: &str,
+    violations: &mut FieldViolations,
+) -> Option<Uuid> {
     if let Ok(uuid) = Uuid::parse_str(s) {
         Some(uuid)
     } else {
-        violations.push(path.to_owned(), format!("invalid UUID: {s:?}"));
+        tracing::warn!("Invalid ID {s:?} at {path}");
+        violations.push(
+            path.to_owned(),
+            format_message!(
+                intl,
+                default_message: "Invalid ID!",
+                description: "Error on a form field holding a malformed ID",
+            ),
+        );
         None
     }
 }
 
-fn parse_grid_axis(value: u32, path: &str, violations: &mut FieldViolations) -> Option<u8> {
+fn parse_grid_axis(
+    intl: &Intl,
+    value: u32,
+    path: &str,
+    violations: &mut FieldViolations,
+) -> Option<u8> {
     if let Ok(v) = u8::try_from(value) {
         Some(v)
     } else {
-        violations.push(path.to_owned(), format!("{value} does not fit in u8"));
+        tracing::warn!("Slot {value} at {path} does not fit in u8");
+        violations.push(
+            path.to_owned(),
+            format_message!(
+                intl,
+                default_message: "This slot does not exist!",
+                description: "Error on a widget's row or column in a combined scene",
+            ),
+        );
         None
     }
 }
 
 fn parse_widget_size(
+    intl: &Intl,
     size: EnumValue<web::WidgetSize>,
     path: &str,
     violations: &mut FieldViolations,
 ) -> Option<scene::WidgetPlacement> {
-    match size.as_known() {
-        Some(web::WidgetSize::Unspecified) => {
+    match size {
+        EnumValue::Known(web::WidgetSize::Unspecified) => {
             violations.push(
                 path.to_owned(),
-                "must be one of {Small, Medium, Large, Full}",
-            );
-            None
-        }
-        Some(web_size) => scene::WidgetPlacement::try_from(web_size).ok(),
-        None => {
-            violations.push(
-                path.to_owned(),
-                format!(
-                    "must be one of {{Small, Medium, Large, Full}} (got {})",
-                    size.to_i32()
+                format_message!(
+                    intl,
+                    default_message: "Choose a widget size",
+                    description: "Error on a widget's size left unset",
                 ),
             );
             None
         }
+        EnumValue::Unknown(value) => {
+            tracing::warn!("Unknown widget size {value} at {path}");
+            violations.push(
+                path.to_owned(),
+                format_message!(
+                    intl,
+                    default_message: "This device does not support that size.",
+                    description: "Error on a widget's size when the request names a size this firmware does not know",
+                ),
+            );
+            None
+        }
+        EnumValue::Known(size) => scene::WidgetPlacement::try_from(size).ok(),
     }
 }
 
@@ -288,25 +400,24 @@ struct ParsedAddFullscreenShape {
 }
 
 fn parse_add_fullscreen_shape(
+    intl: &Intl,
     req: web::AddFullscreenSceneRequest,
 ) -> Result<ParsedAddFullscreenShape, ConnectError> {
     let mut shape = FieldViolations::new();
     let config = req.config.into_option().or_else(|| {
-        shape.push("config", "config is required");
+        shape.push("config", missing_value(intl));
         None
     });
     let widget_uid = config
         .as_ref()
-        .and_then(|c| parse_uuid_field(&c.widget_uid, "config.widget_uid", &mut shape));
+        .and_then(|c| parse_uuid_field(intl, &c.widget_uid, "config.widget_uid", &mut shape));
     if !shape.is_empty() {
-        return Err(bad_request_status(shape));
+        return Err(bad_request_status(intl, shape));
     }
 
     match (config, widget_uid) {
         (Some(config), Some(widget_uid)) => Ok(ParsedAddFullscreenShape { config, widget_uid }),
-        _ => Err(ConnectError::internal(
-            "BUG: shape parsing succeeded with missing required values",
-        )),
+        _ => Err(unchecked_field(intl)),
     }
 }
 
@@ -319,24 +430,25 @@ struct ParsedAddWidgetShape {
 }
 
 fn parse_add_widget_shape(
+    intl: &Intl,
     req: web::AddWidgetRequest,
 ) -> Result<ParsedAddWidgetShape, ConnectError> {
     let mut shape = FieldViolations::new();
 
-    let scene_id = parse_uuid_field(&req.scene_id, "scene_id", &mut shape);
-    let row = parse_grid_axis(req.position.row, "position.row", &mut shape);
-    let col = parse_grid_axis(req.position.col, "position.col", &mut shape);
-    let placement = parse_widget_size(req.size, "size", &mut shape);
+    let scene_id = parse_uuid_field(intl, &req.scene_id, "scene_id", &mut shape);
+    let row = parse_grid_axis(intl, req.position.row, "position.row", &mut shape);
+    let col = parse_grid_axis(intl, req.position.col, "position.col", &mut shape);
+    let placement = parse_widget_size(intl, req.size, "size", &mut shape);
     let config_req = req.config.into_option().or_else(|| {
-        shape.push("config", "config is required");
+        shape.push("config", missing_value(intl));
         None
     });
     let widget_uid = config_req
         .as_ref()
-        .and_then(|c| parse_uuid_field(&c.widget_uid, "config.widget_uid", &mut shape));
+        .and_then(|c| parse_uuid_field(intl, &c.widget_uid, "config.widget_uid", &mut shape));
 
     if !shape.is_empty() {
-        return Err(bad_request_status(shape));
+        return Err(bad_request_status(intl, shape));
     }
 
     match (scene_id, row, col, placement, config_req, widget_uid) {
@@ -354,9 +466,7 @@ fn parse_add_widget_shape(
             config_req,
             widget_uid,
         }),
-        _ => Err(ConnectError::internal(
-            "BUG: shape parsing succeeded with missing required values",
-        )),
+        _ => Err(unchecked_field(intl)),
     }
 }
 
@@ -387,19 +497,20 @@ struct PendingWidgetUpdateCompletion {
 }
 
 fn parse_update_widget_shape(
+    intl: &Intl,
     req: web::UpdateWidgetRequest,
 ) -> Result<ParsedUpdateWidgetShape, ConnectError> {
     let mut shape = FieldViolations::new();
 
-    let scene_id = parse_uuid_field(&req.scene_id, "scene_id", &mut shape);
-    let widget_id = parse_uuid_field(&req.id, "id", &mut shape);
+    let scene_id = parse_uuid_field(intl, &req.scene_id, "scene_id", &mut shape);
+    let widget_id = parse_uuid_field(intl, &req.id, "id", &mut shape);
     let proto_position = req.position.into_option().unwrap_or_default();
-    let row = parse_grid_axis(proto_position.row, "position.row", &mut shape);
-    let col = parse_grid_axis(proto_position.col, "position.col", &mut shape);
-    let placement = parse_widget_size(req.size, "size", &mut shape);
+    let row = parse_grid_axis(intl, proto_position.row, "position.row", &mut shape);
+    let col = parse_grid_axis(intl, proto_position.col, "position.col", &mut shape);
+    let placement = parse_widget_size(intl, req.size, "size", &mut shape);
 
     if !shape.is_empty() {
-        return Err(bad_request_status(shape));
+        return Err(bad_request_status(intl, shape));
     }
 
     match (scene_id, widget_id, row, col, placement) {
@@ -414,9 +525,7 @@ fn parse_update_widget_shape(
                 credential_bindings: req.credential_bindings.into_option(),
             })
         }
-        _ => Err(ConnectError::internal(
-            "BUG: shape parsing succeeded with missing required values",
-        )),
+        _ => Err(unchecked_field(intl)),
     }
 }
 
@@ -488,9 +597,13 @@ impl SceneManagementService {
 
     /// Hold a package reload off this edit, or refuse the edit once a gate
     /// has held the scenes past `SCENE_EDIT_WAIT`.
-    async fn begin_scene_edit(&self) -> Result<RwLockReadGuard<'_, ()>, ConnectError> {
+    async fn begin_scene_edit(&self, intl: &Intl) -> Result<RwLockReadGuard<'_, ()>, ConnectError> {
         self.coordinator.begin_scene_edit().await.map_err(|_| {
-            ConnectError::unavailable("widget packages are being set up or reloaded, try again")
+            ConnectError::unavailable(format_message!(
+                intl,
+                default_message: "The widgets are being set up. Try again in a moment.",
+                description: "Error when changing widgets or scenes while widget packages reload",
+            ))
         })
     }
 
@@ -513,11 +626,15 @@ impl SceneManagementService {
     }
 
     /// Save config, returning a gRPC-friendly error on failure.
-    async fn save_config(config: &mut ConfigHandle) -> Result<(), ConnectError> {
-        config
-            .save()
-            .await
-            .map_err(|e| ConnectError::internal(format!("failed to save config: {e}")))
+    async fn save_config(intl: &Intl, config: &mut ConfigHandle) -> Result<(), ConnectError> {
+        config.save().await.map_err(|e| {
+            tracing::warn!("Failed to save the scenes: {e}");
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the widgets!",
+                description: "Error when the device could not store a change to its widgets and scenes",
+            ))
+        })
     }
 
     fn running_widget_count(
@@ -532,6 +649,7 @@ impl SceneManagementService {
     }
 
     fn require_widget_capacity(
+        intl: &Intl,
         config: &ConfigHandle,
         preview_scene_id: Option<scene::SceneId>,
         additional_widgets: usize,
@@ -541,8 +659,17 @@ impl SceneManagementService {
             return Ok(());
         }
 
-        Err(ConnectError::resource_exhausted(format!(
-            "running widget limit exceeded: {running_widget_count} running, operation would activate {additional_widgets}, maximum {MAX_RUNNING_WIDGETS}",
+        tracing::warn!(
+            "Running widget limit: {running_widget_count} running, {additional_widgets} more asked for, maximum {MAX_RUNNING_WIDGETS}",
+        );
+        Err(ConnectError::resource_exhausted(format_message!(
+            intl,
+            default_message: "Too many widgets are running. The limit is {max}.",
+            description: "Error when enabling more widgets than the device runs at once; max is a whole number",
+            values: {
+                max: u64::try_from(MAX_RUNNING_WIDGETS)
+                    .expect("BUG: running widget limit fits in u64"),
+            },
         )))
     }
 
@@ -568,25 +695,20 @@ impl SceneManagementService {
         let existing = scene
             .widgets
             .get(&widget_id)
-            .ok_or_else(|| ConnectError::not_found(format!("widget not found: {widget_id}")))?;
+            .ok_or_else(|| widget_not_found(intl, widget_id))?;
         let info = self
             .widget_registry
             .get(&existing.widget_type_id)
-            .ok_or_else(|| ConnectError::failed_precondition("widget manifest not installed"))?;
+            .ok_or_else(|| widget_not_installed(intl))?;
         let platform = PlatformDescriptor::from(&self.capabilities);
         let Some(descriptor) = platform.descriptor_for_placement(&parsed.placement) else {
-            return Err(ConnectError::failed_precondition(
-                "size is not supported on this platform",
-            ));
+            return Err(size_not_supported(intl));
         };
         if !self
             .widget_registry
             .supports_viewport(&existing.widget_type_id, &descriptor)
         {
-            return Err(ConnectError::failed_precondition(format!(
-                "widget {} does not support size viewport",
-                existing.widget_type_id,
-            )));
+            return Err(widget_lacks_size(intl, existing.widget_type_id));
         }
 
         let typed_params = validate_widget_params(
@@ -595,12 +717,12 @@ impl SceneManagementService {
             &parsed.params.unwrap_or_default(),
             ValidateMode::Update,
         )
-        .map_err(bad_request_status)?;
+        .map_err(|violations| bad_request_status(intl, violations))?;
         let typed_bindings = match parsed.credential_bindings {
             None => existing.credential_bindings.clone(),
             Some(requested) => {
-                validate_credential_bindings(&info.manifest, &requested.bindings, accounts)
-                    .map_err(bad_request_status)?
+                validate_credential_bindings(intl, &info.manifest, &requested.bindings, accounts)
+                    .map_err(|violations| bad_request_status(intl, violations))?
             }
         };
         let params_changed = existing.params != typed_params;
@@ -619,7 +741,7 @@ impl SceneManagementService {
             credential_bindings: typed_bindings,
         };
         stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
-        validate_widget_placement(scene, &widget, Some(widget_id))?;
+        validate_widget_placement(intl, scene, &widget, Some(widget_id))?;
 
         Ok(ValidatedWidgetUpdate {
             placement_changed: existing.placement != widget.placement,
@@ -633,24 +755,25 @@ impl SceneManagementService {
         intl: Arc<Intl>,
         parsed: ParsedUpdateWidgetShape,
     ) -> ServiceResult<Empty> {
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let scene_id_key = scene::SceneId::from(parsed.scene_id);
         let widget_id_key = scene::WidgetId::from(parsed.widget_id);
         let completion = {
             let preview = self.preview_scene_id.lock().await;
             let mut config = self.config_handle.write().await;
             let accounts = self.secret_store.read().await;
-            let scene = config.edit_scene(&scene_id_key).ok_or_else(|| {
-                ConnectError::not_found(format!("scene not found: {}", parsed.scene_id))
-            })?;
+            let scene = config
+                .edit_scene(&scene_id_key)
+                .ok_or_else(|| scene_not_found(&intl, scene_id_key))?;
 
             reject_update_widget_in_fullscreen(
+                &intl,
                 &scene.get().kind,
                 &parsed.proto_position,
                 &parsed.placement,
             )?;
             if scene.get().kind == scene::SceneKind::Combined {
-                reject_combined_when_no_slot_grid(&self.capabilities)?;
+                reject_combined_when_no_slot_grid(&intl, &self.capabilities)?;
             }
 
             let ValidatedWidgetUpdate {
@@ -666,7 +789,7 @@ impl SceneManagementService {
             )?;
             let showing = scene.get().enabled || *preview == Some(scene_id_key);
             scene.into_mut().widgets.insert(widget.id, widget.clone());
-            Self::save_config(&mut config).await?;
+            Self::save_config(&intl, &mut config).await?;
 
             let replacement = if showing && placement_changed {
                 Some(
@@ -695,7 +818,7 @@ impl SceneManagementService {
                 ) {
                     Ok(()) => true,
                     Err(error) => {
-                        response_error = Some(live_params_status(&error));
+                        response_error = Some(live_params_status(&intl, &error));
                         false
                     }
                 }
@@ -1077,14 +1200,22 @@ fn widget_info_to_proto(
 /// another widget in the same scene. `exclude_id` is set to the widget's own
 /// id when validating an update so it doesn't report overlapping with itself.
 fn validate_widget_placement(
+    intl: &Intl,
     scene: &scene::Scene,
     widget: &scene::Widget,
     exclude_id: Option<scene::WidgetId>,
 ) -> Result<(), ConnectError> {
     if !widget.in_bounds() {
-        return Err(ConnectError::invalid_argument(format!(
-            "widget at ({},{}) size {:?} is out of grid bounds",
-            widget.position.row, widget.position.col, widget.placement,
+        tracing::warn!(
+            "Widget at ({},{}) size {:?} is out of grid bounds",
+            widget.position.row,
+            widget.position.col,
+            widget.placement,
+        );
+        return Err(ConnectError::invalid_argument(format_message!(
+            intl,
+            default_message: "The widget does not fit in that slot.",
+            description: "Error when placing a widget in a combined scene past the screen's edge",
         )));
     }
 
@@ -1093,24 +1224,32 @@ fn validate_widget_placement(
         .iter()
         .any(|(id, existing)| exclude_id != Some(*id) && existing.overlaps(widget));
     if overlaps {
-        return Err(ConnectError::invalid_argument(
-            "widget overlaps with an existing widget",
-        ));
+        return Err(ConnectError::invalid_argument(format_message!(
+            intl,
+            default_message: "Another widget is already in that slot.",
+            description: "Error when placing a widget in a combined scene over another one",
+        )));
     }
 
     Ok(())
 }
 
-fn reject_remove_widget_in_fullscreen(kind: &scene::SceneKind) -> Result<(), ConnectError> {
+fn reject_remove_widget_in_fullscreen(
+    intl: &Intl,
+    kind: &scene::SceneKind,
+) -> Result<(), ConnectError> {
     if *kind == scene::SceneKind::Fullscreen {
-        return Err(ConnectError::failed_precondition(
-            "cannot remove widget in fullscreen scene",
-        ));
+        return Err(ConnectError::failed_precondition(format_message!(
+            intl,
+            default_message: "A full screen widget cannot be removed from its scene.",
+            description: "Error when removing the only widget of a full screen scene",
+        )));
     }
     Ok(())
 }
 
 fn reject_update_widget_in_fullscreen(
+    intl: &Intl,
     kind: &scene::SceneKind,
     new_position: &web::WidgetPosition,
     new_placement: &scene::WidgetPlacement,
@@ -1119,14 +1258,18 @@ fn reject_update_widget_in_fullscreen(
         return Ok(());
     }
     if new_position.row != 0 || new_position.col != 0 {
-        return Err(ConnectError::failed_precondition(
-            "cannot move widget in fullscreen scene",
-        ));
+        return Err(ConnectError::failed_precondition(format_message!(
+            intl,
+            default_message: "A full screen widget cannot be moved.",
+            description: "Error when changing the position of a full screen scene's widget",
+        )));
     }
     if *new_placement != scene::WidgetPlacement::Fullscreen {
-        return Err(ConnectError::failed_precondition(
-            "cannot resize widget in fullscreen scene",
-        ));
+        return Err(ConnectError::failed_precondition(format_message!(
+            intl,
+            default_message: "A full screen widget cannot be resized.",
+            description: "Error when changing the size of a full screen scene's widget",
+        )));
     }
     Ok(())
 }
@@ -1235,6 +1378,7 @@ fn decode_wire_value(
 /// a removal slipping between check and insert would persist a binding
 /// with no account behind it, the state the delete cascade exists to prevent.
 pub(crate) fn validate_credential_bindings<S: std::hash::BuildHasher>(
+    intl: &Intl,
     manifest: &bmc_widget_manifest::Manifest,
     bindings: &HashMap<String, String, S>,
     accounts: &IndexMap<AccountId, Account>,
@@ -1252,9 +1396,23 @@ pub(crate) fn validate_credential_bindings<S: std::hash::BuildHasher>(
             .ok()
             .and_then(|id| accounts.get_key_value(&id))
         {
-            None => violations.push(path, "Account not found"),
+            None => violations.push(
+                path,
+                format_message!(
+                    intl,
+                    default_message: "Account not found!",
+                    description: "Error under a widget's account picker when the chosen account is gone",
+                ),
+            ),
             Some((_, account)) if account.type_id != slot.type_id => {
-                violations.push(path, "Account is of a different credential type");
+                violations.push(
+                    path,
+                    format_message!(
+                        intl,
+                        default_message: "This account is of a different type!",
+                        description: "Error under a widget's account picker when the account does not fit the widget",
+                    ),
+                );
             }
             Some((id, _)) => {
                 typed.insert(key.clone(), id.clone());
@@ -1266,7 +1424,11 @@ pub(crate) fn validate_credential_bindings<S: std::hash::BuildHasher>(
         if !manifest.credentials.contains_key(key.as_str()) {
             violations.push(
                 format!("credential_bindings[{key:?}]"),
-                "Unknown credential slot",
+                format_message!(
+                    intl,
+                    default_message: "This widget does not use this account!",
+                    description: "Error for an account given to a widget that has no use for it",
+                ),
             );
         }
     }
@@ -1373,19 +1535,28 @@ impl Drop for PreviewGuard {
 }
 
 fn parse_scene_cycling_transition(
+    intl: &Intl,
     value: EnumValue<web::SceneCyclingTransition>,
 ) -> Result<SceneCyclingTransition, ConnectError> {
-    match value.as_known() {
-        Some(web::SceneCyclingTransition::Slide) => Ok(SceneCyclingTransition::Slide),
-        Some(web::SceneCyclingTransition::Fade) => Ok(SceneCyclingTransition::Fade),
-        Some(web::SceneCyclingTransition::None) => Ok(SceneCyclingTransition::None),
-        Some(web::SceneCyclingTransition::Unspecified) => Err(ConnectError::invalid_argument(
-            "scene_cycling.transition must be Slide, Fade, or None (got Unspecified)",
-        )),
-        None => Err(ConnectError::invalid_argument(format!(
-            "scene_cycling.transition: unknown value {}",
-            value.to_i32()
-        ))),
+    match value {
+        EnumValue::Known(web::SceneCyclingTransition::Slide) => Ok(SceneCyclingTransition::Slide),
+        EnumValue::Known(web::SceneCyclingTransition::Fade) => Ok(SceneCyclingTransition::Fade),
+        EnumValue::Known(web::SceneCyclingTransition::None) => Ok(SceneCyclingTransition::None),
+        EnumValue::Known(web::SceneCyclingTransition::Unspecified) => {
+            Err(ConnectError::invalid_argument(format_message!(
+                intl,
+                default_message: "Choose a transition effect",
+                description: "Error when saving widget cycling with no transition between widgets",
+            )))
+        }
+        EnumValue::Unknown(value) => {
+            tracing::warn!("Unknown scene cycling transition {value}");
+            Err(ConnectError::invalid_argument(format_message!(
+                intl,
+                default_message: "This device does not support that transition effect.",
+                description: "Error when saving widget cycling with a transition this firmware does not know",
+            )))
+        }
     }
 }
 
@@ -1407,18 +1578,17 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn get_widget_manifest(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, StringValue>,
     ) -> ServiceResult<web::WidgetManifest> {
-        let uid_str = request.value;
-        let uid = Uuid::parse_str(uid_str).map_err(|_| {
-            ConnectError::invalid_argument(format!("invalid widget UID: {uid_str}"))
-        })?;
+        let intl = intl(&ctx);
+        let uid =
+            Uuid::parse_str(request.value).map_err(|_| invalid_widget_id(&intl, request.value))?;
 
         let info = self
             .widget_registry
             .get(&uid)
-            .ok_or_else(|| ConnectError::not_found(format!("widget not found: {uid}")))?;
+            .ok_or_else(|| widget_not_found(&intl, uid))?;
 
         let platform = PlatformDescriptor::from(&self.capabilities);
         Response::ok(widget_info_to_proto(&info, &platform))
@@ -1452,12 +1622,12 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn get_scene(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, StringValue>,
     ) -> ServiceResult<web::SceneResponse> {
-        let id_str = request.value;
-        let id = Uuid::parse_str(id_str)
-            .map_err(|_| ConnectError::invalid_argument(format!("invalid scene ID: {id_str}")))?;
+        let intl = intl(&ctx);
+        let id =
+            Uuid::parse_str(request.value).map_err(|_| invalid_scene_id(&intl, request.value))?;
 
         let preview = self.preview_scene_id.lock().await;
         let config = self.config_handle.read().await;
@@ -1466,7 +1636,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let scene = config
             .scenes()
             .get(&scene::SceneId::from(id))
-            .ok_or_else(|| ConnectError::not_found(format!("scene not found: {id}")))?;
+            .ok_or_else(|| scene_not_found(&intl, id))?;
         let store = self.secret_store.read().await;
         let (running_widget_count, max_running_widget_count) =
             Self::running_widget_capacity(&config, preview_scene_id);
@@ -1482,14 +1652,15 @@ impl GrpcSceneManagementService for SceneManagementService {
         ctx: RequestContext,
         request: ServiceRequest<'_, web::AddFullscreenSceneRequest>,
     ) -> ServiceResult<StringValue> {
+        let intl = intl(&ctx);
         let ParsedAddFullscreenShape { config, widget_uid } =
-            parse_add_fullscreen_shape(request.to_owned_message())?;
+            parse_add_fullscreen_shape(&intl, request.to_owned_message())?;
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let info = self
             .widget_registry
             .get(&widget_uid)
-            .ok_or_else(|| ConnectError::failed_precondition("widget manifest not installed"))?;
+            .ok_or_else(|| widget_not_installed(&intl))?;
         let manifest = &info.manifest;
 
         let platform = PlatformDescriptor::from(&self.capabilities);
@@ -1497,15 +1668,12 @@ impl GrpcSceneManagementService for SceneManagementService {
             .widget_registry
             .supports_viewport(&widget_uid, &platform.fullscreen)
         {
-            return Err(ConnectError::failed_precondition(format!(
-                "widget {widget_uid} does not support the active fullscreen viewport",
-            )));
+            return Err(widget_lacks_size(&intl, widget_uid));
         }
 
         let params = config.params.into_option().unwrap_or_default();
-        let typed_params =
-            validate_widget_params(&intl(&ctx), manifest, &params, ValidateMode::Add)
-                .map_err(bad_request_status)?;
+        let typed_params = validate_widget_params(&intl, manifest, &params, ValidateMode::Add)
+            .map_err(|violations| bad_request_status(&intl, violations))?;
         let requested_bindings = config
             .credential_bindings
             .into_option()
@@ -1525,16 +1693,20 @@ impl GrpcSceneManagementService for SceneManagementService {
         {
             let preview = self.preview_scene_id.lock().await;
             let mut config = self.config_handle.write().await;
-            Self::require_widget_capacity(&config, *preview, scene.widgets.len())?;
+            Self::require_widget_capacity(&intl, &config, *preview, scene.widgets.len())?;
             let accounts = self.secret_store.read().await;
-            let typed_bindings =
-                validate_credential_bindings(manifest, &requested_bindings, accounts.accounts())
-                    .map_err(bad_request_status)?;
+            let typed_bindings = validate_credential_bindings(
+                &intl,
+                manifest,
+                &requested_bindings,
+                accounts.accounts(),
+            )
+            .map_err(|violations| bad_request_status(&intl, violations))?;
             for widget in scene.widgets.values_mut() {
                 widget.credential_bindings = typed_bindings.clone();
             }
             config.scenes_mut().insert(scene.id, scene);
-            Self::save_config(&mut config).await?;
+            Self::save_config(&intl, &mut config).await?;
             registrations = self.coordinator.enqueue_configured_scene_registrations(
                 &config,
                 accounts.accounts(),
@@ -1557,12 +1729,13 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn add_combined_scene(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<StringValue> {
-        reject_combined_when_no_slot_grid(&self.capabilities)?;
+        let intl = intl(&ctx);
+        reject_combined_when_no_slot_grid(&intl, &self.capabilities)?;
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let scene = scene::Scene {
             id: scene::SceneId::generate(),
             enabled: true,
@@ -1575,7 +1748,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         {
             let mut config = self.config_handle.write().await;
             config.scenes_mut().insert(scene.id, scene);
-            Self::save_config(&mut config).await?;
+            Self::save_config(&intl, &mut config).await?;
         }
 
         self.refresh_compositor_scenes().await;
@@ -1588,14 +1761,14 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn update_scene(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::UpdateSceneRequest>,
     ) -> ServiceResult<Empty> {
-        let id = Uuid::parse_str(request.id)
-            .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
+        let intl = intl(&ctx);
+        let id = Uuid::parse_str(request.id).map_err(|_| invalid_scene_id(&intl, request.id))?;
 
         let scene_id_key = scene::SceneId::from(id);
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let (stop, start) = {
             let preview = self.preview_scene_id.lock().await;
             let previewing = *preview == Some(scene_id_key);
@@ -1603,7 +1776,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             let stored_scene = config
                 .scenes()
                 .get(&scene_id_key)
-                .ok_or_else(|| ConnectError::not_found(format!("scene not found: {id}")))?;
+                .ok_or_else(|| scene_not_found(&intl, scene_id_key))?;
             if request.enabled && !stored_scene.enabled {
                 let additional_widgets = if previewing {
                     // The disabled scene's widgets are already counted by its preview.
@@ -1611,7 +1784,7 @@ impl GrpcSceneManagementService for SceneManagementService {
                 } else {
                     stored_scene.widgets.len()
                 };
-                Self::require_widget_capacity(&config, *preview, additional_widgets)?;
+                Self::require_widget_capacity(&intl, &config, *preview, additional_widgets)?;
             }
             let scene = config
                 .scenes_mut()
@@ -1622,10 +1795,7 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .cycle_duration_sec
                 .map(|s| Duration::from_secs(u64::from(s)));
             if cycle_duration.is_some_and(|duration| duration < scene::Scene::MIN_CYCLE_DURATION) {
-                return Err(ConnectError::invalid_argument(format!(
-                    "cycle_duration is shorter than the minimum {:?}",
-                    scene::Scene::MIN_CYCLE_DURATION,
-                )));
+                return Err(cycle_duration_too_short(&intl));
             }
 
             let was_enabled = scene.enabled;
@@ -1636,7 +1806,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             let became_enabled = !was_enabled && scene.enabled;
             let scene_to_stop = (was_shown && !is_shown).then(|| scene.clone());
 
-            Self::save_config(&mut config).await?;
+            Self::save_config(&intl, &mut config).await?;
             if let Some(scene) = scene_to_stop {
                 (
                     Some(self.coordinator.enqueue_scene_stop(&scene).await),
@@ -1662,31 +1832,36 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn move_scene(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::MoveSceneRequest>,
     ) -> ServiceResult<Empty> {
-        let id = Uuid::parse_str(request.id)
-            .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
+        let intl = intl(&ctx);
+        let id = Uuid::parse_str(request.id).map_err(|_| invalid_scene_id(&intl, request.id))?;
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let mut config = self.config_handle.write().await;
         let scene_id = scene::SceneId::from(id);
 
         let current_idx = config
             .scenes()
             .get_index_of(&scene_id)
-            .ok_or_else(|| ConnectError::not_found(format!("scene not found: {id}")))?;
+            .ok_or_else(|| scene_not_found(&intl, scene_id))?;
 
         let target_idx = request.index as usize;
         if target_idx >= config.scenes().len() {
-            return Err(ConnectError::invalid_argument(format!(
-                "target index {target_idx} out of bounds (scene count: {})",
+            tracing::warn!(
+                "Scene index {target_idx} is past the end of {} scenes",
                 config.scenes().len()
+            );
+            return Err(ConnectError::invalid_argument(format_message!(
+                intl,
+                default_message: "This position is past the end of the list!",
+                description: "Error when moving a scene to a position its list does not have",
             )));
         }
         config.scenes_mut().move_index(current_idx, target_idx);
 
-        Self::save_config(&mut config).await?;
+        Self::save_config(&intl, &mut config).await?;
         drop(config);
 
         self.refresh_compositor_scenes().await;
@@ -1696,22 +1871,23 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn clone_scene(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, StringValue>,
     ) -> ServiceResult<StringValue> {
-        let id = Uuid::parse_str(request.value)
-            .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
+        let intl = intl(&ctx);
+        let id =
+            Uuid::parse_str(request.value).map_err(|_| invalid_scene_id(&intl, request.value))?;
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let preview = self.preview_scene_id.lock().await;
         let mut config = self.config_handle.write().await;
         let (source_idx, mut cloned) = config
             .scenes()
             .get_full(&scene::SceneId::from(id))
             .map(|(idx, _, scene)| (idx, scene.clone()))
-            .ok_or_else(|| ConnectError::not_found(format!("scene not found: {id}")))?;
+            .ok_or_else(|| scene_not_found(&intl, id))?;
         if cloned.enabled {
-            Self::require_widget_capacity(&config, *preview, cloned.widgets.len())?;
+            Self::require_widget_capacity(&intl, &config, *preview, cloned.widgets.len())?;
         }
 
         cloned.id = scene::SceneId::generate();
@@ -1730,7 +1906,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let last_idx = scenes.len() - 1;
         scenes.move_index(last_idx, source_idx + 1);
 
-        Self::save_config(&mut config).await?;
+        Self::save_config(&intl, &mut config).await?;
         let registrations = {
             let accounts = self.secret_store.read().await;
             self.coordinator.enqueue_configured_scene_registrations(
@@ -1757,20 +1933,23 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn remove_scene(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, StringValue>,
     ) -> ServiceResult<Empty> {
-        let id = Uuid::parse_str(request.value)
-            .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
+        let intl = intl(&ctx);
+        let id =
+            Uuid::parse_str(request.value).map_err(|_| invalid_scene_id(&intl, request.value))?;
         let scene_id_key = scene::SceneId::from(id);
         self.wait_for_preview_release(scene_id_key).await;
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let preview = self.preview_scene_id.lock().await;
         if preview.as_ref() == Some(&scene_id_key) {
-            return Err(ConnectError::failed_precondition(
-                "scene is currently being previewed",
-            ));
+            return Err(ConnectError::failed_precondition(format_message!(
+                intl,
+                default_message: "This scene is being previewed, so it cannot be removed.",
+                description: "Error when removing a scene whose settings are open somewhere",
+            )));
         }
 
         let stop = {
@@ -1778,8 +1957,8 @@ impl GrpcSceneManagementService for SceneManagementService {
             let removed_scene = config
                 .scenes_mut()
                 .shift_remove(&scene_id_key)
-                .ok_or_else(|| ConnectError::not_found(format!("scene not found: {id}")))?;
-            Self::save_config(&mut config).await?;
+                .ok_or_else(|| scene_not_found(&intl, scene_id_key))?;
+            Self::save_config(&intl, &mut config).await?;
             self.coordinator.enqueue_scene_delete(&removed_scene).await
         };
         drop(preview);
@@ -1792,30 +1971,33 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn preview_scene(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, StringValue>,
     ) -> ServiceResult<ServiceStream<Empty>> {
-        let id = Uuid::parse_str(request.value)
-            .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
+        let intl = intl(&ctx);
+        let id =
+            Uuid::parse_str(request.value).map_err(|_| invalid_scene_id(&intl, request.value))?;
         let scene_id = scene::SceneId::from(id);
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let scene_was_disabled = {
             let mut preview = self.preview_scene_id.lock().await;
             if preview.is_some() {
-                return Err(ConnectError::failed_precondition(
-                    "scene preview already active",
-                ));
+                return Err(ConnectError::failed_precondition(format_message!(
+                    intl,
+                    default_message: "Another scene is already being previewed.",
+                    description: "Error when opening a scene's settings while another scene's are open",
+                )));
             }
 
             let config = self.config_handle.read().await;
             let scene = config
                 .scenes()
                 .get(&scene_id)
-                .ok_or_else(|| ConnectError::not_found(format!("scene not found: {scene_id}")))?;
+                .ok_or_else(|| scene_not_found(&intl, scene_id))?;
 
             if !scene.enabled {
-                Self::require_widget_capacity(&config, None, scene.widgets.len())?;
+                Self::require_widget_capacity(&intl, &config, None, scene.widgets.len())?;
             }
 
             *preview = Some(scene_id);
@@ -1862,33 +2044,34 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn remove_widget(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::RemoveWidgetRequest>,
     ) -> ServiceResult<Empty> {
+        let intl = intl(&ctx);
         let scene_id = Uuid::parse_str(request.scene_id)
-            .map_err(|_| ConnectError::invalid_argument("invalid scene ID"))?;
-        let widget_id = Uuid::parse_str(request.id)
-            .map_err(|_| ConnectError::invalid_argument("invalid widget ID"))?;
+            .map_err(|_| invalid_scene_id(&intl, request.scene_id))?;
+        let widget_id =
+            Uuid::parse_str(request.id).map_err(|_| invalid_widget_id(&intl, request.id))?;
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let stop = {
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes_mut()
                 .get_mut(&scene::SceneId::from(scene_id))
-                .ok_or_else(|| ConnectError::not_found(format!("scene not found: {scene_id}")))?;
+                .ok_or_else(|| scene_not_found(&intl, scene_id))?;
 
-            reject_remove_widget_in_fullscreen(&scene.kind)?;
+            reject_remove_widget_in_fullscreen(&intl, &scene.kind)?;
             if scene.kind == scene::SceneKind::Combined {
-                reject_combined_when_no_slot_grid(&self.capabilities)?;
+                reject_combined_when_no_slot_grid(&intl, &self.capabilities)?;
             }
 
             scene
                 .widgets
                 .shift_remove(&scene::WidgetId::from(widget_id))
-                .ok_or_else(|| ConnectError::not_found(format!("widget not found: {widget_id}")))?;
+                .ok_or_else(|| widget_not_found(&intl, widget_id))?;
 
-            Self::save_config(&mut config).await?;
+            Self::save_config(&intl, &mut config).await?;
             self.coordinator
                 .enqueue_widget_delete(WidgetInstanceKey::new(widget_id))
                 .await
@@ -1926,33 +2109,34 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn set_scene_cycling(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::SetSceneCyclingRequest>,
     ) -> ServiceResult<Empty> {
-        let cycling = request
-            .scene_cycling
-            .as_option()
-            .ok_or_else(|| ConnectError::invalid_argument("scene_cycling is required"))?;
+        let intl = intl(&ctx);
+        let cycling = request.scene_cycling.as_option().ok_or_else(|| {
+            ConnectError::invalid_argument(format_message!(
+                intl,
+                default_message: "The widget cycling settings are missing!",
+                description: "Error when saving widget cycling with no settings in the request",
+            ))
+        })?;
 
         let default_duration =
             Duration::from_secs(u64::from(cycling.automatic_cycling_default_duration_sec));
         if default_duration < scene::Scene::MIN_CYCLE_DURATION {
-            return Err(ConnectError::invalid_argument(format!(
-                "automatic_cycling_default_duration is shorter than the minimum {:?}",
-                scene::Scene::MIN_CYCLE_DURATION,
-            )));
+            return Err(cycle_duration_too_short(&intl));
         }
 
         let config_to_apply = SceneCycling {
             automatic_cycling_enabled: cycling.automatic_cycling_enabled,
             automatic_cycling_default_duration: default_duration,
-            transition: parse_scene_cycling_transition(cycling.transition)?,
+            transition: parse_scene_cycling_transition(&intl, cycling.transition)?,
         };
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let mut config = self.config_handle.write().await;
         config.set_scene_cycling(config_to_apply.clone());
-        Self::save_config(&mut config).await?;
+        Self::save_config(&intl, &mut config).await?;
         drop(config);
 
         if let Err(err) = self
@@ -1971,40 +2155,36 @@ impl GrpcSceneManagementService for SceneManagementService {
         ctx: RequestContext,
         request: ServiceRequest<'_, web::AddWidgetRequest>,
     ) -> ServiceResult<StringValue> {
+        let intl = intl(&ctx);
         let ParsedAddWidgetShape {
             scene_id,
             position,
             placement,
             config_req,
             widget_uid,
-        } = parse_add_widget_shape(request.to_owned_message())?;
+        } = parse_add_widget_shape(&intl, request.to_owned_message())?;
 
-        let _edit = self.begin_scene_edit().await?;
+        let _edit = self.begin_scene_edit(&intl).await?;
         let info = self
             .widget_registry
             .get(&widget_uid)
-            .ok_or_else(|| ConnectError::failed_precondition("widget manifest not installed"))?;
+            .ok_or_else(|| widget_not_installed(&intl))?;
         let manifest = &info.manifest;
 
         let platform = PlatformDescriptor::from(&self.capabilities);
         let Some(descriptor) = platform.descriptor_for_placement(&placement) else {
-            return Err(ConnectError::failed_precondition(
-                "size is not supported on this platform",
-            ));
+            return Err(size_not_supported(&intl));
         };
         if !self
             .widget_registry
             .supports_viewport(&widget_uid, &descriptor)
         {
-            return Err(ConnectError::failed_precondition(format!(
-                "widget {widget_uid} does not support size viewport",
-            )));
+            return Err(widget_lacks_size(&intl, widget_uid));
         }
 
         let params = config_req.params.into_option().unwrap_or_default();
-        let typed_params =
-            validate_widget_params(&intl(&ctx), manifest, &params, ValidateMode::Add)
-                .map_err(bad_request_status)?;
+        let typed_params = validate_widget_params(&intl, manifest, &params, ValidateMode::Add)
+            .map_err(|violations| bad_request_status(&intl, violations))?;
 
         let mut widget = scene::Widget::new(widget_uid, typed_params, position, placement);
         stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
@@ -2022,26 +2202,30 @@ impl GrpcSceneManagementService for SceneManagementService {
             let preview = self.preview_scene_id.lock().await;
             let mut config = self.config_handle.write().await;
             let accounts = self.secret_store.read().await;
-            widget.credential_bindings =
-                validate_credential_bindings(manifest, &requested_bindings, accounts.accounts())
-                    .map_err(bad_request_status)?;
-            let capacity_check = Self::require_widget_capacity(&config, *preview, 1);
+            widget.credential_bindings = validate_credential_bindings(
+                &intl,
+                manifest,
+                &requested_bindings,
+                accounts.accounts(),
+            )
+            .map_err(|violations| bad_request_status(&intl, violations))?;
+            let capacity_check = Self::require_widget_capacity(&intl, &config, *preview, 1);
             let scene = config
                 .edit_scene(&scene_id_key)
-                .ok_or_else(|| ConnectError::not_found(format!("scene not found: {scene_id}")))?;
+                .ok_or_else(|| scene_not_found(&intl, scene_id_key))?;
 
             if scene.get().kind == scene::SceneKind::Combined {
-                reject_combined_when_no_slot_grid(&self.capabilities)?;
+                reject_combined_when_no_slot_grid(&intl, &self.capabilities)?;
             }
 
-            validate_widget_placement(scene.get(), &widget, None)?;
+            validate_widget_placement(&intl, scene.get(), &widget, None)?;
 
             if scene.get().enabled || *preview == Some(scene_id_key) {
                 capacity_check?;
             }
 
             scene.into_mut().widgets.insert(widget.id, widget.clone());
-            Self::save_config(&mut config).await?;
+            Self::save_config(&intl, &mut config).await?;
 
             self.coordinator.enqueue_configured_widget_registration(
                 &config,
@@ -2069,12 +2253,14 @@ impl GrpcSceneManagementService for SceneManagementService {
         ctx: RequestContext,
         request: ServiceRequest<'_, web::UpdateWidgetRequest>,
     ) -> ServiceResult<Empty> {
-        let parsed = parse_update_widget_shape(request.to_owned_message())?;
-        tokio::spawn(self.clone().update_widget_transaction(intl(&ctx), parsed))
-            .await
-            .map_err(|error| {
-                ConnectError::internal(format!("widget update task failed: {error}"))
-            })?
+        let intl = intl(&ctx);
+        let parsed = parse_update_widget_shape(&intl, request.to_owned_message())?;
+        tokio::spawn(
+            self.clone()
+                .update_widget_transaction(Arc::clone(&intl), parsed),
+        )
+        .await
+        .map_err(|error| internal_error(&intl, &format!("widget update task failed: {error}")))?
     }
 }
 
@@ -2109,6 +2295,52 @@ mod tests {
         decode_wire_value(value).map_err(|unreadable| {
             violation_message(&english(), &ViolationKind::Unreadable(unreadable))
         })
+    }
+
+    fn parse_uuid_field(s: &str, path: &str, violations: &mut FieldViolations) -> Option<Uuid> {
+        super::parse_uuid_field(&english(), s, path, violations)
+    }
+
+    fn parse_grid_axis(value: u32, path: &str, violations: &mut FieldViolations) -> Option<u8> {
+        super::parse_grid_axis(&english(), value, path, violations)
+    }
+
+    fn parse_widget_size(
+        size: EnumValue<web::WidgetSize>,
+        path: &str,
+        violations: &mut FieldViolations,
+    ) -> Option<scene::WidgetPlacement> {
+        super::parse_widget_size(&english(), size, path, violations)
+    }
+
+    fn parse_scene_cycling_transition(
+        value: EnumValue<web::SceneCyclingTransition>,
+    ) -> Result<SceneCyclingTransition, ConnectError> {
+        super::parse_scene_cycling_transition(&english(), value)
+    }
+
+    fn reject_combined_when_no_slot_grid(caps: &HardwareCapabilities) -> Result<(), ConnectError> {
+        super::reject_combined_when_no_slot_grid(&english(), caps)
+    }
+
+    fn reject_remove_widget_in_fullscreen(kind: &scene::SceneKind) -> Result<(), ConnectError> {
+        super::reject_remove_widget_in_fullscreen(&english(), kind)
+    }
+
+    fn reject_update_widget_in_fullscreen(
+        kind: &scene::SceneKind,
+        new_position: &web::WidgetPosition,
+        new_placement: &scene::WidgetPlacement,
+    ) -> Result<(), ConnectError> {
+        super::reject_update_widget_in_fullscreen(&english(), kind, new_position, new_placement)
+    }
+
+    fn validate_credential_bindings<S: std::hash::BuildHasher>(
+        manifest: &bmc_widget_manifest::Manifest,
+        bindings: &HashMap<String, String, S>,
+        accounts: &IndexMap<AccountId, Account>,
+    ) -> Result<BTreeMap<CredentialKey, AccountId>, FieldViolations> {
+        super::validate_credential_bindings(&english(), manifest, bindings, accounts)
     }
 
     mod params_version;
@@ -3197,7 +3429,7 @@ mod tests {
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].field, r#"credential_bindings["pool"]"#);
-        assert_eq!(violations[0].description, "Account not found");
+        assert_eq!(violations[0].description, "Account not found!");
     }
 
     #[test]
@@ -3211,7 +3443,7 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert_eq!(
             violations[0].description,
-            "Account is of a different credential type"
+            "This account is of a different type!"
         );
     }
 
@@ -3226,7 +3458,10 @@ mod tests {
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].field, r#"credential_bindings["mystery"]"#);
-        assert_eq!(violations[0].description, "Unknown credential slot");
+        assert_eq!(
+            violations[0].description,
+            "This widget does not use this account!"
+        );
     }
 
     #[test]
@@ -4129,6 +4364,11 @@ mod tests {
         let err = parse_scene_cycling_transition(EnumValue::Unknown(9999))
             .expect_err("BUG: must reject unknown transition int");
         assert_eq!(err.code, ErrorCode::InvalidArgument);
+        assert_eq!(
+            err.message.as_deref(),
+            Some("This device does not support that transition effect."),
+            "an unknown transition is not read as an unset one"
+        );
     }
 
     #[test]
@@ -4434,35 +4674,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_widget_size_unspecified_message_names_variants() {
+    fn parse_widget_size_unspecified_asks_for_a_size() {
         let mut v = FieldViolations::new();
         let result = parse_widget_size(web::WidgetSize::Unspecified.into(), "size", &mut v);
         assert!(result.is_none());
         let violations: Vec<FieldViolation> = v.into();
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].field, "size");
-        let msg = &violations[0].description;
-        assert!(
-            msg.contains("Small")
-                && msg.contains("Medium")
-                && msg.contains("Large")
-                && msg.contains("Full"),
-            "message should name the four valid variants, got: {msg}",
-        );
+        assert_eq!(violations[0].description, "Choose a widget size");
     }
 
     #[test]
-    fn parse_widget_size_unknown_int_message_includes_value() {
+    fn parse_widget_size_unknown_int_is_not_read_as_unset() {
         let mut v = FieldViolations::new();
         let result = parse_widget_size(EnumValue::Unknown(9999), "size", &mut v);
         assert!(result.is_none());
         let violations: Vec<FieldViolation> = v.into();
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].field, "size");
-        let msg = &violations[0].description;
-        assert!(
-            msg.contains("9999"),
-            "message should include the bad value, got: {msg}"
+        assert_eq!(
+            violations[0].description,
+            "This device does not support that size."
         );
     }
 
@@ -5674,7 +5906,7 @@ mod tests {
         assert_eq!(status.code, ErrorCode::FailedPrecondition);
         assert_eq!(
             status.message.as_deref(),
-            Some("combined scenes are not supported on this hardware")
+            Some("This device does not support combined scenes.")
         );
         fixture.coordinator.shutdown_widget_manager().await;
     }

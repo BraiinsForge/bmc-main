@@ -43,9 +43,7 @@ use bmc_intl::format_message;
 use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::FirmwareIndex;
 use connectrpc::{ConnectError, ConnectRpcService, Router};
-use std::fmt::Display;
 use std::sync::Arc;
-use strum::EnumMessage;
 use tokio::sync::RwLock;
 
 mod account_management;
@@ -354,24 +352,6 @@ fn gated<S: SessionManager>(
     axum::Router::new()
         .fallback_service(ConnectRpcService::from_arc(router).with_interceptor(RpcLog))
         .layer(axum::middleware::from_fn_with_state(gate, access_gate::<S>))
-}
-
-#[derive(EnumMessage)]
-pub(crate) enum GrpcError {
-    #[strum(serialize = "Some of the fields are invalid")]
-    BadRequest,
-}
-
-impl Display for GrpcError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Write first serialization, if available (should be always true).
-        // In an unlikely case of no serialization, report the platform as unknown.
-        write!(
-            f,
-            "{}",
-            self.get_serializations().first().unwrap_or(&"unknown")
-        )
-    }
 }
 
 #[cfg(test)]
