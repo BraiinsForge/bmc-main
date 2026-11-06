@@ -26,7 +26,8 @@ use bmc_grpc::web::{EncryptionType, NetworkService as _, SetWifiRequest, SignalS
 use bmc_intl::Language;
 use bmc_net::mock::MockNetworkManager;
 use bmc_net_types::wifi::{
-    EncryptionType as WifiEncryption, WifiConfiguration, WifiLinkState, WifiMode, WifiStatus,
+    EncryptionType as WifiEncryption, WifiConfiguration, WifiJoinError, WifiLinkState, WifiMode,
+    WifiStatus,
 };
 use buffa::EnumValue;
 use buffa_types::google::protobuf::Empty;
@@ -38,7 +39,10 @@ use tokio::sync::{Notify, watch};
 use super::boser_managed::StubBmcManager;
 use super::{no_session, wire_request};
 use crate::initial_setup::{InitSetupState, StateService, Uplink, WifiJoins};
-use crate::web::grpc::network::{NetworkService, into_grpc_wifi_status, try_into_encryption_type};
+use crate::web::grpc::network::{
+    NetworkService, WifiJoinFailure, into_grpc_wifi_status, try_into_encryption_type,
+};
+use crate::web::grpc::shared::ToStatus as _;
 
 /// How long a test waits for a step on the feed; only a step that never comes reaches it.
 const STEP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -175,6 +179,70 @@ async fn a_second_join_is_refused_until_the_first_ends() {
     assert!(
         join_home_net(&service).await.is_ok(),
         "the first join released the guard"
+    );
+}
+
+fn join_message(error: anyhow::Error) -> Option<String> {
+    WifiJoinFailure(error)
+        .to_status(&bmc_intl::shared_formatter(Language::EN))
+        .message
+}
+
+#[test]
+fn a_refused_join_tells_the_users_part_from_the_devices() {
+    let code = |error: anyhow::Error| {
+        WifiJoinFailure(error)
+            .to_status(&bmc_intl::shared_formatter(Language::EN))
+            .code
+    };
+    assert_eq!(
+        code(WifiJoinError::WrongKey("HomeNet".to_owned()).into()),
+        ErrorCode::InvalidArgument,
+        "another password may work"
+    );
+    assert_eq!(
+        code(WifiJoinError::NetworkNotFound("HomeNet".to_owned()).into()),
+        ErrorCode::FailedPrecondition,
+        "the network may come back in range"
+    );
+    assert_eq!(
+        code(anyhow::anyhow!("driver crashed")),
+        ErrorCode::Internal,
+        "nothing the user typed explains it"
+    );
+}
+
+#[test]
+fn a_rejected_password_names_the_network() {
+    assert_eq!(
+        join_message(WifiJoinError::WrongKey("HomeNet".to_owned()).into()).as_deref(),
+        Some("The password for HomeNet was rejected.")
+    );
+}
+
+#[test]
+fn a_missing_network_is_named() {
+    assert_eq!(
+        join_message(WifiJoinError::NetworkNotFound("HomeNet".to_owned()).into()).as_deref(),
+        Some("No Wi-Fi network named HomeNet was found.")
+    );
+}
+
+#[test]
+fn a_reason_wrapped_in_context_still_names_the_network() {
+    let wrapped =
+        anyhow::Error::from(WifiJoinError::WrongKey("HomeNet".to_owned())).context("joining");
+    assert_eq!(
+        join_message(wrapped).as_deref(),
+        Some("The password for HomeNet was rejected.")
+    );
+}
+
+#[test]
+fn a_join_failing_for_another_reason_keeps_its_cause_out_of_the_answer() {
+    assert_eq!(
+        join_message(anyhow::anyhow!("wpa_cli exited with 3")).as_deref(),
+        Some("Failed to join the Wi-Fi network!")
     );
 }
 

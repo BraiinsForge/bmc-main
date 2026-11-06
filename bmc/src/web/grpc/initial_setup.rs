@@ -200,7 +200,7 @@ where
     ) -> ServiceResult<ScanWifiResponse> {
         self.require_wifi_setup(&intl(&ctx)).await?;
 
-        Response::ok(scan_wifi_response(self.manager.clone()).await?)
+        Response::ok(scan_wifi_response(&intl(&ctx), self.manager.clone()).await?)
     }
 
     async fn get_settings_data(

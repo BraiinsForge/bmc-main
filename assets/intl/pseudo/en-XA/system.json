@@ -39,6 +39,11 @@
     "translation": "[Īƞīŧīȧȧŀ Şḗḗŧŭŭƥ]",
     "description": "Device-info eyebrow above every first-boot setup screen"
   },
+  "0CxHW8Ps7w": {
+    "source": "The password for {ssid} was rejected.",
+    "translation": "[Ŧħḗḗ ƥȧȧşşẇǿǿřḓ ƒǿǿř {ssid} ẇȧȧş řḗḗĵḗḗƈŧḗḗḓ.]",
+    "description": "Error when connecting to a Wi-Fi network with a wrong password; ssid is the network's name"
+  },
   "0bkJP9Nd1C": {
     "source": "Until {time}",
     "translation": "[Ŭƞŧīŀ {time}]",
@@ -48,6 +53,11 @@
     "source": "This language is not available on this device.",
     "translation": "[Ŧħīş ŀȧȧƞɠŭŭȧȧɠḗḗ īş ƞǿǿŧ ȧȧṽȧȧīŀȧȧƀŀḗḗ ǿǿƞ ŧħīş ḓḗḗṽīƈḗḗ.]",
     "description": "Error under the language picker when the chosen language is not on the device"
+  },
+  "1whICLmRUk": {
+    "source": "Failed to apply the network settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ȧȧƥƥŀẏ ŧħḗḗ ƞḗḗŧẇǿǿřķ şḗḗŧŧīƞɠş!]",
+    "description": "Error when the device could not apply the network settings just saved"
   },
   "2D5xRkSeHq": {
     "source": "Verifying firmware",
@@ -128,6 +138,11 @@
     "source": "{primary} {secondary}",
     "translation": "[{primary} {secondary}]",
     "description": "Relative time, the two segments side by side: 7m 30s"
+  },
+  "7ggyx5LkEZ": {
+    "source": "Failed to read the network settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ řḗḗȧȧḓ ŧħḗḗ ƞḗḗŧẇǿǿřķ şḗḗŧŧīƞɠş!]",
+    "description": "Error when the device could not read its network settings"
   },
   "7lNDqfhO4P": {
     "source": "Choose an encryption type",
@@ -224,6 +239,11 @@
     "translation": "[ǾƑƑĿĪȠḖ]",
     "description": "Small chip in the screen corner while the device has no network connection; shown in capitals where the script has them"
   },
+  "IFEBgytc3R": {
+    "source": "Failed to join the Wi-Fi network!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ĵǿǿīƞ ŧħḗḗ Ẇī-Ƒī ƞḗḗŧẇǿǿřķ!]",
+    "description": "Error when connecting to a Wi-Fi network failed and the cause is neither a wrong password nor a missing network"
+  },
   "JdGGKBEmmO": {
     "source": "Complete the setup{br}by accessing",
     "translation": "[Ƈǿǿḿƥŀḗḗŧḗḗ ŧħḗḗ şḗḗŧŭŭƥ{br}ƀẏ ȧȧƈƈḗḗşşīƞɠ]",
@@ -314,6 +334,11 @@
     "translation": "[Īŧ ŭŭşḗḗḓ ŧǿǿǿǿ ḿȧȧƞẏ řḗḗşǿǿŭŭřƈḗḗş ȧȧƞḓ ẇȧȧş şŭŭşƥḗḗƞḓḗḗḓ.]",
     "description": "Banner line under the stopped-widget title"
   },
+  "SrvTP45c6R": {
+    "source": "Failed to get MAC address!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ɠḗḗŧ ḾȦƇ ȧȧḓḓřḗḗşş!]",
+    "description": "Error when the device could not read its own MAC address, the network card's hardware address"
+  },
   "TK0DK0guj4": {
     "source": "Incorrect current password!",
     "translation": "[Īƞƈǿǿřřḗḗƈŧ ƈŭŭřřḗḗƞŧ ƥȧȧşşẇǿǿřḓ!]",
@@ -379,6 +404,11 @@
     "translation": "[Ŧħīş īş ǿǿƞŀẏ ȧȧṽȧȧīŀȧȧƀŀḗḗ ẇħīŀḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ īş ƀḗḗīƞɠ şḗḗŧ ŭŭƥ.]",
     "description": "Error when the setup's language picker is used on a device that has finished its setup"
   },
+  "Z5rrTOUCPg": {
+    "source": "Failed to scan Wi-Fi networks!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şƈȧȧƞ Ẇī-Ƒī ƞḗḗŧẇǿǿřķş!]",
+    "description": "Error when the device could not list the Wi-Fi networks around it"
+  },
   "ZpT42pFYon": {
     "source": "Applying firmware",
     "translation": "[Ȧƥƥŀẏīƞɠ ƒīřḿẇȧȧřḗḗ]",
@@ -429,6 +459,11 @@
     "translation": "[īƞ {days, plural, one {{days} ḓȧȧẏ} other {{days} ḓȧȧẏş}} {hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}}]",
     "description": "Relative time label for a moment ahead, days and hours spelled out; both are whole numbers"
   },
+  "csfAr9c73Q": {
+    "source": "Failed to get IP address!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ɠḗḗŧ ĪƤ ȧȧḓḓřḗḗşş!]",
+    "description": "Error when the device could not read its own IP address"
+  },
   "d9K8NSW9TS": {
     "source": "Update Finished",
     "translation": "[Ŭƥḓȧȧŧḗḗ Ƒīƞīşħḗḗḓ]",
@@ -464,6 +499,11 @@
     "translation": "[īƞ {duration}]",
     "description": "Relative time label for a moment ahead; duration is 7m 30s or 7m"
   },
+  "faJwJl6HJU": {
+    "source": "Failed to get hostname!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ɠḗḗŧ ħǿǿşŧƞȧȧḿḗḗ!]",
+    "description": "Error when the device could not read its own network name"
+  },
   "gVSC85AlCJ": {
     "source": "Could not connect. Please try again.",
     "translation": "[Ƈǿǿŭŭŀḓ ƞǿǿŧ ƈǿǿƞƞḗḗƈŧ. Ƥŀḗḗȧȧşḗḗ ŧřẏ ȧȧɠȧȧīƞ.]",
@@ -478,6 +518,11 @@
     "source": "{days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}} ago",
     "translation": "[{days, plural, one {{days} ḓȧȧẏ} other {{days} ḓȧȧẏş}} {hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}} ȧȧɠǿǿ]",
     "description": "Relative time label for a moment behind, days and hours spelled out; both are whole numbers"
+  },
+  "gePB9OS/bX": {
+    "source": "This device does not support Wi-Fi.",
+    "translation": "[Ŧħīş ḓḗḗṽīƈḗḗ ḓǿǿḗḗş ƞǿǿŧ şŭŭƥƥǿǿřŧ Ẇī-Ƒī.]",
+    "description": "Error when a Wi-Fi operation is used on a device with no Wi-Fi hardware"
   },
   "hIhRaewzgO": {
     "source": "Reconfigure Wi-Fi?",
@@ -498,6 +543,11 @@
     "source": "IP Address",
     "translation": "[ĪƤ Ȧḓḓřḗḗşş]",
     "description": "Settings tray, label of the device's IP address"
+  },
+  "jYwhsipkfl": {
+    "source": "The device is already connecting to a Wi-Fi network.",
+    "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ īş ȧȧŀřḗḗȧȧḓẏ ƈǿǿƞƞḗḗƈŧīƞɠ ŧǿǿ ȧȧ Ẇī-Ƒī ƞḗḗŧẇǿǿřķ.]",
+    "description": "Error when connecting to a Wi-Fi network while an earlier attempt has not finished"
   },
   "jlPEslLWc2": {
     "source": "Failed to set password!",
@@ -529,6 +579,11 @@
     "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ ƈǿǿŭŭŀḓ ƞǿǿŧ ƈħḗḗƈķ ŧħḗḗ ƥȧȧşşẇǿǿřḓ.]",
     "description": "Error on the login page when the check itself failed, so the password may well be right"
   },
+  "kjA+R4gGe6": {
+    "source": "Failed to get Wi-Fi status!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ɠḗḗŧ Ẇī-Ƒī şŧȧȧŧŭŭş!]",
+    "description": "Error when the device could not read its Wi-Fi state or its saved Wi-Fi networks"
+  },
   "kmFsbpoffG": {
     "source": "Downloading",
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ]",
@@ -553,6 +608,11 @@
     "source": "Incorrect username or password!",
     "translation": "[Īƞƈǿǿřřḗḗƈŧ ŭŭşḗḗřƞȧȧḿḗḗ ǿǿř ƥȧȧşşẇǿǿřḓ!]",
     "description": "Error on the login page when the password is wrong"
+  },
+  "n/w3M2BuWT": {
+    "source": "No Wi-Fi network named {ssid} was found.",
+    "translation": "[Ƞǿǿ Ẇī-Ƒī ƞḗḗŧẇǿǿřķ ƞȧȧḿḗḗḓ {ssid} ẇȧȧş ƒǿǿŭŭƞḓ.]",
+    "description": "Error when connecting to a Wi-Fi network that is not in range; ssid is the network's name"
   },
   "n8XlxYQaXU": {
     "source": "Rebooting",

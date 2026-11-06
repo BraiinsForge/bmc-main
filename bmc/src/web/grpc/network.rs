@@ -29,7 +29,7 @@ use bmc_grpc::web::{
 };
 use bmc_intl::{Intl, format_message};
 use bmc_net::{NetworkManager, WifiControl};
-use bmc_net_types::wifi::{EncryptionType, SignalStrength};
+use bmc_net_types::wifi::{EncryptionType, SignalStrength, WifiJoinError};
 use buffa::EnumValue;
 use buffa_types::google::protobuf::Empty;
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
@@ -38,7 +38,9 @@ use std::sync::Arc;
 use tracing::warn;
 
 use super::intl::intl;
-use super::shared::{bad_request, missing_value, require_state, violation};
+use super::shared::{
+    StatusExt as _, ToStatus, bad_request, missing_value, require_state, violation,
+};
 use crate::initial_setup::{WifiJoins, WifiSetupError};
 use crate::manager::{NetworkProtocolConfig, NetworkProtocolConfigStatic};
 use crate::{
@@ -94,24 +96,37 @@ where
 {
     async fn get_network_info(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<NetworkInfoResponse> {
         let net_man = self.manager.network_manager();
-        let hostname = net_man
-            .hostname()
-            .await
-            .ok_or(ConnectError::internal("Failed to get hostname"))?;
+        let hostname = net_man.hostname().await.ok_or_else(|| {
+            ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to get hostname!",
+                description: "Error when the device could not read its own network name",
+            ))
+        })?;
 
         let ip_address = net_man
             .ip_address()
             .await
-            .ok_or(ConnectError::internal("Failed to get ip address"))?
+            .ok_or_else(|| {
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to get IP address!",
+                    description: "Error when the device could not read its own IP address",
+                ))
+            })?
             .to_string();
 
-        let mac_address = net_man
-            .mac_address()
-            .ok_or(ConnectError::internal("Failed to get mac address"))?;
+        let mac_address = net_man.mac_address().ok_or_else(|| {
+            ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to get MAC address!",
+                description: "Error when the device could not read its own MAC address, the network card's hardware address",
+            ))
+        })?;
 
         Response::ok(NetworkInfoResponse {
             hostname,
@@ -122,7 +137,7 @@ where
 
     async fn get_network_config(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<NetworkConfig> {
         let network_config = self
@@ -132,7 +147,11 @@ where
             .await
             .ok_or_else(|| {
                 warn!("Failed to get network config");
-                ConnectError::internal("Failed to get network config")
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to read the network settings!",
+                    description: "Error when the device could not read its network settings",
+                ))
             })?;
 
         Response::ok(into_network_config(&network_config))
@@ -144,8 +163,9 @@ where
         request: ServiceRequest<'_, NetworkConfig>,
     ) -> ServiceResult<Empty> {
         let request = request.to_owned_message();
+        let intl = intl(&ctx);
 
-        let config = try_from_network_config(&intl(&ctx), &request)?;
+        let config = try_from_network_config(&intl, &request)?;
 
         self.manager
             .network_manager()
@@ -153,7 +173,11 @@ where
             .await
             .map_err(|e| {
                 warn!("Failed to set network config: {e}");
-                ConnectError::internal("Failed to set network config")
+                ConnectError::internal(format_message!(
+                    intl,
+                    default_message: "Failed to apply the network settings!",
+                    description: "Error when the device could not apply the network settings just saved",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -164,12 +188,13 @@ where
         ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<WifiStatusResponse> {
-        self.require_setup_finished(&intl(&ctx)).await?;
+        let intl = intl(&ctx);
+        self.require_setup_finished(&intl).await?;
 
         let net_man = self.manager.network_manager();
-        let wifi_data = require_wifi(net_man)?.status().await.map_err(|e| {
+        let wifi_data = require_wifi(&intl, net_man)?.status().await.map_err(|e| {
             warn!("Failed to get WiFi status: {}", e);
-            ConnectError::internal("Failed to get Wi-Fi status")
+            failed_wifi_status(&intl)
         })?;
 
         let status = into_grpc_wifi_status(wifi_data.status);
@@ -184,15 +209,16 @@ where
         ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<WifiSavedNetworksResponse> {
-        self.require_setup_finished(&intl(&ctx)).await?;
+        let intl = intl(&ctx);
+        self.require_setup_finished(&intl).await?;
 
         let net_man = self.manager.network_manager();
-        let wifi_data = require_wifi(net_man)?
+        let wifi_data = require_wifi(&intl, net_man)?
             .saved_networks()
             .await
             .map_err(|e| {
                 warn!("Failed to get WiFi status: {}", e);
-                ConnectError::internal("Failed to get Wi-Fi status")
+                failed_wifi_status(&intl)
             })?
             .into_iter()
             .map(into_grpc_wifi_status)
@@ -210,16 +236,16 @@ where
         self.require_setup_finished(&intl).await?;
 
         let config = try_into_wifi_network_config(&intl, request.to_owned_message())?;
-        require_wifi(self.manager.network_manager())?;
+        require_wifi(&intl, self.manager.network_manager())?;
 
-        let join = self.wifi_joins.join(config).map_err(|e| match e {
-            WifiSetupError::InProgress => {
-                ConnectError::failed_precondition("A Wi-Fi join is already in progress")
-            }
-        })?;
+        let join = self.wifi_joins.join(config).or_status(&intl)?;
         join.await
-            .map_err(|e| ConnectError::internal(format!("Wi-Fi join task failed: {e}")))?
-            .map_err(|e| ConnectError::internal(e.to_string()))?;
+            .map_err(|e| {
+                warn!("Wi-Fi join task failed: {e}");
+                failed_wifi_join(&intl)
+            })?
+            .map_err(WifiJoinFailure)
+            .or_status(&intl)?;
         Response::ok(Empty::default())
     }
 
@@ -228,18 +254,80 @@ where
         ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<ScanWifiResponse> {
-        self.require_setup_finished(&intl(&ctx)).await?;
+        let intl = intl(&ctx);
+        self.require_setup_finished(&intl).await?;
 
-        Response::ok(scan_wifi_response(self.manager.clone()).await?)
+        Response::ok(scan_wifi_response(&intl, self.manager.clone()).await?)
+    }
+}
+
+fn failed_wifi_status(intl: &Intl) -> ConnectError {
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "Failed to get Wi-Fi status!",
+        description: "Error when the device could not read its Wi-Fi state or its saved Wi-Fi networks",
+    ))
+}
+
+fn failed_wifi_join(intl: &Intl) -> ConnectError {
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "Failed to join the Wi-Fi network!",
+        description: "Error when connecting to a Wi-Fi network failed and the cause is neither a wrong password nor a missing network",
+    ))
+}
+
+impl ToStatus for WifiSetupError {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        match self {
+            WifiSetupError::InProgress => ConnectError::failed_precondition(format_message!(
+                intl,
+                default_message: "The device is already connecting to a Wi-Fi network.",
+                description: "Error when connecting to a Wi-Fi network while an earlier attempt has not finished",
+            )),
+        }
+    }
+}
+
+/// A failed join, whose cause the Wi-Fi driver may have reported as a `WifiJoinError`.
+pub(crate) struct WifiJoinFailure(pub(crate) anyhow::Error);
+
+impl ToStatus for WifiJoinFailure {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        let Self(error) = self;
+        match error.downcast_ref::<WifiJoinError>() {
+            Some(WifiJoinError::WrongKey(ssid)) => ConnectError::invalid_argument(format_message!(
+                intl,
+                default_message: "The password for {ssid} was rejected.",
+                description: "Error when connecting to a Wi-Fi network with a wrong password; ssid is the network's name",
+                values: { ssid: ssid.as_str() },
+            )),
+            Some(WifiJoinError::NetworkNotFound(ssid)) => {
+                ConnectError::failed_precondition(format_message!(
+                    intl,
+                    default_message: "No Wi-Fi network named {ssid} was found.",
+                    description: "Error when connecting to a Wi-Fi network that is not in range; ssid is the network's name",
+                    values: { ssid: ssid.as_str() },
+                ))
+            }
+            None => failed_wifi_join(intl),
+        }
     }
 }
 
 /// Resolve the WiFi surface, mapping its absence to `unimplemented`: no WiFi
 /// means the operation does not apply to this hardware, not a server fault.
-fn require_wifi(net_man: &dyn NetworkManager) -> Result<&dyn WifiControl, ConnectError> {
-    net_man
-        .require_wifi()
-        .map_err(|e| ConnectError::unimplemented(e.to_string()))
+fn require_wifi<'a>(
+    intl: &Intl,
+    net_man: &'a dyn NetworkManager,
+) -> Result<&'a dyn WifiControl, ConnectError> {
+    net_man.require_wifi().map_err(|_| {
+        ConnectError::unimplemented(format_message!(
+            intl,
+            default_message: "This device does not support Wi-Fi.",
+            description: "Error when a Wi-Fi operation is used on a device with no Wi-Fi hardware",
+        ))
+    })
 }
 
 pub(crate) fn into_network_config(config: &NetworkProtocolConfig) -> NetworkConfig {
@@ -352,14 +440,19 @@ pub(crate) fn parse_network_config(
 }
 
 pub(crate) async fn scan_wifi_response(
+    intl: &Intl,
     manager: Arc<impl BmcManager>,
 ) -> Result<ScanWifiResponse, ConnectError> {
-    let available_wifi = require_wifi(manager.network_manager())?
+    let available_wifi = require_wifi(intl, manager.network_manager())?
         .scan()
         .await
         .map_err(|e| {
             warn!("Failed to scan WiFi networks: {}", e);
-            ConnectError::internal("Failed to scan Wi-Fi networks")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to scan Wi-Fi networks!",
+                description: "Error when the device could not list the Wi-Fi networks around it",
+            ))
         })?;
 
     Ok(ScanWifiResponse {

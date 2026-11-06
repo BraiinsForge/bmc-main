@@ -496,7 +496,7 @@ impl<T: BmcManager> WifiJoins<T> {
                     state_service.notify(InitSetupState::WifiConnectionSuccess);
                 }
                 Err(err) => {
-                    warn!(error = %err, ssid = %ssid, "Failed to join Wi-Fi");
+                    warn!(error = %format_args!("{err:#}"), ssid = %ssid, "Failed to join Wi-Fi");
                     state_service.notify(InitSetupState::WifiConnectionFailed);
                 }
             }
