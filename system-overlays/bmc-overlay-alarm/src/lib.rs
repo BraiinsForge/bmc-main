@@ -343,11 +343,11 @@ fn background_rings(background_size: (u32, u32), motion: RingMotion) -> Node {
 /// vertically centred against it in 12-hour mode. In 24-hour mode
 /// (`view.period` empty) the row is just the time text.
 fn build_time_row(view: &AlarmView) -> Node {
-    let time_font_size: u16 = 200;
+    const TIME_FONT_SIZE: u16 = 200;
     let time_node = text(
         view.time.clone(),
         TextStyle {
-            size: u32::from(time_font_size),
+            size: u32::from(TIME_FONT_SIZE),
             color: WHITE,
             weight: FontWeight::REGULAR,
             align: TextAlign::Center,
@@ -363,12 +363,13 @@ fn build_time_row(view: &AlarmView) -> Node {
         // 12-hour mode: the AM/PM marker sits smaller to the right of the
         // time, vertically centred against it — same arrangement as the
         // clock widget.
-        let period_text_size: u16 = 40;
-        let period_slot_w = f32::from(period_text_size) * 2.4;
+        const PERIOD_TEXT_SIZE: u16 = 40;
+        const PERIOD_SLOT_W: f32 = PERIOD_TEXT_SIZE as f32 * 2.4;
+        const PERIOD_LIFT: f32 = PERIOD_TEXT_SIZE as f32;
         let period_text = text(
             view.period.clone(),
             TextStyle {
-                size: u32::from(period_text_size),
+                size: u32::from(PERIOD_TEXT_SIZE),
                 color: ORANGE_30,
                 weight: FontWeight::REGULAR,
                 align: TextAlign::Center,
@@ -377,18 +378,17 @@ fn build_time_row(view: &AlarmView) -> Node {
             },
         );
 
-        let period_lift = f32::from(period_text_size);
         let period_slot = col(
             PropsData {
-                width: period_slot_w,
+                width: PERIOD_SLOT_W,
                 cross_align: CrossAlign::Start,
                 ..Default::default()
             },
-            [period_text, fixed_height(period_lift)],
+            [period_text, fixed_height(PERIOD_LIFT)],
         );
         let left_padding = col(
             PropsData {
-                width: period_slot_w,
+                width: PERIOD_SLOT_W,
                 ..Default::default()
             },
             [],
@@ -732,6 +732,7 @@ mod tests {
 
     #[test]
     fn the_ringing_alarm_speaks_the_language_it_was_handed() {
+        const STOP: &str = "Stop Alarm";
         let profile = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/intl/profile-languages");
         let translations = bmc_intl::Translations::load(&[profile]).0;
@@ -752,10 +753,9 @@ mod tests {
         let chinese = drawn_in(Language::ZH);
         let chinese = chinese.drawn_texts();
 
-        let stop = "Stop Alarm";
-        assert!(english.contains(&stop), "{english:?}");
+        assert!(english.contains(&STOP), "{english:?}");
         assert!(
-            !chinese.contains(&stop) && chinese.len() == english.len(),
+            !chinese.contains(&STOP) && chinese.len() == english.len(),
             "the alarm must speak the language it was handed: {chinese:?}"
         );
     }
