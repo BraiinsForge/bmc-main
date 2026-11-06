@@ -501,6 +501,89 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
     });
 });
 
+const packageChange = (name: string, versionFrom?: string, versionTo?: string): pb.PackageChange =>
+    pb.create(pb.PackageChangeSchema, { name, versionFrom, versionTo });
+// A core change rebuilds the packages built against it; they keep their version.
+const rebuilt = (name: string): pb.PackageChange => packageChange(name, '0.1.0', '0.1.0');
+
+function offerOf(changes: pb.PackageChange[], firmware?: pb.FirmwareUpgrade): pb.CheckForUpgradeResponse {
+    return pb.create(pb.CheckForUpgradeResponseSchema, {
+        upgradeId: 'upgrade-0',
+        disruption: pb.UpgradeDisruption.APP_RESTART,
+        firmware,
+        packages: pb.create(pb.PackageUpgradePlanSchema, { changes }),
+    });
+}
+
+describe('Settings upgrade package changes (BDK-1091)', () => {
+    test('lists and counts only the packages whose version moves', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () =>
+                offerOf([
+                    rebuilt('widget-clock'),
+                    packageChange('widget-ticker', '0.1.0', '0.2.0'),
+                    packageChange('widget-weather', undefined, '0.1.0'),
+                    packageChange('widget-metronome', '0.1.0'),
+                ]),
+        });
+
+        renderPage();
+        await advance(300);
+
+        expect(screen.getByText('3 package updates available')).toBeTruthy();
+        expect(screen.queryByText('widget-clock')).toBeNull();
+        expect(screen.getByText('widget-ticker')).toBeTruthy();
+        expect(screen.getByText('widget-weather')).toBeTruthy();
+        expect(screen.getByText('widget-metronome')).toBeTruthy();
+    });
+
+    // The rebuilds still install, so the notice stays:
+    // without it "Download & Upgrade" would sit there with nothing announced to press for.
+    test('an offer of rebuilds alone is announced without a count or a list, and starts', async () => {
+        rstest.useFakeTimers();
+        const startUpgrade = rstest.fn(() =>
+            (async function* () {
+                yield finished;
+            })(),
+        );
+        installMocks(startUpgrade);
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () => offerOf([rebuilt('core'), rebuilt('widget-clock')]),
+        });
+
+        renderPage();
+        await advance(300);
+
+        expect(screen.getByText('Package update available')).toBeTruthy();
+        expect(screen.queryByText(/\d+ package updates? available/)).toBeNull();
+        expect(screen.queryByText('core')).toBeNull();
+        expect(screen.queryByText('widget-clock')).toBeNull();
+
+        fireEvent.click(startButton());
+        await advance(1_000);
+        expect(startUpgrade).toHaveBeenCalledTimes(1);
+    });
+
+    test('a firmware offer with rebuilds alone announces both updates', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () =>
+                offerOf([rebuilt('core')], pb.create(pb.FirmwareUpgradeSchema, { version: '26.11' })),
+        });
+
+        renderPage();
+        await advance(300);
+
+        expect(screen.getByText('New firmware version available')).toBeTruthy();
+        expect(screen.getByText('Package update available')).toBeTruthy();
+        expect(screen.queryByText(/\d+ package updates? available/)).toBeNull();
+        expect(screen.queryByText('core')).toBeNull();
+    });
+});
+
 // The tab strip marks the active tab only through a CSS-module class,
 // which jsdom renders empty, so an open General tab is told by its first field set instead.
 const TAB_LABELS = ['General', 'Display', 'Sound & Light', 'Security', 'Upgrades'];
