@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use bmc_field_schema::{ParamValueConversionError, UnreadableValue, Violation, ViolationKind};
 use bmc_widget_manifest::{Manifest, ParamKey, ParamValue, ProgramEntry};
 use indoc::{formatdoc, indoc};
 use serde_json::{Value, json};
@@ -421,6 +422,31 @@ async fn a_rejected_overlay_is_a_failure() {
     assert!(
         matches!(result, Err(MigrationFailure::Rejected(_))),
         "unknown key: {result:?}"
+    );
+}
+
+#[test]
+fn an_overlay_value_that_cannot_convert_is_rejected_at_its_key() {
+    let manifest = manifest();
+    let too_long = "1".repeat(bmc_field_schema::MAX_PARAM_STRING_LENGTH + 1);
+    let overlay = json!({ "period": too_long });
+    let overlay = overlay.as_object().expect("BUG: an object literal");
+    let Err(MigrationFailure::Rejected(violations)) =
+        merge_overlay(&manifest, &old_params(), overlay)
+    else {
+        panic!("an over-long string must not convert");
+    };
+    assert_eq!(
+        violations,
+        [Violation {
+            path: r#"["period"]"#.to_owned(),
+            kind: ViolationKind::Unreadable(UnreadableValue::Conversion(
+                ParamValueConversionError::StringTooLong {
+                    len: bmc_field_schema::MAX_PARAM_STRING_LENGTH + 1,
+                    max: bmc_field_schema::MAX_PARAM_STRING_LENGTH,
+                },
+            )),
+        }]
     );
 }
 

@@ -54,6 +54,7 @@ export interface WifiProps {
     strings: { connect: string };
     // The connected bool attribute is remapped to nullability
     activeNetwork: iField<Maybe<pb.WifiNetwork>> & {
+        /** Reports a refused join itself and resolves false: a rejection would leave the dialog locked. */
         onConnectionRequest(ssid: string, security: pb.EncryptionType, password: string): Promise<boolean>;
         onConnectionRequestCancel?(): void;
     };
@@ -112,14 +113,13 @@ interface State {
 
     wifiManualConnect: {
         data: ManualWifiApConfig;
-        errors: null | Partial<Record<keyof ManualWifiApConfig | 'form', string>>;
+        errors: null | Partial<Record<keyof ManualWifiApConfig, string>>;
     };
     wifiPasswordEntry: {
         wifiCell: null | pb.WifiNetwork;
         password: string;
         passwordError: null | string;
     };
-    wifiConnectionError: null | string;
     wifiNetworkDropdownKey: number;
     wifiIsConnecting: boolean;
 }
@@ -139,7 +139,6 @@ const getInitialState = (): State => ({
         password: '',
         passwordError: null,
     },
-    wifiConnectionError: null,
     wifiNetworkDropdownKey: 0,
     wifiIsConnecting: false,
 });
@@ -169,8 +168,10 @@ class View extends Component<Props, State> {
             join: formatMessage({ defaultMessage: 'Join' }),
 
             // Validation
-            requiredField: formatMessage({ defaultMessage: 'This field is required' }),
-            passwordIsRequired: formatMessage({ defaultMessage: 'Password is required' }),
+            requiredField: formatMessage({
+                defaultMessage: 'Missing value!',
+                description: 'Error under a required form field left empty',
+            }),
 
             // Wifi
             wifi: formatMessage({ defaultMessage: 'Wi-Fi' }),
@@ -280,44 +281,36 @@ class View extends Component<Props, State> {
         this.setState({ openDialog });
     };
     #wifiManualEntryDialogSubmit = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
         const { onConnectionRequest } = this.#wifi.activeNetwork;
         const { openDialog, wifiManualConnect } = this.state;
-        const { ssid, password, security } = wifiManualConnect.data;
+        const { ssid, security } = wifiManualConnect.data;
+        const isOpenNetwork = security === pb.EncryptionType.NONE;
+        // The field hides for an open network, but keeps what was typed before switching to it
+        const password = isOpenNetwork ? '' : wifiManualConnect.data.password;
 
         if (openDialog !== 'wifiManualConnect') return;
 
-        const fail = <Key extends keyof ManualWifiApConfig>(key: Key, message: ManualWifiApConfig[Key]) => {
+        const fail = (key: keyof ManualWifiApConfig) => {
             this.setState(s => ({
                 wifiManualConnect: {
                     ...s.wifiManualConnect,
-                    [key]: message,
+                    errors: { [key]: this.#txt.requiredField },
                 },
             }));
         };
-        if (!ssid) return fail('ssid', this.#txt.requiredField);
-        if (!password) return fail('password', this.#txt.requiredField);
+        if (!ssid) return fail('ssid');
+        if (!isOpenNetwork && !password) return fail('password');
 
         // If we didn't bail till now, we can try to connect
-        try {
-            await setState(this, { wifiIsConnecting: true });
-            await onConnectionRequest(ssid, security, password);
-            await setState(this, getInitialState);
-        } catch (e: any) {
-            this.setState(s => ({
-                wifiManualConnect: {
-                    ...s.wifiManualConnect,
-                    errors: { form: e.message || formatMessage({ defaultMessage: 'Unknown connection error' }) },
-                },
-            }));
-        }
+        await setState(this, { wifiIsConnecting: true });
+        await onConnectionRequest(ssid, security, password);
+        await setState(this, getInitialState);
     };
     #wifiManualEntryDialogChange = <K extends keyof ManualWifiApConfig>(
         field: K,
         value: ManualWifiApConfig[K],
     ): void => {
         this.setState(s => ({
-            wifiConnectionError: null,
             wifiManualConnect: {
                 ...s.wifiManualConnect,
                 errors: null,
@@ -426,7 +419,6 @@ class View extends Component<Props, State> {
         if (!ap) {
             this.#wifi.activeNetwork.onConnectionRequestCancel?.();
             this.setState({
-                wifiConnectionError: null,
                 openDialog: null,
                 wifiPasswordEntry: getInitialState().wifiPasswordEntry,
             });
@@ -434,7 +426,6 @@ class View extends Component<Props, State> {
         }
 
         this.setState({
-            wifiConnectionError: null,
             openDialog: 'wifiPasswordEntry',
             wifiPasswordEntry: { wifiCell: ap, password: '', passwordError: null },
         });
@@ -451,28 +442,16 @@ class View extends Component<Props, State> {
             this.setState(s => ({
                 wifiPasswordEntry: {
                     ...s.wifiPasswordEntry,
-                    passwordError: txt.passwordIsRequired,
+                    passwordError: txt.requiredField,
                 },
             }));
             return;
         }
 
         // If we didn't bail till now, we can try to connect
-        try {
-            await setState(this, { wifiIsConnecting: true });
-            await onConnectionRequest(wifiCell.ssid, wifiCell.encryptionType, password);
-            this.setState(getInitialState);
-        } catch (e: any) {
-            this.setState(s => ({
-                wifiIsConnecting: false,
-                wifiPasswordEntry: {
-                    ...s.wifiPasswordEntry,
-                    passwordError: e.message,
-                },
-            }));
-        } finally {
-            this.setState({ wifiIsConnecting: false });
-        }
+        await setState(this, { wifiIsConnecting: true });
+        await onConnectionRequest(wifiCell.ssid, wifiCell.encryptionType, password);
+        await setState(this, getInitialState);
     };
     #wifiPasswordDialogRender = (): ReactElement => {
         const { intl } = this.props;
@@ -542,7 +521,7 @@ class View extends Component<Props, State> {
     #handleWifiNetworkChange = async (ap: null | pb.WifiNetwork): Promise<void> => {
         const { onConnectionRequest, onChange } = this.#wifi.activeNetwork;
         const { wifiManualConnect, wifiPasswordEntry } = getInitialState();
-        await setState(this, { wifiConnectionError: null, wifiManualConnect, wifiPasswordEntry });
+        await setState(this, { wifiManualConnect, wifiPasswordEntry });
 
         // Nothing to do when the selection is somehow cleared
         if (ap == null) {
@@ -563,9 +542,7 @@ class View extends Component<Props, State> {
 
             // If the network is open, we can connect right away
             if (ap.encryptionType === pb.EncryptionType.NONE) {
-                onConnectionRequest(ap.ssid, ap.encryptionType, '').catch((e: any) => {
-                    this.setState({ wifiConnectionError: e.message });
-                });
+                void onConnectionRequest(ap.ssid, ap.encryptionType, '');
             }
 
             // …otherwise we gotta go throught the password dialog
@@ -576,7 +553,6 @@ class View extends Component<Props, State> {
         const { availableNetworks, activeNetwork } = this.#wifi;
         const { wifiNetworkDropdownKey } = this.state;
 
-        // const globalManualConnectError = this.state.wifiManualConnect.errors?.form;
         const txt = this.#txt;
 
         return (

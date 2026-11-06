@@ -221,7 +221,7 @@ fn paint_violations(ui: &mut egui::Ui, violations: &[Violation], palette: &Palet
     );
     for violation in violations {
         ui.label(
-            egui::RichText::new(format!("{}: {}", violation.path, violation.message))
+            egui::RichText::new(format!("{}: {}", violation.path, violation.kind))
                 .color(palette.support_error),
         );
     }
@@ -1204,7 +1204,7 @@ mod draft_tests {
             validate_draft(&manifest, &draft).expect_err("BUG: every value is invalid");
         let mut found: Vec<String> = violations
             .iter()
-            .map(|v| format!("{}: {}", v.path, v.message))
+            .map(|v| format!("{}: {}", v.path, v.kind))
             .collect();
         found.sort();
         assert_eq!(
@@ -1212,7 +1212,7 @@ mod draft_tests {
             [
                 r#"["count"]: Must be at least 1"#,
                 r#"["ratio"]: Must be a finite number"#,
-                r#"["zones"][0]: Value is required"#,
+                r#"["zones"][0]: Missing value!"#,
             ]
         );
     }

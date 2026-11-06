@@ -58,13 +58,59 @@ describe('FormWidgetManifest', () => {
                 onCancel={() => {}}
                 manifest={manifest}
                 params={{ count: 'abc' }}
-                errors={{ global: [], fields: { count: ['Not an integer'] } }}
+                errors={{ global: [], fields: { count: ['Must be a whole number'] } }}
                 onParamChange={() => {}}
                 timezones={[]}
                 accounts={[]}
             />,
         );
-        expect(getByText('Not an integer')).toBeTruthy();
+        expect(getByText('Must be a whole number')).toBeTruthy();
+    });
+
+    test('beside a field error, shows what no field can and leaves the status to the fields', () => {
+        const { queryByText } = render(
+            <FormWidgetManifest
+                isOpen
+                onSave={() => {}}
+                onCancel={() => {}}
+                manifest={manifest}
+                params={{ count: 'abc' }}
+                errors={{
+                    status: 'Some of the fields are invalid.',
+                    global: ['Unsupported size'],
+                    fields: { count: ['Must be a whole number'], retired: ['Unknown setting!'] },
+                }}
+                onParamChange={() => {}}
+                timezones={[]}
+                accounts={[]}
+            />,
+        );
+        expect(queryByText('Must be a whole number')).not.toBeNull();
+        expect(document.body.textContent).toContain('Unsupported size');
+        expect(document.body.textContent).toContain('Unknown setting!');
+        expect(document.body.textContent).not.toContain('Some of the fields are invalid.');
+    });
+
+    test('Done waits on what the form can fix, not on what no field shows', () => {
+        const props = (errors: ParamsFormErrors) => (
+            <FormWidgetManifest
+                isOpen
+                onSave={() => {}}
+                onCancel={() => {}}
+                manifest={manifest}
+                params={{ count: '1' }}
+                errors={errors}
+                onParamChange={() => {}}
+                timezones={[]}
+                accounts={[]}
+            />
+        );
+        const { getByText, rerender } = render(props({ global: ['Unsupported size'], fields: {} }));
+        const done = () => getByText('Done').closest('button');
+        expect(done()?.disabled).toBe(false);
+
+        rerender(props({ global: [], fields: { count: ['Must be a whole number'] } }));
+        expect(done()?.disabled).toBe(true);
     });
 
     test('onParamChange propagates numeric input as a string', () => {
@@ -282,6 +328,15 @@ describe('FormWidgetManifest credential slots', () => {
         const { queryByText } = renderSlots({ bindings: { pool: 'a1' }, accounts: null });
 
         expect(queryByText('Takes a braiins-pool account — pick another, or clear it.')).toBeNull();
+    });
+
+    test("before the accounts load, a slot's violation still says why saving is blocked", () => {
+        const { queryByText } = renderSlots({
+            bindings: { pool: 'a1' },
+            accounts: null,
+            errors: { global: [], fields: {}, credentials: { pool: ['Account not found'] } },
+        });
+        expect(queryByText('Account not found')).not.toBeNull();
     });
 
     test('before the accounts load, saving is not blocked', () => {

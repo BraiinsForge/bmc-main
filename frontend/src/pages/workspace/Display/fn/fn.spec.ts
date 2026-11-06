@@ -36,9 +36,15 @@ import {
     widgetParamsToFormifiedState,
     buildFieldValues as buildFieldValuesIn,
     fitStoredParams as fitStoredParamsIn,
-    hasItemErrors,
+    hasFieldErrors,
     itemErrorsOf,
     clearFieldError,
+    formNotices,
+    saveNotices,
+    unplacedErrors,
+    withLocalErrors,
+    clearSlotError,
+    clearGlobalErrors,
     revalidateField as revalidateFieldIn,
     type ParamsFormErrors,
     credentialBindingsValid,
@@ -828,15 +834,9 @@ function rows(...values: string[]): ListItem[] {
 describe('parseFormifiedValue', () => {
     test.each([
         ['required', paramDef('paramString'), ''],
-        ['too many bytes', paramDef('paramString'), 'x'.repeat(1025)],
-        ['too few characters', paramDef('paramString', 'k', false, { minLength: 2 }), 'x'],
-        ['too many characters', paramDef('paramString', 'k', false, { maxLength: 1 }), 'xx'],
         ['not a number', paramDef('paramDouble'), 'abc'],
         ['not an integer', paramDef('paramInteger'), '1.5'],
-        ['below the lowest', paramDef('paramInteger', 'k', false, { min: 5 }), '3'],
-        ['above the highest', paramDef('paramInteger', 'k', false, { max: 5 }), '9'],
-        ['too few rows', countsDef({ minItems: 1 }), rows()],
-        ['too many rows', countsDef({ maxItems: 1 }), rows('1', '2')],
+        ['past int32', paramDef('paramInteger'), '2147483648'],
     ] as const)('an error of %s goes through the catalog', (_case, def, raw) => {
         const r = parseFormifiedValueIn(pseudoIntl, def, raw);
         if (r.ok || !r.error) throw new Error('the value parsed');
@@ -845,33 +845,15 @@ describe('parseFormifiedValue', () => {
         expect(r.error).not.toBe(english.error);
     });
     test.each([
-        ['a whole row', 'Repeats item 1', { uniqueItems: { case: 'whole', value: {} } }],
-        [
-            'the identifying fields',
-            'Same as item 1',
-            { uniqueItems: { case: 'by', value: { keys: ['label', 'url'] } } },
-        ],
-    ])('an error of %s repeating goes through the catalog', (_case, english, unique) => {
-        const repeated = [listItem({ label: 'a', url: 'b' }), listItem({ label: 'a', url: 'b' })];
-        const r = parseFormifiedValueIn(pseudoIntl, linksDef(unique), repeated);
-        if (r.ok) throw new Error('the value parsed');
-        expect(r.items?.[1]?.error).toBeTruthy();
-        expect(r.items?.[1]?.error).not.toBe(english);
-    });
-    test('a limit of one is worded in the singular', () => {
-        const characters = parseFormifiedValue(paramDef('paramString', 'k', false, { maxLength: 1 }), 'xx');
-        const items = parseFormifiedValue(countsDef({ maxItems: 1 }), rows('1', '2'));
-        if (characters.ok || items.ok) throw new Error('the value parsed');
-        expect(characters.error).toBe('Must be at most 1 character');
-        expect(items.error).toBe('Must have at most 1 item');
-    });
-    test('paramString required, null → error', () => {
-        const r = parseFormifiedValue(paramDef('paramString'), null);
-        expect(r.ok).toBe(false);
-    });
-    test('paramString required, empty → error', () => {
-        const r = parseFormifiedValue(paramDef('paramString'), '');
-        expect(r.ok).toBe(false);
+        ['paramString', null],
+        ['paramString', ''],
+        ['paramInteger', ''],
+        ['paramTimezone', null],
+        ['paramTimezone', ''],
+    ] as const)('a required %s left empty (%j) is refused', (kind, raw) => {
+        const r = parseFormifiedValue(paramDef(kind), raw);
+        if (!r.ok) expect(r.error).toBe('Missing value!');
+        else throw new Error('expected error');
     });
     test('paramString optional, empty → nullValue', () => {
         const r = parseFormifiedValue(paramDef('paramString', 'k', true), '');
@@ -883,33 +865,13 @@ describe('parseFormifiedValue', () => {
         if (r.ok) expect(r.value.kind).toEqual({ case: 'stringValue', value: 'hi' });
         else throw new Error('expected ok');
     });
-    test('paramString past 1024 UTF-8 bytes → error, though fewer characters', () => {
-        const r = parseFormifiedValue(paramDef('paramString'), 'č'.repeat(600));
-        if (!r.ok) expect(r.error).toBe('Must be at most 1024 bytes');
-        else throw new Error('expected error');
-    });
-    test('paramString of exactly 1024 bytes → stringValue', () => {
-        const r = parseFormifiedValue(paramDef('paramString'), 'x'.repeat(1024));
-        expect(r.ok).toBe(true);
-    });
-    test('paramString outside its length bounds → error', () => {
-        const def = paramDef('paramString', 'k', false, { minLength: 2, maxLength: 3 });
-        const short = parseFormifiedValue(def, 'B');
-        if (!short.ok) expect(short.error).toBe('Must be at least 2 characters');
-        else throw new Error('expected error');
-        const long = parseFormifiedValue(def, 'BTCU');
-        if (!long.ok) expect(long.error).toBe('Must be at most 3 characters');
-        else throw new Error('expected error');
-    });
-    test('paramString length counts an emoji as one character, as on the server', () => {
-        const r = parseFormifiedValue(paramDef('paramString', 'k', false, { maxLength: 2 }), '🚀🚀');
-        expect(r.ok).toBe(true);
+    test('a value outside its schema still goes, for the device to refuse', () => {
+        const def = paramDef('paramString', 'k', false, { maxLength: 1 });
+        const r = parseFormifiedValue(def, 'too long');
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'stringValue', value: 'too long' });
+        else throw new Error('expected ok');
     });
 
-    test('paramInteger required, empty → error', () => {
-        const r = parseFormifiedValue(paramDef('paramInteger'), '');
-        expect(r.ok).toBe(false);
-    });
     test('paramInteger optional, empty → nullValue', () => {
         const r = parseFormifiedValue(paramDef('paramInteger', 'k', true), '');
         if (r.ok) expect(r.value.kind.case).toBe('nullValue');
@@ -944,22 +906,17 @@ describe('parseFormifiedValue', () => {
         expect(r.ok).toBe(false);
     });
 
-    test('paramInteger below min → error', () => {
-        const r = parseFormifiedValue(paramDef('paramInteger', 'k', false, { min: 5 }), '3');
-        if (!r.ok) expect(r.error).toBe('Must be at least 5');
-        else throw new Error('expected error');
-    });
-    test('paramInteger above max → error', () => {
+    test('paramInteger past its own bounds still goes, for the device to refuse', () => {
         const r = parseFormifiedValue(paramDef('paramInteger', 'k', false, { max: 10 }), '11');
-        if (!r.ok) expect(r.error).toBe('Must be at most 10');
-        else throw new Error('expected error');
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'integerValue', value: 11 });
+        else throw new Error('expected ok');
     });
-    test('paramInteger without a max is capped at int32', () => {
+    test('paramInteger is capped at int32', () => {
         const r = parseFormifiedValue(paramDef('paramInteger', 'k', false, { min: 0 }), '2147483648');
         if (!r.ok) expect(r.error).toBe('Must be at most 2147483647');
         else throw new Error('expected error');
     });
-    test('paramInteger without a min is floored at int32', () => {
+    test('paramInteger is floored at int32', () => {
         const r = parseFormifiedValue(paramDef('paramInteger'), '-2147483649');
         if (!r.ok) expect(r.error).toBe('Must be at least -2147483648');
         else throw new Error('expected error');
@@ -967,6 +924,14 @@ describe('parseFormifiedValue', () => {
     test('paramInteger "1e10" → error (past int32)', () => {
         const r = parseFormifiedValue(paramDef('paramInteger'), '1e10');
         if (!r.ok) expect(r.error).toBe('Must be at most 2147483647');
+        else throw new Error('expected error');
+    });
+    test('paramInteger past int32 names its own bound where it has one', () => {
+        const high = parseFormifiedValue(paramDef('paramInteger', 'k', false, { max: 100 }), '99999999999');
+        if (!high.ok) expect(high.error).toBe('Must be at most 100');
+        else throw new Error('expected error');
+        const low = parseFormifiedValue(paramDef('paramInteger', 'k', false, { min: -5 }), '-99999999999');
+        if (!low.ok) expect(low.error).toBe('Must be at least -5');
         else throw new Error('expected error');
     });
     test('paramInteger at the int32 edges → integerValue', () => {
@@ -980,11 +945,6 @@ describe('parseFormifiedValue', () => {
         const r = parseFormifiedValue(paramDef('paramDouble'), '3000000000');
         if (r.ok) expect(r.value.kind).toEqual({ case: 'doubleValue', value: 3_000_000_000 });
         else throw new Error('expected ok');
-    });
-    test('paramDouble below min → error', () => {
-        const r = parseFormifiedValue(paramDef('paramDouble', 'k', false, { min: 0.5 }), '0.1');
-        if (!r.ok) expect(r.error).toBe('Must be at least 0.5');
-        else throw new Error('expected error');
     });
 
     test('paramBoolean true → booleanValue true', () => {
@@ -1003,16 +963,6 @@ describe('parseFormifiedValue', () => {
         if (r.ok) expect(r.value.kind.case).toBe('nullValue');
         else throw new Error('expected ok');
     });
-    test('paramTimezone required null → Required error', () => {
-        const r = parseFormifiedValue(paramDef('paramTimezone', 'k', false), null);
-        if (!r.ok) expect(r.error).toBe('Value is required');
-        else throw new Error('expected error');
-    });
-    test('paramTimezone required empty string → Required error', () => {
-        const r = parseFormifiedValue(paramDef('paramTimezone', 'k', false), '');
-        if (!r.ok) expect(r.error).toBe('Value is required');
-        else throw new Error('expected error');
-    });
     test('paramTimezone "Europe/Prague" → stringValue', () => {
         const r = parseFormifiedValue(paramDef('paramTimezone', 'k', true), 'Europe/Prague');
         if (r.ok) expect(r.value.kind).toEqual({ case: 'stringValue', value: 'Europe/Prague' });
@@ -1028,22 +978,11 @@ describe('parseFormifiedValue', () => {
             { case: 'integerValue', value: 1 },
         ]);
     });
-    test('paramArray below min_items → error on the list', () => {
-        const r = parseFormifiedValue(countsDef({ minItems: 1 }), []);
-        if (!r.ok) expect(r.error).toBe('Must have at least 1 item');
-        else throw new Error('expected error');
-    });
-    test('paramArray above max_items → only the count on the list, as on the server', () => {
-        const r = parseFormifiedValue(countsDef({ maxItems: 2 }), rows('1', '9', '9'));
-        if (r.ok) throw new Error('expected error');
-        expect(r.error).toBe('Must have at most 2 items');
-        expect(r.items).toBeUndefined();
-    });
-    test('paramArray bad items → errors at their indices, none on the list', () => {
-        const r = parseFormifiedValue(countsDef(), rows('1', '9', ''));
+    test('paramArray items without a wire form → errors at their indices, none on the list', () => {
+        const r = parseFormifiedValue(countsDef(), rows('1', 'abc', '1.5'));
         if (r.ok) throw new Error('expected error');
         expect(r.error).toBeUndefined();
-        expect(r.items).toEqual([undefined, { error: 'Must be at most 5' }, { error: 'Value is required' }]);
+        expect(r.items).toEqual([undefined, { error: 'Must be a number' }, { error: 'Must be a whole number' }]);
     });
     test('paramArray of objects → a struct per row, a blank optional field as null', () => {
         const r = parseFormifiedValue(linksDef(), [listItem({ label: 'Home', url: '' })]);
@@ -1054,63 +993,12 @@ describe('parseFormifiedValue', () => {
         expect(row.kind.value.fields.label.kind).toEqual({ case: 'stringValue', value: 'Home' });
         expect(row.kind.value.fields.url.kind.case).toBe('nullValue');
     });
-    test('paramArray of objects, a required field left blank → error on that field of its row', () => {
-        const r = parseFormifiedValue(linksDef(), [listItem({ label: '', url: 'https://braiins.com' })]);
-        if (r.ok) throw new Error('expected error');
-        expect(r.items).toEqual([{ fields: { label: 'Value is required' } }]);
-    });
-
-    const uniqueWhole = { uniqueItems: { case: 'whole', value: {} } };
-    const uniqueBy = (...keys: string[]) => ({ uniqueItems: { case: 'by', value: { keys } } });
-
-    test('paramArray with unique_items → each repeat names the item it repeats', () => {
-        const r = parseFormifiedValue(countsDef(uniqueWhole), rows('1', '2', '1'));
-        if (r.ok) throw new Error('expected error');
-        expect(r.items).toEqual([undefined, undefined, { error: 'Repeats item 1' }]);
-    });
-    test('paramArray with unique_items → repeats wait until every row parses', () => {
-        const r = parseFormifiedValue(countsDef(uniqueWhole), rows('1', '1', '9'));
-        if (r.ok) throw new Error('expected error');
-        expect(r.items).toEqual([undefined, undefined, { error: 'Must be at most 5' }]);
-    });
-    test('paramArray with unique_items → 0 and -0 are one number, as on the server', () => {
-        const r = parseFormifiedValue(countsDef(uniqueWhole), rows('0', '-0'));
-        if (r.ok) throw new Error('expected error');
-        expect(r.items).toEqual([undefined, { error: 'Repeats item 1' }]);
-    });
-    test('paramArray of objects with unique_items → only a whole-row match repeats', () => {
-        const r = parseFormifiedValue(linksDef(uniqueWhole), [
-            listItem({ label: 'Home', url: '' }),
-            listItem({ label: 'Home', url: 'https://braiins.com' }),
-            listItem({ label: 'Home', url: '' }),
-        ]);
-        if (r.ok) throw new Error('expected error');
-        expect(r.items).toEqual([undefined, undefined, { error: 'Repeats item 1' }]);
-    });
-    test('paramArray of objects unique by a key → the repeat sits on the key field', () => {
-        const r = parseFormifiedValue(linksDef(uniqueBy('label')), [
-            listItem({ label: 'Home', url: 'https://braiins.com' }),
-            listItem({ label: 'Home', url: 'https://braiins.com/pool' }),
-        ]);
-        if (r.ok) throw new Error('expected error');
-        expect(r.items).toEqual([undefined, { fields: { label: 'Same as item 1' } }]);
-    });
-    test('paramArray of objects unique by a composite key → one row message, the key fields marked', () => {
-        const r = parseFormifiedValue(linksDef(uniqueBy('label', 'url')), [
-            listItem({ label: 'Home', url: 'https://braiins.com' }),
-            listItem({ label: 'Home', url: 'https://braiins.com/pool' }),
-            listItem({ label: 'Home', url: 'https://braiins.com' }),
-        ]);
-        if (r.ok) throw new Error('expected error');
-        expect(r.items).toEqual([undefined, undefined, { error: 'Same as item 1', markedFields: ['label', 'url'] }]);
-    });
-    test('paramArray of objects unique by an optional key → unset keys match, as on the server', () => {
-        const r = parseFormifiedValue(linksDef(uniqueBy('url')), [
-            listItem({ label: 'Home', url: '' }),
-            listItem({ label: 'Pool', url: '' }),
-        ]);
-        if (r.ok) throw new Error('expected error');
-        expect(r.items).toEqual([undefined, { fields: { url: 'Same as item 1' } }]);
+    test('paramArray past its bounds or with repeats still goes, for the device to refuse', () => {
+        const r = parseFormifiedValue(
+            countsDef({ maxItems: 1, uniqueItems: { case: 'whole', value: {} } }),
+            rows('1', '1'),
+        );
+        expect(r.ok).toBe(true);
     });
 });
 
@@ -1244,10 +1132,10 @@ describe('buildFieldValues', () => {
 
     test('a bad list item → error in items[key][index]', () => {
         const withList = pb.create(pb.WidgetManifestSchema, { params: [countsDef()] });
-        const r = buildFieldValues(withList, { counts: rows('1', '9') });
+        const r = buildFieldValues(withList, { counts: rows('1', 'abc') });
         if (r.ok) throw new Error('expected error');
         expect(r.errors.fields.counts).toBeUndefined();
-        expect(r.errors.items?.counts).toEqual([undefined, { errors: ['Must be at most 5'] }]);
+        expect(r.errors.items?.counts).toEqual([undefined, { errors: ['Must be a number'] }]);
     });
 });
 
@@ -1302,22 +1190,41 @@ describe('params form errors', () => {
     });
     const count = paramDef('paramInteger', 'count', false, { max: 5 });
 
-    describe('hasItemErrors', () => {
-        test('no errors, or rows that carry none, are not item errors', () => {
-            expect(hasItemErrors(null)).toBe(false);
-            expect(hasItemErrors(formErrors())).toBe(false);
-            const blank = formErrors({ items: { links: [undefined, { errors: [], fields: { label: [] } }] } });
-            expect(hasItemErrors(blank)).toBe(false);
+    describe('hasFieldErrors', () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            params: [paramDef('paramInteger', 'count'), countsDef()],
+            credentials: [{ key: 'pool', typeId: 'braiins-pool', label: 'Pool' }],
         });
 
-        test('a row error counts', () => {
-            const form = formErrors({ items: { counts: [undefined, { errors: ['Must be at most 5'] }] } });
-            expect(hasItemErrors(form)).toBe(true);
+        test('no errors, or rows that carry none, do not count', () => {
+            expect(hasFieldErrors(null, manifest)).toBe(false);
+            expect(hasFieldErrors(formErrors(), manifest)).toBe(false);
+            const blank = formErrors({ items: { counts: [undefined, { errors: [], fields: { label: [] } }] } });
+            expect(hasFieldErrors(blank, manifest)).toBe(false);
         });
 
         test("a row field's error counts", () => {
-            const form = formErrors({ items: { links: [{ fields: { label: ['Value is required'] } }] } });
-            expect(hasItemErrors(form)).toBe(true);
+            const form = formErrors({ items: { counts: [{ fields: { label: ['Missing value!'] } }] } });
+            expect(hasFieldErrors(form, manifest)).toBe(true);
+        });
+
+        test('a param the form draws counts, by its field and by its rows', () => {
+            expect(hasFieldErrors(formErrors({ fields: { count: ['Must be at most 5'] } }), manifest)).toBe(true);
+            const rowError = formErrors({ items: { counts: [{ errors: ['Must be at most 5'] }] } });
+            expect(hasFieldErrors(rowError, manifest)).toBe(true);
+        });
+
+        test('a credential slot the form draws counts', () => {
+            expect(hasFieldErrors(formErrors({ credentials: { pool: ['Unknown account'] } }), manifest)).toBe(true);
+        });
+
+        test('what the form does not draw has nowhere to show, so it does not count', () => {
+            const dropped = formErrors({
+                fields: { retired: ['Unknown setting!'] },
+                items: { oldRows: [{ errors: ['Unknown field!'] }] },
+                credentials: { oldSlot: ['Unknown account'] },
+            });
+            expect(hasFieldErrors(dropped, manifest)).toBe(false);
         });
     });
 
@@ -1327,13 +1234,13 @@ describe('params form errors', () => {
                 items: {
                     links: [
                         undefined,
-                        { errors: ['First', 'Second'], fields: { label: ['Value is required', 'Too long'] } },
+                        { errors: ['First', 'Second'], fields: { label: ['Missing value!', 'Too long'] } },
                     ],
                 },
             });
             expect(itemErrorsOf(form, 'links')).toEqual([
                 undefined,
-                { error: 'First', fields: { label: 'Value is required' } },
+                { error: 'First', fields: { label: 'Missing value!' } },
             ]);
         });
 
@@ -1352,71 +1259,178 @@ describe('params form errors', () => {
             expect(clearFieldError(null, 'count')).toBeNull();
         });
 
-        test("clears the key's field error and the global one, keeping other keys", () => {
+        test("clears the key's field error and the status, keeping other keys and what no field shows", () => {
             const form = formErrors({
-                global: ['Invalid params'],
-                fields: { count: ['Must be at most 5'], name: ['Value is required'] },
+                status: 'Invalid params',
+                global: ['Unsupported size'],
+                fields: { count: ['Must be at most 5'], name: ['Missing value!'] },
                 items: { counts: [{ errors: ['Must be at most 5'] }] },
             });
-            expect(clearFieldError(form, 'count')).toEqual({
-                global: [],
-                fields: { name: ['Value is required'] },
+            const cleared = clearFieldError(form, 'count');
+            expect(cleared?.status).toBeUndefined();
+            expect(cleared).toEqual({
+                global: ['Unsupported size'],
+                fields: { name: ['Missing value!'] },
                 items: { counts: [{ errors: ['Must be at most 5'] }] },
             });
         });
 
-        test("clears a list key's row errors and the global one", () => {
+        test("clears a list key's row errors and the status", () => {
             const form = formErrors({
-                global: ['Invalid params'],
+                status: 'Invalid params',
                 items: { counts: [{ errors: ['Must be at most 5'] }] },
             });
-            expect(clearFieldError(form, 'counts')).toEqual({ global: [], fields: {}, items: {} });
+            const cleared = clearFieldError(form, 'counts');
+            expect(cleared?.status).toBeUndefined();
+            expect(cleared).toEqual({ global: [], fields: {}, items: {} });
         });
 
-        test('keeps the global error when the key had none', () => {
-            const form = formErrors({ global: ['Invalid params'], fields: { name: ['Value is required'] } });
-            expect(clearFieldError(form, 'count')?.global).toEqual(['Invalid params']);
+        test("keeps the bindings' violations, which no param edit addresses", () => {
+            const form = formErrors({
+                fields: { count: ['Must be at most 5'] },
+                credentials: { pool: ['Account not found'] },
+            });
+            expect(clearFieldError(form, 'count')?.credentials).toEqual({ pool: ['Account not found'] });
+        });
+
+        test('keeps the status when the key had no error', () => {
+            const form = formErrors({ status: 'Invalid params', fields: { name: ['Missing value!'] } });
+            expect(clearFieldError(form, 'count')?.status).toBe('Invalid params');
         });
 
         test('a key named like an Object member had no error to clear', () => {
-            const form = formErrors({ global: ['Invalid params'], items: {} });
-            expect(clearFieldError(form, 'constructor')?.global).toEqual(['Invalid params']);
+            const form = formErrors({ status: 'Invalid params', items: {} });
+            expect(clearFieldError(form, 'constructor')?.status).toBe('Invalid params');
         });
     });
 
     describe('revalidateField', () => {
         test('a value that now parses clears the key', () => {
-            const form = formErrors({ global: ['Invalid params'], fields: { count: ['Must be at most 5'] } });
+            const form = formErrors({ status: 'Invalid params', fields: { count: ['Must be at most 5'] } });
             expect(revalidateField(form, count, '3')).toEqual({ global: [], fields: {}, items: {} });
         });
 
         test('an invalid scalar sets its field error, keeping the other keys', () => {
-            const form = formErrors({ global: ['Invalid params'], fields: { name: ['Value is required'] } });
-            expect(revalidateField(form, count, '9')).toEqual({
-                global: ['Invalid params'],
-                fields: { name: ['Value is required'], count: ['Must be at most 5'] },
+            const form = formErrors({ status: 'Invalid params', fields: { name: ['Missing value!'] } });
+            expect(revalidateField(form, count, 'abc')).toEqual({
+                status: 'Invalid params',
+                global: [],
+                fields: { name: ['Missing value!'], count: ['Must be a number'] },
                 items: {},
             });
         });
 
         test("an invalid list sets its rows' errors", () => {
-            expect(revalidateField(null, countsDef(), rows('1', '9'))).toEqual({
+            expect(revalidateField(null, countsDef(), rows('1', 'abc'))).toEqual({
                 global: [],
                 fields: {},
-                items: { counts: [undefined, { errors: ['Must be at most 5'] }] },
+                items: { counts: [undefined, { errors: ['Must be a number'] }] },
+            });
+        });
+    });
+
+    describe("what the form's notice and toasts show", () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            params: [paramDef('paramInteger', 'count')],
+            credentials: [{ key: 'pool', typeId: 'braiins-pool', label: 'Pool' }],
+        });
+
+        test('takes in the violations on keys the manifest no longer declares', () => {
+            const form = formErrors({
+                global: ['Unsupported size'],
+                fields: { count: ['Must be at most 5'], retired: ['Unknown setting!'] },
+                items: { gone: [undefined, { errors: ['Not a row'], fields: { label: ['Missing value!'] } }] },
+                credentials: { pool: ['Account not found'], old: ['Unknown slot'] },
+            });
+            expect(unplacedErrors(form, manifest)).toEqual([
+                'Unsupported size',
+                'Unknown setting!',
+                'Not a row',
+                'Missing value!',
+                'Unknown slot',
+            ]);
+        });
+
+        test('leaves out the status while a field shows the reason', () => {
+            const form = formErrors({
+                status: 'Invalid params',
+                global: ['Unsupported size'],
+                fields: { count: ['Must be at most 5'] },
+            });
+            expect(formNotices(form, manifest)).toEqual(['Unsupported size']);
+        });
+
+        test('shows the status when no field explains it', () => {
+            const form = formErrors({ status: 'Invalid params', global: ['Unsupported size'] });
+            expect(formNotices(form, manifest)).toEqual(['Invalid params', 'Unsupported size']);
+        });
+
+        test("the form's own check keeps the device's violations it cannot judge", () => {
+            const local = formErrors({ fields: { count: ['Must be a number'] } });
+            const previous = formErrors({
+                status: 'Invalid params',
+                global: ['Unsupported size'],
+                fields: { count: ['Must be at most 5'] },
+                credentials: { pool: ['Account not found'] },
+            });
+            const merged = withLocalErrors(local, previous);
+            expect(merged.status).toBeUndefined();
+            expect(merged).toEqual({
+                global: ['Unsupported size'],
+                fields: { count: ['Must be a number'] },
+                items: {},
+                credentials: { pool: ['Account not found'] },
             });
         });
 
-        test('a composite key repeat keeps the fields it marks through to the list field', () => {
-            const links = linksDef({ uniqueItems: { case: 'by', value: { keys: ['label', 'url'] } } });
-            const form = revalidateField(null, links, [
-                listItem({ label: 'Home', url: 'https://braiins.com' }),
-                listItem({ label: 'Home', url: 'https://braiins.com' }),
-            ]);
-            expect(itemErrorsOf(form, 'links')).toEqual([
-                undefined,
-                { error: 'Same as item 1', markedFields: ['label', 'url'] },
-            ]);
+        test("a row's local fault keeps the device's word on its list", () => {
+            const local = formErrors({
+                fields: { counts: undefined },
+                items: { counts: [{ errors: ['Must be a number'] }] },
+            });
+            const previous = formErrors({ fields: { counts: ['Must have at most 2 items'] } });
+            expect(withLocalErrors(local, previous).fields.counts).toEqual(['Must have at most 2 items']);
+        });
+
+        test("the form's own check keeps the device's word on keys the manifest no longer declares", () => {
+            const local = formErrors({ fields: { count: ['Must be a number'] } });
+            const previous = formErrors({ fields: { retired: ['Unknown setting!'] } });
+            expect(unplacedErrors(withLocalErrors(local, previous), manifest)).toEqual(['Unknown setting!']);
+        });
+
+        test('a new size clears the violations on the request and keeps the fields', () => {
+            const form = formErrors({
+                status: 'Invalid params',
+                global: ['Unsupported size'],
+                fields: { count: ['Must be a number'] },
+            });
+            const cleared = clearGlobalErrors(form);
+            expect(cleared?.status).toBeUndefined();
+            expect(cleared).toEqual({ global: [], fields: { count: ['Must be a number'] } });
+        });
+
+        test("rebinding a slot clears that slot's violation and the status", () => {
+            const form = formErrors({
+                status: 'Invalid params',
+                credentials: { pool: ['Account not found'], api: ['Account not found'] },
+            });
+            const cleared = clearSlotError(form, 'pool');
+            expect(cleared?.status).toBeUndefined();
+            expect(cleared?.credentials).toEqual({ pool: [], api: ['Account not found'] });
+        });
+
+        test('rebinding a slot without a violation keeps the rest as it was', () => {
+            const form = formErrors({ status: 'Invalid params', fields: { count: ['Must be at most 5'] } });
+            expect(clearSlotError(form, 'pool')).toBe(form);
+        });
+
+        test('a refused save names its status even while a field shows the reason', () => {
+            const form = formErrors({
+                status: 'Invalid params',
+                global: ['Unsupported size'],
+                fields: { count: ['Must be at most 5'] },
+            });
+            expect(saveNotices(form, manifest)).toEqual(['Invalid params', 'Unsupported size']);
         });
     });
 });

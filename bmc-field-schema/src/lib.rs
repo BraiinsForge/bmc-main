@@ -39,7 +39,9 @@ use thiserror::Error;
 pub mod credential;
 mod validate;
 
-pub use validate::{MissingValues, Violation, validate_values};
+pub use validate::{
+    Bound, MissingValues, UnreadableValue, Violation, ViolationKind, validate_values,
+};
 
 /// Maximum byte length of a [`ParamKey`]. Under the wire-format `u16` length field, so the
 /// encoder's `u16::try_from` is statically infallible.
@@ -1099,7 +1101,7 @@ impl<'a> Scalar<'a> {
         if empty_default == EmptyDefault::Refused
             && matches!(&default, ParamValue::String(s) if s.is_empty())
         {
-            return Err("default_value: Value is required".into());
+            return Err(format!("default_value: {}", ViolationKind::Required));
         }
         if matches!(default, ParamValue::Null) {
             return Ok(());
@@ -1107,7 +1109,7 @@ impl<'a> Scalar<'a> {
         let mut violations = Vec::new();
         validate::validate_scalar("default_value", self, &default, &mut violations);
         match violations.into_iter().next() {
-            Some(violation) => Err(format!("{}: {}", violation.path, violation.message)),
+            Some(violation) => Err(format!("{}: {}", violation.path, violation.kind)),
             None => Ok(()),
         }
     }
@@ -1122,7 +1124,7 @@ impl ArrayParam {
             .ok_or_else(|| {
                 violations
                     .iter()
-                    .map(|violation| format!("{}: {}", violation.path, violation.message))
+                    .map(|violation| format!("{}: {}", violation.path, violation.kind))
                     .collect::<Vec<_>>()
                     .join("; ")
             })

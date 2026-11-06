@@ -44,6 +44,11 @@
     "translation": "正在构建",
     "description": "Upgrade overlay, short title before a percentage on a small display: building packages"
   },
+  "/bog61Qqsv": {
+    "source": "Must be a number",
+    "translation": "必须是数字",
+    "description": "Error under a numeric widget setting"
+  },
   "/lA4E/MHR1": {
     "source": "Restart the device?",
     "translation": "重启设备？",
@@ -73,6 +78,11 @@
     "source": "This language is not available on this device.",
     "translation": "此设备不提供该语言。",
     "description": "Error under the language picker when the chosen language is not on the device"
+  },
+  "1aAnak/CwP": {
+    "source": "{count, plural, one {Must be at most {count} character} other {Must be at most {count} characters}}",
+    "translation": "{count, plural, other {最多 {count} 个字符}}",
+    "description": "Error under a widget text setting; count is the longest allowed"
   },
   "1cXvAKA3/1": {
     "source": "Invalid sound!",
@@ -108,6 +118,11 @@
     "source": "Update Finished",
     "translation": "更新完成",
     "description": "Device-info title on the first boot after a firmware upgrade"
+  },
+  "33QD0tiSvb": {
+    "source": "Invalid field name: {key}!",
+    "translation": "字段名称无效：{key}！",
+    "description": "Error on a widget setting with a malformed field; key is the field's name"
   },
   "3KMjhU/aZV": {
     "source": "Restarting {device_name}...",
@@ -174,6 +189,11 @@
     "translation": "{primary}{secondary}",
     "description": "Relative time, the two segments side by side: 7m 30s"
   },
+  "7UrNWaPTul": {
+    "source": "Same as item {position}!",
+    "translation": "与第 {position} 项相同！",
+    "description": "Error on a widget list row's field; position is the earlier row's number"
+  },
   "7ggyx5LkEZ": {
     "source": "Failed to read the network settings!",
     "translation": "读取网络设置失败！",
@@ -198,6 +218,11 @@
     "source": "Line {line}: an entry cannot contain spaces.",
     "translation": "第 {line} 行：条目不能包含空格。",
     "description": "Error under an account's allowed hosts list; line is the entry's line number"
+  },
+  "87vrLqOw4c": {
+    "source": "Invalid field name at {at}: {key}!",
+    "translation": "{at} 处的字段名称无效：{key}！",
+    "description": "Error on a widget setting's nested value with a malformed field; key is the field's name, at its position"
   },
   "97LQdzs6/Y": {
     "source": "{device_name} is ready!",
@@ -224,6 +249,11 @@
     "translation": "设置屏幕亮度失败！",
     "description": "Error when the device could not apply the screen brightness setting"
   },
+  "DShSOKnbDN": {
+    "source": "Must be at least {min}",
+    "translation": "不能小于 {min}",
+    "description": "Error under a numeric widget setting; min is a number"
+  },
   "DWHJR5qqsV": {
     "source": "Effect type not specified!",
     "translation": "未指定效果类型！",
@@ -243,6 +273,11 @@
     "source": "Restarting the device…",
     "translation": "正在重启设备…",
     "description": "Settings tray notice title after the restart hold completed"
+  },
+  "EUUzbYRCy6": {
+    "source": "Must be a timezone",
+    "translation": "必须是时区",
+    "description": "Error under a timezone widget setting"
   },
   "EXlo7pbX6t": {
     "source": "Failed to log out!",
@@ -273,6 +308,11 @@
     "source": "Verifying",
     "translation": "正在校验",
     "description": "Upgrade overlay, short title before a percentage on a small display: verifying"
+  },
+  "FfSjpAlflF": {
+    "source": "Must be a valid timezone",
+    "translation": "必须是有效的时区",
+    "description": "Error under a timezone widget setting naming an unknown one"
   },
   "FnqgN2Rm7X": {
     "source": "To access the controls, IP and Wi-Fi info, <b>swipe down</b>",
@@ -344,6 +384,11 @@
     "translation": "{hours, plural, other {{hours}小时}}{minutes, plural, other {{minutes}分钟}}前",
     "description": "Relative time label for a moment behind, hours and minutes spelled out; both are whole numbers"
   },
+  "Jt/Y49BQJQ": {
+    "source": "The value at {at} has no type!",
+    "translation": "{at} 处的值没有类型！",
+    "description": "Error on a widget setting's nested value sent without its kind; at is its position, such as [3]"
+  },
   "KHno+BRDQE": {
     "source": "Use only letters, digits and hyphens, separated by dots",
     "translation": "只能使用字母、数字和连字符，并以点分隔",
@@ -393,6 +438,11 @@
     "source": "Line {line}: only \":port\" may follow the \"]\".",
     "translation": "第 {line} 行：“]”后只能跟“:port”。",
     "description": "Error under an account's allowed hosts list; line is the entry's line number, port is written as it must be typed"
+  },
+  "N2SWYpiACP": {
+    "source": "Must be an object",
+    "translation": "必须是一组字段",
+    "description": "Error on a widget list row; an object is a set of fields"
   },
   "N3uTWaGA5X": {
     "source": "Failed to save language!",
@@ -474,10 +524,20 @@
     "translation": "它占用了过多资源，已被暂停。",
     "description": "Banner line under the stopped-widget title"
   },
+  "SjBe8OZpAo": {
+    "source": "{count, plural, one {Must have at most {count} item} other {Must have at most {count} items}}",
+    "translation": "{count, plural, other {最多只能有 {count} 项}}",
+    "description": "Error under a widget list setting; count is the most rows allowed"
+  },
   "SrvTP45c6R": {
     "source": "Failed to get MAC address!",
     "translation": "获取 MAC 地址失败！",
     "description": "Error when the device could not read its own MAC address, the network card's hardware address"
+  },
+  "T5TLaa0vPb": {
+    "source": "Must be a finite number",
+    "translation": "必须是有限的数字",
+    "description": "Error under a numeric widget setting holding infinity"
   },
   "TDA31Tk5dv": {
     "source": "This credential type already sets where its secret may go.",
@@ -494,10 +554,25 @@
     "translation": "保存闹钟失败！",
     "description": "Error when the device could not store a change to its alarms"
   },
+  "TfM95g6WPR": {
+    "source": "Must be one of the listed options",
+    "translation": "必须是列出的选项之一",
+    "description": "Error under a widget setting with fixed choices"
+  },
+  "TrLuG4m0Wz": {
+    "source": "Repeats item {position}!",
+    "translation": "与第 {position} 项重复！",
+    "description": "Error on a widget list row; position is the earlier row's number"
+  },
   "TsdrcB/ovR": {
     "source": "Invalid API key!",
     "translation": "API 密钥无效！",
     "description": "Error under an account's token field when Braiins Pool refused the token"
+  },
+  "TsmVEHxWfm": {
+    "source": "{count, plural, one {Must be at least {count} character} other {Must be at least {count} characters}}",
+    "translation": "{count, plural, other {至少需要 {count} 个字符}}",
+    "description": "Error under a widget text setting; count is the shortest allowed"
   },
   "Tz1KEWXgJ3": {
     "source": "Failed to set the sound volume!",
@@ -513,6 +588,11 @@
     "source": "Could not run the check, so this token is unverified.",
     "translation": "无法执行检查，因此无法验证此令牌。",
     "description": "Error under an account's token field when the device could not start the check"
+  },
+  "UfnzFnesQd": {
+    "source": "Must be at most {max} bytes",
+    "translation": "最多 {max} 个字节",
+    "description": "Error under a widget text setting; max is a whole number"
   },
   "UkW/zUhInw": {
     "source": "SETUP",
@@ -734,6 +814,11 @@
     "translation": "获取主机名失败！",
     "description": "Error when the device could not read its own network name"
   },
+  "fbamqAX/er": {
+    "source": "This value has no type!",
+    "translation": "此值没有类型！",
+    "description": "Error on a widget setting sent without saying what kind of value it is"
+  },
   "gVSC85AlCJ": {
     "source": "Could not connect. Please try again.",
     "translation": "无法连接，请重试。",
@@ -744,6 +829,11 @@
     "translation": "或直接在浏览器中打开：",
     "description": "Device-info QR column, label above the address the code encodes"
   },
+  "gZIm9qFZM3": {
+    "source": "Unknown setting!",
+    "translation": "未知设置！",
+    "description": "Error for a widget setting the widget does not have"
+  },
   "gap8mTi9PY": {
     "source": "{days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}} ago",
     "translation": "{days, plural, other {{days}天}}{hours, plural, other {{hours}小时}}前",
@@ -753,6 +843,11 @@
     "source": "This device does not support Wi-Fi.",
     "translation": "此设备不支持 Wi-Fi。",
     "description": "Error when a Wi-Fi operation is used on a device with no Wi-Fi hardware"
+  },
+  "goDNO90+uU": {
+    "source": "{count, plural, one {Must have at least {count} item} other {Must have at least {count} items}}",
+    "translation": "{count, plural, other {至少需要 {count} 项}}",
+    "description": "Error under a widget list setting; count is the fewest rows allowed"
   },
   "h62fKvG87I": {
     "source": "Account not found!",
@@ -768,6 +863,11 @@
     "source": "Connecting to network...",
     "translation": "正在连接网络…",
     "description": "Device-info screen title while the device waits on its Ethernet cable, no Wi-Fi join under way"
+  },
+  "hXwfdCnjxR": {
+    "source": "Must be text",
+    "translation": "必须是文本",
+    "description": "Error under a text widget setting"
   },
   "hYOtrRdLud": {
     "source": "Failed to reboot device!",
@@ -788,6 +888,11 @@
     "source": "Failed to detach the account from its widgets!",
     "translation": "解除账户与小组件的关联失败！",
     "description": "Error when deleting an account and the device could not remove it from the widgets using it"
+  },
+  "iuzEJ36wJ5": {
+    "source": "Must be a whole number",
+    "translation": "必须是整数",
+    "description": "Error under a whole-number widget setting"
   },
   "jWfTPPZy4b": {
     "source": "Failed to save the time format!",
@@ -959,6 +1064,11 @@
     "translation": "保存每周首日失败！",
     "description": "Error when the device could not store which day its weeks start on"
   },
+  "rHvyAPFO0c": {
+    "source": "Must be a list",
+    "translation": "必须是列表",
+    "description": "Error under a widget list setting"
+  },
   "rYe1Be9pBK": {
     "source": "Failed to save the accounts!",
     "translation": "保存账户失败！",
@@ -968,6 +1078,11 @@
     "source": "Failed to switch night mode!",
     "translation": "切换夜间模式失败！",
     "description": "Error when the device could not apply the night mode switch"
+  },
+  "sE15x+Fe2Q": {
+    "source": "Unknown field!",
+    "translation": "未知字段！",
+    "description": "Error on a field a widget list row does not have"
   },
   "sXHuW30/mg": {
     "source": "Failed to check whether a password is set!",
@@ -1039,10 +1154,20 @@
     "translation": "登录以继续",
     "description": "Device-info line under the ready title, pointing at the web UI login"
   },
+  "y/q25hJxZZ": {
+    "source": "Must be true or false",
+    "translation": "必须是开或关",
+    "description": "Error under an on or off widget setting"
+  },
   "yBXCaNi47m": {
     "source": "The restart command failed",
     "translation": "重启命令执行失败",
     "description": "Settings tray notice, under its title when the restart is declined: the device's reboot call failed"
+  },
+  "yRA94B7J/1": {
+    "source": "Must be at most {max}",
+    "translation": "不能大于 {max}",
+    "description": "Error under a numeric widget setting; max is a number"
   },
   "zKG/OxShA+": {
     "source": "This device already has a password. Change it instead of creating a new one.",

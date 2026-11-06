@@ -414,7 +414,8 @@ const INITIAL_BINDINGS: Record<string, string> = {
 
 function invalidErrors(manifest: pb.WidgetManifest): ParamsFormErrors {
     return {
-        global: ['The widget could not be saved.'],
+        status: 'The widget could not be saved.',
+        global: ['This device does not support that size.'],
         fields: Object.fromEntries(manifest.params.map(p => [p.key, [`${p.name} is not acceptable.`]])),
         items: { [SYMBOLS.key]: [undefined, { errors: ['Unknown symbol.'] }] },
         credentials: Object.fromEntries(manifest.credentials.map(s => [s.key, ['Account not found']])),

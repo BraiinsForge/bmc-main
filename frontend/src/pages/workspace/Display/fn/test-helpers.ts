@@ -24,9 +24,14 @@ import * as pb from '@/proto';
 import { BadRequestSchema } from '@/proto/gen/google/rpc/error_details_pb';
 import { assertUnreachable } from '@/lib/ts';
 
-/** A server refusal carrying one field violation, as the scene handlers send it. */
-export function badRequest(field: string, description: string): ConnectError {
-    const detail = pb.create(BadRequestSchema, { fieldViolations: [{ field, description }] });
+/** A server refusal carrying its field violations, as the scene handlers send it. */
+export function badRequest(
+    field: string,
+    description: string,
+    ...more: Array<[field: string, description: string]>
+): ConnectError {
+    const fieldViolations = [{ field, description }, ...more.map(([field, description]) => ({ field, description }))];
+    const detail = pb.create(BadRequestSchema, { fieldViolations });
     return new ConnectError('Bad request', Code.InvalidArgument, undefined, [
         { desc: BadRequestSchema, value: detail },
     ]);

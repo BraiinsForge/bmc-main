@@ -622,7 +622,7 @@ function ObjectRow({ id, object, labelText, value, error, onChange, timezones }:
             <div className={css.objectFields}>
                 {object.fields.map(field => {
                     const fieldError = ownValue(error?.fields, field.key);
-                    const rowError = !fieldError && marksField(error, field.key) ? error?.error : undefined;
+                    const rowError = fieldError ? undefined : error?.error;
                     return (
                         <div key={field.key} className={cn(css.objectField, rowError && css.markedField)}>
                             <ScalarField
@@ -646,10 +646,6 @@ function ObjectRow({ id, object, labelText, value, error, onChange, timezones }:
             </div>
         </CarbonFormField>
     );
-}
-
-function marksField(error: RowError | undefined, key: string): boolean {
-    return !!error?.error && (error.markedFields?.includes(key) ?? true);
 }
 
 interface ArrayFieldProps {

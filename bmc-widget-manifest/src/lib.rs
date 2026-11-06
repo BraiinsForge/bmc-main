@@ -1383,7 +1383,7 @@ mod tests {
             "unique_items": true,
             "default_value": ["BTC", "ETH", "BTC"],
         }));
-        assert_eq!(reason, "default_value[2]: Repeats item 1");
+        assert_eq!(reason, "default_value[2]: Repeats item 1!");
     }
 
     #[test]
@@ -1429,7 +1429,7 @@ mod tests {
         def["unique_items"] = serde_json::json!(["label"]);
         assert_eq!(
             array_rejection(def),
-            r#"default_value[1]["label"]: Same as item 1"#
+            r#"default_value[1]["label"]: Same as item 1!"#
         );
     }
 
@@ -1625,13 +1625,13 @@ mod tests {
         let reason = array_rejection(links(
             serde_json::json!([{ "value": "https://braiins.com" }]),
         ));
-        assert_eq!(reason, r#"default_value[0]["label"]: Value is required"#);
+        assert_eq!(reason, r#"default_value[0]["label"]: Missing value!"#);
     }
 
     #[test]
     fn validate_object_default_with_an_unknown_field_fails() {
         let reason = array_rejection(links(serde_json::json!([{ "label": "Home", "icon": "x" }])));
-        assert_eq!(reason, r#"default_value[0]["icon"]: Unknown field"#);
+        assert_eq!(reason, r#"default_value[0]["icon"]: Unknown field!"#);
     }
 
     /// The list default a normalized param stores, as JSON: `1.0` and `1` compare unequal.
@@ -1712,11 +1712,11 @@ mod tests {
                 serde_json::json!({
                     "name": "L", "type": "array", "items": text, "max_items": 3, "default_value": [""],
                 }),
-                "default_value[0]: Value is required",
+                "default_value[0]: Missing value!",
             ),
             (
                 serde_json::json!({ "name": "L", "type": "array", "items": item, "max_items": 3 }),
-                "items: default_value: Value is required",
+                "items: default_value: Missing value!",
             ),
             (
                 serde_json::json!({
@@ -1725,7 +1725,7 @@ mod tests {
                     "items": { "type": "object", "fields": { "label": field } },
                     "max_items": 3,
                 }),
-                r#"items: field "label": default_value: Value is required"#,
+                r#"items: field "label": default_value: Missing value!"#,
             ),
         ] {
             assert_eq!(array_rejection(def), expected);
@@ -1789,7 +1789,7 @@ mod tests {
             violations,
             [Violation {
                 path: r#"["url"]"#.to_owned(),
-                message: "Value is required".to_owned(),
+                kind: bmc_field_schema::ViolationKind::Required,
             }],
         );
     }

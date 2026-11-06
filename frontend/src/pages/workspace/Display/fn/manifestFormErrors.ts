@@ -39,7 +39,7 @@ export function mapManifestUpdateError(rawError: unknown): ParamsFormErrors {
     const fields: Record<string, string[] | undefined> = {};
     const items: Record<string, Array<RowErrors | undefined> | undefined> = {};
     const credentials: Record<string, string[]> = {};
-    const global = message ? [message] : [];
+    const global: string[] = [];
 
     for (const { field, description } of fieldViolations) {
         // Field names arrive camelCased:
@@ -64,5 +64,5 @@ export function mapManifestUpdateError(rawError: unknown): ParamsFormErrors {
         }
     }
 
-    return { global, fields, items, credentials };
+    return { status: message || undefined, global, fields, items, credentials };
 }

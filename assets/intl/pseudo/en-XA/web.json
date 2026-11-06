@@ -198,10 +198,6 @@
     "source": "Add",
     "translation": "[Ȧḓḓ]"
   },
-  "2/nV0r0AXx": {
-    "source": "Unknown connection error",
-    "translation": "[Ŭƞķƞǿǿẇƞ ƈǿǿƞƞḗḗƈŧīǿǿƞ ḗḗřřǿǿř]"
-  },
   "2NqUghZFW1": {
     "source": "Wed",
     "translation": "[Ẇḗḗḓ]"
@@ -209,6 +205,11 @@
   "2Rb7NuJWUu": {
     "source": "Enable Screen Cycling",
     "translation": "[Ḗƞȧȧƀŀḗḗ Şƈřḗḗḗḗƞ Ƈẏƈŀīƞɠ]"
+  },
+  "2W0VyqHD5n": {
+    "source": "Must be a number",
+    "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧ ƞŭŭḿƀḗḗř]",
+    "description": "Error under a numeric widget setting holding something other than a number"
   },
   "2YcWO70nn6": {
     "source": "The device didn't answer in time.",
@@ -225,11 +226,6 @@
   "2kBrtfEhBU": {
     "source": "Passwords must match!",
     "translation": "[Ƥȧȧşşẇǿǿřḓş ḿŭŭşŧ ḿȧȧŧƈħ!]"
-  },
-  "2lkkIt/sQZ": {
-    "source": "Value is required",
-    "translation": "[Ṽȧȧŀŭŭḗḗ īş řḗḗɋŭŭīřḗḗḓ]",
-    "description": "Error under a widget setting left empty"
   },
   "2m+pAldxBC": {
     "source": "Finishing up…",
@@ -385,11 +381,6 @@
     "source": "Edit Combined Scene",
     "translation": "[Ḗḓīŧ Ƈǿǿḿƀīƞḗḗḓ Şƈḗḗƞḗḗ]"
   },
-  "6FbHMkvF2I": {
-    "source": "{count, plural, one {Must be at least {count} character} other {Must be at least {count} characters}}",
-    "translation": "[{count, plural, one {Ḿŭŭşŧ ƀḗḗ ȧȧŧ ŀḗḗȧȧşŧ {count} ƈħȧȧřȧȧƈŧḗḗř} other {Ḿŭŭşŧ ƀḗḗ ȧȧŧ ŀḗḗȧȧşŧ {count} ƈħȧȧřȧȧƈŧḗḗřş}}]",
-    "description": "Error under a widget text setting shorter than allowed; count is its fewest characters"
-  },
   "6RFmTPnch5": {
     "source": "Your system and packages are up to date",
     "translation": "[Ẏǿǿŭŭř şẏşŧḗḗḿ ȧȧƞḓ ƥȧȧƈķȧȧɠḗḗş ȧȧřḗḗ ŭŭƥ ŧǿǿ ḓȧȧŧḗḗ]"
@@ -468,11 +459,6 @@
     "translation": "[Ƥȧȧşşẇǿǿřḓ]",
     "description": "Login page, the label of the device's web password field"
   },
-  "96/QJ8EYrn": {
-    "source": "Not an integer",
-    "translation": "[Ƞǿǿŧ ȧȧƞ īƞŧḗḗɠḗḗř]",
-    "description": "Error under a whole-number widget setting holding a fraction"
-  },
   "9BBNEzxnNi": {
     "source": "Metric (km, kg)",
     "translation": "[Ḿḗḗŧřīƈ (ķḿ, ķɠ)]"
@@ -528,11 +514,6 @@
   "AYXyukWL5P": {
     "source": "Downloading",
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ]"
-  },
-  "AgR+F5BSo4": {
-    "source": "{count, plural, one {Must have at most {count} item} other {Must have at most {count} items}}",
-    "translation": "[{count, plural, one {Ḿŭŭşŧ ħȧȧṽḗḗ ȧȧŧ ḿǿǿşŧ {count} īŧḗḗḿ} other {Ḿŭŭşŧ ħȧȧṽḗḗ ȧȧŧ ḿǿǿşŧ {count} īŧḗḗḿş}}]",
-    "description": "Error under a widget list setting with too many rows; count is its most rows"
   },
   "AhQdiCzbWT": {
     "source": "If you forget this password, you'll need to reset the device to regain access.",
@@ -687,20 +668,10 @@
     "source": "{name} was upgraded from {previous} to {version}.",
     "translation": "[{name} ẇȧȧş ŭŭƥɠřȧȧḓḗḗḓ ƒřǿǿḿ {previous} ŧǿǿ {version}.]"
   },
-  "EOpapZmbDd": {
-    "source": "Repeats item {position}",
-    "translation": "[Řḗḗƥḗḗȧȧŧş īŧḗḗḿ {position}]",
-    "description": "Error on a row of a widget list setting that must not repeat; position is the number of the earlier equal row"
-  },
   "EXPh3I0MA0": {
     "source": "Copy to clipboard",
     "translation": "[Ƈǿǿƥẏ ŧǿǿ ƈŀīƥƀǿǿȧȧřḓ]",
     "description": "Tooltip and screen-reader name of a button copying a value"
-  },
-  "Ek0Bt0UR7I": {
-    "source": "Must be at least {min}",
-    "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧŧ ŀḗḗȧȧşŧ {min}]",
-    "description": "Error under a numeric widget setting below its lowest value; min is a number"
   },
   "Ev6SEFBkdw": {
     "source": "New Password",
@@ -880,6 +851,11 @@
     "source": "Widget cycling: {status}",
     "translation": "[Ẇīḓɠḗḗŧ ƈẏƈŀīƞɠ: {status}]"
   },
+  "J5q4+a01tY": {
+    "source": "Must be at least {min}",
+    "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧŧ ŀḗḗȧȧşŧ {min}]",
+    "description": "Error under a whole-number widget setting too low to send; min is a number"
+  },
   "JCebdsA/Mm": {
     "source": "One per line: host / \"*.example.com\" wildcard / CIDR range.{br}Leave empty to allow any destination.",
     "translation": "[Ǿƞḗḗ ƥḗḗř ŀīƞḗḗ: ħǿǿşŧ / \"*.ḗḗẋȧȧḿƥŀḗḗ.ƈǿǿḿ\" ẇīŀḓƈȧȧřḓ / ƇĪḒŘ řȧȧƞɠḗḗ.{br}Ŀḗḗȧȧṽḗḗ ḗḗḿƥŧẏ ŧǿǿ ȧȧŀŀǿǿẇ ȧȧƞẏ ḓḗḗşŧīƞȧȧŧīǿǿƞ.]"
@@ -978,11 +954,6 @@
     "source": "Failed to load sound settings!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ şǿǿŭŭƞḓ şḗḗŧŧīƞɠş!]"
   },
-  "MhtSyAVGz8": {
-    "source": "{count, plural, one {Must have at least {count} item} other {Must have at least {count} items}}",
-    "translation": "[{count, plural, one {Ḿŭŭşŧ ħȧȧṽḗḗ ȧȧŧ ŀḗḗȧȧşŧ {count} īŧḗḗḿ} other {Ḿŭŭşŧ ħȧȧṽḗḗ ȧȧŧ ŀḗḗȧȧşŧ {count} īŧḗḗḿş}}]",
-    "description": "Error under a widget list setting with too few rows; count is its fewest rows"
-  },
   "Mirphk5bbO": {
     "source": "Network Configuration",
     "translation": "[Ƞḗḗŧẇǿǿřķ Ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ]"
@@ -1015,11 +986,6 @@
     "source": "Alarm has been successfully toggled.",
     "translation": "[Ȧŀȧȧřḿ ħȧȧş ƀḗḗḗḗƞ şŭŭƈƈḗḗşşƒŭŭŀŀẏ ŧǿǿɠɠŀḗḗḓ.]"
   },
-  "Nnva2ngVn/": {
-    "source": "Must be at most {max} bytes",
-    "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {max} ƀẏŧḗḗş]",
-    "description": "Error under a widget text setting too long to store; max is always 1024"
-  },
   "NqihMEPE7t": {
     "source": "{widget} could not go there and is back in place.",
     "translation": "[{widget} ƈǿǿŭŭŀḓ ƞǿǿŧ ɠǿǿ ŧħḗḗřḗḗ ȧȧƞḓ īş ƀȧȧƈķ īƞ ƥŀȧȧƈḗḗ.]",
@@ -1040,11 +1006,6 @@
   "O6TzPNzw67": {
     "source": "Verifying packages",
     "translation": "[Ṽḗḗřīƒẏīƞɠ ƥȧȧƈķȧȧɠḗḗş]"
-  },
-  "OIfOdhUGU7": {
-    "source": "{count, plural, one {Must be at most {count} character} other {Must be at most {count} characters}}",
-    "translation": "[{count, plural, one {Ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {count} ƈħȧȧřȧȧƈŧḗḗř} other {Ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {count} ƈħȧȧřȧȧƈŧḗḗřş}}]",
-    "description": "Error under a widget text setting longer than allowed; count is its most characters"
   },
   "OLVyHLE2VH": {
     "source": "WEP",
@@ -1100,11 +1061,6 @@
     "source": "Success",
     "translation": "[Şŭŭƈƈḗḗşş]",
     "description": "Screen-reader name of a success notification's icon"
-  },
-  "P3nj3Hx6B1": {
-    "source": "Same as item {position}",
-    "translation": "[Şȧȧḿḗḗ ȧȧş īŧḗḗḿ {position}]",
-    "description": "Error on a row of a widget list setting whose identifying fields repeat; position is the number of the earlier row"
   },
   "P6PLpip+L0": {
     "source": "Join",
@@ -1233,10 +1189,6 @@
     "source": "{name} ({unit})",
     "translation": "[{name} ({unit})]"
   },
-  "TKmub+jF8a": {
-    "source": "This field is required",
-    "translation": "[Ŧħīş ƒīḗḗŀḓ īş řḗḗɋŭŭīřḗḗḓ]"
-  },
   "TegfEqa1ff": {
     "source": "Edit {widget}",
     "translation": "[Ḗḓīŧ {widget}]",
@@ -1254,6 +1206,11 @@
   "UILcXulI13": {
     "source": "Unit system changed",
     "translation": "[Ŭƞīŧ şẏşŧḗḗḿ ƈħȧȧƞɠḗḗḓ]"
+  },
+  "US+AafvTJd": {
+    "source": "Must be at most {max}",
+    "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {max}]",
+    "description": "Error under a whole-number widget setting too high to send; max is a number"
   },
   "UTWdjErGLJ": {
     "source": "Configure the content displayed on your Deck. Enable, order, and set durations for each widget to control what’s shown.",
@@ -1553,6 +1510,11 @@
     "source": "This Deck runs up to {max} widgets at once. Turn off or delete a scene to free a slot before adding another.",
     "translation": "[Ŧħīş Ḓḗḗƈķ řŭŭƞş ŭŭƥ ŧǿǿ {max} ẇīḓɠḗḗŧş ȧȧŧ ǿǿƞƈḗḗ. Ŧŭŭřƞ ǿǿƒƒ ǿǿř ḓḗḗŀḗḗŧḗḗ ȧȧ şƈḗḗƞḗḗ ŧǿǿ ƒřḗḗḗḗ ȧȧ şŀǿǿŧ ƀḗḗƒǿǿřḗḗ ȧȧḓḓīƞɠ ȧȧƞǿǿŧħḗḗř.]"
   },
+  "e1A6/LD3Kt": {
+    "source": "Missing value!",
+    "translation": "[Ḿīşşīƞɠ ṽȧȧŀŭŭḗḗ!]",
+    "description": "Error under a required form field left empty"
+  },
   "eK57EzWaF5": {
     "source": "Sound volume in night mode saved",
     "translation": "[Şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ īƞ ƞīɠħŧ ḿǿǿḓḗḗ şȧȧṽḗḗḓ]"
@@ -1648,11 +1610,6 @@
   "gJUhDBplXf": {
     "source": "Turn off the screen after a period of inactivity during night mode. Touch to wake.",
     "translation": "[Ŧŭŭřƞ ǿǿƒƒ ŧħḗḗ şƈřḗḗḗḗƞ ȧȧƒŧḗḗř ȧȧ ƥḗḗřīǿǿḓ ǿǿƒ īƞȧȧƈŧīṽīŧẏ ḓŭŭřīƞɠ ƞīɠħŧ ḿǿǿḓḗḗ. Ŧǿǿŭŭƈħ ŧǿǿ ẇȧȧķḗḗ.]"
-  },
-  "gOsAMMep1e": {
-    "source": "Not a number",
-    "translation": "[Ƞǿǿŧ ȧȧ ƞŭŭḿƀḗḗř]",
-    "description": "Error under a numeric widget setting holding something other than a number"
   },
   "gnJyZ1YE4o": {
     "source": "No “Display widget” yet",
@@ -1903,6 +1860,11 @@
     "source": "System Settings",
     "translation": "[Şẏşŧḗḗḿ Şḗḗŧŧīƞɠş]"
   },
+  "nkMxhWPmk+": {
+    "source": "Must be a whole number",
+    "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧ ẇħǿǿŀḗḗ ƞŭŭḿƀḗḗř]",
+    "description": "Error under a whole-number widget setting holding a fraction"
+  },
   "nnTDy2H+X0": {
     "source": "Move {scene}",
     "translation": "[Ḿǿǿṽḗḗ {scene}]"
@@ -2045,11 +2007,6 @@
     "source": "Password is not set!",
     "translation": "[Ƥȧȧşşẇǿǿřḓ īş ƞǿǿŧ şḗḗŧ!]"
   },
-  "rgjVof+QF8": {
-    "source": "Must be at most {max}",
-    "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {max}]",
-    "description": "Error under a numeric widget setting above its highest value; max is a number"
-  },
   "ris6V67rM0": {
     "source": "Connected Accounts",
     "translation": "[Ƈǿǿƞƞḗḗƈŧḗḗḓ Ȧƈƈǿǿŭŭƞŧş]"
@@ -2178,10 +2135,6 @@
   "uhx3NcomO0": {
     "source": "Accept the Risk and Install",
     "translation": "[Ȧƈƈḗḗƥŧ ŧħḗḗ Řīşķ ȧȧƞḓ Īƞşŧȧȧŀŀ]"
-  },
-  "uiFoFmfuC9": {
-    "source": "Password is required",
-    "translation": "[Ƥȧȧşşẇǿǿřḓ īş řḗḗɋŭŭīřḗḗḓ]"
   },
   "v+ng25gutv": {
     "source": "{item} dropped outside the list, back at position {position} of {count}.",

@@ -344,26 +344,109 @@ export function getValidDropSlots(pool: C.Located[], widget: C.Located): C.Valid
 export type FormifiedValue = FieldValue;
 export type FormifiedParams = Record<string, FormifiedValue>;
 export interface ParamsFormErrors {
+    // The refusal's own sentence, apart from the violations it carries.
+    status?: string;
+    // Violations at paths `mapManifestUpdateError` could not place.
     global: string[];
     fields: Record<string, string[] | undefined>;
-    /** A list param's item violations, by item index. */
+    // A list param's item violations, by item index.
     items?: Record<string, Array<RowErrors | undefined> | undefined>;
-    /** Binding violations, keyed by slot key. */
+    // Binding violations, keyed by slot key.
     credentials?: Record<string, string[]>;
 }
 
 export interface RowErrors {
     errors?: string[];
     fields?: Record<string, string[] | undefined>;
-    markedFields?: string[];
 }
 
 function hasRowErrors(row: RowErrors | undefined): boolean {
     return !!row?.errors?.length || Object.values(row?.fields ?? {}).some(errors => !!errors?.length);
 }
 
-export function hasItemErrors(errors: null | ParamsFormErrors): boolean {
-    return Object.values(errors?.items ?? {}).some(rows => rows?.some(hasRowErrors));
+/**
+ * Whether a field the form draws shows an error.
+ * One on a param or slot the manifest no longer declares has nowhere to show.
+ */
+export function hasFieldErrors(errors: null | ParamsFormErrors, manifest: pb.WidgetManifest): boolean {
+    return (
+        manifest.params.some(
+            ({ key }) =>
+                ownValue(errors?.fields, key)?.some(Boolean) || ownValue(errors?.items, key)?.some(hasRowErrors),
+        ) || manifest.credentials.some(({ key }) => ownValue(errors?.credentials, key)?.some(Boolean))
+    );
+}
+
+/**
+ * The violations the form has no field for:
+ * those off every field, and those on keys the manifest no longer declares.
+ */
+export function unplacedErrors(errors: null | ParamsFormErrors, manifest: pb.WidgetManifest): string[] {
+    if (!errors) return [];
+    const params = new Set(manifest.params.map(({ key }) => key));
+    const slots = new Set(manifest.credentials.map(({ key }) => key));
+    const undeclared = <T>(record: Record<string, T> | undefined, declared: Set<string>): T[] =>
+        Object.entries(record ?? {}).flatMap(([key, value]) => (declared.has(key) ? [] : [value]));
+    const rowMessages = (row: RowErrors | undefined): string[] => [
+        ...(row?.errors ?? []),
+        ...Object.values(row?.fields ?? {}).flatMap(list => list ?? []),
+    ];
+    return [
+        ...errors.global,
+        ...undeclared(errors.fields, params).flatMap(list => list ?? []),
+        ...undeclared(errors.items, params).flatMap(rows => rows?.flatMap(rowMessages) ?? []),
+        ...undeclared(errors.credentials, slots).flat(),
+    ].filter(Boolean);
+}
+
+/**
+ * What the form's notice and its live toast show: every unplaced violation,
+ * and the refusal's own sentence only while no field explains it.
+ */
+export function formNotices(errors: null | ParamsFormErrors, manifest: pb.WidgetManifest): string[] {
+    const status = errors?.status && !hasFieldErrors(errors, manifest) ? [errors.status] : [];
+    return [...status, ...unplacedErrors(errors, manifest)];
+}
+
+/**
+ * What a refused save says: every unplaced violation,
+ * and the refusal's own sentence even beside field errors,
+ * since a save the user asked for must say it failed.
+ */
+export function saveNotices(errors: null | ParamsFormErrors, manifest: pb.WidgetManifest): string[] {
+    const status = errors?.status ? [errors.status] : [];
+    return [...status, ...unplacedErrors(errors, manifest)];
+}
+
+/**
+ * The local check's faults, with the device's violations kept wherever the check put none.
+ * A list's own violation and its rows' stand apart, so a faulty row leaves the list's in place.
+ * The device's status goes, since this write never reached the device to refuse it.
+ */
+export function withLocalErrors(local: ParamsFormErrors, previous: null | ParamsFormErrors): ParamsFormErrors {
+    const faults = <T>(record: Record<string, T | undefined> | undefined) =>
+        Object.fromEntries(Object.entries(record ?? {}).filter(([, value]) => value !== undefined));
+    return {
+        global: previous?.global ?? [],
+        fields: { ...previous?.fields, ...faults(local.fields) },
+        items: { ...previous?.items, ...faults(local.items) },
+        credentials: previous?.credentials,
+    };
+}
+
+/**
+ * After a new size, what the device said beyond the fields is stale,
+ * such as its refusal of the old size.
+ * The next write reports afresh.
+ */
+export function clearGlobalErrors(errors: null | ParamsFormErrors): null | ParamsFormErrors {
+    return errors && { ...errors, status: undefined, global: [] };
+}
+
+/** Rebinding a slot answers its violation, as editing a field answers that field's. */
+export function clearSlotError(errors: null | ParamsFormErrors, key: string): null | ParamsFormErrors {
+    if (!ownValue(errors?.credentials, key)?.length) return errors;
+    return errors && { ...errors, status: undefined, credentials: { ...errors.credentials, [key]: [] } };
 }
 
 /** Each row's first violation, and each field's, as a list field shows them. */
@@ -371,7 +454,7 @@ export function itemErrorsOf(errors: null | ParamsFormErrors, key: string): Arra
     return ownValue(errors?.items, key)?.map(row => {
         if (!row) return undefined;
         const fields = row.fields && Object.entries(row.fields).map(([field, list]) => [field, list?.[0]]);
-        return { error: row.errors?.[0], fields: fields && Object.fromEntries(fields), markedFields: row.markedFields };
+        return { error: row.errors?.[0], fields: fields && Object.fromEntries(fields) };
     });
 }
 
@@ -379,7 +462,9 @@ export function clearFieldError(errors: null | ParamsFormErrors, key: string): n
     if (!errors) return null;
     const hadFieldError = !!ownValue(errors.fields, key)?.length || !!ownValue(errors.items, key)?.some(hasRowErrors);
     return {
-        global: hadFieldError ? [] : errors.global,
+        status: hadFieldError ? undefined : errors.status,
+        global: errors.global,
+        credentials: errors.credentials,
         fields: { ...errors.fields, [key]: undefined },
         items: { ...errors.items, [key]: undefined },
     };
@@ -391,7 +476,6 @@ function toRowErrors(row: RowError | undefined): RowErrors | undefined {
     return {
         errors: row.error ? [row.error] : undefined,
         fields: fields && Object.fromEntries(fields),
-        markedFields: row.markedFields,
     };
 }
 

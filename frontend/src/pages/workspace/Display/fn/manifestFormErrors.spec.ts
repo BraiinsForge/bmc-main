@@ -57,13 +57,13 @@ describe('mapManifestUpdateError', () => {
     test("an object row's field violation lands on that field of its row", () => {
         const errors = mapManifestUpdateError(
             badRequest([
-                ['params["links"][1]["label"]', 'Value is required'],
+                ['params["links"][1]["label"]', 'Missing value!'],
                 ['params["links"][1]', 'Must be an object'],
             ]),
         );
         expect(errors.items?.links?.[1]).toEqual({
             errors: ['Must be an object'],
-            fields: { label: ['Value is required'] },
+            fields: { label: ['Missing value!'] },
         });
     });
 
@@ -71,13 +71,13 @@ describe('mapManifestUpdateError', () => {
         const { fields, items, credentials } = mapManifestUpdateError(
             badRequest([
                 ['params["constructor"]', 'Must be text'],
-                ['params["toString"][0]["valueOf"]', 'Value is required'],
+                ['params["toString"][0]["valueOf"]', 'Missing value!'],
                 ['credential_bindings["hasOwnProperty"]', 'Unknown account'],
             ]),
         );
         expect({ fields, items, credentials }).toEqual({
             fields: { constructor: ['Must be text'] },
-            items: { toString: [{ fields: { valueOf: ['Value is required'] } }] },
+            items: { toString: [{ fields: { valueOf: ['Missing value!'] } }] },
             credentials: { hasOwnProperty: ['Unknown account'] },
         });
     });
@@ -94,7 +94,13 @@ describe('mapManifestUpdateError', () => {
                 ['params["counts"]["x"]', 'Not an item'],
             ]),
         );
-        expect(errors.global).toEqual(expect.arrayContaining(['Unsupported size', 'Not an item']));
+        expect(errors.global).toEqual(['Unsupported size', 'Not an item']);
         expect(errors.items).toEqual({});
+    });
+
+    test("the refusal's own sentence stays apart from the violations", () => {
+        const errors = mapManifestUpdateError(badRequest([['size', 'Unsupported size']]));
+        expect(errors.status).toBe('Bad request');
+        expect(errors.global).toEqual(['Unsupported size']);
     });
 });

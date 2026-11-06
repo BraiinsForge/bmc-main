@@ -33,7 +33,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bmc_field_schema::{MissingValues, Violation};
+use bmc_field_schema::{MissingValues, UnreadableValue, Violation};
 use bmc_widget_manifest::{Manifest, ParamKey, ParamValue};
 use bmc_widget_protocol::{DisplayInfo, ViewportShape};
 use serde::Serialize;
@@ -83,7 +83,7 @@ pub(crate) enum MigrationFailure {
 fn violations_line(violations: &[Violation]) -> String {
     violations
         .iter()
-        .map(|violation| format!("{}: {}", violation.path, violation.message))
+        .map(|violation| format!("{}: {}", violation.path, violation.kind))
         .collect::<Vec<_>>()
         .join("; ")
 }
@@ -303,7 +303,7 @@ pub(crate) fn merge_overlay(
     stored: &BTreeMap<ParamKey, ParamValue>,
     overlay: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<BTreeMap<ParamKey, ParamValue>, MigrationFailure> {
-    let mut values: BTreeMap<String, Result<ParamValue, String>> = stored
+    let mut values: BTreeMap<String, Result<ParamValue, UnreadableValue>> = stored
         .iter()
         .filter(|(key, _)| manifest.params.contains_key(key.as_str()))
         .map(|(key, value)| (key.as_str().to_owned(), Ok(value.clone())))
@@ -311,7 +311,7 @@ pub(crate) fn merge_overlay(
     for (key, value) in overlay {
         values.insert(
             key.clone(),
-            ParamValue::try_from(value).map_err(|error| error.to_string()),
+            ParamValue::try_from(value).map_err(UnreadableValue::Conversion),
         );
     }
     bmc_field_schema::validate_values(&manifest.params, &values, MissingValues::Default)

@@ -19,6 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_field_schema::{UnreadableValue, ViolationKind};
 use bmc_grpc::google::rpc::BadRequest;
 use bmc_grpc::google::rpc::bad_request::FieldViolation;
 use bmc_grpc::web::NumberFormat;
@@ -103,6 +104,162 @@ pub(crate) fn missing_value(intl: &Intl) -> String {
         default_message: "Missing value!",
         description: "Error under a required form field left empty",
     )
+}
+
+fn unreadable_message(intl: &Intl, unreadable: &UnreadableValue) -> String {
+    match unreadable {
+        UnreadableValue::KindUnset { at } if at.is_empty() => format_message!(
+            intl,
+            default_message: "This value has no type!",
+            description: "Error on a widget setting sent without saying what kind of value it is",
+        ),
+        UnreadableValue::KindUnset { at } => format_message!(
+            intl,
+            default_message: "The value at {at} has no type!",
+            description: "Error on a widget setting's nested value sent without its kind; at is its position, such as [3]",
+            values: { at: at.as_str() },
+        ),
+        UnreadableValue::InvalidFieldKey { at, key } if at.is_empty() => format_message!(
+            intl,
+            default_message: "Invalid field name: {key}!",
+            description: "Error on a widget setting with a malformed field; key is the field's name",
+            values: { key: key.as_str() },
+        ),
+        UnreadableValue::InvalidFieldKey { at, key } => format_message!(
+            intl,
+            default_message: "Invalid field name at {at}: {key}!",
+            description: "Error on a widget setting's nested value with a malformed field; key is the field's name, at its position",
+            values: { key: key.as_str(), at: at.as_str() },
+        ),
+        UnreadableValue::Conversion(error) => violation_message(intl, &error.into()),
+    }
+}
+
+/// `kind` in the request's language. Its `Display` is the same English.
+#[expect(clippy::too_many_lines, reason = "one message per violation kind")]
+pub(crate) fn violation_message(intl: &Intl, kind: &ViolationKind) -> String {
+    fn whole(count: usize) -> u64 {
+        u64::try_from(count).expect("BUG: a schema's count fits in u64")
+    }
+
+    match kind {
+        ViolationKind::Required => missing_value(intl),
+        ViolationKind::Unreadable(unreadable) => unreadable_message(intl, unreadable),
+        ViolationKind::UnknownParam => format_message!(
+            intl,
+            default_message: "Unknown setting!",
+            description: "Error for a widget setting the widget does not have",
+        ),
+        ViolationKind::UnknownField => format_message!(
+            intl,
+            default_message: "Unknown field!",
+            description: "Error on a field a widget list row does not have",
+        ),
+        ViolationKind::NotAList => format_message!(
+            intl,
+            default_message: "Must be a list",
+            description: "Error under a widget list setting",
+        ),
+        ViolationKind::NotAnObject => format_message!(
+            intl,
+            default_message: "Must be an object",
+            description: "Error on a widget list row; an object is a set of fields",
+        ),
+        ViolationKind::NotText => format_message!(
+            intl,
+            default_message: "Must be text",
+            description: "Error under a text widget setting",
+        ),
+        ViolationKind::NotWholeNumber => format_message!(
+            intl,
+            default_message: "Must be a whole number",
+            description: "Error under a whole-number widget setting",
+        ),
+        ViolationKind::NotNumber => format_message!(
+            intl,
+            default_message: "Must be a number",
+            description: "Error under a numeric widget setting",
+        ),
+        ViolationKind::NotTrueOrFalse => format_message!(
+            intl,
+            default_message: "Must be true or false",
+            description: "Error under an on or off widget setting",
+        ),
+        ViolationKind::NotTimezone => format_message!(
+            intl,
+            default_message: "Must be a timezone",
+            description: "Error under a timezone widget setting",
+        ),
+        ViolationKind::InvalidTimezone => format_message!(
+            intl,
+            default_message: "Must be a valid timezone",
+            description: "Error under a timezone widget setting naming an unknown one",
+        ),
+        ViolationKind::NotFinite => format_message!(
+            intl,
+            default_message: "Must be a finite number",
+            description: "Error under a numeric widget setting holding infinity",
+        ),
+        ViolationKind::NotListed => format_message!(
+            intl,
+            default_message: "Must be one of the listed options",
+            description: "Error under a widget setting with fixed choices",
+        ),
+        ViolationKind::TooFewItems { min } => format_message!(
+            intl,
+            default_message: "{count, plural, one {Must have at least {count} item} other {Must have at least {count} items}}",
+            description: "Error under a widget list setting; count is the fewest rows allowed",
+            values: { count: whole(*min) },
+        ),
+        ViolationKind::TooManyItems { max } => format_message!(
+            intl,
+            default_message: "{count, plural, one {Must have at most {count} item} other {Must have at most {count} items}}",
+            description: "Error under a widget list setting; count is the most rows allowed",
+            values: { count: whole(*max) },
+        ),
+        ViolationKind::TooManyBytes { max } => format_message!(
+            intl,
+            default_message: "Must be at most {max} bytes",
+            description: "Error under a widget text setting; max is a whole number",
+            values: { max: whole(*max) },
+        ),
+        ViolationKind::TooFewCharacters { min } => format_message!(
+            intl,
+            default_message: "{count, plural, one {Must be at least {count} character} other {Must be at least {count} characters}}",
+            description: "Error under a widget text setting; count is the shortest allowed",
+            values: { count: whole(*min) },
+        ),
+        ViolationKind::TooManyCharacters { max } => format_message!(
+            intl,
+            default_message: "{count, plural, one {Must be at most {count} character} other {Must be at most {count} characters}}",
+            description: "Error under a widget text setting; count is the longest allowed",
+            values: { count: whole(*max) },
+        ),
+        ViolationKind::BelowMin(min) => format_message!(
+            intl,
+            default_message: "Must be at least {min}",
+            description: "Error under a numeric widget setting; min is a number",
+            values: { min: min.to_string() },
+        ),
+        ViolationKind::AboveMax(max) => format_message!(
+            intl,
+            default_message: "Must be at most {max}",
+            description: "Error under a numeric widget setting; max is a number",
+            values: { max: max.to_string() },
+        ),
+        ViolationKind::RepeatsItem { item } => format_message!(
+            intl,
+            default_message: "Repeats item {position}!",
+            description: "Error on a widget list row; position is the earlier row's number",
+            values: { position: whole(*item) },
+        ),
+        ViolationKind::SameAsItem { item } => format_message!(
+            intl,
+            default_message: "Same as item {position}!",
+            description: "Error on a widget list row's field; position is the earlier row's number",
+            values: { position: whole(*item) },
+        ),
+    }
 }
 
 /// `error` carrying `violations` as a `google.rpc.BadRequest` detail.
@@ -204,6 +361,117 @@ pub(crate) fn try_from_number_format(
         }
         NumberFormat::SpaceGroupDotDecimal => {
             Ok(bmc_shared_utils::number_format::NumberFormat::SpaceGroupDotDecimal)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_field_schema::{Bound, ParamValueConversionError};
+    use bmc_intl::Language;
+
+    use super::*;
+
+    /// No wildcard: a new kind stops compiling here, the cue to add it to the samples below.
+    fn name_every_kind(kind: &ViolationKind) {
+        match kind {
+            ViolationKind::Required
+            | ViolationKind::Unreadable(
+                UnreadableValue::KindUnset { .. }
+                | UnreadableValue::InvalidFieldKey { .. }
+                | UnreadableValue::Conversion(
+                    ParamValueConversionError::InvalidObjectKey(_)
+                    | ParamValueConversionError::UnrepresentableNumber
+                    | ParamValueConversionError::NonFiniteNumber
+                    | ParamValueConversionError::StringTooLong { .. },
+                ),
+            )
+            | ViolationKind::UnknownParam
+            | ViolationKind::UnknownField
+            | ViolationKind::NotAList
+            | ViolationKind::NotAnObject
+            | ViolationKind::NotText
+            | ViolationKind::NotWholeNumber
+            | ViolationKind::NotNumber
+            | ViolationKind::NotTrueOrFalse
+            | ViolationKind::NotTimezone
+            | ViolationKind::InvalidTimezone
+            | ViolationKind::NotFinite
+            | ViolationKind::NotListed
+            | ViolationKind::TooFewItems { .. }
+            | ViolationKind::TooManyItems { .. }
+            | ViolationKind::TooManyBytes { .. }
+            | ViolationKind::TooFewCharacters { .. }
+            | ViolationKind::TooManyCharacters { .. }
+            | ViolationKind::BelowMin(_)
+            | ViolationKind::AboveMax(_)
+            | ViolationKind::RepeatsItem { .. }
+            | ViolationKind::SameAsItem { .. } => {}
+        }
+    }
+
+    #[test]
+    fn every_violation_kind_words_its_display_in_english() {
+        let intl = bmc_intl::shared_formatter(Language::EN);
+        for kind in [
+            ViolationKind::Required,
+            ViolationKind::Unreadable(UnreadableValue::KindUnset { at: String::new() }),
+            ViolationKind::Unreadable(UnreadableValue::KindUnset {
+                at: "[1]".to_owned(),
+            }),
+            ViolationKind::Unreadable(UnreadableValue::InvalidFieldKey {
+                at: String::new(),
+                key: "1".to_owned(),
+            }),
+            ViolationKind::Unreadable(UnreadableValue::InvalidFieldKey {
+                at: "[1]".to_owned(),
+                key: "2".to_owned(),
+            }),
+            ViolationKind::Unreadable(UnreadableValue::Conversion(
+                ParamValueConversionError::InvalidObjectKey("1".to_owned()),
+            )),
+            ViolationKind::Unreadable(UnreadableValue::Conversion(
+                ParamValueConversionError::UnrepresentableNumber,
+            )),
+            ViolationKind::Unreadable(UnreadableValue::Conversion(
+                ParamValueConversionError::NonFiniteNumber,
+            )),
+            ViolationKind::Unreadable(UnreadableValue::Conversion(
+                ParamValueConversionError::StringTooLong {
+                    len: 1025,
+                    max: 1024,
+                },
+            )),
+            ViolationKind::UnknownParam,
+            ViolationKind::UnknownField,
+            ViolationKind::NotAList,
+            ViolationKind::NotAnObject,
+            ViolationKind::NotText,
+            ViolationKind::NotWholeNumber,
+            ViolationKind::NotNumber,
+            ViolationKind::NotTrueOrFalse,
+            ViolationKind::NotTimezone,
+            ViolationKind::InvalidTimezone,
+            ViolationKind::NotFinite,
+            ViolationKind::NotListed,
+            ViolationKind::TooFewItems { min: 1 },
+            ViolationKind::TooFewItems { min: 2 },
+            ViolationKind::TooManyItems { max: 1 },
+            ViolationKind::TooManyItems { max: 2 },
+            ViolationKind::TooManyBytes { max: 1024 },
+            ViolationKind::TooFewCharacters { min: 1 },
+            ViolationKind::TooFewCharacters { min: 2 },
+            ViolationKind::TooManyCharacters { max: 1 },
+            ViolationKind::TooManyCharacters { max: 2 },
+            ViolationKind::BelowMin(Bound::Integer(-3)),
+            ViolationKind::BelowMin(Bound::Double(0.5)),
+            ViolationKind::AboveMax(Bound::Integer(1234)),
+            ViolationKind::AboveMax(Bound::Double(2.5)),
+            ViolationKind::RepeatsItem { item: 1 },
+            ViolationKind::SameAsItem { item: 2 },
+        ] {
+            name_every_kind(&kind);
+            assert_eq!(violation_message(&intl, &kind), kind.to_string());
         }
     }
 }

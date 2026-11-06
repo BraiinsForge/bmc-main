@@ -25,8 +25,8 @@ use indexmap::IndexMap;
 
 use crate::{
     ArrayParam, DoubleParam, IntegerParam, ListItems, MAX_PARAM_STRING_LENGTH, ObjectParam,
-    ParamDefinition, ParamKey, ParamKind, ParamValue, RowUniqueness, Scalar, Shape, StringParam,
-    f64_canonical_bits,
+    ParamDefinition, ParamKey, ParamKind, ParamValue, ParamValueConversionError, RowUniqueness,
+    Scalar, Shape, StringParam, f64_canonical_bits,
 };
 
 /// What a schema key the input omits turns into.
@@ -34,23 +34,182 @@ use crate::{
 pub enum MissingValues {
     /// The field's default, or `Null` for an optional field without one.
     Default,
-    /// A "Value is required" violation.
+    /// A [`ViolationKind::Required`] violation.
     Reject,
 }
 
 /// A value that failed its schema, addressed relative to the value map:
 /// `["key"]`, `["key"][i]` for a list item, `["key"][i]["field"]` for an object item's field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Violation {
     pub path: String,
-    pub message: String,
+    pub kind: ViolationKind,
 }
 
 impl Violation {
-    fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+    fn new(path: impl Into<String>, kind: ViolationKind) -> Self {
         Self {
             path: path.into(),
-            message: message.into(),
+            kind,
+        }
+    }
+}
+
+/// What is wrong with a value.
+///
+/// A request's edge words it in the request's language.
+/// `Display` is the English for what has no language to ask for, such as a manifest's load error.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ViolationKind {
+    Required,
+    /// A value the edge could not read.
+    Unreadable(UnreadableValue),
+    UnknownParam,
+    UnknownField,
+    NotAList,
+    NotAnObject,
+    NotText,
+    NotWholeNumber,
+    NotNumber,
+    NotTrueOrFalse,
+    NotTimezone,
+    InvalidTimezone,
+    NotFinite,
+    NotListed,
+    TooFewItems {
+        min: usize,
+    },
+    TooManyItems {
+        max: usize,
+    },
+    TooManyBytes {
+        max: usize,
+    },
+    TooFewCharacters {
+        min: usize,
+    },
+    TooManyCharacters {
+        max: usize,
+    },
+    BelowMin(Bound),
+    AboveMax(Bound),
+    /// `item` is the 1-based place of the earlier item.
+    RepeatsItem {
+        item: usize,
+    },
+    /// `item` is the 1-based place of the earlier item.
+    SameAsItem {
+        item: usize,
+    },
+}
+
+impl std::fmt::Display for ViolationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Required => f.write_str("Missing value!"),
+            Self::Unreadable(value) => write!(f, "{value}"),
+            Self::UnknownParam => f.write_str("Unknown setting!"),
+            Self::UnknownField => f.write_str("Unknown field!"),
+            Self::NotAList => f.write_str("Must be a list"),
+            Self::NotAnObject => f.write_str("Must be an object"),
+            Self::NotText => f.write_str("Must be text"),
+            Self::NotWholeNumber => f.write_str("Must be a whole number"),
+            Self::NotNumber => f.write_str("Must be a number"),
+            Self::NotTrueOrFalse => f.write_str("Must be true or false"),
+            Self::NotTimezone => f.write_str("Must be a timezone"),
+            Self::InvalidTimezone => f.write_str("Must be a valid timezone"),
+            Self::NotFinite => f.write_str("Must be a finite number"),
+            Self::NotListed => f.write_str("Must be one of the listed options"),
+            Self::TooFewItems { min } => write!(f, "Must have at least {}", item_count(*min)),
+            Self::TooManyItems { max } => write!(f, "Must have at most {}", item_count(*max)),
+            Self::TooManyBytes { max } => write!(f, "Must be at most {max} bytes"),
+            Self::TooFewCharacters { min } => {
+                write!(f, "Must be at least {}", character_count(*min))
+            }
+            Self::TooManyCharacters { max } => {
+                write!(f, "Must be at most {}", character_count(*max))
+            }
+            Self::BelowMin(bound) => write!(f, "Must be at least {bound}"),
+            Self::AboveMax(bound) => write!(f, "Must be at most {bound}"),
+            Self::RepeatsItem { item } => write!(f, "Repeats item {item}!"),
+            Self::SameAsItem { item } => write!(f, "Same as item {item}!"),
+        }
+    }
+}
+
+/// Why the edge could not read a value into a [`ParamValue`].
+///
+/// `at` is where it sits below the value, such as `[1]["label"]`,
+/// and empty for the value itself.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnreadableValue {
+    KindUnset {
+        at: String,
+    },
+    InvalidFieldKey {
+        at: String,
+        key: String,
+    },
+    /// Reads as the [`ViolationKind`] it amounts to.
+    Conversion(ParamValueConversionError),
+}
+
+impl From<&ParamValueConversionError> for ViolationKind {
+    fn from(error: &ParamValueConversionError) -> Self {
+        match error {
+            ParamValueConversionError::InvalidObjectKey(key) => {
+                Self::Unreadable(UnreadableValue::InvalidFieldKey {
+                    at: String::new(),
+                    key: key.clone(),
+                })
+            }
+            ParamValueConversionError::UnrepresentableNumber => Self::NotNumber,
+            ParamValueConversionError::NonFiniteNumber => Self::NotFinite,
+            ParamValueConversionError::StringTooLong { max, .. } => {
+                Self::TooManyBytes { max: *max }
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for UnreadableValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::KindUnset { at } if at.is_empty() => f.write_str("This value has no type!"),
+            Self::KindUnset { at } => write!(f, "The value at {at} has no type!"),
+            Self::InvalidFieldKey { at, key } if at.is_empty() => {
+                write!(f, "Invalid field name: {key}!")
+            }
+            Self::InvalidFieldKey { at, key } => write!(f, "Invalid field name at {at}: {key}!"),
+            Self::Conversion(error) => write!(f, "{}", ViolationKind::from(error)),
+        }
+    }
+}
+
+/// A numeric limit, whole or not as its schema has it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Bound {
+    Integer(i32),
+    Double(f64),
+}
+
+impl From<i32> for Bound {
+    fn from(value: i32) -> Self {
+        Self::Integer(value)
+    }
+}
+
+impl From<f64> for Bound {
+    fn from(value: f64) -> Self {
+        Self::Double(value)
+    }
+}
+
+impl std::fmt::Display for Bound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Integer(value) => write!(f, "{value}"),
+            Self::Double(value) => write!(f, "{value}"),
         }
     }
 }
@@ -59,10 +218,10 @@ impl Violation {
 /// onto typed values, collecting every violation before returning.
 ///
 /// Each present value is as the wire edge decoded it:
-/// an `Err` is a value the edge could not read, reported at its key as-is.
+/// an `Err` is a value the edge could not read, reported at its key.
 pub fn validate_values(
     fields: &IndexMap<ParamKey, ParamDefinition>,
-    values: &BTreeMap<String, Result<ParamValue, String>>,
+    values: &BTreeMap<String, Result<ParamValue, UnreadableValue>>,
     missing: MissingValues,
 ) -> Result<BTreeMap<ParamKey, ParamValue>, Vec<Violation>> {
     let mut violations = Vec::new();
@@ -75,14 +234,19 @@ pub fn validate_values(
                 MissingValues::Default => {
                     typed.insert(key.clone(), ParamValue::from_param_kind_default(&def.kind));
                 }
-                MissingValues::Reject => violations.push(Violation::new(path, "Value is required")),
+                MissingValues::Reject => {
+                    violations.push(Violation::new(path, ViolationKind::Required));
+                }
             }
             continue;
         };
         let value = match value {
             Ok(value) => value,
-            Err(message) => {
-                violations.push(Violation::new(path, message.clone()));
+            Err(unreadable) => {
+                violations.push(Violation::new(
+                    path,
+                    ViolationKind::Unreadable(unreadable.clone()),
+                ));
                 continue;
             }
         };
@@ -92,7 +256,7 @@ pub fn validate_values(
             continue;
         }
         if !def.is_optional && lacks_value(value) {
-            violations.push(Violation::new(path, "Value is required"));
+            violations.push(Violation::new(path, ViolationKind::Required));
             continue;
         }
 
@@ -103,7 +267,7 @@ pub fn validate_values(
 
     for key in values.keys() {
         if !fields.contains_key(key.as_str()) {
-            violations.push(Violation::new(key_path(key), "Unknown param"));
+            violations.push(Violation::new(key_path(key), ViolationKind::UnknownParam));
         }
     }
 
@@ -134,13 +298,13 @@ fn key_path(key: &str) -> String {
     format!("[{key:?}]")
 }
 
-fn type_mismatch_message(scalar: Scalar<'_>) -> &'static str {
+fn type_mismatch(scalar: Scalar<'_>) -> ViolationKind {
     match scalar {
-        Scalar::String(_) => "Must be text",
-        Scalar::Integer(_) => "Must be a whole number",
-        Scalar::Double(_) => "Must be a number",
-        Scalar::Boolean(_) => "Must be true or false",
-        Scalar::Timezone(_) => "Must be a timezone",
+        Scalar::String(_) => ViolationKind::NotText,
+        Scalar::Integer(_) => ViolationKind::NotWholeNumber,
+        Scalar::Double(_) => ViolationKind::NotNumber,
+        Scalar::Boolean(_) => ViolationKind::NotTrueOrFalse,
+        Scalar::Timezone(_) => ViolationKind::NotTimezone,
     }
 }
 
@@ -163,7 +327,7 @@ fn validate_list(
     violations: &mut Vec<Violation>,
 ) -> Option<ParamValue> {
     let ParamValue::List(items) = value else {
-        violations.push(Violation::new(path, "Must be a list"));
+        violations.push(Violation::new(path, ViolationKind::NotAList));
         return None;
     };
     validate_list_items(path, array, items, violations).map(ParamValue::List)
@@ -180,14 +344,18 @@ pub(crate) fn validate_list_items(
     if items.len() < array.min_items {
         violations.push(Violation::new(
             path,
-            format!("Must have at least {}", item_count(array.min_items)),
+            ViolationKind::TooFewItems {
+                min: array.min_items,
+            },
         ));
     }
     if items.len() > array.max_items {
         // Past the bound, item checks add nothing but one violation per item to the response.
         violations.push(Violation::new(
             path,
-            format!("Must have at most {}", item_count(array.max_items)),
+            ViolationKind::TooManyItems {
+                max: array.max_items,
+            },
         ));
         return None;
     }
@@ -234,7 +402,7 @@ fn validate_each<T>(
         .filter_map(|(i, item)| {
             let path = format!("{path}[{i}]");
             if lacks_value(item) {
-                violations.push(Violation::new(path, "Value is required"));
+                violations.push(Violation::new(path, ViolationKind::Required));
                 return None;
             }
             validate(&path, item, violations)
@@ -251,7 +419,7 @@ fn validate_object(
     violations: &mut Vec<Violation>,
 ) -> Option<BTreeMap<ParamKey, ParamValue>> {
     let ParamValue::Object(fields) = value else {
-        violations.push(Violation::new(path, "Must be an object"));
+        violations.push(Violation::new(path, ViolationKind::NotAnObject));
         return None;
     };
     let before = violations.len();
@@ -262,7 +430,7 @@ fn validate_object(
         if field.is_optional && matches!(value, ParamValue::Null) {
             typed.insert(key.clone(), ParamValue::Null);
         } else if !field.is_optional && lacks_value(value) {
-            violations.push(Violation::new(field_path, "Value is required"));
+            violations.push(Violation::new(field_path, ViolationKind::Required));
         } else if let Some(value) =
             validate_scalar(&field_path, field.kind.as_scalar(), value, violations)
         {
@@ -273,7 +441,7 @@ fn validate_object(
         if !object.fields.contains_key(key) {
             violations.push(Violation::new(
                 format!("{path}{}", key_path(key.as_str())),
-                "Unknown field",
+                ViolationKind::UnknownField,
             ));
         }
     }
@@ -300,12 +468,12 @@ fn push_repeats<T: PartialEq>(
         match keys {
             None => violations.push(Violation::new(
                 format!("{path}[{i}]"),
-                format!("Repeats item {item}"),
+                ViolationKind::RepeatsItem { item },
             )),
             Some(keys) => violations.extend(keys.iter().map(|key| {
                 Violation::new(
                     format!("{path}[{i}]{}", key_path(key.as_str())),
-                    format!("Same as item {item}"),
+                    ViolationKind::SameAsItem { item },
                 )
             })),
         }
@@ -343,36 +511,40 @@ fn character_count(n: usize) -> String {
 }
 
 /// The bound `s` breaks, counted in characters (Unicode code points) as JSON Schema counts them.
-pub(crate) fn length_violation(s: &str, min: Option<usize>, max: Option<usize>) -> Option<String> {
+pub(crate) fn length_violation(
+    s: &str,
+    min: Option<usize>,
+    max: Option<usize>,
+) -> Option<ViolationKind> {
     let len = s.chars().count();
     if let Some(lo) = min
         && len < lo
     {
-        return Some(format!("Must be at least {}", character_count(lo)));
+        return Some(ViolationKind::TooFewCharacters { min: lo });
     }
     if let Some(hi) = max
         && len > hi
     {
-        return Some(format!("Must be at most {}", character_count(hi)));
+        return Some(ViolationKind::TooManyCharacters { max: hi });
     }
     None
 }
 
 /// The bound `n` breaks.
-pub(crate) fn bound_violation<T: Copy + PartialOrd + std::fmt::Display>(
+pub(crate) fn bound_violation<T: Copy + PartialOrd + Into<Bound>>(
     n: T,
     min: Option<T>,
     max: Option<T>,
-) -> Option<String> {
+) -> Option<ViolationKind> {
     if let Some(lo) = min
         && n < lo
     {
-        return Some(format!("Must be at least {lo}"));
+        return Some(ViolationKind::BelowMin(lo.into()));
     }
     if let Some(hi) = max
         && n > hi
     {
-        return Some(format!("Must be at most {hi}"));
+        return Some(ViolationKind::AboveMax(hi.into()));
     }
     None
 }
@@ -386,16 +558,18 @@ fn validate_string(
     if s.len() > MAX_PARAM_STRING_LENGTH {
         violations.push(Violation::new(
             path,
-            format!("Must be at most {MAX_PARAM_STRING_LENGTH} bytes"),
+            ViolationKind::TooManyBytes {
+                max: MAX_PARAM_STRING_LENGTH,
+            },
         ));
         return None;
     }
-    if let Some(message) = length_violation(s, param.min_length, param.max_length) {
-        violations.push(Violation::new(path, message));
+    if let Some(kind) = length_violation(s, param.min_length, param.max_length) {
+        violations.push(Violation::new(path, kind));
         return None;
     }
     if !param.enum_values.is_empty() && !param.enum_values.iter().any(|o| o.value == s) {
-        violations.push(Violation::new(path, "Must be one of the listed options"));
+        violations.push(Violation::new(path, ViolationKind::NotListed));
         return None;
     }
     Some(ParamValue::String(s.to_owned()))
@@ -413,7 +587,7 @@ pub(crate) fn validate_scalar(
         }
         (Scalar::Timezone(_), ParamValue::String(s)) => {
             if Timezone::lookup(s).is_none() {
-                violations.push(Violation::new(path, "Must be a valid timezone"));
+                violations.push(Violation::new(path, ViolationKind::InvalidTimezone));
                 return None;
             }
             Some(ParamValue::String(s.clone()))
@@ -429,12 +603,12 @@ pub(crate) fn validate_scalar(
             ParamValue::Integer(i),
         ) => {
             let mut ok = true;
-            if let Some(message) = bound_violation(*i, *min, *max) {
-                violations.push(Violation::new(path, message));
+            if let Some(kind) = bound_violation(*i, *min, *max) {
+                violations.push(Violation::new(path, kind));
                 ok = false;
             }
             if !enum_values.is_empty() && !enum_values.iter().any(|o| o.value == *i) {
-                violations.push(Violation::new(path, "Must be one of the listed options"));
+                violations.push(Violation::new(path, ViolationKind::NotListed));
                 ok = false;
             }
             if ok {
@@ -451,7 +625,7 @@ pub(crate) fn validate_scalar(
             validate_double(path, param, f64::from(*i), violations)
         }
         (other_kind, _) => {
-            violations.push(Violation::new(path, type_mismatch_message(other_kind)));
+            violations.push(Violation::new(path, type_mismatch(other_kind)));
             None
         }
     }
@@ -464,12 +638,12 @@ fn validate_double(
     violations: &mut Vec<Violation>,
 ) -> Option<ParamValue> {
     if !d.is_finite() {
-        violations.push(Violation::new(path, "Must be a finite number"));
+        violations.push(Violation::new(path, ViolationKind::NotFinite));
         return None;
     }
     let mut ok = true;
-    if let Some(message) = bound_violation(d, param.min, param.max) {
-        violations.push(Violation::new(path, message));
+    if let Some(kind) = bound_violation(d, param.min, param.max) {
+        violations.push(Violation::new(path, kind));
         ok = false;
     }
     if !param.enum_values.is_empty()
@@ -478,7 +652,7 @@ fn validate_double(
             .iter()
             .any(|o| f64_canonical_bits(o.value) == f64_canonical_bits(d))
     {
-        violations.push(Violation::new(path, "Must be one of the listed options"));
+        violations.push(Violation::new(path, ViolationKind::NotListed));
         ok = false;
     }
     ok.then_some(ParamValue::Double(d))
@@ -490,7 +664,7 @@ mod tests {
 
     use super::*;
 
-    type Values = BTreeMap<String, Result<ParamValue, String>>;
+    type Values = BTreeMap<String, Result<ParamValue, UnreadableValue>>;
 
     fn violations(
         result: Result<BTreeMap<ParamKey, ParamValue>, Vec<Violation>>,
@@ -527,8 +701,8 @@ mod tests {
                 &json!(["BTC", "ETH", "BTC", "ETH"])
             ),
             [
-                Violation::new(r#"["list"][2]"#, "Repeats item 1"),
-                Violation::new(r#"["list"][3]"#, "Repeats item 2"),
+                Violation::new(r#"["list"][2]"#, ViolationKind::RepeatsItem { item: 1 }),
+                Violation::new(r#"["list"][3]"#, ViolationKind::RepeatsItem { item: 2 }),
             ],
         );
     }
@@ -551,7 +725,10 @@ mod tests {
                 &json!(true),
                 &json!([0.0, -0.0])
             ),
-            [Violation::new(r#"["list"][1]"#, "Repeats item 1")],
+            [Violation::new(
+                r#"["list"][1]"#,
+                ViolationKind::RepeatsItem { item: 1 }
+            )],
         );
     }
 
@@ -577,7 +754,10 @@ mod tests {
                     { "label": "Home", "url": "https://braiins.com" },
                 ])
             ),
-            [Violation::new(r#"["list"][1]"#, "Repeats item 1")],
+            [Violation::new(
+                r#"["list"][1]"#,
+                ViolationKind::RepeatsItem { item: 1 }
+            )],
         );
     }
 
@@ -592,7 +772,10 @@ mod tests {
                     { "label": "Home", "url": "https://braiins.com/pool" },
                 ])
             ),
-            [Violation::new(r#"["list"][1]["label"]"#, "Same as item 1")],
+            [Violation::new(
+                r#"["list"][1]["label"]"#,
+                ViolationKind::SameAsItem { item: 1 }
+            )],
         );
     }
 
@@ -609,8 +792,14 @@ mod tests {
                 ])
             ),
             [
-                Violation::new(r#"["list"][2]["label"]"#, "Same as item 1"),
-                Violation::new(r#"["list"][2]["url"]"#, "Same as item 1"),
+                Violation::new(
+                    r#"["list"][2]["label"]"#,
+                    ViolationKind::SameAsItem { item: 1 }
+                ),
+                Violation::new(
+                    r#"["list"][2]["url"]"#,
+                    ViolationKind::SameAsItem { item: 1 }
+                ),
             ],
         );
     }
@@ -623,7 +812,10 @@ mod tests {
                 &json!(["url"]),
                 &json!([{ "label": "Home" }, { "label": "Pool" }])
             ),
-            [Violation::new(r#"["list"][1]["url"]"#, "Same as item 1")],
+            [Violation::new(
+                r#"["list"][1]["url"]"#,
+                ViolationKind::SameAsItem { item: 1 }
+            )],
         );
     }
 
@@ -645,14 +837,14 @@ mod tests {
             symbol_violations("B"),
             [Violation::new(
                 r#"["symbol"]"#,
-                "Must be at least 2 characters"
+                ViolationKind::TooFewCharacters { min: 2 }
             )],
         );
         assert_eq!(
             symbol_violations("BTCUSD"),
             [Violation::new(
                 r#"["symbol"]"#,
-                "Must be at most 4 characters"
+                ViolationKind::TooManyCharacters { max: 4 }
             )],
         );
     }
@@ -676,7 +868,9 @@ mod tests {
             symbol_violations(&"x".repeat(MAX_PARAM_STRING_LENGTH + 1)),
             [Violation::new(
                 r#"["symbol"]"#,
-                format!("Must be at most {MAX_PARAM_STRING_LENGTH} bytes")
+                ViolationKind::TooManyBytes {
+                    max: MAX_PARAM_STRING_LENGTH
+                }
             )],
         );
     }
@@ -714,9 +908,9 @@ mod tests {
         assert_eq!(
             violations(validate_values(&fields, &values, MissingValues::Default)),
             [
-                Violation::new(r#"["links"][0]["label"]"#, "Value is required"),
-                Violation::new(r#"["name"]"#, "Value is required"),
-                Violation::new(r#"["tags"][0]"#, "Value is required"),
+                Violation::new(r#"["links"][0]["label"]"#, ViolationKind::Required),
+                Violation::new(r#"["name"]"#, ViolationKind::Required),
+                Violation::new(r#"["tags"][0]"#, ViolationKind::Required),
             ],
         );
     }
@@ -752,7 +946,10 @@ mod tests {
     fn a_whole_number_for_a_double_meets_the_double_bounds() {
         assert_eq!(
             violations(ratio(3)),
-            [Violation::new(r#"["ratio"]"#, "Must be at most 2")],
+            [Violation::new(
+                r#"["ratio"]"#,
+                ViolationKind::AboveMax(Bound::Double(2.0))
+            )],
         );
     }
 }

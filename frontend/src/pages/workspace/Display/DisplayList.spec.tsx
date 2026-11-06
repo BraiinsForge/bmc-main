@@ -1262,7 +1262,184 @@ describe('dialog session lifecycle', () => {
             firstHeld.resolve();
             await flush();
 
-            expect(screen.queryByText('Value is required')).not.toBeNull();
+            expect(screen.queryByText('Missing value!')).not.toBeNull();
+        });
+
+        test("a preview's refusal of a field shows under it, without a toast", async () => {
+            const showError = rstest.spyOn(toast, 'error');
+            const refusalHeld = deferred<void>();
+            mockServer(async ({ req }) => {
+                if (req.params?.fields.count?.kind.value === 8) {
+                    await refusalHeld;
+                    throw badRequest('params["count"]', 'Must be at most 5');
+                }
+                return {};
+            });
+            try {
+                await openEditor();
+                fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+                await flush(300);
+                // GrpcMockInterceptor hands the page a pending reply
+                // on a setTimeout; fail it once the page holds it.
+                await flush();
+                refusalHeld.resolve();
+                await flush();
+
+                expect(screen.queryByText('Must be at most 5')).not.toBeNull();
+                const toasted = showError.mock.calls.map(([message]) => String(message));
+                const refusal = /Bad request|Must be at most 5|Failed to update widget!/;
+                expect(toasted.filter(m => refusal.test(m))).toEqual([]);
+            } finally {
+                showError.mockRestore();
+            }
+        });
+
+        test("a preview's refusal of a setting the form does not draw still says something", async () => {
+            const showError = rstest.spyOn(toast, 'error');
+            const refusalHeld = deferred<void>();
+            mockServer(async ({ req }) => {
+                if (req.params?.fields.count?.kind.value === 8) {
+                    await refusalHeld;
+                    throw badRequest('params["retired"]', 'Unknown setting!');
+                }
+                return {};
+            });
+            try {
+                await openEditor();
+                fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+                await flush(300);
+                await flush();
+                refusalHeld.resolve();
+                await flush();
+
+                expect(showError).toHaveBeenCalledWith('- Bad request\n- Unknown setting!');
+            } finally {
+                showError.mockRestore();
+            }
+        });
+
+        test('rebinding a refused slot frees Done before the device answers again', async () => {
+            const secondHeld = deferred<void>();
+            let writes = 0;
+            mockServer(async () => {
+                writes += 1;
+                if (writes === 1) throw badRequest('credential_bindings["pool"]', 'Account not found');
+                await secondHeld;
+                return {};
+            });
+            const done = () =>
+                within(elementById(MANIFEST_MODAL_ID)).getByRole<HTMLButtonElement>('button', { name: 'Done' });
+            try {
+                await openEditorAndPick('Pool B');
+                await flush();
+                expect(done().disabled).toBe(true);
+
+                pickAccount('Pool A');
+                expect(done().disabled).toBe(false);
+            } finally {
+                secondHeld.resolve();
+                await flush();
+            }
+        });
+
+        test("an earlier write's refusal stays out once its slot is rebound", async () => {
+            const firstHeld = deferred<void>();
+            const laterHeld = deferred<void>();
+            let writes = 0;
+            mockServer(async () => {
+                writes += 1;
+                if (writes === 1) {
+                    await firstHeld;
+                    throw badRequest('credential_bindings["pool"]', 'Account not found');
+                }
+                await laterHeld;
+                return {};
+            });
+            const done = () =>
+                within(elementById(MANIFEST_MODAL_ID)).getByRole<HTMLButtonElement>('button', { name: 'Done' });
+            try {
+                await openEditorAndPick('Pool B');
+                await flush();
+                pickAccount('Pool A');
+                firstHeld.resolve();
+                await flush();
+
+                expect(screen.queryByText('Account not found')).toBeNull();
+                expect(done().disabled).toBe(false);
+            } finally {
+                laterHeld.resolve();
+                await flush();
+            }
+        });
+
+        test('a refused save leaves alone a field corrected while it waited, and still says it failed', async () => {
+            const showError = rstest.spyOn(toast, 'error');
+            const saveHeld = deferred<void>();
+            let writes = 0;
+            mockServer(async () => {
+                writes += 1;
+                if (writes === 1) {
+                    await saveHeld;
+                    throw badRequest('params["count"]', 'Must be at most 5');
+                }
+                return {};
+            });
+            try {
+                await openEditor();
+                fireEvent.click(within(elementById(MANIFEST_MODAL_ID)).getByRole('button', { name: 'Done' }));
+                await flush();
+                fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '3' } });
+                saveHeld.resolve();
+                await flush();
+
+                expect(screen.queryByText('Must be at most 5')).toBeNull();
+                expect(showError).toHaveBeenCalledWith('Bad request');
+            } finally {
+                showError.mockRestore();
+            }
+        });
+
+        test('a refused save says so even beside a field error', async () => {
+            const showError = rstest.spyOn(toast, 'error');
+            mockServer(() => {
+                throw badRequest('params["count"]', 'Must be at most 5');
+            });
+            try {
+                await openEditor();
+                fireEvent.click(within(elementById(MANIFEST_MODAL_ID)).getByRole('button', { name: 'Done' }));
+                await flush();
+                await flush();
+
+                expect(screen.queryByText('Must be at most 5')).not.toBeNull();
+                expect(showError).toHaveBeenCalledWith('Bad request');
+            } finally {
+                showError.mockRestore();
+            }
+        });
+
+        test("a preview's refusal beside a field error still shows what no field can", async () => {
+            const showError = rstest.spyOn(toast, 'error');
+            const refusalHeld = deferred<void>();
+            mockServer(async ({ req }) => {
+                if (req.params?.fields.count?.kind.value === 8) {
+                    await refusalHeld;
+                    throw badRequest('params["count"]', 'Must be at most 5', ['size', 'Unsupported size']);
+                }
+                return {};
+            });
+            try {
+                await openEditor();
+                fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+                await flush(300);
+                await flush();
+                refusalHeld.resolve();
+                await flush();
+
+                expect(screen.queryByText('Must be at most 5')).not.toBeNull();
+                expect(showError).toHaveBeenCalledWith('Unsupported size');
+            } finally {
+                showError.mockRestore();
+            }
         });
 
         test('until the accounts load, the picker says so instead of judging the binding', async () => {

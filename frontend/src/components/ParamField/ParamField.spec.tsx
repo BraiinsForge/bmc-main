@@ -214,10 +214,10 @@ describe('ParamField toggle description', () => {
     });
 
     test('an error takes the place of the description', () => {
-        const { getByRole, queryByText } = renderToggle('Value is required');
+        const { getByRole, queryByText } = renderToggle('Missing value!');
         const toggle = getByRole('switch', { name: 'Show AxeOS miners' });
 
-        expect(errorOf(toggle)).toBe('Value is required');
+        expect(errorOf(toggle)).toBe('Missing value!');
         expect(queryByText(REQUIREMENT)).toBeNull();
         expect(toggle.getAttribute('aria-describedby')).toBeNull();
     });
@@ -646,9 +646,9 @@ describe('ParamField list', () => {
     test("shows an item's error on its own row", () => {
         const { getByLabelText } = renderList(
             [listItem('NVDA'), listItem('')],
-            [undefined, { error: 'Value is required' }],
+            [undefined, { error: 'Missing value!' }],
         );
-        expect(errorOf(getByLabelText('Symbols, item 2'))).toBe('Value is required');
+        expect(errorOf(getByLabelText('Symbols, item 2'))).toBe('Missing value!');
         expect(errorOf(getByLabelText('Symbols, item 1'))).toBeNull();
     });
 });
@@ -741,10 +741,10 @@ describe('ParamField object list', () => {
     test("shows a field's error on its own input", () => {
         const { getByLabelText } = renderList(
             [listItem({ label: '', url: null })],
-            [{ fields: { label: 'Value is required' } }],
+            [{ fields: { label: 'Missing value!' } }],
             linksField,
         );
-        expect(errorOf(getByLabelText('Links, item 1, Label'))).toBe('Value is required');
+        expect(errorOf(getByLabelText('Links, item 1, Label'))).toBe('Missing value!');
         expect(errorOf(getByLabelText('Links, item 1, URL (optional)'))).toBeNull();
     });
 
@@ -768,15 +768,5 @@ describe('ParamField object list', () => {
         expect(errorOf(getByLabelText('Links, item 2, Label'))).toBe('Repeats item 1');
         expect(errorOf(getByLabelText('Links, item 2, URL (optional)'))).toBe('Repeats item 1');
         expect(errorOf(getByLabelText('Links, item 1, Label'))).toBeNull();
-    });
-
-    test('marks only the fields a row error names', () => {
-        const { getByLabelText } = renderList(
-            [listItem({ label: 'Home', url: null }), listItem({ label: 'Home', url: 'https://pool' })],
-            [undefined, { error: 'Same as item 1', markedFields: ['label'] }],
-            linksField,
-        );
-        expect(errorOf(getByLabelText('Links, item 2, Label'))).toBe('Same as item 1');
-        expect(errorOf(getByLabelText('Links, item 2, URL (optional)'))).toBeNull();
     });
 });

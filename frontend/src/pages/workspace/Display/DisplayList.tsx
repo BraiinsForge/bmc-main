@@ -707,13 +707,18 @@ class View extends Component<Props, State> {
 
     #liveUpdateWidget = debounce(async (): Promise<void> => {
         const { manifestForm } = this.state;
-        const { manifest, sceneID, widgetID, params } = manifestForm;
+        const { manifest, sceneID, widgetID, params, editedBindings } = manifestForm;
         if (!manifest || !widgetID) return;
         const built = fn.buildFieldValues(this.props.intl, manifest, params);
         if (!built.ok) {
-            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
+            this.setState(s => ({
+                manifestForm: { ...s.manifestForm, errors: fn.withLocalErrors(built.errors, s.manifestForm.errors) },
+            }));
             return;
         }
+        // A reply about values the user has since changed would judge what is no longer on screen.
+        const isCurrent = (form: typeof manifestForm) =>
+            form.params === params && form.editedBindings === editedBindings;
         const scene = this.#getScene(sceneID);
         const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
         const credentialBindings = this.#credentialBindingsFor('preview');
@@ -734,21 +739,21 @@ class View extends Component<Props, State> {
             );
         } catch ($) {
             if (pb.abort.is($)) return;
-            // A newer edit has its own write on the way, which reports on the params it sends.
-            if (this.state.manifestForm.params !== params) return;
+            if (!isCurrent(this.state.manifestForm)) return;
             const { formatMessage } = this.props.intl;
             const errors = fn.mapManifestUpdateError($);
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
 
-            if (errors.global.length) {
-                let msg = pb.renderFieldErrorsAsList(errors.global);
-                msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
-                toast.error(msg);
+            const notices = fn.formNotices(errors, manifest);
+            // No fallback while a field says why, as it would repeat on every pause in the typing.
+            if (notices.length || !fn.hasFieldErrors(errors, manifest)) {
+                const fallback = formatMessage({ defaultMessage: 'Failed to update widget!' });
+                toast.error(pb.renderFieldErrorsAsList(notices) || fallback);
             }
             return;
         }
         this.setState(s => {
-            if (!s.manifestForm.errors || s.manifestForm.params !== params) return null;
+            if (!s.manifestForm.errors || !isCurrent(s.manifestForm)) return null;
             return { manifestForm: { ...s.manifestForm, errors: null } };
         });
     }, 300);
@@ -780,7 +785,8 @@ class View extends Component<Props, State> {
                 };
                 if (accountId) editedBindings[slotKey] = accountId;
                 else delete editedBindings[slotKey];
-                return { manifestForm: { ...s.manifestForm, editedBindings } };
+                const errors = fn.clearSlotError(s.manifestForm.errors, slotKey);
+                return { manifestForm: { ...s.manifestForm, editedBindings, errors } };
             },
             () => this.#liveUpdateWidget(),
         );
@@ -788,7 +794,7 @@ class View extends Component<Props, State> {
 
     #handleManifestFormDone = async (): Promise<void> => {
         const { manifestForm } = this.state;
-        const { manifest, sceneID, widgetID, params } = manifestForm;
+        const { manifest, sceneID, widgetID, params, editedBindings } = manifestForm;
         this.#liveUpdateWidget.cancel();
 
         if (!manifest || !widgetID) {
@@ -798,7 +804,9 @@ class View extends Component<Props, State> {
 
         const built = fn.buildFieldValues(this.props.intl, manifest, params);
         if (!built.ok) {
-            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
+            this.setState(s => ({
+                manifestForm: { ...s.manifestForm, errors: fn.withLocalErrors(built.errors, s.manifestForm.errors) },
+            }));
             return;
         }
 
@@ -831,12 +839,17 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             const { formatMessage } = this.props.intl;
             const errors = fn.mapManifestUpdateError($);
-            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
+            // Values the user changed since would wear the old ones' errors, though the toast still says it failed.
+            this.setState(s =>
+                s.manifestForm.params === params && s.manifestForm.editedBindings === editedBindings
+                    ? { manifestForm: { ...s.manifestForm, errors } }
+                    : null,
+            );
 
-            if (errors.global.length) {
-                let msg = pb.renderFieldErrorsAsList(errors.global);
-                msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
-                toast.error(msg);
+            const notices = fn.saveNotices(errors, manifest);
+            if (notices.length || !fn.hasFieldErrors(errors, manifest)) {
+                const fallback = formatMessage({ defaultMessage: 'Failed to update widget!' });
+                toast.error(pb.renderFieldErrorsAsList(notices) || fallback);
             }
         }
     };

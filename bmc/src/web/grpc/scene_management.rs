@@ -24,9 +24,10 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bmc_field_schema::MissingValues;
+use bmc_field_schema::{MissingValues, UnreadableValue};
 use bmc_grpc::web;
 use bmc_grpc::web::SceneManagementService as GrpcSceneManagementService;
+use bmc_intl::Intl;
 use bmc_widget_manifest::{
     ArrayParam, BooleanParam, CredentialKey, DoubleParam, EnumControl, IntegerParam, ListItems,
     ObjectParam, ParamDefinition, ParamKind, RowUniqueness, ScalarField, ScalarKind, StringParam,
@@ -54,7 +55,8 @@ use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene;
 use crate::secret_store::SecretStoreHandle;
 use crate::web::grpc::GrpcError;
-use crate::web::grpc::shared::{FieldViolations, with_violations};
+use crate::web::grpc::intl::intl;
+use crate::web::grpc::shared::{FieldViolations, violation_message, with_violations};
 use crate::widget::coordinator::{PendingWidgetRegistration, WidgetStopBatch};
 use crate::widget::{Coordinator, WidgetRegistry};
 
@@ -532,6 +534,7 @@ impl SceneManagementService {
 
     fn validate_widget_update(
         &self,
+        intl: &Intl,
         scene: &scene::Scene,
         widget_id: scene::WidgetId,
         parsed: ParsedUpdateWidgetShape,
@@ -562,6 +565,7 @@ impl SceneManagementService {
         }
 
         let typed_params = validate_widget_params(
+            intl,
             &info.manifest,
             &parsed.params.unwrap_or_default(),
             ValidateMode::Update,
@@ -601,6 +605,7 @@ impl SceneManagementService {
 
     async fn update_widget_transaction(
         self,
+        intl: Arc<Intl>,
         parsed: ParsedUpdateWidgetShape,
     ) -> ServiceResult<Empty> {
         let _edit = self.begin_scene_edit().await?;
@@ -628,6 +633,7 @@ impl SceneManagementService {
                 placement_changed,
                 params_changed,
             } = self.validate_widget_update(
+                &intl,
                 scene.get(),
                 widget_id_key,
                 parsed,
@@ -1115,6 +1121,7 @@ pub(crate) enum ValidateMode {
 /// optional params without a default). On `Update`, missing keys are
 /// reported as violations. Unknown override keys are also reported.
 pub(crate) fn validate_widget_params(
+    intl: &Intl,
     manifest: &bmc_widget_manifest::Manifest,
     params: &web::FieldValues,
     mode: ValidateMode,
@@ -1123,7 +1130,7 @@ pub(crate) fn validate_widget_params(
     let values = params
         .fields
         .iter()
-        .map(|(key, value)| (key.clone(), param_value_from_wire(value)))
+        .map(|(key, value)| (key.clone(), decode_wire_value(value)))
         .collect();
     let missing = match mode {
         ValidateMode::Add => MissingValues::Default,
@@ -1132,53 +1139,38 @@ pub(crate) fn validate_widget_params(
     bmc_field_schema::validate_values(&manifest.params, &values, missing).map_err(|violations| {
         let mut field_violations = FieldViolations::new();
         for v in violations {
-            field_violations.push(format!("params{}", v.path), v.message);
+            field_violations.push(
+                format!("params{}", v.path),
+                violation_message(intl, &v.kind),
+            );
         }
         field_violations
     })
 }
 
+/// `unreadable` sitting `step` deeper below the value being decoded.
+fn under(unreadable: UnreadableValue, step: &str) -> UnreadableValue {
+    match unreadable {
+        UnreadableValue::KindUnset { at } => UnreadableValue::KindUnset {
+            at: format!("{step}{at}"),
+        },
+        UnreadableValue::InvalidFieldKey { at, key } => UnreadableValue::InvalidFieldKey {
+            at: format!("{step}{at}"),
+            key,
+        },
+        conversion @ UnreadableValue::Conversion(_) => conversion,
+    }
+}
+
 /// A nested value that cannot be read fails the whole value,
-/// and the error names where it sits: `[3]["label"]: FieldValue.kind unset`.
-fn param_value_from_wire(
-    value: &web::FieldValue,
-) -> Result<bmc_widget_manifest::ParamValue, String> {
-    decode_wire_value(value).map_err(|unreadable| {
-        if unreadable.at.is_empty() {
-            unreadable.message
-        } else {
-            format!("{}: {}", unreadable.at, unreadable.message)
-        }
-    })
-}
-
-/// Why a value could not be read, and its position below the value being decoded.
-struct Unreadable {
-    at: String,
-    message: String,
-}
-
-impl Unreadable {
-    fn new(message: impl Into<String>) -> Self {
-        Self {
-            at: String::new(),
-            message: message.into(),
-        }
-    }
-
-    fn under(mut self, step: &str) -> Self {
-        self.at.insert_str(0, step);
-        self
-    }
-}
-
+/// and the error names where it sits.
 fn decode_wire_value(
     value: &web::FieldValue,
-) -> Result<bmc_widget_manifest::ParamValue, Unreadable> {
+) -> Result<bmc_widget_manifest::ParamValue, UnreadableValue> {
     use bmc_widget_manifest::ParamValue as PV;
     use web::field_value::Kind as VK;
     match &value.kind {
-        None => Err(Unreadable::new("FieldValue.kind unset")),
+        None => Err(UnreadableValue::KindUnset { at: String::new() }),
         Some(VK::NullValue(_)) => Ok(PV::Null),
         Some(VK::BooleanValue(b)) => Ok(PV::Boolean(*b)),
         Some(VK::IntegerValue(i)) => Ok(PV::Integer(*i)),
@@ -1188,16 +1180,21 @@ fn decode_wire_value(
             .items
             .iter()
             .enumerate()
-            .map(|(i, item)| decode_wire_value(item).map_err(|e| e.under(&format!("[{i}]"))))
+            .map(|(i, item)| decode_wire_value(item).map_err(|e| under(e, &format!("[{i}]"))))
             .collect::<Result<_, _>>()
             .map(PV::List),
         Some(VK::ObjectValue(values)) => values
             .fields
             .iter()
             .map(|(key, value)| {
-                let field = bmc_widget_manifest::ParamKey::try_new(key.clone())
-                    .map_err(|key| Unreadable::new(format!("Invalid field key {key:?}")))?;
-                let value = decode_wire_value(value).map_err(|e| e.under(&format!("[{key:?}]")))?;
+                let field = bmc_widget_manifest::ParamKey::try_new(key.clone()).map_err(|key| {
+                    UnreadableValue::InvalidFieldKey {
+                        at: String::new(),
+                        key: key.clone(),
+                    }
+                })?;
+                let value =
+                    decode_wire_value(value).map_err(|e| under(e, &format!("[{key:?}]")))?;
                 Ok((field, value))
             })
             .collect::<Result<_, _>>()
@@ -1454,7 +1451,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn add_fullscreen_scene(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::AddFullscreenSceneRequest>,
     ) -> ServiceResult<StringValue> {
         let ParsedAddFullscreenShape { config, widget_uid } =
@@ -1478,8 +1475,9 @@ impl GrpcSceneManagementService for SceneManagementService {
         }
 
         let params = config.params.into_option().unwrap_or_default();
-        let typed_params = validate_widget_params(manifest, &params, ValidateMode::Add)
-            .map_err(bad_request_status)?;
+        let typed_params =
+            validate_widget_params(&intl(&ctx), manifest, &params, ValidateMode::Add)
+                .map_err(bad_request_status)?;
         let requested_bindings = config
             .credential_bindings
             .into_option()
@@ -1940,7 +1938,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn add_widget(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::AddWidgetRequest>,
     ) -> ServiceResult<StringValue> {
         let ParsedAddWidgetShape {
@@ -1974,8 +1972,9 @@ impl GrpcSceneManagementService for SceneManagementService {
         }
 
         let params = config_req.params.into_option().unwrap_or_default();
-        let typed_params = validate_widget_params(manifest, &params, ValidateMode::Add)
-            .map_err(bad_request_status)?;
+        let typed_params =
+            validate_widget_params(&intl(&ctx), manifest, &params, ValidateMode::Add)
+                .map_err(bad_request_status)?;
 
         let mut widget = scene::Widget::new(widget_uid, typed_params, position, placement);
         stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
@@ -2037,11 +2036,11 @@ impl GrpcSceneManagementService for SceneManagementService {
 
     async fn update_widget(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::UpdateWidgetRequest>,
     ) -> ServiceResult<Empty> {
         let parsed = parse_update_widget_shape(request.to_owned_message())?;
-        tokio::spawn(self.clone().update_widget_transaction(parsed))
+        tokio::spawn(self.clone().update_widget_transaction(intl(&ctx), parsed))
             .await
             .map_err(|error| {
                 ConnectError::internal(format!("widget update task failed: {error}"))
@@ -2055,8 +2054,32 @@ mod tests {
 
     use crate::compositor::testing::{ASYNC_TEST_TIMEOUT, RecordingCompositor};
     use crate::web::grpc::tests::{no_session, wire_request};
+    use bmc_field_schema::ViolationKind;
     use bmc_grpc::google::rpc::bad_request::FieldViolation;
     use connectrpc::ErrorCode;
+
+    fn validate_widget_params(
+        manifest: &bmc_widget_manifest::Manifest,
+        params: &web::FieldValues,
+        mode: ValidateMode,
+    ) -> Result<
+        BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+        FieldViolations,
+    > {
+        super::validate_widget_params(&english(), manifest, params, mode)
+    }
+
+    fn english() -> Arc<Intl> {
+        bmc_intl::shared_formatter(bmc_intl::Language::EN)
+    }
+
+    fn param_value_from_wire(
+        value: &web::FieldValue,
+    ) -> Result<bmc_widget_manifest::ParamValue, String> {
+        decode_wire_value(value).map_err(|unreadable| {
+            violation_message(&english(), &ViolationKind::Unreadable(unreadable))
+        })
+    }
 
     mod params_version;
     mod refused_add;
@@ -2479,7 +2502,7 @@ mod tests {
         let params = fields_one("color", object);
         assert_eq!(
             first_violation_desc(&manifest, &params),
-            r#"Invalid field key "not a key""#
+            "Invalid field name: not a key!"
         );
     }
 
@@ -2604,7 +2627,7 @@ mod tests {
                 ),
                 (
                     r#"params["counts"][3]"#.to_owned(),
-                    "Value is required".to_owned()
+                    "Missing value!".to_owned()
                 ),
             ]
         );
@@ -2678,7 +2701,7 @@ mod tests {
     fn an_unreadable_top_level_value_keeps_the_bare_message() {
         assert_eq!(
             param_value_from_wire(&unset_value()),
-            Err("FieldValue.kind unset".to_owned())
+            Err("This value has no type!".to_owned())
         );
     }
 
@@ -2690,7 +2713,7 @@ mod tests {
         ]);
         assert_eq!(
             param_value_from_wire(&links),
-            Err(r#"[1]["label"]: FieldValue.kind unset"#.to_owned())
+            Err(r#"The value at [1]["label"] has no type!"#.to_owned())
         );
     }
 
@@ -2699,7 +2722,7 @@ mod tests {
         let links = list_value(vec![object_value(&[("1bad", string_value("x"))])]);
         assert_eq!(
             param_value_from_wire(&links),
-            Err(r#"[0]: Invalid field key "1bad""#.to_owned())
+            Err("Invalid field name at [0]: 1bad!".to_owned())
         );
     }
 
@@ -2739,11 +2762,11 @@ mod tests {
             [
                 (
                     r#"params["links"][0]["label"]"#.to_owned(),
-                    "Value is required".to_owned()
+                    "Missing value!".to_owned()
                 ),
                 (
                     r#"params["links"][1]["icon"]"#.to_owned(),
-                    "Unknown field".to_owned()
+                    "Unknown field!".to_owned()
                 ),
                 (
                     r#"params["links"][2]"#.to_owned(),

@@ -22,11 +22,11 @@ import { Fragment, useState } from 'react';
 import { FormattedMessage, useIntl } from 'react-intl';
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
-import { Form, hasFormErrors } from '@/lib/form';
+import { Form } from '@/lib/form';
 import { ownValue } from '@/lib/ts';
 import { getID } from '../const';
 import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
-import { hasItemErrors, isMisbound, itemErrorsOf } from '../../fn';
+import { formNotices, hasFieldErrors, isMisbound, itemErrorsOf } from '../../fn';
 
 import { ParamField } from '@/components/ParamField';
 import { BoundDropdown, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
@@ -110,16 +110,23 @@ function CredentialSlotField(props: CredentialSlotFieldProps) {
     // Judged against a list that has not arrived, every bound slot would read as invalid.
     if (!accounts) {
         return (
-            <BoundDropdown<pb.Account>
-                id={$(`credential-${slot.key}`)}
-                labelText={labelText}
-                placeholderText={formatMessage({ defaultMessage: 'Accounts not loaded' })}
-                helperText={slot.description}
-                items={[]}
-                value={null}
-                itemToString={a => a?.name ?? ''}
-                disabled
-            />
+            <Fragment>
+                <BoundDropdown<pb.Account>
+                    id={$(`credential-${slot.key}`)}
+                    labelText={labelText}
+                    placeholderText={formatMessage({ defaultMessage: 'Accounts not loaded' })}
+                    helperText={slot.description}
+                    items={[]}
+                    value={null}
+                    itemToString={a => a?.name ?? ''}
+                    disabled
+                />
+
+                {/* A disabled dropdown hides its error text, yet the error still blocks saving. */}
+                {error ? (
+                    <InlineNotification kind="error" theme="inverse" stretch hideCloseButton title={error} />
+                ) : null}
+            </Fragment>
         );
     }
 
@@ -215,9 +222,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
 
     const showSizeSelector = !!sizeOptions && sizeOptions.length > 0 && !!onSizeChange && size != null;
     const fieldErrors = errors?.fields ?? {};
-    const hasFieldErrors = Object.values(fieldErrors).some(errs => errs?.some(Boolean)) || hasItemErrors(errors);
-    const globalErrors = errors?.global?.filter(Boolean) ?? [];
-    const showGlobalError = !hasFieldErrors && globalErrors.length > 0;
+    const notices = formNotices(errors, manifest);
 
     return (
         <Form className={css.form}>
@@ -257,14 +262,14 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
 
             <CheckYourScreenForPreview />
 
-            {showGlobalError ? (
+            {notices.length > 0 ? (
                 <InlineNotification
                     kind="error"
                     theme="inverse"
                     stretch
                     hideCloseButton
                     title={formatMessage({ defaultMessage: 'Error' })}
-                    children={pb.renderFieldErrorsAsList(globalErrors)}
+                    children={pb.renderFieldErrorsAsList(notices)}
                 />
             ) : null}
         </Form>
@@ -313,7 +318,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
                     kind="primary"
                     children={formatMessage({ defaultMessage: 'Done' })}
                     onClick={onSave}
-                    disabled={hasFormErrors(errors ?? undefined) || hasItemErrors(errors) || misbound}
+                    disabled={hasFieldErrors(errors, manifest) || misbound}
                 />
             }
         />
