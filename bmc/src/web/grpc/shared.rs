@@ -70,10 +70,6 @@ pub(crate) async fn require_state(
     Err(ConnectError::failed_precondition(refusal()))
 }
 
-pub fn unchecked_field_violations_status() -> ConnectError {
-    ConnectError::internal("Unchecked field violations")
-}
-
 /// A failure that should never happen: `cause` goes to the log and the user gets one sentence.
 pub(crate) fn internal_error(intl: &Intl, cause: &str) -> ConnectError {
     error!("BUG: {cause}");

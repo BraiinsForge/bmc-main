@@ -27,12 +27,13 @@ use std::time::Duration;
 
 use bmc_field_schema::ParamKey;
 use bmc_field_schema::credential::BRAIINS_POOL_HOST;
+use bmc_field_schema::credential::EntryProblem;
 use bmc_grpc::web;
+use bmc_intl::{Intl, format_message};
 use buffa_types::google::protobuf::{Empty, StringValue, Timestamp};
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use indexmap::IndexMap;
 use reqwest::StatusCode;
-use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{error, warn};
 use url::Url;
@@ -42,9 +43,10 @@ use crate::credential;
 use crate::data::{Account, AccountId};
 use crate::scene::{Scene, SceneId};
 use crate::secret_store::SecretStoreHandle;
-use crate::web::grpc::GrpcError;
+use crate::web::grpc::intl::intl;
 use crate::web::grpc::shared::{
-    FieldViolations, ParseOutput, unchecked_field_violations_status, with_violations,
+    FieldViolations, ParseOutput, StatusExt as _, ToStatus, bad_request, missing_value,
+    unchecked_field, with_violations,
 };
 
 /// Where the Braiins Pool token check goes.
@@ -96,26 +98,28 @@ impl web::AccountManagementService for AccountManagementService {
 
     async fn upsert_account(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::UpsertAccountRequest>,
     ) -> ServiceResult<StringValue> {
+        let intl = intl(&ctx);
         let req = request.to_owned_message();
 
         let mut violations = FieldViolations::new();
-        let (name, v) = parse_account_name("name", &req.name);
+        let (name, v) = parse_account_name(&intl, "name", &req.name);
         violations.extend(v);
         let target_id = if req.id.is_empty() {
             None
         } else {
-            let (id, v) = parse_account_id("id", &req.id);
+            let (id, v) = parse_account_id(&intl, "id", &req.id);
             violations.extend(v);
             id
         };
-        let field_values = parse_field_values("field_values", &req.field_values, &mut violations);
+        let field_values =
+            parse_field_values(&intl, "field_values", &req.field_values, &mut violations);
         if !violations.is_empty() {
-            return Err(bad_request(violations));
+            return Err(bad_request(&intl, violations.into()));
         }
-        let name = name.ok_or_else(unchecked_field_violations_status)?;
+        let name = name.ok_or_else(|| unchecked_field(&intl))?;
 
         // The type is fixed for an account's life: on create it comes from the request, on update
         // from the stored account (the request's type_id is ignored).
@@ -126,7 +130,7 @@ impl web::AccountManagementService for AccountManagementService {
                 .await
                 .accounts()
                 .get(id)
-                .ok_or_else(|| ConnectError::not_found("Account not found"))?
+                .ok_or_else(|| account_not_found(&intl))?
                 .type_id
                 .clone(),
             None => req.type_id.clone(),
@@ -135,16 +139,16 @@ impl web::AccountManagementService for AccountManagementService {
         // On update, an empty field_values map keeps the stored secrets — skip validation then.
         let replace_values = target_id.is_none() || !field_values.is_empty();
         if replace_values {
-            validate_account(&type_id, &field_values).await?;
+            validate_account(&intl, &type_id, &field_values).await?;
         }
         let field_values = normalized_field_values(&type_id, field_values);
 
         let allow_hosts = req.allow_hosts;
         {
             let mut violations = FieldViolations::new();
-            validate_allow_hosts(&type_id, &allow_hosts, &mut violations);
+            validate_allow_hosts(&intl, &type_id, &allow_hosts, &mut violations);
             if !violations.is_empty() {
-                return Err(bad_request(violations));
+                return Err(bad_request(&intl, violations.into()));
             }
         }
 
@@ -158,7 +162,7 @@ impl web::AccountManagementService for AccountManagementService {
                     let account = temp
                         .accounts_mut()
                         .get_mut(&id)
-                        .ok_or_else(|| ConnectError::not_found("Account not found"))?;
+                        .ok_or_else(|| account_not_found(&intl))?;
                     let effective_values = if replace_values {
                         field_values
                     } else {
@@ -187,7 +191,7 @@ impl web::AccountManagementService for AccountManagementService {
 
                 if let Err(err) = temp.save().await {
                     error!("Cannot save accounts: {err}");
-                    return Err(ConnectError::internal("Failed to save accounts"));
+                    return Err(failed_accounts_save(&intl));
                 }
                 *store = temp;
 
@@ -205,14 +209,15 @@ impl web::AccountManagementService for AccountManagementService {
 
     async fn remove_account(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, StringValue>,
     ) -> ServiceResult<Empty> {
-        let (id, violations) = parse_account_id("id", request.value);
+        let intl = intl(&ctx);
+        let (id, violations) = parse_account_id(&intl, "id", request.value);
         if !violations.is_empty() {
-            return Err(bad_request(violations));
+            return Err(bad_request(&intl, violations.into()));
         }
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
+        let id = id.ok_or_else(|| unchecked_field(&intl))?;
 
         // Unbind and delete under one config write lock,
         // so a binding written in between cannot outlive the account it names.
@@ -229,13 +234,18 @@ impl web::AccountManagementService for AccountManagementService {
                 let mut config = config_handle.write().await;
                 let mut store = secret_store.write().await;
                 if !store.accounts().contains_key(&id) {
-                    return Err(ConnectError::not_found("Account not found"));
+                    return Err(account_not_found(&intl));
                 }
 
                 let mut new_config = config.clone();
                 if unbind_account(new_config.scenes_mut(), &id) {
                     new_config.save().await.map_err(|e| {
-                        ConnectError::internal(format!("failed to save config: {e}"))
+                        error!("Cannot save the config after unbinding an account: {e}");
+                        ConnectError::internal(format_message!(
+                            intl,
+                            default_message: "Failed to detach the account from its widgets!",
+                            description: "Error when deleting an account and the device could not remove it from the widgets using it",
+                        ))
                     })?;
                     *config = new_config;
                 }
@@ -243,7 +253,7 @@ impl web::AccountManagementService for AccountManagementService {
                 let mut temp = store.clone();
                 temp.accounts_mut()
                     .shift_remove(&id)
-                    .ok_or_else(|| ConnectError::not_found("Account not found"))?;
+                    .ok_or_else(|| account_not_found(&intl))?;
                 let delete_error = match temp.save().await {
                     Ok(()) => {
                         *store = temp;
@@ -251,7 +261,7 @@ impl web::AccountManagementService for AccountManagementService {
                     }
                     Err(err) => {
                         error!("Cannot save accounts: {err}");
-                        Some(ConnectError::internal("Failed to save accounts"))
+                        Some(failed_accounts_save(&intl))
                     }
                 };
                 if let Some(error) = delete_error {
@@ -267,6 +277,22 @@ impl web::AccountManagementService for AccountManagementService {
     }
 }
 
+fn account_not_found(intl: &Intl) -> ConnectError {
+    ConnectError::not_found(format_message!(
+        intl,
+        default_message: "Account not found!",
+        description: "Error when a request names a credentials account the device does not have",
+    ))
+}
+
+fn failed_accounts_save(intl: &Intl) -> ConnectError {
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "Failed to save the accounts!",
+        description: "Error when the device could not store a change to its credentials accounts",
+    ))
+}
+
 /// Field-violation key for a credential field (e.g. `token` → `field_values.token`),
 /// so the web UI can attach the error to that field rather than showing it form-wide.
 // Bracketed like every other map entry, so the key reaches the form unrenamed.
@@ -278,16 +304,17 @@ fn field_error_key(field: &str) -> String {
 /// then run the per-type upstream check, collecting
 /// every field violation and returning them together.
 async fn validate_account(
+    intl: &Intl,
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
 ) -> Result<(), ConnectError> {
     let mut violations = FieldViolations::new();
-    validate_schema(type_id, field_values, &mut violations);
+    validate_schema(intl, type_id, field_values, &mut violations);
     if !violations.is_empty() {
-        return Err(bad_request(violations));
+        return Err(bad_request(intl, violations.into()));
     }
     // Only spend a network round-trip once the field shape is valid.
-    validate_upstream(type_id, field_values).await
+    validate_upstream(intl, type_id, field_values).await
 }
 
 /// `type_id` must name a known credential type, and `field_values`
@@ -295,24 +322,36 @@ async fn validate_account(
 /// a file token's path must also be absolute.
 /// Pure (no upstream call), so unit-testable on its own.
 fn validate_schema(
+    intl: &Intl,
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
     violations: &mut FieldViolations,
 ) {
     let Some(cred_type) = credential::builtins().into_iter().find(|t| t.id == type_id) else {
-        violations.push("type_id", format!("Unknown credential type {type_id:?}"));
+        let description = format_message!(
+            intl,
+            default_message: "Unknown credential type {type_id}!",
+            description: "Error when saving an account of a type the device does not know; type_id is its identifier",
+            values: { type_id: type_id },
+        );
+        violations.push("type_id", description);
         return;
     };
 
     for key in cred_type.fields.keys() {
         let has_value = field_values.get(key).is_some_and(|value| !value.is_empty());
         if !has_value {
-            violations.push(field_error_key(key.as_str()), "Required");
+            violations.push(field_error_key(key.as_str()), missing_value(intl));
         }
     }
     for key in field_values.keys() {
         if !cred_type.fields.contains_key(key) {
-            violations.push(field_error_key(key.as_str()), "Unknown field");
+            let description = format_message!(
+                intl,
+                default_message: "Unknown field!",
+                description: "Error when saving an account with a field its credential type does not have",
+            );
+            violations.push(field_error_key(key.as_str()), description);
         }
     }
 
@@ -321,9 +360,14 @@ fn validate_schema(
         && !path.is_empty()
         && !std::path::Path::new(path).is_absolute()
     {
+        let description = format_message!(
+            intl,
+            default_message: "Must be an absolute path",
+            description: "Error under the token file path field when the path does not start at the root of the file system",
+        );
         violations.push(
             field_error_key(credential::FILE_TOKEN_PATH_FIELD),
-            "Must be an absolute path",
+            description,
         );
     }
 
@@ -357,6 +401,7 @@ fn normalized_field_values(
 /// Per-type live check. Braiins Pool verifies the token against the pool API; other types have no
 /// upstream to check against and pass.
 async fn validate_upstream(
+    intl: &Intl,
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
 ) -> Result<(), ConnectError> {
@@ -364,27 +409,52 @@ async fn validate_upstream(
         return Ok(());
     }
     let token = field_values.get("token").map_or("", String::as_str);
-    match check_braiins_pool_token(token).await {
-        Ok(()) => Ok(()),
-        Err(err) => Err(upstream_check_status(&err)),
-    }
+    check_braiins_pool_token(token).await.or_status(intl)
 }
 
 /// A rejected token is the operator's to correct, so it stays an invalid-argument. Any
 /// other outcome means the check could not run, and calling that invalid would send the
 /// operator chasing a value that may be fine. Both keep the violation on the token field.
-fn upstream_check_status(err: &CredentialCheckError) -> ConnectError {
-    let mut violations = FieldViolations::new();
-    violations.push(field_error_key("token"), err.to_string());
+impl ToStatus for CredentialCheckError {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        let description = match self {
+            CredentialCheckError::ServiceNotAvailable => format_message!(
+                intl,
+                default_message: "Could not reach Braiins Pool, so this token is unverified.",
+                description: "Error under an account's token field when the Braiins Pool service did not answer the check; Braiins Pool is a product name",
+            ),
+            CredentialCheckError::Invalid => format_message!(
+                intl,
+                default_message: "Invalid API key!",
+                description: "Error under an account's token field when Braiins Pool refused the token",
+            ),
+            CredentialCheckError::Unexpected => format_message!(
+                intl,
+                default_message: "Braiins Pool gave an unexpected response, so this token is unverified.",
+                description: "Error under an account's token field when the check got an answer it cannot read; Braiins Pool is a product name",
+            ),
+            CredentialCheckError::ClientInitFailed => format_message!(
+                intl,
+                default_message: "Could not run the check, so this token is unverified.",
+                description: "Error under an account's token field when the device could not start the check",
+            ),
+        };
+        let mut violations = FieldViolations::new();
+        violations.push(field_error_key("token"), description);
 
-    match err {
-        CredentialCheckError::Invalid => bad_request(violations),
-        CredentialCheckError::ServiceNotAvailable
-        | CredentialCheckError::Unexpected
-        | CredentialCheckError::ClientInitFailed => with_violations(
-            ConnectError::unavailable(GrpcError::CredentialUnverified.to_string()),
-            violations.into(),
-        ),
+        match self {
+            CredentialCheckError::Invalid => bad_request(intl, violations.into()),
+            CredentialCheckError::ServiceNotAvailable
+            | CredentialCheckError::Unexpected
+            | CredentialCheckError::ClientInitFailed => {
+                let message = format_message!(
+                    intl,
+                    default_message: "Could not verify the credential.",
+                    description: "Error above the account form when the device could not check the token with its service, which may well be fine",
+                );
+                with_violations(ConnectError::unavailable(message), violations.into())
+            }
+        }
     }
 }
 
@@ -476,7 +546,12 @@ fn map_account_to_proto(account: Account, connected_widgets: Vec<String>) -> web
 /// Runs against the request even though a hand-edited store is honoured as-is:
 /// the API is the form's contract, and the form must learn of a dead line now
 /// rather than ship it.
-fn validate_allow_hosts(type_id: &str, entries: &[String], violations: &mut FieldViolations) {
+fn validate_allow_hosts(
+    intl: &Intl,
+    type_id: &str,
+    entries: &[String],
+    violations: &mut FieldViolations,
+) {
     const FIELD: &str = "allow_hosts";
 
     if entries.is_empty() {
@@ -486,45 +561,137 @@ fn validate_allow_hosts(type_id: &str, entries: &[String], violations: &mut Fiel
         .and_then(credential::BuiltinType::egress)
         .is_some();
     if pinned {
-        violations.push(
-            FIELD.to_owned(),
-            "This credential type already pins where its secret may go",
+        let description = format_message!(
+            intl,
+            default_message: "This credential type already sets where its secret may go.",
+            description: "Error under an account's allowed hosts list on a credential type whose hosts are fixed",
         );
+        violations.push(FIELD.to_owned(), description);
         return;
     }
     for (index, entry) in entries.iter().enumerate() {
-        if let Err(reason) = credential::check_entry(entry) {
-            violations.push(FIELD.to_owned(), format!("Line {}: {reason}", index + 1));
+        if let Err(problem) = credential::check_entry(entry) {
+            violations.push(FIELD.to_owned(), entry_problem(intl, index + 1, problem));
         }
     }
 }
 
-fn parse_account_name(field: &str, input: &str) -> ParseOutput<String> {
+/// `line` is the entry's 1-based place in the form's one textarea.
+fn entry_problem(intl: &Intl, line: usize, problem: EntryProblem) -> String {
+    let line = line.to_string();
+    match problem {
+        EntryProblem::Empty => format_message!(
+            intl,
+            default_message: "Line {line}: an entry cannot be empty.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number",
+            values: { line: line },
+        ),
+        EntryProblem::HasSpaces => format_message!(
+            intl,
+            default_message: "Line {line}: an entry cannot contain spaces.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number",
+            values: { line: line },
+        ),
+        EntryProblem::BadCidr => format_message!(
+            intl,
+            default_message: "Line {line}: \"/\" makes this a CIDR range, and it does not parse as one.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number, CIDR is a network notation",
+            values: { line: line },
+        ),
+        EntryProblem::BadPort => format_message!(
+            intl,
+            default_message: "Line {line}: the part after \":\" is not a port number.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number",
+            values: { line: line },
+        ),
+        EntryProblem::NoHost => format_message!(
+            intl,
+            default_message: "Line {line}: there is no host before the \":\".",
+            description: "Error under an account's allowed hosts list; line is the entry's line number",
+            values: { line: line },
+        ),
+        EntryProblem::WildcardWithoutDomain => format_message!(
+            intl,
+            default_message: "Line {line}: a wildcard needs a domain right after \"*.\".",
+            description: "Error under an account's allowed hosts list; line is the entry's line number",
+            values: { line: line },
+        ),
+        EntryProblem::SecondWildcard => format_message!(
+            intl,
+            default_message: "Line {line}: one leading \"*.\" is the only wildcard there is.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number",
+            values: { line: line },
+        ),
+        EntryProblem::MisplacedWildcard => format_message!(
+            intl,
+            default_message: "Line {line}: \"*\" is only valid as a leading \"*.\" label.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number, a label is one dot-separated part of a host name",
+            values: { line: line },
+        ),
+        EntryProblem::MisplacedBracket => format_message!(
+            intl,
+            default_message: "Line {line}: brackets can only open an IPv6 literal.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number, a literal is an address written out in full",
+            values: { line: line },
+        ),
+        EntryProblem::UnclosedBracket => format_message!(
+            intl,
+            default_message: "Line {line}: the \"[\" is never closed.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number",
+            values: { line: line },
+        ),
+        EntryProblem::BracketsWithoutIpv6 => format_message!(
+            intl,
+            default_message: "Line {line}: brackets must hold an IPv6 address.",
+            description: "Error under an account's allowed hosts list; line is the entry's line number",
+            values: { line: line },
+        ),
+        EntryProblem::TextAfterBracket => format_message!(
+            intl,
+            default_message: "Line {line}: only \":port\" may follow the \"]\".",
+            description: "Error under an account's allowed hosts list; line is the entry's line number, port is written as it must be typed",
+            values: { line: line },
+        ),
+    }
+}
+
+fn parse_account_name(intl: &Intl, field: &str, input: &str) -> ParseOutput<String> {
     let mut violations = FieldViolations::new();
     let maybe_name = match input.len() {
         0 => {
-            violations.push(field, "Missing value!");
+            violations.push(field, missing_value(intl));
             None
         }
         1..=50 => Some(input.to_owned()),
         _ => {
-            violations.push(field, "Input too long!");
+            let description = format_message!(
+                intl,
+                default_message: "Input too long!",
+                description: "Error under an account's name field when it is too long",
+            );
+            violations.push(field, description);
             None
         }
     };
     (maybe_name, violations)
 }
 
-fn parse_account_id(field: &str, input: &str) -> ParseOutput<AccountId> {
+fn parse_account_id(intl: &Intl, field: &str, input: &str) -> ParseOutput<AccountId> {
     let mut violations = FieldViolations::new();
     let maybe_id = AccountId::from_str(input).ok();
     if maybe_id.is_none() {
-        violations.push(field, "Invalid account ID");
+        let description = format_message!(
+            intl,
+            default_message: "Invalid account ID!",
+            description: "Error when a request names a credentials account by an identifier that is malformed",
+        );
+        violations.push(field, description);
     }
     (maybe_id, violations)
 }
 
 fn parse_field_values<S: std::hash::BuildHasher>(
+    intl: &Intl,
     field: &str,
     input: &HashMap<String, String, S>,
     violations: &mut FieldViolations,
@@ -535,28 +702,25 @@ fn parse_field_values<S: std::hash::BuildHasher>(
             Ok(key) => {
                 out.insert(key, value.clone());
             }
-            Err(bad) => violations.push(field, format!("Invalid field key {bad:?}")),
+            Err(bad) => {
+                let description = format_message!(
+                    intl,
+                    default_message: "Invalid field name: {key}!",
+                    description: "Error when saving an account with a malformed field name; key is that name",
+                    values: { key: bad },
+                );
+                violations.push(field, description);
+            }
         }
     }
     out
 }
 
-fn bad_request(violations: FieldViolations) -> ConnectError {
-    with_violations(
-        ConnectError::invalid_argument(GrpcError::BadRequest.to_string()),
-        violations.into(),
-    )
-}
-
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone)]
 enum CredentialCheckError {
-    #[error("Could not reach Braiins Pool, so this token is unverified")]
     ServiceNotAvailable,
-    #[error("Invalid API key")]
     Invalid,
-    #[error("Braiins Pool gave an unexpected response, so this token is unverified")]
     Unexpected,
-    #[error("Could not run the check, so this token is unverified")]
     ClientInitFailed,
 }
 
@@ -591,17 +755,21 @@ mod tests {
             .collect()
     }
 
+    fn english() -> Arc<Intl> {
+        bmc_intl::shared_formatter(bmc_intl::Language::EN)
+    }
+
     /// Collect the field violations `validate_schema` produces for a (type, fields) pair.
     fn schema_violations(type_id: &str, pairs: &[(&str, &str)]) -> Vec<FieldViolation> {
         let mut violations = FieldViolations::new();
-        validate_schema(type_id, &values(pairs), &mut violations);
+        validate_schema(&english(), type_id, &values(pairs), &mut violations);
         violations.into()
     }
 
     fn allow_hosts_violations(type_id: &str, entries: &[&str]) -> Vec<FieldViolation> {
         let entries: Vec<String> = entries.iter().map(|e| (*e).to_owned()).collect();
         let mut violations = FieldViolations::new();
-        validate_allow_hosts(type_id, &entries, &mut violations);
+        validate_allow_hosts(&english(), type_id, &entries, &mut violations);
         violations.into()
     }
 
@@ -695,7 +863,7 @@ mod tests {
             &[(credential::FILE_TOKEN_PATH_FIELD, "")],
         );
         let reasons: Vec<&str> = violations.iter().map(|v| v.description.as_str()).collect();
-        assert_eq!(reasons, ["Required"]);
+        assert_eq!(reasons, ["Missing value!"]);
     }
 
     fn home_assistant_violations(address: &str) -> Vec<String> {
@@ -1813,10 +1981,13 @@ mod tests {
 
     #[test]
     fn a_rejected_token_is_the_operators_to_fix() {
-        let error = upstream_check_status(&CredentialCheckError::Invalid);
+        let error = CredentialCheckError::Invalid.to_status(&english());
 
         assert_eq!(error.code, ErrorCode::InvalidArgument);
-        assert_eq!(error.message, Some(GrpcError::BadRequest.to_string()));
+        assert_eq!(
+            error.message.as_deref(),
+            Some("Some of the fields are invalid.")
+        );
     }
 
     #[test]
@@ -1826,12 +1997,12 @@ mod tests {
             CredentialCheckError::Unexpected,
             CredentialCheckError::ClientInitFailed,
         ] {
-            let error = upstream_check_status(&err);
+            let error = err.to_status(&english());
 
             assert_eq!(error.code, ErrorCode::Unavailable, "for {err:?}");
             assert_eq!(
-                error.message,
-                Some(GrpcError::CredentialUnverified.to_string()),
+                error.message.as_deref(),
+                Some("Could not verify the credential."),
                 "for {err:?}"
             );
         }
@@ -1845,7 +2016,7 @@ mod tests {
             CredentialCheckError::Unexpected,
             CredentialCheckError::ClientInitFailed,
         ] {
-            let fields = violation_fields(&upstream_check_status(&err));
+            let fields = violation_fields(&err.to_status(&english()));
 
             assert_eq!(fields, [r#"field_values["token"]"#], "for {err:?}");
         }

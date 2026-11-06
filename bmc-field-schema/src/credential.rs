@@ -269,7 +269,24 @@ fn split_port(entry: &str) -> (&str, Option<u16>) {
     }
 }
 
-/// Why an operator-written egress entry is unusable, in words the form can echo.
+/// What is wrong with an operator-written egress entry, for the edge to word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryProblem {
+    Empty,
+    HasSpaces,
+    BadCidr,
+    BadPort,
+    NoHost,
+    WildcardWithoutDomain,
+    SecondWildcard,
+    MisplacedWildcard,
+    MisplacedBracket,
+    UnclosedBracket,
+    BracketsWithoutIpv6,
+    TextAfterBracket,
+}
+
+/// Why an operator-written egress entry is unusable.
 ///
 /// [`entry_allows`] never fails — an entry that matches nothing
 /// simply allows nothing — so saving runs this instead,
@@ -277,18 +294,18 @@ fn split_port(entry: &str) -> (&str, Option<u16>) {
 ///
 /// # Errors
 ///
-/// A static English sentence naming what is wrong with the entry.
-pub fn check_entry(entry: &str) -> Result<(), &'static str> {
+/// The [`EntryProblem`] with the entry.
+pub fn check_entry(entry: &str) -> Result<(), EntryProblem> {
     if entry.is_empty() {
-        return Err("an entry cannot be empty");
+        return Err(EntryProblem::Empty);
     }
     if entry.chars().any(char::is_whitespace) {
-        return Err("an entry cannot contain spaces");
+        return Err(EntryProblem::HasSpaces);
     }
     if entry.contains('/') {
         return match entry.parse::<ipnet::IpNet>() {
             Ok(_) => Ok(()),
-            Err(_) => Err("\"/\" makes this a CIDR range, and it does not parse as one"),
+            Err(_) => Err(EntryProblem::BadCidr),
         };
     }
     if entry.contains('[') || entry.contains(']') {
@@ -299,41 +316,39 @@ pub fn check_entry(entry: &str) -> Result<(), &'static str> {
     // The matcher drops a `:suffix` that is not a port, then matches
     // the bare host on any port; a save must not inherit that lenience.
     if port.is_none() && host != entry {
-        return Err("the part after \":\" is not a port number");
+        return Err(EntryProblem::BadPort);
     }
     if host.is_empty() {
-        return Err("there is no host before the \":\"");
+        return Err(EntryProblem::NoHost);
     }
     match host.strip_prefix("*.") {
         Some(suffix) if suffix.is_empty() || suffix.starts_with('.') => {
-            Err("a wildcard needs a domain right after \"*.\"")
+            Err(EntryProblem::WildcardWithoutDomain)
         }
-        Some(suffix) if suffix.contains('*') => {
-            Err("one leading \"*.\" is the only wildcard there is")
-        }
-        None if host.contains('*') => Err("\"*\" is only valid as a leading \"*.\" label"),
+        Some(suffix) if suffix.contains('*') => Err(EntryProblem::SecondWildcard),
+        None if host.contains('*') => Err(EntryProblem::MisplacedWildcard),
         Some(_) | None => Ok(()),
     }
 }
 
 /// The bracketed spelling is IPv6-only,
 /// and the sole way to pin an IPv6 address to a port.
-fn check_bracketed_entry(entry: &str) -> Result<(), &'static str> {
+fn check_bracketed_entry(entry: &str) -> Result<(), EntryProblem> {
     let Some(inner) = entry.strip_prefix('[') else {
-        return Err("brackets can only open an IPv6 literal");
+        return Err(EntryProblem::MisplacedBracket);
     };
     let Some((host, tail)) = inner.split_once(']') else {
-        return Err("the \"[\" is never closed");
+        return Err(EntryProblem::UnclosedBracket);
     };
     if host.parse::<Ipv6Addr>().is_err() {
-        return Err("brackets must hold an IPv6 address");
+        return Err(EntryProblem::BracketsWithoutIpv6);
     }
     match tail.strip_prefix(':') {
         None if tail.is_empty() => Ok(()),
-        None => Err("only \":port\" may follow the \"]\""),
+        None => Err(EntryProblem::TextAfterBracket),
         Some(port) => match port.parse::<u16>() {
             Ok(_) => Ok(()),
-            Err(_) => Err("the part after \":\" is not a port number"),
+            Err(_) => Err(EntryProblem::BadPort),
         },
     }
 }
