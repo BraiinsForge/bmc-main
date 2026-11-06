@@ -35,7 +35,7 @@ use bmc_grpc::web::{
     BrightnessInfo, ConfigurationService as GrpcConfigurationService, DisplaySettingsResponse,
     SoundVolumeSettingsResponse, TimeInterval,
 };
-use bmc_intl::Translations;
+use bmc_intl::{Intl, Translations, format_message};
 use bmc_shared_time::time::{DateFormat, TimeSystem};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
@@ -50,7 +50,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
 use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
-use super::initial_setup::{try_from_date_time, try_from_time_format};
+use super::initial_setup::{
+    try_from_date_time, try_from_temperature_unit, try_from_time_format, try_from_unit_system,
+};
 use super::intl::intl;
 use super::language::{listed_tag, save_language};
 use super::shared::{
@@ -133,7 +135,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_brightness(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, UInt32Value>,
     ) -> ServiceResult<Empty> {
         let value = clamp_brightness(request.value);
@@ -144,7 +146,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 warn!("Cannot set display brightness: {}", e);
-                ConnectError::internal("Failed to set display brightness")
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to set the display brightness!",
+                    description: "Error when the device could not apply the screen brightness setting",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -152,7 +158,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_brightness_nightmode(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, UInt32Value>,
     ) -> ServiceResult<Empty> {
         let value = clamp_brightness(request.value);
@@ -163,7 +169,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 warn!("Cannot set night mode brightness, error: {}", e);
-                ConnectError::internal("Failed to set night mode brightness")
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to set the night mode brightness!",
+                    description: "Error when the device could not apply the screen brightness setting for night mode",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -171,7 +181,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_nightmode_enabled(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, BoolValue>,
     ) -> ServiceResult<Empty> {
         self.system_manager
@@ -179,7 +189,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 error!("Failed to enable/disable night mode, error {}", e);
-                ConnectError::internal("Failed to enable/disable night mode")
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to switch night mode!",
+                    description: "Error when the device could not apply the night mode switch",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -199,7 +213,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 error!("Failed to set night mode interval, error: {}", e);
-                ConnectError::internal("Failed to set night mode interval")
+                ConnectError::internal(format_message!(
+                    intl,
+                    default_message: "Failed to set the night mode time interval!",
+                    description: "Error when the device could not apply the hours night mode runs between",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -231,12 +249,13 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_sound_volume(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, UInt32Value>,
     ) -> ServiceResult<Empty> {
         let value = request.value;
+        let intl = intl(&ctx);
 
-        validate_sound_volume(value)?;
+        validate_sound_volume(&intl, value)?;
 
         #[expect(clippy::cast_possible_truncation)]
         self.system_manager
@@ -244,7 +263,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 warn!("Failed to set sound volume, error: {}", e);
-                ConnectError::internal("Failed to set sound volume")
+                ConnectError::internal(format_message!(
+                    intl,
+                    default_message: "Failed to set the sound volume!",
+                    description: "Error when the device could not apply the sound volume setting",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -252,12 +275,13 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_sound_volume_nightmode(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, UInt32Value>,
     ) -> ServiceResult<Empty> {
         let value = request.value;
+        let intl = intl(&ctx);
 
-        validate_sound_volume(value)?;
+        validate_sound_volume(&intl, value)?;
 
         #[expect(clippy::cast_possible_truncation)]
         self.system_manager
@@ -265,7 +289,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 warn!("Failed to set sound volume for night mode, error: {}", e);
-                ConnectError::internal("Failed to set sound volume for night mode")
+                ConnectError::internal(format_message!(
+                    intl,
+                    default_message: "Failed to set the night mode sound volume!",
+                    description: "Error when the device could not apply the sound volume setting for night mode",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -283,12 +311,16 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn play_sound(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, PlaySoundRequest>,
     ) -> ServiceResult<Empty> {
         let sound = Sounds::from_str(request.sound_id).map_err(|e| {
             warn!("Failed to parse sound, error {e}");
-            ConnectError::invalid_argument("Invalid sound_id")
+            ConnectError::invalid_argument(format_message!(
+                intl(&ctx),
+                default_message: "Invalid sound!",
+                description: "Error when playing a sound the device does not have",
+            ))
         })?;
 
         let token = CancellationToken::new();
@@ -301,19 +333,20 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         // NOTE: Spawn `Audio::play` to avoid blocking cancellation;
         // running it inline would delay dropping the token and prevent cancellation.
-        tokio::spawn(async move {
+        let played = tokio::spawn(async move {
             sound_controller
                 .play_sound(sound, token)
                 .await
-                .map_err(|e| {
-                    error!("Failed to play sound, error {e}");
-                    ConnectError::internal("Failed to play sound")
-                })?;
-
-            Ok::<(), ConnectError>(())
+                .inspect_err(|e| error!("Failed to play sound, error {e}"))
         })
-        .await
-        .map_err(|_| ConnectError::internal("Failed to play sound"))??;
+        .await;
+        if !matches!(played, Ok(Ok(()))) {
+            return Err(ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to play the sound!",
+                description: "Error when the device could not play the sound chosen to preview",
+            )));
+        }
 
         Response::ok(Empty::default())
     }
@@ -372,7 +405,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         config.save().await.map_err(|e| {
             error!("Failed to save time_system, error {e}");
-            ConnectError::internal("Failed to save time_system")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the time format!",
+                description: "Error when the device could not store the 12 or 24 hour clock setting",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -392,7 +429,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         config.save().await.map_err(|e| {
             error!("Failed to save number_format, error {e}");
-            ConnectError::internal("Failed to save number_format")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the number format!",
+                description: "Error when the device could not store how numbers are grouped and punctuated",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -412,7 +453,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         config.save().await.map_err(|e| {
             error!("Failed to save date_format, error {e}");
-            ConnectError::internal("Failed to save date_format")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the date format!",
+                description: "Error when the device could not store how dates are written",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -420,7 +465,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_data_collection(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, BoolValue>,
     ) -> ServiceResult<Empty> {
         let mut config = self.config_handle.write().await;
@@ -428,7 +473,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         config.save().await.map_err(|e| {
             error!("Failed to save data_collection, error {e}");
-            ConnectError::internal("Failed to save data_collection")
+            ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to save the data collection setting!",
+                description: "Error when the device could not store whether it may collect usage data",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -439,16 +488,18 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         ctx: RequestContext,
         request: ServiceRequest<'_, SetFirstDayOfWeekRequest>,
     ) -> ServiceResult<Empty> {
+        let intl = intl(&ctx);
         let weekday = request
             .first_day_of_week
             .as_known()
             .and_then(map_weekday_from_proto)
             .ok_or_else(|| {
-                invalid_field(
-                    &intl(&ctx),
-                    "first_day_of_week",
-                    "value cannot be unspecified",
-                )
+                let description = format_message!(
+                    intl,
+                    default_message: "Choose the first day of the week",
+                    description: "Error under the first day of the week field when nothing is chosen",
+                );
+                invalid_field(&intl, "first_day_of_week", description)
             })?;
 
         let mut config = self.config_handle.write().await;
@@ -456,7 +507,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         config.save().await.map_err(|e| {
             error!("Failed to save first_day_of_week, error {e}");
-            ConnectError::internal("Failed to save first_day_of_week")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the first day of the week!",
+                description: "Error when the device could not store which day its weeks start on",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -467,24 +522,20 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         ctx: RequestContext,
         request: ServiceRequest<'_, SetTemperatureUnitRequest>,
     ) -> ServiceResult<Empty> {
-        let temperature_unit = request
-            .temperature_unit
-            .as_known()
-            .and_then(map_temperature_unit_from_proto)
-            .ok_or_else(|| {
-                invalid_field(
-                    &intl(&ctx),
-                    "temperature_unit",
-                    "value cannot be unspecified",
-                )
-            })?;
+        let intl = intl(&ctx);
+        let temperature_unit = try_from_temperature_unit(&intl, request.temperature_unit)
+            .map_err(|violation| bad_request(&intl, vec![violation]))?;
 
         let mut config = self.config_handle.write().await;
         config.set_temperature_unit(temperature_unit);
 
         config.save().await.map_err(|e| {
             error!("Failed to save temperature_unit, error {e}");
-            ConnectError::internal("Failed to save temperature_unit")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the temperature unit!",
+                description: "Error when the device could not store whether it shows Celsius or Fahrenheit",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -495,20 +546,20 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
         ctx: RequestContext,
         request: ServiceRequest<'_, SetUnitSystemRequest>,
     ) -> ServiceResult<Empty> {
-        let unit_system = request
-            .unit_system
-            .as_known()
-            .and_then(map_unit_system_from_proto)
-            .ok_or_else(|| {
-                invalid_field(&intl(&ctx), "unit_system", "value cannot be unspecified")
-            })?;
+        let intl = intl(&ctx);
+        let unit_system = try_from_unit_system(&intl, request.unit_system)
+            .map_err(|violation| bad_request(&intl, vec![violation]))?;
 
         let mut config = self.config_handle.write().await;
         config.set_unit_system(unit_system);
 
         config.save().await.map_err(|e| {
             error!("Failed to save unit_system, error {e}");
-            ConnectError::internal("Failed to save unit_system")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the unit system!",
+                description: "Error when the device could not store whether it uses metric or imperial units",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -525,7 +576,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn show_seconds_in_status_bar(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, BoolValue>,
     ) -> ServiceResult<Empty> {
         let mut config = self.config_handle.write().await;
@@ -533,7 +584,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         config.save().await.map_err(|e| {
             error!("Failed to show/hide seconds in status bar, error {e}");
-            ConnectError::internal("Failed to show/hide seconds in status bar")
+            ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to show or hide the seconds in the status bar!",
+                description: "Error when the device could not store whether its status bar clock shows seconds",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -554,7 +609,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_led_enabled(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, BoolValue>,
     ) -> ServiceResult<Empty> {
         self.system_manager
@@ -562,7 +617,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 error!("Failed to set led_enabled, error {e}");
-                ConnectError::internal("Failed to save led_enabled")
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to save the LED notifications setting!",
+                    description: "Error when the device could not store whether its LEDs show notifications",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -570,7 +629,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_led_enabled_nightmode(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, BoolValue>,
     ) -> ServiceResult<Empty> {
         self.system_manager
@@ -578,7 +637,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 error!("Failed to set led_enabled_nightmode, error {e}");
-                ConnectError::internal("Failed to save led_enabled_nightmode")
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to save the night mode LED notifications setting!",
+                    description: "Error when the device could not store whether its LEDs show notifications during night mode",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -596,7 +659,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_boot_sound_enabled(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, BoolValue>,
     ) -> ServiceResult<Empty> {
         let mut config = self.config_handle.write().await;
@@ -610,7 +673,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
         config.save().await.map_err(|e| {
             error!("Failed to save boot_sound_enabled, error {e}");
-            ConnectError::internal("Failed to save boot_sound_enabled")
+            ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to save the boot sound setting!",
+                description: "Error when the device could not store whether it plays a sound when it starts",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -618,7 +685,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_nightmode_screen_off_timeout(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, UInt32Value>,
     ) -> ServiceResult<Empty> {
         let value = request.value;
@@ -630,7 +697,11 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .await
             .map_err(|e| {
                 error!("Failed to set night mode screen off timeout, error: {e}");
-                ConnectError::internal("Failed to set night mode screen off timeout")
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to set the night mode screen-off timeout!",
+                    description: "Error when the device could not apply how long night mode waits before turning the screen off",
+                ))
             })?;
 
         Response::ok(Empty::default())
@@ -641,10 +712,16 @@ fn clamp_brightness(value: u32) -> u32 {
     value.clamp(API_BRIGHTNESS_MIN, API_BRIGHTNESS_MAX)
 }
 
-fn validate_sound_volume(value: u32) -> Result<(), ConnectError> {
+fn validate_sound_volume(intl: &Intl, value: u32) -> Result<(), ConnectError> {
     if value > API_SOUND_VOLUME_MAX {
-        return Err(ConnectError::invalid_argument(format!(
-            "Invalid sound volume. Value must be within a range [{API_SOUND_VOLUME_MIN}-{API_SOUND_VOLUME_MAX}]"
+        return Err(ConnectError::invalid_argument(format_message!(
+            intl,
+            default_message: "The sound volume must be between {min} and {max}.",
+            description: "Error when a sound volume is out of range; min and max are whole numbers",
+            values: {
+                min: u64::from(API_SOUND_VOLUME_MIN),
+                max: u64::from(API_SOUND_VOLUME_MAX),
+            },
         )));
     }
     Ok(())
@@ -695,25 +772,9 @@ fn map_temperature_unit_to_proto(value: TemperatureUnit) -> web::TemperatureUnit
     }
 }
 
-fn map_temperature_unit_from_proto(value: web::TemperatureUnit) -> Option<TemperatureUnit> {
-    match value {
-        web::TemperatureUnit::Unspecified => None,
-        web::TemperatureUnit::Celsius => Some(TemperatureUnit::Celsius),
-        web::TemperatureUnit::Fahrenheit => Some(TemperatureUnit::Fahrenheit),
-    }
-}
-
 fn map_unit_system_to_proto(value: UnitSystem) -> web::UnitSystem {
     match value {
         UnitSystem::Metric => web::UnitSystem::Metric,
         UnitSystem::Imperial => web::UnitSystem::Imperial,
-    }
-}
-
-fn map_unit_system_from_proto(value: web::UnitSystem) -> Option<UnitSystem> {
-    match value {
-        web::UnitSystem::Unspecified => None,
-        web::UnitSystem::Metric => Some(UnitSystem::Metric),
-        web::UnitSystem::Imperial => Some(UnitSystem::Imperial),
     }
 }

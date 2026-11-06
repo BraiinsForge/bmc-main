@@ -609,7 +609,7 @@ pub(crate) fn try_from_date_time(
     }
 }
 
-fn try_from_temperature_unit(
+pub(crate) fn try_from_temperature_unit(
     intl: &Intl,
     value: EnumValue<TemperatureUnit>,
 ) -> Result<ConfigTemperatureUnit, FieldViolation> {
@@ -627,7 +627,7 @@ fn try_from_temperature_unit(
     }
 }
 
-fn try_from_unit_system(
+pub(crate) fn try_from_unit_system(
     intl: &Intl,
     value: EnumValue<UnitSystem>,
 ) -> Result<ConfigUnitSystem, FieldViolation> {

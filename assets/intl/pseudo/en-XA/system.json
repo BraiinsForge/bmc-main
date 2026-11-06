@@ -9,6 +9,16 @@
     "translation": "[Şŧȧȧřŧīƞɠ şḗḗŧŭŭƥ Ẇī-Ƒī...]",
     "description": "Device-info setup title while the device's own network is coming up"
   },
+  "+oTfHJv+oS": {
+    "source": "Choose the first day of the week",
+    "translation": "[Ƈħǿǿǿǿşḗḗ ŧħḗḗ ƒīřşŧ ḓȧȧẏ ǿǿƒ ŧħḗḗ ẇḗḗḗḗķ]",
+    "description": "Error under the first day of the week field when nothing is chosen"
+  },
+  "+y8tisHeJ9": {
+    "source": "The sound volume must be between {min} and {max}.",
+    "translation": "[Ŧħḗḗ şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ ḿŭŭşŧ ƀḗḗ ƀḗḗŧẇḗḗḗḗƞ {min} ȧȧƞḓ {max}.]",
+    "description": "Error when a sound volume is out of range; min and max are whole numbers"
+  },
   "//NWDATvZK": {
     "source": "Your {device_name} is connected!",
     "translation": "[Ẏǿǿŭŭř {device_name} īş ƈǿǿƞƞḗḗƈŧḗḗḓ!]",
@@ -49,10 +59,20 @@
     "translation": "[Ŭƞŧīŀ {time}]",
     "description": "Settings tray, under the night mode button; time is when the current state ends, a time of day as the device formats it"
   },
+  "0yyipdvLtT": {
+    "source": "Failed to save the temperature unit!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ŧḗḗḿƥḗḗřȧȧŧŭŭřḗḗ ŭŭƞīŧ!]",
+    "description": "Error when the device could not store whether it shows Celsius or Fahrenheit"
+  },
   "1KxN6IjflZ": {
     "source": "This language is not available on this device.",
     "translation": "[Ŧħīş ŀȧȧƞɠŭŭȧȧɠḗḗ īş ƞǿǿŧ ȧȧṽȧȧīŀȧȧƀŀḗḗ ǿǿƞ ŧħīş ḓḗḗṽīƈḗḗ.]",
     "description": "Error under the language picker when the chosen language is not on the device"
+  },
+  "1cXvAKA3/1": {
+    "source": "Invalid sound!",
+    "translation": "[Īƞṽȧȧŀīḓ şǿǿŭŭƞḓ!]",
+    "description": "Error when playing a sound the device does not have"
   },
   "1whICLmRUk": {
     "source": "Failed to apply the network settings!",
@@ -174,6 +194,11 @@
     "translation": "[Ƈǿǿŀǿǿř īş řḗḗɋŭŭīřḗḗḓ ƒǿǿř ŧħīş ḗḗƒƒḗḗƈŧ ŧẏƥḗḗ.]",
     "description": "Error on the LED test page when the chosen light effect needs a color and none is given"
   },
+  "Cc6ld21VRG": {
+    "source": "Failed to set the display brightness!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ ḓīşƥŀȧȧẏ ƀřīɠħŧƞḗḗşş!]",
+    "description": "Error when the device could not apply the screen brightness setting"
+  },
   "DWHJR5qqsV": {
     "source": "Effect type not specified!",
     "translation": "[Ḗƒƒḗḗƈŧ ŧẏƥḗḗ ƞǿǿŧ şƥḗḗƈīƒīḗḗḓ!]",
@@ -229,6 +254,11 @@
     "translation": "[{value} īş ƞǿǿŧ ȧȧ ṽȧȧŀīḓ ĪƤṽ4.]",
     "description": "Error under a network address field; value is what was typed"
   },
+  "HfwpNDwXu6": {
+    "source": "Failed to save the date format!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ḓȧȧŧḗḗ ƒǿǿřḿȧȧŧ!]",
+    "description": "Error when the device could not store how dates are written"
+  },
   "HsiwpZhFtX": {
     "source": "Can't restart now",
     "translation": "[Ƈȧȧƞ'ŧ řḗḗşŧȧȧřŧ ƞǿǿẇ]",
@@ -263,6 +293,11 @@
     "source": "Use only letters, digits and hyphens, separated by dots",
     "translation": "[Ŭşḗḗ ǿǿƞŀẏ ŀḗḗŧŧḗḗřş, ḓīɠīŧş ȧȧƞḓ ħẏƥħḗḗƞş, şḗḗƥȧȧřȧȧŧḗḗḓ ƀẏ ḓǿǿŧş]",
     "description": "Error under the device's hostname field"
+  },
+  "L/dnAG21CY": {
+    "source": "Failed to set the night mode screen-off timeout!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ şƈřḗḗḗḗƞ-ǿǿƒƒ ŧīḿḗḗǿǿŭŭŧ!]",
+    "description": "Error when the device could not apply how long night mode waits before turning the screen off"
   },
   "LDBHp/p81S": {
     "source": "Invalid time format!",
@@ -319,6 +354,11 @@
     "translation": "[Ḗŧħḗḗřƞḗḗŧ īş ƞǿǿŧ ƈǿǿƞƞḗḗƈŧḗḗḓ, şǿǿ Ẇī-Ƒī şḗḗŧŭŭƥ īş řḗḗɋŭŭīřḗḗḓ.]",
     "description": "Error when skipping the setup's Wi-Fi step while no Ethernet cable is plugged in"
   },
+  "Q2f5ufkQwL": {
+    "source": "Failed to save the data collection setting!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ḓȧȧŧȧȧ ƈǿǿŀŀḗḗƈŧīǿǿƞ şḗḗŧŧīƞɠ!]",
+    "description": "Error when the device could not store whether it may collect usage data"
+  },
   "RKPljShnpm": {
     "source": "Update Failed",
     "translation": "[Ŭƥḓȧȧŧḗḗ Ƒȧȧīŀḗḗḓ]",
@@ -333,6 +373,11 @@
     "source": "Invalid URL!",
     "translation": "[Īƞṽȧȧŀīḓ ŬŘĿ!]",
     "description": "Error under the mining pool's address field"
+  },
+  "Rn6ggDTH9e": {
+    "source": "Failed to save the number format!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƞŭŭḿƀḗḗř ƒǿǿřḿȧȧŧ!]",
+    "description": "Error when the device could not store how numbers are grouped and punctuated"
   },
   "S6DYT1b/D3": {
     "source": "Alarm",
@@ -353,6 +398,16 @@
     "source": "Incorrect current password!",
     "translation": "[Īƞƈǿǿřřḗḗƈŧ ƈŭŭřřḗḗƞŧ ƥȧȧşşẇǿǿřḓ!]",
     "description": "Error under the current password field when changing or removing the password"
+  },
+  "Tz1KEWXgJ3": {
+    "source": "Failed to set the sound volume!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ!]",
+    "description": "Error when the device could not apply the sound volume setting"
+  },
+  "UHAY858rQD": {
+    "source": "Failed to save the night mode LED notifications setting!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş şḗḗŧŧīƞɠ!]",
+    "description": "Error when the device could not store whether its LEDs show notifications during night mode"
   },
   "UkW/zUhInw": {
     "source": "SETUP",
@@ -399,6 +454,11 @@
     "translation": "[Řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī]",
     "description": "Settings tray, label under the Wi-Fi reconfigure button"
   },
+  "Xj08Iy+sHN": {
+    "source": "Failed to save the boot sound setting!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƀǿǿǿǿŧ şǿǿŭŭƞḓ şḗḗŧŧīƞɠ!]",
+    "description": "Error when the device could not store whether it plays a sound when it starts"
+  },
   "XoQtZlfRZz": {
     "source": "in {minutes, plural, one {{minutes} minute} other {{minutes} minutes}} {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",
     "translation": "[īƞ {minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}} {seconds, plural, one {{seconds} şḗḗƈǿǿƞḓ} other {{seconds} şḗḗƈǿǿƞḓş}}]",
@@ -424,6 +484,11 @@
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şƈȧȧƞ Ẇī-Ƒī ƞḗḗŧẇǿǿřķş!]",
     "description": "Error when the device could not list the Wi-Fi networks around it"
   },
+  "ZYsJqySQkU": {
+    "source": "Failed to save the unit system!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ŭŭƞīŧ şẏşŧḗḗḿ!]",
+    "description": "Error when the device could not store whether it uses metric or imperial units"
+  },
   "ZpT42pFYon": {
     "source": "Applying firmware",
     "translation": "[Ȧƥƥŀẏīƞɠ ƒīřḿẇȧȧřḗḗ]",
@@ -438,6 +503,11 @@
     "source": "Open the web browser at",
     "translation": "[Ǿƥḗḗƞ ŧħḗḗ ẇḗḗƀ ƀřǿǿẇşḗḗř ȧȧŧ]",
     "description": "Device-info wired setup, title above the setup wizard's address"
+  },
+  "aHGy/uJJGR": {
+    "source": "Failed to set the night mode time interval!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ ŧīḿḗḗ īƞŧḗḗřṽȧȧŀ!]",
+    "description": "Error when the device could not apply the hours night mode runs between"
   },
   "bFKhQ/MiVz": {
     "source": "Downloading packages",
@@ -564,6 +634,16 @@
     "translation": "[ĪƤ Ȧḓḓřḗḗşş]",
     "description": "Settings tray, label of the device's IP address"
   },
+  "i2ZVRjvv6L": {
+    "source": "Failed to show or hide the seconds in the status bar!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şħǿǿẇ ǿǿř ħīḓḗḗ ŧħḗḗ şḗḗƈǿǿƞḓş īƞ ŧħḗḗ şŧȧȧŧŭŭş ƀȧȧř!]",
+    "description": "Error when the device could not store whether its status bar clock shows seconds"
+  },
+  "jWfTPPZy4b": {
+    "source": "Failed to save the time format!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ŧīḿḗḗ ƒǿǿřḿȧȧŧ!]",
+    "description": "Error when the device could not store the 12 or 24 hour clock setting"
+  },
   "jYwhsipkfl": {
     "source": "The device is already connecting to a Wi-Fi network.",
     "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ īş ȧȧŀřḗḗȧȧḓẏ ƈǿǿƞƞḗḗƈŧīƞɠ ŧǿǿ ȧȧ Ẇī-Ƒī ƞḗḗŧẇǿǿřķ.]",
@@ -599,6 +679,11 @@
     "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ ƈǿǿŭŭŀḓ ƞǿǿŧ ƈħḗḗƈķ ŧħḗḗ ƥȧȧşşẇǿǿřḓ.]",
     "description": "Error on the login page when the check itself failed, so the password may well be right"
   },
+  "kaQBLjcQ8F": {
+    "source": "Failed to save the LED notifications setting!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş şḗḗŧŧīƞɠ!]",
+    "description": "Error when the device could not store whether its LEDs show notifications"
+  },
   "kjA+R4gGe6": {
     "source": "Failed to get Wi-Fi status!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ɠḗḗŧ Ẇī-Ƒī şŧȧȧŧŭŭş!]",
@@ -623,6 +708,16 @@
     "source": "Don't start or end the name with a dot, or put two dots together",
     "translation": "[Ḓǿǿƞ'ŧ şŧȧȧřŧ ǿǿř ḗḗƞḓ ŧħḗḗ ƞȧȧḿḗḗ ẇīŧħ ȧȧ ḓǿǿŧ, ǿǿř ƥŭŭŧ ŧẇǿǿ ḓǿǿŧş ŧǿǿɠḗḗŧħḗḗř]",
     "description": "Error under the device's hostname field when a dot leads, ends or doubles in the name"
+  },
+  "lpn97WlmC9": {
+    "source": "Failed to set the night mode brightness!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ ƀřīɠħŧƞḗḗşş!]",
+    "description": "Error when the device could not apply the screen brightness setting for night mode"
+  },
+  "mIVLfvxvbp": {
+    "source": "Failed to play the sound!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƥŀȧȧẏ ŧħḗḗ şǿǿŭŭƞḓ!]",
+    "description": "Error when the device could not play the sound chosen to preview"
   },
   "miWTwyBX3v": {
     "source": "Incorrect username or password!",
@@ -684,6 +779,16 @@
     "translation": "[Ƈǿǿŭŭŀḓƞ'ŧ şŧȧȧřŧ Ẇī-Ƒī şḗḗŧŭŭƥ]",
     "description": "Settings tray notice title when Wi-Fi setup did not start in time"
   },
+  "rHLTOTnSlM": {
+    "source": "Failed to save the first day of the week!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƒīřşŧ ḓȧȧẏ ǿǿƒ ŧħḗḗ ẇḗḗḗḗķ!]",
+    "description": "Error when the device could not store which day its weeks start on"
+  },
+  "rYySZOj2aj": {
+    "source": "Failed to switch night mode!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şẇīŧƈħ ƞīɠħŧ ḿǿǿḓḗḗ!]",
+    "description": "Error when the device could not apply the night mode switch"
+  },
   "sXHuW30/mg": {
     "source": "Failed to check whether a password is set!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħḗḗƈķ ẇħḗḗŧħḗḗř ȧȧ ƥȧȧşşẇǿǿřḓ īş şḗḗŧ!]",
@@ -713,6 +818,11 @@
     "source": "Stop Alarm",
     "translation": "[Şŧǿǿƥ Ȧŀȧȧřḿ]",
     "description": "Ringing alarm screen, button that dismisses the alarm"
+  },
+  "vRbCrkZYmj": {
+    "source": "Failed to set the night mode sound volume!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ şǿǿŭŭƞḓ ṽǿǿŀŭŭḿḗḗ!]",
+    "description": "Error when the device could not apply the sound volume setting for night mode"
   },
   "vZ+Z0Il3rV": {
     "source": "Applying",
