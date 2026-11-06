@@ -53,9 +53,9 @@ use super::alarm::{map_weekday_from_proto, map_weekday_to_proto};
 use super::initial_setup::{try_from_date_time, try_from_time_format};
 use super::intl::intl;
 use super::language::{listed_tag, save_language};
-use super::network::bad_request;
 use super::shared::{
-    invalid_field, naive_time_to_hhmm, parse_hhmm_to_naive_time, try_from_number_format,
+    bad_request, invalid_field, naive_time_to_hhmm, parse_hhmm_to_naive_time,
+    try_from_number_format,
 };
 use crate::sound::SoundController;
 
@@ -435,14 +435,20 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_first_day_of_week(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetFirstDayOfWeekRequest>,
     ) -> ServiceResult<Empty> {
         let weekday = request
             .first_day_of_week
             .as_known()
             .and_then(map_weekday_from_proto)
-            .ok_or_else(|| invalid_field("first_day_of_week", "value cannot be unspecified"))?;
+            .ok_or_else(|| {
+                invalid_field(
+                    &intl(&ctx),
+                    "first_day_of_week",
+                    "value cannot be unspecified",
+                )
+            })?;
 
         let mut config = self.config_handle.write().await;
         config.set_first_day_of_week(weekday);
@@ -457,14 +463,20 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_temperature_unit(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetTemperatureUnitRequest>,
     ) -> ServiceResult<Empty> {
         let temperature_unit = request
             .temperature_unit
             .as_known()
             .and_then(map_temperature_unit_from_proto)
-            .ok_or_else(|| invalid_field("temperature_unit", "value cannot be unspecified"))?;
+            .ok_or_else(|| {
+                invalid_field(
+                    &intl(&ctx),
+                    "temperature_unit",
+                    "value cannot be unspecified",
+                )
+            })?;
 
         let mut config = self.config_handle.write().await;
         config.set_temperature_unit(temperature_unit);
@@ -479,14 +491,16 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_unit_system(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetUnitSystemRequest>,
     ) -> ServiceResult<Empty> {
         let unit_system = request
             .unit_system
             .as_known()
             .and_then(map_unit_system_from_proto)
-            .ok_or_else(|| invalid_field("unit_system", "value cannot be unspecified"))?;
+            .ok_or_else(|| {
+                invalid_field(&intl(&ctx), "unit_system", "value cannot be unspecified")
+            })?;
 
         let mut config = self.config_handle.write().await;
         config.set_unit_system(unit_system);
@@ -501,10 +515,10 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_language(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetLanguageRequest>,
     ) -> ServiceResult<Empty> {
-        save_language(&self.config_handle, request.language).await?;
+        save_language(&intl(&ctx), &self.config_handle, request.language).await?;
         Response::ok(Empty::default())
     }
 

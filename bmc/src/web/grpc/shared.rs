@@ -28,7 +28,6 @@ use chrono::NaiveTime;
 use connectrpc::{ConnectError, ErrorDetail};
 use tracing::warn;
 
-use super::GrpcError;
 use crate::BmcManager;
 use crate::manager::BmcState;
 
@@ -91,12 +90,23 @@ pub(crate) fn with_violations(
     ))
 }
 
-/// The `InvalidArgument` of one wrong field, worded as the generic bad request.
-pub(crate) fn invalid_field(field: &str, description: impl Into<String>) -> ConnectError {
-    with_violations(
-        ConnectError::invalid_argument(GrpcError::BadRequest.to_string()),
-        vec![violation(field, description)],
-    )
+/// The `InvalidArgument` of a refused form, with the reason for each field.
+pub(crate) fn bad_request(intl: &Intl, field_violations: Vec<FieldViolation>) -> ConnectError {
+    let message = format_message!(
+        intl,
+        default_message: "Some of the fields are invalid.",
+        description: "Error above a form the device refused, with the reasons under its fields",
+    );
+    with_violations(ConnectError::invalid_argument(message), field_violations)
+}
+
+/// The `InvalidArgument` of one wrong field.
+pub(crate) fn invalid_field(
+    intl: &Intl,
+    field: &str,
+    description: impl Into<String>,
+) -> ConnectError {
+    bad_request(intl, vec![violation(field, description)])
 }
 
 #[derive(Debug)]

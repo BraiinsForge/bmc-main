@@ -25,10 +25,11 @@ use super::system::into_grpc_timezone;
 use crate::config::ConfigHandle;
 use crate::initial_setup::{DeviceSetupError, WifiSetupError};
 use crate::web::grpc::network::{
-    bad_request, into_network_config, parse_network_config, scan_wifi_response,
-    try_into_wifi_network_config,
+    into_network_config, parse_network_config, scan_wifi_response, try_into_wifi_network_config,
 };
-use crate::web::grpc::shared::{missing_value, require_state, try_from_number_format, violation};
+use crate::web::grpc::shared::{
+    bad_request, missing_value, require_state, try_from_number_format, violation,
+};
 use crate::{
     BmcManager,
     initial_setup::{DeviceSetupConfig, InitialSetup, MinerSetupParams, PoolEntry, SkipWifiError},
@@ -267,8 +268,9 @@ where
         ctx: RequestContext,
         request: ServiceRequest<'_, SetLanguageRequest>,
     ) -> ServiceResult<Empty> {
-        self.require_setup(&intl(&ctx)).await?;
-        save_language(&self.config_handle, request.language).await?;
+        let intl = intl(&ctx);
+        self.require_setup(&intl).await?;
+        save_language(&intl, &self.config_handle, request.language).await?;
         Response::ok(Empty::default())
     }
 }

@@ -38,7 +38,7 @@ use std::sync::Arc;
 use tracing::warn;
 
 use super::intl::intl;
-use super::shared::{missing_value, require_state, violation, with_violations};
+use super::shared::{bad_request, missing_value, require_state, violation};
 use crate::initial_setup::{WifiJoins, WifiSetupError};
 use crate::manager::{NetworkProtocolConfig, NetworkProtocolConfigStatic};
 use crate::{
@@ -267,16 +267,6 @@ pub(crate) fn try_from_network_config(
     config: &NetworkConfig,
 ) -> Result<NetworkProtocolConfig, ConnectError> {
     parse_network_config(intl, config, "protocol", "").map_err(|v| bad_request(intl, v))
-}
-
-/// One `InvalidArgument` carrying every field violation collected so far.
-pub(crate) fn bad_request(intl: &Intl, field_violations: Vec<FieldViolation>) -> ConnectError {
-    let message = format_message!(
-        intl,
-        default_message: "Some of the fields are invalid.",
-        description: "Error above a form the device refused, with the reasons under its fields",
-    );
-    with_violations(ConnectError::invalid_argument(message), field_violations)
 }
 
 /// Parses a network config, naming a missing protocol `protocol_field` and

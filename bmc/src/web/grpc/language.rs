@@ -23,12 +23,13 @@ use bmc_grpc::web::{
     self, GetWebCatalogRequest, GetWebCatalogResponse, Icon, LanguageInfo,
     LanguageService as GrpcLanguageService, ListLanguagesResponse,
 };
-use bmc_intl::{Language, TextDirection, Translations};
+use bmc_intl::{Intl, Language, TextDirection, Translations};
 use buffa_types::google::protobuf::Empty;
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use tokio::sync::RwLock;
 use tracing::{error, warn};
 
+use super::intl::intl;
 use super::shared::invalid_field;
 use crate::config::ConfigHandle;
 
@@ -45,18 +46,23 @@ impl GrpcLanguageService for LanguageService {
 
     async fn get_web_catalog(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, GetWebCatalogRequest>,
     ) -> ServiceResult<GetWebCatalogResponse> {
-        Response::ok(web_catalog(&Translations::shared(), request.language)?)
+        Response::ok(web_catalog(
+            &intl(&ctx),
+            &Translations::shared(),
+            request.language,
+        )?)
     }
 }
 
 fn web_catalog(
+    intl: &Intl,
     translations: &Translations,
     tag: &str,
 ) -> Result<GetWebCatalogResponse, ConnectError> {
-    let language = offered_language(translations, tag)?;
+    let language = offered_language(intl, translations, tag)?;
     Ok(GetWebCatalogResponse {
         messages: translations
             .web(language)
@@ -89,19 +95,21 @@ fn list(translations: &Translations) -> ListLanguagesResponse {
 
 /// [`crate::i18n::offered`], refused as the request's mistake.
 pub(crate) fn offered_language(
+    intl: &Intl,
     translations: &Translations,
     tag: &str,
 ) -> Result<Language, ConnectError> {
     crate::i18n::offered(translations, tag)
-        .ok_or_else(|| invalid_field("language", "not a language this device offers"))
+        .ok_or_else(|| invalid_field(intl, "language", "not a language this device offers"))
 }
 
 /// Save the device language `tag` names, as the device's own picker does.
 pub(crate) async fn save_language(
+    intl: &Intl,
     config_handle: &RwLock<ConfigHandle>,
     tag: &str,
 ) -> Result<(), ConnectError> {
-    let language = offered_language(&Translations::shared(), tag)?;
+    let language = offered_language(intl, &Translations::shared(), tag)?;
     config_handle
         .write()
         .await
@@ -139,10 +147,14 @@ mod tests {
 
     use base64::Engine as _;
     use bmc_grpc::web;
-    use bmc_intl::{Language, Translations};
+    use bmc_intl::{Intl, Language, Translations};
     use connectrpc::ErrorCode;
 
     use super::{list, listed_tag, offered_language, web_catalog};
+
+    fn english() -> std::sync::Arc<Intl> {
+        bmc_intl::shared_formatter(Language::EN)
+    }
 
     fn profile() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/intl/profile-languages")
@@ -205,12 +217,12 @@ mod tests {
     fn only_a_listed_tag_spelled_as_listed_sets_the_language() {
         let (translations, _) = Translations::load(&[profile()]);
         for tag in ["en-GB", "en-US", "zh"] {
-            let language = offered_language(&translations, tag)
+            let language = offered_language(&english(), &translations, tag)
                 .unwrap_or_else(|error| panic!("BUG: {tag} is listed: {error:?}"));
             assert_eq!(language.tag(), tag);
         }
         for tag in ["en", "en-gb", "zh-Hans", "de", "not a tag", ""] {
-            let error = offered_language(&translations, tag)
+            let error = offered_language(&english(), &translations, tag)
                 .expect_err("only a listed spelling of a listed language is taken");
             assert_eq!(error.code, ErrorCode::InvalidArgument, "{tag:?}");
         }
@@ -227,11 +239,12 @@ mod tests {
         let (translations, report) = Translations::load(&[root.path().to_owned()]);
         assert!(report.is_clean(), "{report}");
 
-        let zh = web_catalog(&translations, "zh").expect("BUG: zh is listed");
+        let intl = english();
+        let zh = web_catalog(&intl, &translations, "zh").expect("BUG: zh is listed");
         assert_eq!(zh.messages.get("save").map(String::as_str), Some("保存"));
-        let english = web_catalog(&translations, "en-GB").expect("BUG: en-GB is listed");
-        assert!(english.messages.is_empty());
-        let error = web_catalog(&translations, "de").expect_err("de is not listed");
+        let en_gb = web_catalog(&intl, &translations, "en-GB").expect("BUG: en-GB is listed");
+        assert!(en_gb.messages.is_empty());
+        let error = web_catalog(&intl, &translations, "de").expect_err("de is not listed");
         assert_eq!(error.code, ErrorCode::InvalidArgument);
     }
 

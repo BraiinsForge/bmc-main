@@ -33,8 +33,7 @@ use std::sync::Arc;
 use tracing::{error, warn};
 
 use super::intl::intl;
-use super::network::bad_request;
-use super::shared::{invalid_field, violation};
+use super::shared::{bad_request, invalid_field, violation};
 use crate::{BmcManager, session::Manager as SessionManager, web::session::extract_session};
 
 #[derive(Clone)]
@@ -205,11 +204,11 @@ where
 
     async fn set_timezone(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetTimezoneRequest>,
     ) -> ServiceResult<Empty> {
         let timezone = Timezone::from_str(request.id)
-            .map_err(|_| invalid_field("timezone", "invalid timezone variant"))?;
+            .map_err(|_| invalid_field(&intl(&ctx), "timezone", "invalid timezone variant"))?;
 
         self.manager.set_timezone(timezone).await.map_err(|e| {
             warn!("Failed to set timezone: {}", e);
