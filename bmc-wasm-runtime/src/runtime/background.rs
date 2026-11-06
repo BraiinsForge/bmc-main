@@ -24,6 +24,7 @@ mod discovery;
 mod fetch;
 mod http;
 mod socket;
+mod tls_roots;
 
 pub(super) use discovery::{mdns_browse_thread, ssdp_search_thread, udp_broadcast_thread};
 pub use fetch::FetchAgent;

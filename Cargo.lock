@@ -1752,6 +1752,7 @@ dependencies = [
  "wasmi",
  "wasmparser 0.228.0",
  "wat",
+ "webpki-root-certs",
  "webpki-roots",
  "winit",
 ]
@@ -10123,6 +10124,15 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "url",
  "web-sys",
+]
+
+[[package]]
+name = "webpki-root-certs"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e49d0e65abc00c142e8f9428da991da9f1a250c39be97459901eb12b9b49f62a"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
