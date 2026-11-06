@@ -60,7 +60,7 @@
     },
     "view": {
       "name": "View",
-      "description": "Chart style for the price series",
+      "description": "Chart style for the price series, or the price alone without a chart",
       "type": "string",
       "default_value": "sparkline",
       "enum_values": [
@@ -71,6 +71,10 @@
         {
           "value": "candlestick",
           "label": "Candlestick"
+        },
+        {
+          "value": "price",
+          "label": "Price only"
         }
       ],
       "enum_control": "radio"

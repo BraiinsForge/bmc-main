@@ -132,7 +132,7 @@ four rows in BMM101's own frame.
 
 ### [Single Ticker Widget](ticker-single.md)
 
-A widget that follows one financial instrument in depth, either as a sparkline behind a large price readout or as a
-candlestick chart with a price axis, a volume strip, and time labels. Reads price history from the Braiins Forge Nexus
-over a selectable time period, dims when the instrument's market is closed, and keeps the last known chart on screen
-when a refresh fails.
+A widget that follows one financial instrument in depth, as a sparkline behind a large price readout, as a candlestick
+chart with a price axis, a volume strip, and time labels, or as the large price readout alone. Reads price history from
+the Braiins Forge Nexus over a selectable time period, dims when the instrument's market is closed, and keeps the last
+known chart on screen when a refresh fails.

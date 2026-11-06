@@ -2,8 +2,9 @@
 
 The single ticker widget follows one financial instrument — a stock, an index, a currency pair, or a cryptocurrency
 pair. It shows a header with the instrument icon, its symbol, the selected time period, and a percentage change badge,
-and fills the rest of the tile with either a sparkline behind a large price readout or a full candlestick chart with a
-price axis, a volume strip, and time labels. Price history comes from the Braiins Forge Nexus.
+and fills the rest of the tile with a sparkline behind a large price readout, a full candlestick chart with a price
+axis, a volume strip, and time labels, or the large price readout alone. Price history comes from the Braiins Forge
+Nexus.
 
 ## User stories
 
@@ -42,12 +43,12 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 - Currency pairs made of two fiat currencies below a rate of 1000 use five decimals, or three when quoted in JPY.
 - Number grouping and the decimal separator follow the device localization setting.
 
-### Switch between a sparkline and a candlestick chart
+### Switch between a sparkline, a candlestick chart, and the price alone
 
-> As a user, I want to choose between a clean price trend and a detailed trading chart depending on what the widget is
-> for.
+> As a user, I want to choose between a clean price trend, a detailed trading chart, and no chart at all depending on
+> what the widget is for.
 
-- The *View* parameter is either *Sparkline* (the default) or *Candlestick*.
+- The *View* parameter is *Sparkline* (the default), *Candlestick*, or *Price only*.
 - The sparkline view draws a filled trend line across the lower part of the tile with the current price large and
   centred over it.
 - The candlestick view draws individual bars with wicks, a dashed price grid, a price axis with the current price
@@ -55,6 +56,8 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 - Each candle is green when it closed at or above its open and red when it closed below, independently of the overall
   period trend.
 - The volume strip only appears when the data carries volumes; without them the chart uses the full height.
+- The price-only view keeps the header and the large price exactly where the sparkline view puts them and draws no
+  chart, for a calmer tile when only the current price matters. The change badge still covers the selected period.
 
 ### Read the candlestick time axis
 
@@ -71,8 +74,8 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 
 > As a user, I want to be able to tell stale numbers from live ones so I do not act on an old price.
 
-- When the data reports that the instrument's market is closed, a pause marker covers its icon and its chart dims while
-  the text stays legible. Indices are never marked or dimmed this way.
+- When the data reports that the instrument's market is closed, a pause marker covers its icon and its chart, if any,
+  dims while the text stays legible. Indices are never marked or dimmed this way.
 - When a refresh has been failing for longer than 90 seconds, a *last refresh* pill appears in the corner while the last
   known chart stays on screen.
 - If the symbol is not recognized the widget shows `Symbol {symbol} not found` and keeps polling normally.
@@ -94,7 +97,7 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
   15 second per-request timeout, sized above the Nexus cold long-poll. A response that arrives but cannot be parsed is
   retried after 10 seconds; a 400, 404, or 503 uses the normal 60-second cadence.
 - Market state comes from `https://nexus.braiinsforge.com/api/v1/data/reference/` and refreshes every 30 minutes.
-- Both views use the period's supported resolution and merge adjacent bars when the plot is too narrow to draw them at
-  least four pixels apart. Roughly 45 bars fit at `small` and 286 at `full`.
+- The chart views use the period's supported resolution and merge adjacent bars when the plot is too narrow to draw them
+  at least four pixels apart. Roughly 45 bars fit at `small` and 286 at `full`.
 - Changing the symbol, period, or view clears the chart to `Loading…` and restarts the fetch.
 - The widget has a fixed dark palette and does not recolour for night mode.

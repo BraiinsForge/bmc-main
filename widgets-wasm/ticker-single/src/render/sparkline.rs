@@ -19,7 +19,8 @@
 // the grant above.
 
 //! The sparkline view: header row on top, a canvas below drawing the
-//! bottom-anchored sparkline with the tile-centered price over it.
+//! bottom-anchored sparkline with the tile-centered price over it. The
+//! price-only view is the same tile without the sparkline.
 
 use super::*;
 use prices::chart;
@@ -33,6 +34,17 @@ const CHART_HEIGHT_FRACTION: f32 = 0.6;
 /// The loaded view: header on top, sparkline + price on a canvas below.
 #[must_use]
 pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: WidgetSize) -> Node {
+    view(series, symbol, period_label, ws, true)
+}
+
+/// The loaded view without a chart: header on top, the price where the
+/// sparkline view puts it, so switching between the two keeps it in place.
+#[must_use]
+pub fn price_view(series: &Series, symbol: &str, period_label: &str, ws: WidgetSize) -> Node {
+    view(series, symbol, period_label, ws, false)
+}
+
+fn view(series: &Series, symbol: &str, period_label: &str, ws: WidgetSize, chart: bool) -> Node {
     let band = band_for(ws.variant).scaled(ws.fit());
     #[expect(
         clippy::cast_precision_loss,
@@ -54,7 +66,11 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
     // ── chart + price canvas ────────────────────────────────────────────
     let mut draws = Vec::new();
     let chart_height = (h * CHART_HEIGHT_FRACTION).min(canvas_h);
-    let raw_line = chart::series_points(&series.sparkline_series(), w, chart_height, CHART_INSET);
+    let raw_line = if chart {
+        chart::series_points(&series.sparkline_series(), w, chart_height, CHART_INSET)
+    } else {
+        Vec::new()
+    };
     if raw_line.len() >= 2 {
         let y0 = canvas_h - chart_height;
         let line: Vec<(f32, f32)> = raw_line.iter().map(|&(x, y)| (x, y + y0)).collect();
@@ -267,6 +283,54 @@ mod tests {
             header_text_colors(&closed_node),
             "closed-market alpha must not dim the header"
         );
+    }
+
+    fn autofit_origins(draws: &[Draw]) -> Vec<(f32, f32)> {
+        draws
+            .iter()
+            .filter_map(|draw| {
+                let Draw::AutofitText { x, y, .. } = draw else {
+                    return None;
+                };
+                Some((*x, *y))
+            })
+            .collect()
+    }
+
+    #[wasm_test]
+    fn the_price_only_view_draws_no_chart() {
+        let ws = WidgetSize::from_dimensions(1_280, 480);
+        let draws = canvas_draws(price_view(&series(), "BTC-USD", "1D", ws));
+        assert!(
+            !draws.iter().any(|draw| matches!(draw, Draw::Path { .. })),
+            "neither the trend line nor its fill may be drawn"
+        );
+        assert_eq!(autofit_origins(&draws).len(), 1, "the price still shows");
+    }
+
+    #[wasm_test]
+    fn the_price_only_view_keeps_the_header_and_the_price_in_place() {
+        for ws in [
+            WidgetSize::from_dimensions(1_280, 480),
+            WidgetSize::from_dimensions(317, 238),
+        ] {
+            let with_chart = series_view(&series(), "BTC-USD", "1D", ws);
+            let without = price_view(&series(), "BTC-USD", "1D", ws);
+            assert_eq!(
+                header_text_colors(&with_chart),
+                header_text_colors(&without)
+            );
+            let [(x0, y0)] = autofit_origins(&canvas_draws(with_chart))[..] else {
+                panic!("BUG: the sparkline must autofit exactly one price");
+            };
+            let [(x1, y1)] = autofit_origins(&canvas_draws(without))[..] else {
+                panic!("BUG: the price-only view must autofit exactly one price");
+            };
+            assert!(
+                (x0 - x1).abs() < f32::EPSILON && (y0 - y1).abs() < f32::EPSILON,
+                "the price stays where the sparkline view puts it"
+            );
+        }
     }
 
     #[wasm_test]
