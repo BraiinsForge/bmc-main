@@ -1,4 +1,9 @@
 {
+  "+3X2Fc3/3s": {
+    "source": "Failed to check current password!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħḗḗƈķ ƈŭŭřřḗḗƞŧ ƥȧȧşşẇǿǿřḓ!]",
+    "description": "Error when the device could not compare the current password while changing or removing it, so it may well be right"
+  },
   "+SR1j9Py5N": {
     "source": "Starting setup Wi-Fi...",
     "translation": "[Şŧȧȧřŧīƞɠ şḗḗŧŭŭƥ Ẇī-Ƒī...]",
@@ -54,6 +59,11 @@
     "translation": "[{label} {percent}%...]",
     "description": "Upgrade overlay title during a download; label is the phase title (e.g. Downloading firmware), percent a whole number"
   },
+  "2mO8NLt/kA": {
+    "source": "Failed to apply factory settings!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ȧȧƥƥŀẏ ƒȧȧƈŧǿǿřẏ şḗḗŧŧīƞɠş!]",
+    "description": "Error when the device could not carry out a factory reset"
+  },
   "2nTvm7AyE8": {
     "source": "Update Finished",
     "translation": "[Ŭƥḓȧȧŧḗḗ Ƒīƞīşħḗḗḓ]",
@@ -88,6 +98,16 @@
     "source": "Building packages",
     "translation": "[Ɓŭŭīŀḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
     "description": "Upgrade overlay title while the packages are built"
+  },
+  "5fIY5JPOR4": {
+    "source": "Invalid timezone!",
+    "translation": "[Īƞṽȧȧŀīḓ ŧīḿḗḗẑǿǿƞḗḗ!]",
+    "description": "Error under the timezone field when the device does not know the chosen timezone"
+  },
+  "5fmFBFxaKi": {
+    "source": "Failed to set timezone!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧīḿḗḗẑǿǿƞḗḗ!]",
+    "description": "Error when the device could not apply the chosen timezone"
   },
   "5kQYXsPgl4": {
     "source": "Waiting for Wi-Fi connection",
@@ -469,10 +489,20 @@
     "translation": "[Ƈǿǿƞƞḗḗƈŧīƞɠ ŧǿǿ ƞḗḗŧẇǿǿřķ...]",
     "description": "Device-info screen title while the device waits on its Ethernet cable, no Wi-Fi join under way"
   },
+  "hYOtrRdLud": {
+    "source": "Failed to reboot device!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ řḗḗƀǿǿǿǿŧ ḓḗḗṽīƈḗḗ!]",
+    "description": "Error when the device could not restart after the user asked it to"
+  },
   "hbnq1MI1KD": {
     "source": "IP Address",
     "translation": "[ĪƤ Ȧḓḓřḗḗşş]",
     "description": "Settings tray, label of the device's IP address"
+  },
+  "jlPEslLWc2": {
+    "source": "Failed to set password!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ƥȧȧşşẇǿǿřḓ!]",
+    "description": "Error when the device could not store a new password or remove the current one"
   },
   "jvAv2WBCt0": {
     "source": "{duration} ago",
@@ -574,6 +604,11 @@
     "translation": "[Ƈǿǿŭŭŀḓƞ'ŧ şŧȧȧřŧ Ẇī-Ƒī şḗḗŧŭŭƥ]",
     "description": "Settings tray notice title when Wi-Fi setup did not start in time"
   },
+  "sXHuW30/mg": {
+    "source": "Failed to check whether a password is set!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħḗḗƈķ ẇħḗḗŧħḗḗř ȧȧ ƥȧȧşşẇǿǿřḓ īş şḗḗŧ!]",
+    "description": "Error when the device could not tell whether a password is set"
+  },
   "scfJRAEtKn": {
     "source": "Waiting for IP address",
     "translation": "[Ẇȧȧīŧīƞɠ ƒǿǿř ĪƤ ȧȧḓḓřḗḗşş]",
@@ -633,5 +668,10 @@
     "source": "The restart command failed",
     "translation": "[Ŧħḗḗ řḗḗşŧȧȧřŧ ƈǿǿḿḿȧȧƞḓ ƒȧȧīŀḗḗḓ]",
     "description": "Settings tray notice, under its title when the restart is declined: the device's reboot call failed"
+  },
+  "zKG/OxShA+": {
+    "source": "This device already has a password. Change it instead of creating a new one.",
+    "translation": "[Ŧħīş ḓḗḗṽīƈḗḗ ȧȧŀřḗḗȧȧḓẏ ħȧȧş ȧȧ ƥȧȧşşẇǿǿřḓ. Ƈħȧȧƞɠḗḗ īŧ īƞşŧḗḗȧȧḓ ǿǿƒ ƈřḗḗȧȧŧīƞɠ ȧȧ ƞḗḗẇ ǿǿƞḗḗ.]",
+    "description": "Error when creating a password on a device that already has one"
   }
 }

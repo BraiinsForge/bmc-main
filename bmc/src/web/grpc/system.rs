@@ -68,6 +68,30 @@ fn wrong_current_password(intl: &Intl, field: &str) -> ConnectError {
     bad_request(intl, vec![violation(field, description)])
 }
 
+fn failed_password_presence(intl: &Intl) -> ConnectError {
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "Failed to check whether a password is set!",
+        description: "Error when the device could not tell whether a password is set",
+    ))
+}
+
+fn failed_password_check(intl: &Intl) -> ConnectError {
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "Failed to check current password!",
+        description: "Error when the device could not compare the current password while changing or removing it, so it may well be right",
+    ))
+}
+
+fn failed_password_set(intl: &Intl) -> ConnectError {
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "Failed to set password!",
+        description: "Error when the device could not store a new password or remove the current one",
+    ))
+}
+
 impl<T, S> GrpcSystemService for SystemService<T, S>
 where
     T: BmcManager,
@@ -75,12 +99,12 @@ where
 {
     async fn has_password(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<BoolValue> {
         let has_password = self.manager.has_password().await.map_err(|err| {
             error!(?err, "Failed to check password presence");
-            ConnectError::internal("Failed to check password presence")
+            failed_password_presence(&intl(&ctx))
         })?;
 
         Response::ok(BoolValue {
@@ -98,13 +122,15 @@ where
 
         let has_password = self.manager.has_password().await.map_err(|err| {
             error!(?err, "Failed to check password presence");
-            ConnectError::internal("Failed to check password presence")
+            failed_password_presence(&intl(&ctx))
         })?;
 
         if has_password {
-            return Err(ConnectError::failed_precondition(
-                "System already has password. You can change it using `change_password` call",
-            ));
+            return Err(ConnectError::failed_precondition(format_message!(
+                intl(&ctx),
+                default_message: "This device already has a password. Change it instead of creating a new one.",
+                description: "Error when creating a password on a device that already has one",
+            )));
         }
 
         self.manager
@@ -112,7 +138,7 @@ where
             .await
             .map_err(|err| {
                 error!(?err, "Failed to set password");
-                ConnectError::internal("Failed to set password")
+                failed_password_set(&intl(&ctx))
             })?;
 
         if let Err(err) = self.session_manager.logout_all_related(session).await {
@@ -135,7 +161,7 @@ where
             .await
             .map_err(|err| {
                 error!(?err, "Failed to check current password");
-                ConnectError::internal("Failed to check current password")
+                failed_password_check(&intl(&ctx))
             })?;
 
         if !is_current_password_correct {
@@ -147,7 +173,7 @@ where
             .await
             .map_err(|err| {
                 error!(?err, "Failed to set password");
-                ConnectError::internal("Failed to set password")
+                failed_password_set(&intl(&ctx))
             })?;
 
         if let Err(err) = self.session_manager.logout_all_related(session).await {
@@ -168,7 +194,7 @@ where
             .await
             .map_err(|err| {
                 error!(?err, "Failed to check current password");
-                ConnectError::internal("Failed to check current password")
+                failed_password_check(&intl(&ctx))
             })?;
 
         if !is_current_password_correct {
@@ -177,7 +203,7 @@ where
 
         self.manager.set_password(None).await.map_err(|err| {
             error!(?err, "Failed to set password");
-            ConnectError::internal("Failed to set password")
+            failed_password_set(&intl(&ctx))
         })?;
 
         Response::ok(Empty::default())
@@ -207,12 +233,23 @@ where
         ctx: RequestContext,
         request: ServiceRequest<'_, SetTimezoneRequest>,
     ) -> ServiceResult<Empty> {
-        let timezone = Timezone::from_str(request.id)
-            .map_err(|_| invalid_field(&intl(&ctx), "timezone", "invalid timezone variant"))?;
+        let intl = intl(&ctx);
+        let timezone = Timezone::from_str(request.id).map_err(|_| {
+            let description = format_message!(
+                intl,
+                default_message: "Invalid timezone!",
+                description: "Error under the timezone field when the device does not know the chosen timezone",
+            );
+            invalid_field(&intl, "timezone", description)
+        })?;
 
         self.manager.set_timezone(timezone).await.map_err(|e| {
             warn!("Failed to set timezone: {}", e);
-            ConnectError::internal("Unexpected error occured when settign timezone")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to set timezone!",
+                description: "Error when the device could not apply the chosen timezone",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -220,13 +257,17 @@ where
 
     async fn factory_reset(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<Empty> {
         // NOTE: this API for now supports only soft-reset
         self.manager.factory_reset(false).await.map_err(|err| {
             warn!(?err, "Failed to apply factory settings");
-            ConnectError::internal("Failed to apply factory settings")
+            ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to apply factory settings!",
+                description: "Error when the device could not carry out a factory reset",
+            ))
         })?;
 
         Response::ok(Empty::default())
@@ -234,12 +275,16 @@ where
 
     async fn reboot(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<Empty> {
         self.manager.reboot().await.map_err(|err| {
             warn!(?err, "Failed to reboot device");
-            ConnectError::internal("Failed to reboot device")
+            ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to reboot device!",
+                description: "Error when the device could not restart after the user asked it to",
+            ))
         })?;
 
         Response::ok(Empty::default())
