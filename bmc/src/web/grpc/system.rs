@@ -94,7 +94,7 @@ where
         ctx: RequestContext,
         request: ServiceRequest<'_, CreatePasswordRequest>,
     ) -> ServiceResult<Empty> {
-        let session = extract_session::<S>(ctx.extensions())?.clone();
+        let session = extract_session::<S>(ctx.headers(), ctx.extensions())?.clone();
 
         let has_password = self.manager.has_password().await.map_err(|err| {
             error!(?err, "Failed to check password presence");
@@ -127,7 +127,7 @@ where
         ctx: RequestContext,
         request: ServiceRequest<'_, ChangePasswordRequest>,
     ) -> ServiceResult<Empty> {
-        let session = extract_session::<S>(ctx.extensions())?.clone();
+        let session = extract_session::<S>(ctx.headers(), ctx.extensions())?.clone();
 
         let is_current_password_correct = self
             .manager

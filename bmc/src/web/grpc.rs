@@ -39,6 +39,7 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use bmc_grpc::web;
+use bmc_intl::format_message;
 use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::FirmwareIndex;
 use connectrpc::{ConnectError, ConnectRpcService, Router};
@@ -50,7 +51,7 @@ use tokio::sync::RwLock;
 mod account_management;
 pub mod authentication;
 mod credential_management;
-mod intl;
+pub(super) mod intl;
 mod language;
 pub(super) use language::listed_tag;
 mod logging;
@@ -67,8 +68,6 @@ mod shared;
 mod upgrade_service;
 
 use logging::{RpcLog, log_refusal};
-
-const BOSER_MANAGED_STATUS_MESSAGE: &str = "This operation is managed by Boser on this platform";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ManagedRpcOwner {
@@ -157,7 +156,12 @@ impl<S> Clone for AccessGate<S> {
 }
 
 impl<S: SessionManager> AccessGate<S> {
-    fn check(&self, path: &str, extensions: &http::Extensions) -> Result<(), ConnectError> {
+    fn check(
+        &self,
+        path: &str,
+        headers: &http::HeaderMap,
+        extensions: &http::Extensions,
+    ) -> Result<(), ConnectError> {
         // A procedure nobody serves is the dispatcher's to refuse as unimplemented.
         // That holds only while the gate and the dispatcher read the same path;
         // nothing may rewrite the URI between them.
@@ -173,12 +177,16 @@ impl<S: SessionManager> AccessGate<S> {
             )));
         }
         if !split_procedure(path).is_some_and(|(service, _)| is_public(service)) {
-            extract_session::<S>(extensions)?;
+            extract_session::<S>(headers, extensions)?;
         }
         if self.hardware_capabilities.boser_managed
             && managed_rpc_owner(path) == Some(ManagedRpcOwner::Boser)
         {
-            return Err(ConnectError::unimplemented(BOSER_MANAGED_STATUS_MESSAGE));
+            return Err(ConnectError::unimplemented(format_message!(
+                intl::intl_from_headers(headers),
+                default_message: "This operation is managed by Boser on this platform.",
+                description: "Error when the device refuses an operation because Boser owns it on this hardware; Boser is a product name",
+            )));
         }
         Ok(())
     }
@@ -190,7 +198,11 @@ pub(crate) async fn access_gate<S: SessionManager>(
     request: Request,
     next: Next,
 ) -> Response {
-    if let Err(refusal) = gate.check(request.uri().path(), request.extensions()) {
+    if let Err(refusal) = gate.check(
+        request.uri().path(),
+        request.headers(),
+        request.extensions(),
+    ) {
         log_refusal(request.extensions(), request.uri().path(), &refusal);
         return refusal.into_http_response(request.headers()).map(Body::new);
     }

@@ -745,7 +745,10 @@ async fn call_boser_owned_mutations(router: &axum::Router) -> Vec<Result<(), Con
 
 fn assert_boser_managed(error: &ConnectError) {
     assert_eq!(error.code, ErrorCode::Unimplemented);
-    assert_eq!(error.message.as_deref(), Some(BOSER_MANAGED_STATUS_MESSAGE));
+    assert_eq!(
+        error.message.as_deref(),
+        Some("This operation is managed by Boser on this platform.")
+    );
 }
 
 #[tokio::test]
@@ -1095,7 +1098,7 @@ fn the_gate_enforces_every_managed_rpc_owner() {
 
     for (service, method, expected_owner) in EXPECTED_MANAGED_RPC_OWNERS {
         let path = format!("/{service}/{method}");
-        let result = gate.check(&path, &session);
+        let result = gate.check(&path, &http::HeaderMap::new(), &session);
         match expected_owner {
             ManagedRpcOwner::Bmc => {
                 result.expect("BMC-owned operation must remain available");

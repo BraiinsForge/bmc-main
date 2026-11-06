@@ -119,7 +119,7 @@ where
                 Response::ok(outcome_to_response(outcome))
             }
             UpgradeRoute::Boser(boser) => {
-                let session_id = extract_session::<S>(ctx.extensions())?.id();
+                let session_id = extract_session::<S>(ctx.headers(), ctx.extensions())?.id();
                 let response = boser.check(&session_id, install).await?;
                 Response::ok(managed::check_response(response))
             }
@@ -139,7 +139,7 @@ where
                 .await
                 .map_err(Into::<ConnectError>::into)?,
             UpgradeRoute::Boser(boser) => {
-                let session_id = extract_session::<S>(ctx.extensions())?.id();
+                let session_id = extract_session::<S>(ctx.headers(), ctx.extensions())?.id();
                 installable_widgets::from_packages(boser.installable(&session_id).await?)
             }
             UpgradeRoute::BoserUnavailable => return Err(managed::boser_unavailable()),
@@ -164,7 +164,7 @@ where
                 run.map(run_state_to_progress).boxed()
             }
             UpgradeRoute::Boser(boser) => {
-                let session_id = extract_session::<S>(ctx.extensions())?.id();
+                let session_id = extract_session::<S>(ctx.headers(), ctx.extensions())?.id();
                 managed::start(boser, &session_id, &upgrade_id).await
             }
             UpgradeRoute::BoserUnavailable => managed::only(managed::boser_unavailable()),

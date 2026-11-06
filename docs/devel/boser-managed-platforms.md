@@ -24,7 +24,7 @@ automatic-upgrade pair; the BMC application observes Boser's upgrade state inste
 
 Every gRPC call passes one access gate (`AccessGate` in `bmc/src/web/grpc.rs`), which checks the session before the
 ownership policy. On a managed product, the gate rejects the following exact gRPC methods with `Unimplemented` and the
-message `This operation is managed by Boser on this platform`:
+message `This operation is managed by Boser on this platform.`:
 
 | Boser-owned method                | System effect                                      |
 | --------------------------------- | -------------------------------------------------- |

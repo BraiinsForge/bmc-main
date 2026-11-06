@@ -110,7 +110,7 @@ async fn registered_alarm_service_is_behind_authentication() {
         assert_eq!(error.code, ErrorCode::Unauthenticated, "{protocol}");
         assert_eq!(
             error.message.as_deref(),
-            Some("Missing or invalid session"),
+            Some("Missing or invalid session!"),
             "{protocol}"
         );
     }

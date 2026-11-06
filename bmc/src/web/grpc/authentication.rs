@@ -55,7 +55,7 @@ where
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<BoolValue> {
         Response::ok(BoolValue {
-            value: extract_session::<S>(ctx.extensions()).is_ok(),
+            value: extract_session::<S>(ctx.headers(), ctx.extensions()).is_ok(),
             ..Default::default()
         })
     }
@@ -89,7 +89,7 @@ where
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<Empty> {
         let cookies = extract_cookies(ctx.extensions());
-        let session = extract_session::<S>(ctx.extensions())?;
+        let session = extract_session::<S>(ctx.headers(), ctx.extensions())?;
 
         let cookie = self
             .session_manager

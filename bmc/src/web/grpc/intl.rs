@@ -22,15 +22,20 @@ use std::sync::Arc;
 
 use bmc_intl::{Intl, Language, Translations};
 use connectrpc::RequestContext;
-use http::HeaderValue;
 use http::header::ACCEPT_LANGUAGE;
+use http::{HeaderMap, HeaderValue};
 
 /// The formatter a handler words its errors with, for the language the request asks for.
 pub(crate) fn intl(ctx: &RequestContext) -> Arc<Intl> {
+    intl_from_headers(ctx.headers())
+}
+
+/// [`intl`], for an edge with no [`RequestContext`].
+pub(crate) fn intl_from_headers(headers: &HeaderMap) -> Arc<Intl> {
     let translations = Translations::shared();
     bmc_intl::shared_formatter(requested_language(
         &translations,
-        ctx.header(ACCEPT_LANGUAGE),
+        headers.get(ACCEPT_LANGUAGE),
     ))
 }
 

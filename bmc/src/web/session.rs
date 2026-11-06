@@ -19,6 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use super::grpc::intl::intl_from_headers;
 use crate::session::{self};
 
 use futures::Future;
@@ -144,10 +145,15 @@ pub(crate) fn extract_cookies(extensions: &http::Extensions) -> &tower_cookies::
 }
 
 /// Retrieves authentication session and fails if it is not present
-pub fn extract_session<S: session::Manager>(
-    extensions: &http::Extensions,
-) -> Result<&S::Session, connectrpc::ConnectError> {
-    extensions
-        .get::<S::Session>()
-        .ok_or_else(|| connectrpc::ConnectError::unauthenticated("Missing or invalid session"))
+pub fn extract_session<'a, S: session::Manager>(
+    headers: &http::HeaderMap,
+    extensions: &'a http::Extensions,
+) -> Result<&'a S::Session, connectrpc::ConnectError> {
+    extensions.get::<S::Session>().ok_or_else(|| {
+        connectrpc::ConnectError::unauthenticated(bmc_intl::format_message!(
+            intl_from_headers(headers),
+            default_message: "Missing or invalid session!",
+            description: "Error when a request needs signing in and the session is missing or has expired",
+        ))
+    })
 }

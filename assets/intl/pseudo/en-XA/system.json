@@ -59,6 +59,11 @@
     "translation": "[Řḗḗşŧȧȧřŧīƞɠ {device_name}...]",
     "description": "Device-info setup failure line while the BMC application restarts the device; device_name is the product name"
   },
+  "40UMft8l9G": {
+    "source": "Missing or invalid session!",
+    "translation": "[Ḿīşşīƞɠ ǿǿř īƞṽȧȧŀīḓ şḗḗşşīǿǿƞ!]",
+    "description": "Error when a request needs signing in and the session is missing or has expired"
+  },
   "5E2DQVd7xu": {
     "source": "This widget has been stopped",
     "translation": "[Ŧħīş ẇīḓɠḗḗŧ ħȧȧş ƀḗḗḗḗƞ şŧǿǿƥƥḗḗḓ]",
@@ -273,6 +278,11 @@
     "source": "Reconfigure Wi-Fi",
     "translation": "[Řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī]",
     "description": "Device-info eyebrow above the setup screens while a device redoes its Wi-Fi"
+  },
+  "VmKfjKuzX9": {
+    "source": "This operation is managed by Boser on this platform.",
+    "translation": "[Ŧħīş ǿǿƥḗḗřȧȧŧīǿǿƞ īş ḿȧȧƞȧȧɠḗḗḓ ƀẏ Ɓǿǿşḗḗř ǿǿƞ ŧħīş ƥŀȧȧŧƒǿǿřḿ.]",
+    "description": "Error when the device refuses an operation because Boser owns it on this hardware; Boser is a product name"
   },
   "VstI3V3Hsf": {
     "source": "Wi-Fi SSID",

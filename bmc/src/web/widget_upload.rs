@@ -161,7 +161,7 @@ async fn handle<S: SessionManager, I: WidgetPackageInstaller>(
     State(uploads): State<Arc<Uploads<I>>>,
     request: Request,
 ) -> Response {
-    if let Err(error) = extract_session::<S>(request.extensions()) {
+    if let Err(error) = extract_session::<S>(request.headers(), request.extensions()) {
         return failure(StatusCode::UNAUTHORIZED, error.message.unwrap_or_default());
     }
     if request
