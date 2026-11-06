@@ -24,6 +24,7 @@ use bmc::session::{self, Handle as _};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::process::{ExitStatus, Output};
 use tokio::process::Command;
 use tracing::{debug, warn};
 
@@ -68,14 +69,33 @@ pub enum Error {
     FromUtf8Error(#[from] std::string::FromUtf8Error),
     #[error("IO error: {0}")]
     SerdeJson(#[from] serde_json::Error),
-    #[error("Ubus error: {0}")]
-    UbusError(String),
+    #[error("Ubus session {call} failed ({status})")]
+    Ubus {
+        call: &'static str,
+        status: ExitStatus,
+    },
     #[error("Ubus error: permission denied")]
     UbusPermissionDenied,
     #[error("Session not found")]
     SessionNotFound,
     #[error("Session cookie not found")]
     SessionCookieNotFound,
+}
+
+/// The stdout of a finished `ubus session` call, or what it failed with.
+/// Its stderr is never kept: `ubus` repeats a failed call there,
+/// with a login's password or another call's session id.
+fn ubus_outcome(call: &'static str, output: Output) -> Result<Vec<u8>, Error> {
+    if output.status.code() == Some(OpenwrtSessionManager::UBUS_EXIT_PERMISSION_DENIED) {
+        return Err(Error::UbusPermissionDenied);
+    }
+    if !output.status.success() {
+        return Err(Error::Ubus {
+            call,
+            status: output.status,
+        });
+    }
+    Ok(output.stdout)
 }
 
 #[derive(Default, Debug, Clone)]
@@ -102,7 +122,10 @@ impl OpenwrtSessionManager {
     // `ubus` exits with its status negated: `UBUS_STATUS_PERMISSION_DENIED` is 6.
     const UBUS_EXIT_PERMISSION_DENIED: i32 = 250;
 
-    async fn call_ubus_session(command_name: &str, arg: Option<&str>) -> Result<String, Error> {
+    async fn call_ubus_session(
+        command_name: &'static str,
+        arg: Option<&str>,
+    ) -> Result<String, Error> {
         let mut cmd = Command::new(Self::UBUS_COMMAND);
         cmd.arg(Self::UBUS_COMMAND_ARG_CALL);
         cmd.arg(Self::UBUS_COMMAND_ARG_SESSION);
@@ -112,19 +135,12 @@ impl OpenwrtSessionManager {
             cmd.arg(arg);
         }
 
-        let output = cmd.output().await?;
-
-        if output.status.code() == Some(Self::UBUS_EXIT_PERMISSION_DENIED) {
-            return Err(Error::UbusPermissionDenied);
-        }
-        if !output.status.success() {
-            return Err(Error::UbusError(String::from_utf8(output.stderr)?));
-        }
-        Ok(String::from_utf8(output.stdout)?)
+        let stdout = ubus_outcome(command_name, cmd.output().await?)?;
+        Ok(String::from_utf8(stdout)?)
     }
 
     async fn call_ubus_session_deserialize(
-        command_name: &str,
+        command_name: &'static str,
         arg: Option<&str>,
     ) -> Result<UbusSession, Error> {
         Ok(serde_json::from_str(
@@ -133,7 +149,7 @@ impl OpenwrtSessionManager {
     }
 
     async fn call_ubus_sessions_deserialize(
-        command_name: &str,
+        command_name: &'static str,
         arg: Option<&str>,
     ) -> Result<Vec<UbusSession>, Error> {
         // We cannot directly deserialize output to Vec<UbusSession> because it is
@@ -171,7 +187,7 @@ impl OpenwrtSessionManager {
             failed @ (Error::Io(_)
             | Error::FromUtf8Error(_)
             | Error::SerdeJson(_)
-            | Error::UbusError(_)
+            | Error::Ubus { .. }
             | Error::SessionNotFound
             | Error::SessionCookieNotFound) => session::LoginError::Failed(failed),
         })
@@ -341,5 +357,52 @@ impl session::Manager for OpenwrtSessionManager {
                     Err(Error::SessionNotFound)
                 }
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    use super::*;
+
+    // A timed-out call as `ubus` reported it on Deck:
+    // exit 249 and the call repeated on stderr
+    fn failed(call: &str, args: &str) -> Output {
+        Output {
+            status: ExitStatus::from_raw(249 << 8),
+            stdout: Vec::new(),
+            stderr: format!("Command failed: ubus call session {call} {args} (Request timed out)")
+                .into_bytes(),
+        }
+    }
+
+    fn error_text(call: &'static str, output: Output) -> String {
+        let error = ubus_outcome(call, output).expect_err("BUG: the call failed");
+        format!("{error} {error:?}")
+    }
+
+    #[test]
+    fn a_failed_login_does_not_carry_the_password() {
+        let args = r#"{"username":"root","password":"LeakProbe7731","timeout":60}"#;
+
+        let text = error_text("login", failed("login", args));
+
+        assert!(
+            !text.contains("LeakProbe7731"),
+            "the password leaked: {text}"
+        );
+    }
+
+    #[test]
+    fn a_failed_destroy_does_not_carry_the_session_id() {
+        let args = r#"{"ubus_rpc_session":"1bcb57a7df0ecb2c5d56434a2ddff1a5"}"#;
+
+        let text = error_text("destroy", failed("destroy", args));
+
+        assert!(
+            !text.contains("1bcb57a7df0ecb2c5d56434a2ddff1a5"),
+            "the session id leaked: {text}"
+        );
     }
 }

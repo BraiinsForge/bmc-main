@@ -39,6 +39,11 @@
     "translation": "[Ŭƞŧīŀ {time}]",
     "description": "Settings tray, under the night mode button; time is when the current state ends, a time of day as the device formats it"
   },
+  "1KxN6IjflZ": {
+    "source": "This language is not available on this device.",
+    "translation": "[Ŧħīş ŀȧȧƞɠŭŭȧȧɠḗḗ īş ƞǿǿŧ ȧȧṽȧȧīŀȧȧƀŀḗḗ ǿǿƞ ŧħīş ḓḗḗṽīƈḗḗ.]",
+    "description": "Error under the language picker when the chosen language is not on the device"
+  },
   "2D5xRkSeHq": {
     "source": "Verifying firmware",
     "translation": "[Ṽḗḗřīƒẏīƞɠ ƒīřḿẇȧȧřḗḗ]",
@@ -129,6 +134,16 @@
     "translation": "[Ƥřǿǿƀŀḗḗḿ ẇīŧħ ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
     "description": "Device-info title when the boot connect got no address"
   },
+  "BsQpa08si4": {
+    "source": "Color is required for this effect type.",
+    "translation": "[Ƈǿǿŀǿǿř īş řḗḗɋŭŭīřḗḗḓ ƒǿǿř ŧħīş ḗḗƒƒḗḗƈŧ ŧẏƥḗḗ.]",
+    "description": "Error on the LED test page when the chosen light effect needs a color and none is given"
+  },
+  "DWHJR5qqsV": {
+    "source": "Effect type not specified!",
+    "translation": "[Ḗƒƒḗḗƈŧ ŧẏƥḗḗ ƞǿǿŧ şƥḗḗƈīƒīḗḗḓ!]",
+    "description": "Error on the LED test page when no light effect is chosen"
+  },
   "E/6Fq+RKSo": {
     "source": "Access the device at",
     "translation": "[Ȧƈƈḗḗşş ŧħḗḗ ḓḗḗṽīƈḗḗ ȧȧŧ]",
@@ -138,6 +153,11 @@
     "source": "Restarting the device…",
     "translation": "[Řḗḗşŧȧȧřŧīƞɠ ŧħḗḗ ḓḗḗṽīƈḗḗ…]",
     "description": "Settings tray notice title after the restart hold completed"
+  },
+  "EXlo7pbX6t": {
+    "source": "Failed to log out!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿɠ ǿǿŭŭŧ!]",
+    "description": "Error when the device could not end the session after the user chose to log out"
   },
   "Ep9jX08a/n": {
     "source": "{downloaded} MB of {total} MB",
@@ -199,6 +219,11 @@
     "translation": "[Ŭşḗḗ ǿǿƞŀẏ ŀḗḗŧŧḗḗřş, ḓīɠīŧş ȧȧƞḓ ħẏƥħḗḗƞş, şḗḗƥȧȧřȧȧŧḗḗḓ ƀẏ ḓǿǿŧş]",
     "description": "Error under the device's hostname field"
   },
+  "LDBHp/p81S": {
+    "source": "Invalid time format!",
+    "translation": "[Īƞṽȧȧŀīḓ ŧīḿḗḗ ƒǿǿřḿȧȧŧ!]",
+    "description": "Error when a time of day, such as when night mode starts, is not in hours and minutes"
+  },
   "LmOJe5rX2r": {
     "source": "Wi-Fi Connection",
     "translation": "[Ẇī-Ƒī Ƈǿǿƞƞḗḗƈŧīǿǿƞ]",
@@ -218,6 +243,11 @@
     "source": "This is only available while the device's Wi-Fi is being set up.",
     "translation": "[Ŧħīş īş ǿǿƞŀẏ ȧȧṽȧȧīŀȧȧƀŀḗḗ ẇħīŀḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ'ş Ẇī-Ƒī īş ƀḗḗīƞɠ şḗḗŧ ŭŭƥ.]",
     "description": "Error when the setup's Wi-Fi step is used while the device is not waiting for Wi-Fi settings"
+  },
+  "N3uTWaGA5X": {
+    "source": "Failed to save language!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŀȧȧƞɠŭŭȧȧɠḗḗ!]",
+    "description": "Error when the device could not store the language just chosen"
   },
   "OCm3mUiaLn": {
     "source": "Choose a temperature unit",
@@ -349,6 +379,11 @@
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
     "description": "Upgrade overlay title during the package download"
   },
+  "bVRP6dFSGd": {
+    "source": "Failed to detect current version!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḓḗḗŧḗḗƈŧ ƈŭŭřřḗḗƞŧ ṽḗḗřşīǿǿƞ!]",
+    "description": "Error when the device could not read its own firmware version"
+  },
   "bZW/Dljxnk": {
     "source": "This is only available once the device has finished its setup.",
     "translation": "[Ŧħīş īş ǿǿƞŀẏ ȧȧṽȧȧīŀȧȧƀŀḗḗ ǿǿƞƈḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ ħȧȧş ƒīƞīşħḗḗḓ īŧş şḗḗŧŭŭƥ.]",
@@ -458,6 +493,11 @@
     "source": "Choose a date format",
     "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ḓȧȧŧḗḗ ƒǿǿřḿȧȧŧ]",
     "description": "Error under the date format field when nothing is chosen"
+  },
+  "kNAx4hETiv": {
+    "source": "The device could not check the password.",
+    "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ ƈǿǿŭŭŀḓ ƞǿǿŧ ƈħḗḗƈķ ŧħḗḗ ƥȧȧşşẇǿǿřḓ.]",
+    "description": "Error on the login page when the check itself failed, so the password may well be right"
   },
   "kmFsbpoffG": {
     "source": "Downloading",

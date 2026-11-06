@@ -23,7 +23,7 @@ use bmc_grpc::web::{
     self, GetWebCatalogRequest, GetWebCatalogResponse, Icon, LanguageInfo,
     LanguageService as GrpcLanguageService, ListLanguagesResponse,
 };
-use bmc_intl::{Intl, Language, TextDirection, Translations};
+use bmc_intl::{Intl, Language, TextDirection, Translations, format_message};
 use buffa_types::google::protobuf::Empty;
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use tokio::sync::RwLock;
@@ -99,8 +99,14 @@ pub(crate) fn offered_language(
     translations: &Translations,
     tag: &str,
 ) -> Result<Language, ConnectError> {
-    crate::i18n::offered(translations, tag)
-        .ok_or_else(|| invalid_field(intl, "language", "not a language this device offers"))
+    crate::i18n::offered(translations, tag).ok_or_else(|| {
+        let description = format_message!(
+            intl,
+            default_message: "This language is not available on this device.",
+            description: "Error under the language picker when the chosen language is not on the device",
+        );
+        invalid_field(intl, "language", description)
+    })
 }
 
 /// Save the device language `tag` names, as the device's own picker does.
@@ -117,7 +123,11 @@ pub(crate) async fn save_language(
         .await
         .map_err(|e| {
             error!("Failed to save language, error {e}");
-            ConnectError::internal("Failed to save language")
+            ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save language!",
+                description: "Error when the device could not store the language just chosen",
+            ))
         })?;
     Ok(())
 }

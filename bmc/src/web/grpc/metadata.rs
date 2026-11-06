@@ -25,8 +25,10 @@ use bmc_grpc::web::{
     GetMetadataRequest, GetServerInstanceRequest, GetServerInstanceResponse, Metadata,
     MetadataService as GrpcMetadataService,
 };
+use bmc_intl::format_message;
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 
+use super::intl::intl;
 use crate::BmcManager;
 
 #[derive(Clone)]
@@ -58,14 +60,16 @@ where
 {
     async fn get_metadata(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: ServiceRequest<'_, GetMetadataRequest>,
     ) -> ServiceResult<Metadata> {
-        let version = self
-            .bmc_manager
-            .version()
-            .await
-            .ok_or_else(|| ConnectError::internal("Failed to detect current version"))?;
+        let version = self.bmc_manager.version().await.ok_or_else(|| {
+            ConnectError::internal(format_message!(
+                intl(&ctx),
+                default_message: "Failed to detect current version!",
+                description: "Error when the device could not read its own firmware version",
+            ))
+        })?;
         let packages_version = self.bmc_manager.packages_version().await;
 
         Response::ok(Metadata {

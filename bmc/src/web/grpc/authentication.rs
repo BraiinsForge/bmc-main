@@ -20,6 +20,7 @@
 // the grant above.
 
 use super::intl::intl;
+use super::shared::{StatusExt as _, ToStatus};
 use crate::session::{LoginError, Manager as SessionManager};
 use crate::web::session::{extract_cookies, extract_session};
 use bmc_grpc::web::{self, LoginRequest, LoginResponse};
@@ -28,6 +29,7 @@ use buffa_types::google::protobuf::{BoolValue, Empty};
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 use std::fmt::Display;
 use std::sync::Arc;
+use tracing::warn;
 
 pub struct AuthenticationService<S>
 where
@@ -70,7 +72,7 @@ where
             .session_manager
             .login(request.password)
             .await
-            .map_err(|error| login_error(&intl(&ctx), &error))?;
+            .or_status(&intl(&ctx))?;
 
         #[cfg(debug_assertions)]
         tracing::debug!("Session {} has been started", cookie.value());
@@ -95,7 +97,14 @@ where
             .session_manager
             .logout(session.clone())
             .await
-            .map_err(|e| ConnectError::internal(e.to_string()))?;
+            .map_err(|e| {
+                warn!("Failed to log out: {e}");
+                ConnectError::internal(format_message!(
+                    intl(&ctx),
+                    default_message: "Failed to log out!",
+                    description: "Error when the device could not end the session after the user chose to log out",
+                ))
+            })?;
 
         cookies.remove(cookie);
 
@@ -103,14 +112,23 @@ where
     }
 }
 
-fn login_error(intl: &Intl, error: &LoginError<impl Display>) -> ConnectError {
-    match error {
-        LoginError::BadCredentials => ConnectError::unauthenticated(format_message!(
-            intl,
-            default_message: "Incorrect username or password!",
-            description: "Error on the login page when the password is wrong",
-        )),
-        LoginError::Failed(error) => ConnectError::internal(error.to_string()),
+impl<E: Display> ToStatus for LoginError<E> {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        match self {
+            LoginError::BadCredentials => ConnectError::unauthenticated(format_message!(
+                intl,
+                default_message: "Incorrect username or password!",
+                description: "Error on the login page when the password is wrong",
+            )),
+            LoginError::Failed(error) => {
+                warn!("Failed to check the password: {error}");
+                ConnectError::internal(format_message!(
+                    intl,
+                    default_message: "The device could not check the password.",
+                    description: "Error on the login page when the check itself failed, so the password may well be right",
+                ))
+            }
+        }
     }
 }
 
@@ -123,7 +141,7 @@ mod tests {
     #[test]
     fn a_wrong_password_is_unauthenticated_and_worded() {
         let intl = bmc_intl::shared_formatter(Language::EN);
-        let error = login_error(&intl, &LoginError::<&str>::BadCredentials);
+        let error = LoginError::<&str>::BadCredentials.to_status(&intl);
         assert_eq!(error.code, ErrorCode::Unauthenticated);
         assert_eq!(
             error.message.as_deref(),
@@ -132,17 +150,20 @@ mod tests {
     }
 
     #[test]
-    fn a_device_that_failed_is_internal_and_keeps_its_own_text() {
+    fn a_device_that_failed_is_internal_and_worded_without_its_own_text() {
         let intl = bmc_intl::shared_formatter(Language::EN);
-        let error = login_error(&intl, &LoginError::Failed("no reply from ubus"));
+        let error = LoginError::Failed("no reply from ubus").to_status(&intl);
         assert_eq!(error.code, ErrorCode::Internal);
-        assert_eq!(error.message.as_deref(), Some("no reply from ubus"));
+        assert_eq!(
+            error.message.as_deref(),
+            Some("The device could not check the password.")
+        );
     }
 
     #[test]
     fn a_request_asking_for_chinese_is_refused_in_it() {
         let intl = crate::web::grpc::intl::asking_for("zh");
-        let error = login_error(&intl, &LoginError::<&str>::BadCredentials);
+        let error = LoginError::<&str>::BadCredentials.to_status(&intl);
         assert_eq!(error.code, ErrorCode::Unauthenticated);
         let message = error.message.expect("BUG: a refusal is always worded");
         assert_ne!(

@@ -33,6 +33,24 @@ use crate::manager::BmcState;
 
 pub type ParseOutput<T> = (Option<T>, FieldViolations);
 
+/// An error a call can be refused with in the caller's language.
+pub(crate) trait ToStatus {
+    /// Detail the status leaves out is the implementation's to log, unless its source already did.
+    fn to_status(&self, intl: &Intl) -> ConnectError;
+}
+
+/// `?` for a `ToStatus` error.
+/// A `From` impl cannot do it, as the status needs the request's `Intl`.
+pub(crate) trait StatusExt<T> {
+    fn or_status(self, intl: &Intl) -> Result<T, ConnectError>;
+}
+
+impl<T, E: ToStatus> StatusExt<T> for Result<T, E> {
+    fn or_status(self, intl: &Intl) -> Result<T, ConnectError> {
+        self.map_err(|error| error.to_status(intl))
+    }
+}
+
 /// The device's setup state, when `allows` lets the call run in it.
 /// Otherwise the call is refused with `refusal`, and the state it met is logged.
 pub(crate) async fn require_state(
@@ -140,10 +158,14 @@ pub fn naive_time_to_hhmm(time: NaiveTime) -> String {
     time.format("%H:%M").to_string()
 }
 
-pub fn parse_hhmm_to_naive_time(input: &str) -> Result<NaiveTime, ConnectError> {
+pub fn parse_hhmm_to_naive_time(intl: &Intl, input: &str) -> Result<NaiveTime, ConnectError> {
     NaiveTime::parse_from_str(input, "%H:%M").map_err(|e| {
         warn!("Failed to parse Time in format HH:MM, error: {}", e);
-        ConnectError::invalid_argument("Invalid time format")
+        ConnectError::invalid_argument(format_message!(
+            intl,
+            default_message: "Invalid time format!",
+            description: "Error when a time of day, such as when night mode starts, is not in hours and minutes",
+        ))
     })
 }
 

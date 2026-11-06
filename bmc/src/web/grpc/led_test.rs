@@ -18,9 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use super::intl::intl;
 use crate::BmcManager;
 use crate::led::LedController;
 use bmc_grpc::web;
+use bmc_intl::{Intl, format_message};
 use bmc_led::data::{LedCommand, LedEffect, LedScene, Rgb};
 use buffa::EnumValue;
 use buffa_types::google::protobuf::Empty;
@@ -40,11 +42,11 @@ impl<T: BmcManager> LedTestService<T> {
 impl<T: BmcManager> web::LedTestService for LedTestService<T> {
     async fn set_effect(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, web::SetLedEffectRequest>,
     ) -> ServiceResult<Empty> {
         let req = request.to_owned_message();
-        let effect = map_effect(req.effect, req.color.into_option())?;
+        let effect = map_effect(&intl(&ctx), req.effect, req.color.into_option())?;
         let period_ms: u64 = req.period_ms.into();
         let scene = LedScene {
             effect,
@@ -94,12 +96,17 @@ impl<T: BmcManager> web::LedTestService for LedTestService<T> {
 }
 
 fn map_effect(
+    intl: &Intl,
     effect_type: EnumValue<web::LedEffectType>,
     color: Option<web::RgbColor>,
 ) -> Result<LedEffect, ConnectError> {
     let effect_type = match effect_type {
         EnumValue::Known(web::LedEffectType::Unspecified) | EnumValue::Unknown(_) => {
-            return Err(ConnectError::invalid_argument("Effect type not specified"));
+            return Err(ConnectError::invalid_argument(format_message!(
+                intl,
+                default_message: "Effect type not specified!",
+                description: "Error on the LED test page when no light effect is chosen",
+            )));
         }
         EnumValue::Known(known) => known,
     };
@@ -107,8 +114,13 @@ fn map_effect(
         return Ok(LedEffect::None);
     }
 
-    let color = color
-        .ok_or_else(|| ConnectError::invalid_argument("Color is required for this effect type"))?;
+    let color = color.ok_or_else(|| {
+        ConnectError::invalid_argument(format_message!(
+            intl,
+            default_message: "Color is required for this effect type.",
+            description: "Error on the LED test page when the chosen light effect needs a color and none is given",
+        ))
+    })?;
     let rgb = Rgb::new(
         color.r.min(255) as u8,
         color.g.min(255) as u8,

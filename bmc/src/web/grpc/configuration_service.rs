@@ -187,11 +187,12 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
 
     async fn set_nightmode_interval(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, TimeInterval>,
     ) -> ServiceResult<Empty> {
-        let from = parse_hhmm_to_naive_time(request.from)?;
-        let to = parse_hhmm_to_naive_time(request.to)?;
+        let intl = intl(&ctx);
+        let from = parse_hhmm_to_naive_time(&intl, request.from)?;
+        let to = parse_hhmm_to_naive_time(&intl, request.to)?;
 
         self.system_manager
             .set_night_mode_interval(from, to)
