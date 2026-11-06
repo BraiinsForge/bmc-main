@@ -203,6 +203,7 @@ pub(super) fn view(
     states: &[RowState],
     names: &[Option<String>],
     stale: &[Option<SystemTime>],
+    decimals: &[Option<u32>],
     ws: WidgetSize,
 ) -> Node {
     #[expect(
@@ -232,7 +233,12 @@ pub(super) fn view(
             price_min_width: Some(PRICE_MIN_WIDTH),
         };
         let rows = (0..BMM101_ROWS)
-            .map(|index| row_cells(&row_style, slot(index, symbols, states, names, stale)))
+            .map(|index| {
+                row_cells(
+                    &row_style,
+                    slot(index, symbols, states, names, stale, decimals),
+                )
+            })
             .collect();
         list(rows, &grid)
     };
