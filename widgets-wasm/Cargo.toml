@@ -21,6 +21,7 @@ members = [
     "formula-1",
     "halving-countdown",
     "image",
+    "immich-photo",
     "iss-position",
     "lib/miner-info",
     "lib/mining",
