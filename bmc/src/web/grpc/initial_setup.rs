@@ -28,7 +28,8 @@ use crate::web::grpc::network::{
     into_network_config, parse_network_config, scan_wifi_response, try_into_wifi_network_config,
 };
 use crate::web::grpc::shared::{
-    bad_request, missing_value, require_state, try_from_number_format, violation,
+    StatusExt as _, ToStatus, bad_request, missing_value, require_state, try_from_number_format,
+    violation,
 };
 use crate::{
     BmcManager,
@@ -173,14 +174,10 @@ where
         let config = try_into_wifi_network_config(&intl, request.to_owned_message())?;
         let is_reconfig = state == BmcState::WifiReconfiguration;
 
-        match self.product_setup.connect_wifi(config, is_reconfig) {
-            Ok(()) => Response::ok(Empty::default()),
-            Err(e) => match e {
-                WifiSetupError::InProgress => Err(ConnectError::failed_precondition(
-                    "Wi-Fi setup is in progress",
-                )),
-            },
-        }
+        self.product_setup
+            .connect_wifi(config, is_reconfig)
+            .or_status(&intl)?;
+        Response::ok(Empty::default())
     }
 
     async fn skip_wifi(
@@ -188,8 +185,9 @@ where
         ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<Empty> {
-        self.require_wifi_setup(&intl(&ctx)).await?;
-        self.product_setup.skip_wifi().await?;
+        let intl = intl(&ctx);
+        self.require_wifi_setup(&intl).await?;
+        self.product_setup.skip_wifi(&intl).await?;
         Response::ok(Empty::default())
     }
 
@@ -198,9 +196,10 @@ where
         ctx: RequestContext,
         _request: ServiceRequest<'_, Empty>,
     ) -> ServiceResult<ScanWifiResponse> {
-        self.require_wifi_setup(&intl(&ctx)).await?;
+        let intl = intl(&ctx);
+        self.require_wifi_setup(&intl).await?;
 
-        Response::ok(scan_wifi_response(&intl(&ctx), self.manager.clone()).await?)
+        Response::ok(scan_wifi_response(&intl, self.manager.clone()).await?)
     }
 
     async fn get_settings_data(
@@ -284,7 +283,7 @@ pub(crate) trait ProductSetup: Send + Sync {
         config: WifiNetworkConfig,
         is_reconfig: bool,
     ) -> Result<(), WifiSetupError>;
-    async fn skip_wifi(&self) -> Result<(), ConnectError>;
+    async fn skip_wifi(&self, intl: &Intl) -> Result<(), ConnectError>;
     async fn setup_device(&self, intl: &Intl, request: SettingsRequest)
     -> Result<(), ConnectError>;
 }
@@ -310,10 +309,12 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for DisplaySetup<T, F> {
         self.inner.connect_to_wifi(config, is_reconfig)
     }
 
-    async fn skip_wifi(&self) -> Result<(), ConnectError> {
-        Err(ConnectError::failed_precondition(
-            "WiFi setup is required on this device",
-        ))
+    async fn skip_wifi(&self, intl: &Intl) -> Result<(), ConnectError> {
+        Err(ConnectError::failed_precondition(format_message!(
+            intl,
+            default_message: "Wi-Fi setup is required on this device.",
+            description: "Error when skipping the setup's Wi-Fi step on a device that cannot work without Wi-Fi",
+        )))
     }
 
     async fn setup_device(
@@ -322,11 +323,7 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for DisplaySetup<T, F> {
         request: SettingsRequest,
     ) -> Result<(), ConnectError> {
         let config = parse_device_setup(intl, request).map_err(|v| bad_request(intl, v))?;
-        self.inner
-            .setup_device(config)
-            .await
-            .inspect_err(|e| warn!("Error while setting device, {}", e))
-            .map_err(|e| map_device_setup_error(&e))
+        self.inner.setup_device(config).await.or_status(intl)
     }
 }
 
@@ -350,12 +347,8 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for MinerSetup<T, F> {
         self.inner.connect_to_wifi(config, is_reconfig)
     }
 
-    async fn skip_wifi(&self) -> Result<(), ConnectError> {
-        self.inner.skip_wifi().await.map_err(|e| match e {
-            SkipWifiError::NoEthernet | SkipWifiError::InProgress => {
-                ConnectError::failed_precondition(e.to_string())
-            }
-        })
+    async fn skip_wifi(&self, intl: &Intl) -> Result<(), ConnectError> {
+        self.inner.skip_wifi().await.or_status(intl)
     }
 
     async fn setup_device(
@@ -431,11 +424,7 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for MinerSetup<T, F> {
             },
         };
 
-        self.inner
-            .setup_miner(params)
-            .await
-            .inspect_err(|e| warn!("Error while setting up miner, {}", e))
-            .map_err(|e| map_device_setup_error(&e))
+        self.inner.setup_miner(params).await.or_status(intl)
     }
 }
 
@@ -473,17 +462,51 @@ fn hostname_refusal(intl: &Intl, error: &HostnameError) -> String {
     }
 }
 
-fn map_device_setup_error(e: &DeviceSetupError) -> ConnectError {
-    match e {
-        DeviceSetupError::SetTimezone(..)
-        | DeviceSetupError::SetPassword
-        | DeviceSetupError::SyncConfigData(..)
-        | DeviceSetupError::UpdateDeviceState(..)
-        | DeviceSetupError::EnableAutoUpgrade(..)
-        | DeviceSetupError::ApplyNetwork(..)
-        | DeviceSetupError::WritePoolConfig(..)
-        | DeviceSetupError::StartServices(..) => {
-            ConnectError::internal("Error while saving device settings")
+impl ToStatus for SkipWifiError {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        match self {
+            SkipWifiError::NoEthernet => ConnectError::failed_precondition(format_message!(
+                intl,
+                default_message: "Ethernet is not connected, so Wi-Fi setup is required.",
+                description: "Error when skipping the setup's Wi-Fi step while no Ethernet cable is plugged in",
+            )),
+            SkipWifiError::InProgress => ConnectError::failed_precondition(format_message!(
+                intl,
+                default_message: "Wi-Fi setup is in progress.",
+                description: "Error when a setup action is refused because the device is still connecting to Wi-Fi",
+            )),
+        }
+    }
+}
+
+impl ToStatus for DeviceSetupError {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        match self {
+            // Logged where it failed, before the device reboots.
+            DeviceSetupError::StartServices(_) => {}
+            DeviceSetupError::SetTimezone(cause)
+            | DeviceSetupError::SetPassword(cause)
+            | DeviceSetupError::SyncConfigData(cause)
+            | DeviceSetupError::UpdateDeviceState(cause)
+            | DeviceSetupError::EnableAutoUpgrade(cause)
+            | DeviceSetupError::ApplyNetwork(cause)
+            | DeviceSetupError::WritePoolConfig(cause) => {
+                warn!(error = %format_args!("{cause:#}"), "Initial setup failed: {self}");
+            }
+        }
+        match self {
+            DeviceSetupError::SetTimezone(..)
+            | DeviceSetupError::SetPassword(..)
+            | DeviceSetupError::SyncConfigData(..)
+            | DeviceSetupError::UpdateDeviceState(..)
+            | DeviceSetupError::EnableAutoUpgrade(..)
+            | DeviceSetupError::ApplyNetwork(..)
+            | DeviceSetupError::WritePoolConfig(..)
+            | DeviceSetupError::StartServices(..) => ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the device settings!",
+                description: "Error when the device could not apply the settings from the setup's final form",
+            )),
         }
     }
 }

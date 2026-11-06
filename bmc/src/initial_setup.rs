@@ -259,7 +259,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             self.manager
                 .set_password(config.system_password)
                 .await
-                .map_err(|_| DeviceSetupError::SetPassword)?;
+                .map_err(|error| DeviceSetupError::SetPassword(anyhow::Error::new(error)))?;
 
             info!("Device system password configured");
         }
@@ -524,8 +524,8 @@ pub(crate) enum SkipWifiError {
 pub(crate) enum DeviceSetupError {
     #[error("Failed to set timezone, error: {0}")]
     SetTimezone(#[source] anyhow::Error),
-    #[error("Failed to set password")]
-    SetPassword,
+    #[error("Failed to set password, error: {0}")]
+    SetPassword(#[source] anyhow::Error),
     #[error("Failed to save data to config, error: {0}")]
     SyncConfigData(#[source] anyhow::Error),
     #[error("Failed to update device state, error: {0}")]

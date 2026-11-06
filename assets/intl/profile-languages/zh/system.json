@@ -204,6 +204,11 @@
     "translation": "{hours, plural, other {{hours}小时}}{minutes, plural, other {{minutes}分钟}}后",
     "description": "Relative time label for a moment ahead, hours and minutes spelled out; both are whole numbers"
   },
+  "FXafNB0ZLr": {
+    "source": "Failed to save the device settings!",
+    "translation": "保存设备设置失败！",
+    "description": "Error when the device could not apply the settings from the setup's final form"
+  },
   "FcloNeoS34": {
     "source": "Verifying",
     "translation": "正在校验",
@@ -309,6 +314,11 @@
     "translation": "正在启用",
     "description": "Upgrade overlay, short title before a percentage on a small display: activating packages"
   },
+  "PwddTctIJq": {
+    "source": "Ethernet is not connected, so Wi-Fi setup is required.",
+    "translation": "未连接以太网，因此必须设置 Wi-Fi。",
+    "description": "Error when skipping the setup's Wi-Fi step while no Ethernet cable is plugged in"
+  },
   "RKPljShnpm": {
     "source": "Update Failed",
     "translation": "更新失败",
@@ -379,6 +389,11 @@
     "translation": "部分字段无效。",
     "description": "Error above a form the device refused, with the reasons under its fields"
   },
+  "X2GkeraLfg": {
+    "source": "Wi-Fi setup is required on this device.",
+    "translation": "此设备必须设置 Wi-Fi。",
+    "description": "Error when skipping the setup's Wi-Fi step on a device that cannot work without Wi-Fi"
+  },
   "XAK9Pep0j+": {
     "source": "Reconfigure Wi-Fi",
     "translation": "重新配置 Wi-Fi",
@@ -443,6 +458,11 @@
     "source": "Volume",
     "translation": "音量",
     "description": "Settings tray, label under the volume buttons"
+  },
+  "c/ZzTaPXFD": {
+    "source": "Wi-Fi setup is in progress.",
+    "translation": "正在进行 Wi-Fi 设置。",
+    "description": "Error when a setup action is refused because the device is still connecting to Wi-Fi"
   },
   "c4PCwy/FL7": {
     "source": "Keep holding, or release to cancel",
