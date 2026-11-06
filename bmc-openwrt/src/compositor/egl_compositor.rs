@@ -528,6 +528,7 @@ impl EglCompositor {
             scene_drag_active: false,
             edge_reveal_active: false,
             touch_frame_dirty: false,
+            widget_touch_position: None,
             logical_width,
             logical_height,
             touch_transform: display_profile.touch_transform,
@@ -1002,6 +1003,8 @@ struct AppState {
     /// the last `wl_touch.frame`. Ensures `wl_touch.frame` is sent exactly
     /// once per libinput `TouchFrame` that produced forwarding.
     touch_frame_dirty: bool,
+    /// Where the widget last saw the primary touch, while it still owns it.
+    widget_touch_position: Option<smithay::input::touch::MotionEvent>,
     /// Logical (landscape) width used as the libinput coordinate range; the
     /// GT911 reports its axes already in this orientation.
     logical_width: u32,
@@ -1581,7 +1584,7 @@ impl AppState {
         &mut self,
         event: &(impl AbsolutePositionEvent<B> + TouchEventTrait<B>),
     ) {
-        use smithay::input::touch::DownEvent;
+        use smithay::input::touch::{DownEvent, MotionEvent};
         use smithay::utils::SERIAL_COUNTER;
 
         // No-overlay fallback: while an alarm rings with no overlay to show its
@@ -1667,7 +1670,25 @@ impl AppState {
                 serial: SERIAL_COUNTER.next_serial(),
             },
         );
+        self.widget_touch_position = Some(MotionEvent {
+            slot,
+            time,
+            location,
+        });
         self.touch_frame_dirty = true;
+    }
+
+    /// Take the primary touch away from the widget that has it.
+    ///
+    /// smithay's `TouchInnerHandle::cancel` skips a touch point already framed (`current >= pending`),
+    /// and libinput frames every batch.
+    /// So the cancel follows a motion repeating where the widget last saw the touch.
+    fn cancel_widget_touch(&mut self) {
+        let touch_handle = self.compositor.touch_handle.clone();
+        if let Some(last_seen) = self.widget_touch_position.take() {
+            touch_handle.motion(&mut self.compositor, None, &last_seen);
+        }
+        touch_handle.cancel(&mut self.compositor);
     }
 
     fn on_touch_motion<B: InputBackend>(
@@ -1708,9 +1729,7 @@ impl AppState {
                 );
                 self.gesture.confirm_edge_reveal();
                 self.edge_reveal_active = true;
-                let touch_handle = self.compositor.touch_handle.clone();
-                touch_handle.cancel(&mut self.compositor);
-                self.touch_frame_dirty = true;
+                self.cancel_widget_touch();
                 return;
             }
             self.gesture.reject_edge_reveal();
@@ -1736,9 +1755,7 @@ impl AppState {
             // the layout has only one scene — there is nothing to swipe to,
             // so the widget keeps owning the touch sequence.
             self.scene_drag_active = true;
-            let touch_handle = self.compositor.touch_handle.clone();
-            touch_handle.cancel(&mut self.compositor);
-            self.touch_frame_dirty = true;
+            self.cancel_widget_touch();
             self.compositor.widgets.start_drag();
         }
 
@@ -1757,15 +1774,13 @@ impl AppState {
         } else {
             let touch_handle = self.compositor.touch_handle.clone();
             let focus = self.compositor.touch_focus_at(location.x, location.y);
-            touch_handle.motion(
-                &mut self.compositor,
-                focus,
-                &MotionEvent {
-                    slot,
-                    time,
-                    location,
-                },
-            );
+            let motion = MotionEvent {
+                slot,
+                time,
+                location,
+            };
+            touch_handle.motion(&mut self.compositor, focus, &motion);
+            self.widget_touch_position = Some(motion);
             self.touch_frame_dirty = true;
         }
     }
@@ -1790,6 +1805,7 @@ impl AppState {
         }
 
         self.gesture_slot = None;
+        self.widget_touch_position = None;
         if !touch_sequence_finished {
             // Legitimate for a multi-finger hold, but also the moment a
             // leaked slot (up/cancel never delivered) becomes observable.
@@ -1873,9 +1889,7 @@ impl AppState {
             self.reset_automatic_waiting(Instant::now());
             return;
         } else {
-            let touch_handle = self.compositor.touch_handle.clone();
-            touch_handle.cancel(&mut self.compositor);
-            self.touch_frame_dirty = true;
+            self.cancel_widget_touch();
         }
         self.reset_automatic_waiting(Instant::now());
     }
@@ -2995,7 +3009,8 @@ mod tests {
     };
     use smithay::backend::input::{
         AbsolutePositionEvent, Device, DeviceCapability, Event, InputBackend, InputEvent,
-        TouchCancelEvent, TouchDownEvent, TouchEvent, TouchMotionEvent, TouchUpEvent, UnusedEvent,
+        TouchCancelEvent, TouchDownEvent, TouchEvent, TouchFrameEvent, TouchMotionEvent,
+        TouchUpEvent, UnusedEvent,
     };
     use smithay::reexports::{
         calloop::EventLoop,
@@ -3133,6 +3148,7 @@ mod tests {
             scene_drag_active: false,
             edge_reveal_active: false,
             touch_frame_dirty: false,
+            widget_touch_position: None,
             logical_width: 480,
             logical_height: 1280,
             touch_transform: bmc_platform::TouchTransform::Deg0,
@@ -3456,6 +3472,14 @@ mod tests {
                 ..Self::new(slot, time_msec)
             }
         }
+
+        fn at(slot: u32, time_msec: u32, x: f64, y: f64) -> Self {
+            Self {
+                x,
+                y,
+                ..Self::new(slot, time_msec)
+            }
+        }
     }
 
     /// An input backend whose touch events are [`FakeTouchEvent`]s,
@@ -3481,7 +3505,7 @@ mod tests {
         type TouchUpEvent = FakeTouchEvent;
         type TouchMotionEvent = FakeTouchEvent;
         type TouchCancelEvent = FakeTouchEvent;
-        type TouchFrameEvent = UnusedEvent;
+        type TouchFrameEvent = FakeTouchEvent;
         type TabletToolAxisEvent = UnusedEvent;
         type TabletToolProximityEvent = UnusedEvent;
         type TabletToolTipEvent = UnusedEvent;
@@ -3535,6 +3559,7 @@ mod tests {
     impl TouchUpEvent<FakeBackend> for FakeTouchEvent {}
     impl TouchMotionEvent<FakeBackend> for FakeTouchEvent {}
     impl TouchCancelEvent<FakeBackend> for FakeTouchEvent {}
+    impl TouchFrameEvent<FakeBackend> for FakeTouchEvent {}
 
     impl AbsolutePositionEvent<FakeBackend> for FakeTouchEvent {
         fn x(&self) -> f64 {
@@ -3689,18 +3714,13 @@ mod tests {
     }
 
     #[test]
-    fn edge_reveal_touch_cancel_does_not_forward_duplicate_cancel() {
+    fn edge_reveal_touch_cancel_clears_the_touch_state() {
         let mut state = make_app_state();
         state.edge_reveal_active = true;
-        state.touch_frame_dirty = false;
         state.active_touch_slots.insert(TouchSlot::from(Some(1)));
 
         state.on_touch_cancel();
 
-        assert!(
-            !state.touch_frame_dirty,
-            "edge-owned cancel must not emit a second wl_touch.cancel"
-        );
         assert!(!state.edge_reveal_active);
         assert!(state.active_touch_slots.is_empty());
     }
@@ -5051,5 +5071,526 @@ mod tests {
             ),
             "resuming lifts only the suspend gate, never the user's disabled config"
         );
+    }
+
+    /// What a widget's `wl_touch` receives when libinput drives the compositor.
+    ///
+    /// smithay's delivery depends on where frames fall,
+    /// so these tests feed whole libinput batches and read the events off a real client.
+    mod touch_delivery {
+        use super::{
+            AppState, FakeBackend, FakeTouchEvent, FakeTouchscreen, make_cycling_app_state,
+        };
+        use crate::compositor::screen_edge::{EdgeFlags, ScreenEdgeSession, ScreenEdgeUserData};
+        use crate::compositor::state::{ClientState, CompositorState};
+        use deck_screen_edge_v1::server::{
+            deck_auto_hide_screen_edge_v1::DeckAutoHideScreenEdgeV1,
+            deck_screen_edge_manager_v1::Border,
+        };
+        use smithay::backend::input::InputEvent;
+        use smithay::reexports::wayland_server::{
+            Client, protocol::wl_surface::WlSurface as ServerSurface,
+        };
+        use std::os::unix::net::UnixStream;
+        use std::sync::Arc;
+        use wayland_client::protocol::{
+            wl_callback, wl_compositor, wl_registry, wl_seat, wl_surface, wl_touch,
+        };
+        use wayland_client::{Connection, Dispatch, EventQueue, Proxy as _, QueueHandle};
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum Received {
+            Down,
+            Motion,
+            Up,
+            Frame,
+            Cancel,
+        }
+
+        #[derive(Default)]
+        struct TouchClient {
+            compositor: Option<wl_compositor::WlCompositor>,
+            seat: Option<wl_seat::WlSeat>,
+            received: Vec<Received>,
+            synced: bool,
+        }
+
+        impl Dispatch<wl_registry::WlRegistry, ()> for TouchClient {
+            fn event(
+                state: &mut Self,
+                registry: &wl_registry::WlRegistry,
+                event: wl_registry::Event,
+                (): &(),
+                _: &Connection,
+                qh: &QueueHandle<Self>,
+            ) {
+                if let wl_registry::Event::Global {
+                    name,
+                    interface,
+                    version,
+                } = event
+                {
+                    match interface.as_str() {
+                        "wl_compositor" => {
+                            state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
+                        }
+                        "wl_seat" => {
+                            state.seat = Some(registry.bind(name, version.min(7), qh, ()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        impl Dispatch<wl_compositor::WlCompositor, ()> for TouchClient {
+            fn event(
+                _: &mut Self,
+                _: &wl_compositor::WlCompositor,
+                _: wl_compositor::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<wl_seat::WlSeat, ()> for TouchClient {
+            fn event(
+                _: &mut Self,
+                _: &wl_seat::WlSeat,
+                _: wl_seat::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<wl_surface::WlSurface, ()> for TouchClient {
+            fn event(
+                _: &mut Self,
+                _: &wl_surface::WlSurface,
+                _: wl_surface::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<wl_callback::WlCallback, ()> for TouchClient {
+            fn event(
+                state: &mut Self,
+                _: &wl_callback::WlCallback,
+                _: wl_callback::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+                state.synced = true;
+            }
+        }
+
+        impl Dispatch<wl_touch::WlTouch, ()> for TouchClient {
+            fn event(
+                state: &mut Self,
+                _: &wl_touch::WlTouch,
+                event: wl_touch::Event,
+                (): &(),
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+                #[expect(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "shape and orientation say nothing about the touch sequence's lifecycle"
+                )]
+                let received = match event {
+                    wl_touch::Event::Down { .. } => Received::Down,
+                    wl_touch::Event::Motion { .. } => Received::Motion,
+                    wl_touch::Event::Up { .. } => Received::Up,
+                    wl_touch::Event::Frame => Received::Frame,
+                    wl_touch::Event::Cancel => Received::Cancel,
+                    _ => return,
+                };
+                state.received.push(received);
+            }
+        }
+
+        struct Connected {
+            conn: Connection,
+            queue: EventQueue<TouchClient>,
+            client: TouchClient,
+            server_client: Client,
+            surface: ServerSurface,
+        }
+
+        impl Connected {
+            fn received(&mut self, state: &mut AppState) -> Vec<Received> {
+                sync(state, &self.conn, &mut self.queue, &mut self.client);
+                std::mem::take(&mut self.client.received)
+            }
+        }
+
+        /// Let the server handle the client's requests,
+        /// then read every event it sent before its `wl_display.sync` reply.
+        fn sync(
+            state: &mut AppState,
+            conn: &Connection,
+            queue: &mut EventQueue<TouchClient>,
+            client: &mut TouchClient,
+        ) {
+            client.synced = false;
+            conn.display().sync(&queue.handle(), ());
+            conn.flush()
+                .expect("BUG: test client flush should succeed on a live socket pair");
+            state
+                .display
+                .dispatch_clients(&mut state.compositor)
+                .expect("BUG: test server dispatch should succeed on a live socket pair");
+            state
+                .display
+                .flush_clients()
+                .expect("BUG: test server flush should succeed on a live socket pair");
+            while !client.synced {
+                queue
+                    .blocking_dispatch(client)
+                    .expect("BUG: the sync reply must reach the test client");
+            }
+        }
+
+        fn connect(state: &mut AppState) -> Connected {
+            let (server_stream, client_stream) =
+                UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
+            let server_client = state
+                .display
+                .handle()
+                .insert_client(server_stream, Arc::new(ClientState::default()))
+                .expect("BUG: test Wayland client should register");
+            let conn = Connection::from_socket(client_stream)
+                .expect("BUG: test client socket should form a Wayland connection");
+            let mut queue = conn.new_event_queue();
+            let mut client = TouchClient::default();
+            conn.display().get_registry(&queue.handle(), ());
+            sync(state, &conn, &mut queue, &mut client);
+
+            let qh = queue.handle();
+            let surface = client
+                .compositor
+                .as_ref()
+                .expect("BUG: the compositor must advertise wl_compositor")
+                .create_surface(&qh, ());
+            client
+                .seat
+                .as_ref()
+                .expect("BUG: the compositor must advertise wl_seat")
+                .get_touch(&qh, ());
+            sync(state, &conn, &mut queue, &mut client);
+
+            let surface = server_client
+                .object_from_protocol_id::<ServerSurface>(
+                    &state.display.handle(),
+                    surface.id().protocol_id(),
+                )
+                .expect("BUG: the server must hold the surface the client created");
+            Connected {
+                conn,
+                queue,
+                client,
+                server_client,
+                surface,
+            }
+        }
+
+        /// The widget filling the active scene of `make_cycling_app_state`.
+        fn connect_widget(state: &mut AppState) -> Connected {
+            let widget = connect(state);
+            let active = state.compositor.widgets.active_visible_widget_ids();
+            let [instance_id] = active.as_slice() else {
+                panic!("BUG: the cycling fixture shows one widget, got {active:?}");
+            };
+            state
+                .compositor
+                .render_surfaces
+                .insert(instance_id.clone(), widget.surface.clone());
+            widget
+        }
+
+        /// Arm a top-edge reveal owned by another client's surface.
+        ///
+        /// The owner's connection is returned only to keep its socket open.
+        /// It is never read, as it has no proxy for the edge object the server made.
+        fn arm_top_edge(state: &mut AppState) -> Connected {
+            let tray = connect(state);
+            let edge = tray
+                .server_client
+                .create_resource::<DeckAutoHideScreenEdgeV1, _, CompositorState>(
+                    &state.display.handle(),
+                    1,
+                    ScreenEdgeUserData {
+                        surface: tray.surface.clone(),
+                    },
+                )
+                .expect("BUG: test screen-edge resource must be created");
+            state
+                .compositor
+                .screen_edge_sessions
+                .push(ScreenEdgeSession {
+                    resource: edge,
+                    surface: tray.surface.clone(),
+                    flags: EdgeFlags {
+                        border: Border::Top,
+                        armed: true,
+                        revealed: false,
+                    },
+                });
+            tray
+        }
+
+        fn down(time_msec: u32, x: f64, y: f64) -> InputEvent<FakeBackend> {
+            InputEvent::TouchDown {
+                event: FakeTouchEvent::at(0, time_msec, x, y),
+            }
+        }
+
+        fn motion(time_msec: u32, x: f64, y: f64) -> InputEvent<FakeBackend> {
+            InputEvent::TouchMotion {
+                event: FakeTouchEvent::at(0, time_msec, x, y),
+            }
+        }
+
+        fn up(time_msec: u32) -> InputEvent<FakeBackend> {
+            InputEvent::TouchUp {
+                event: FakeTouchEvent::new(0, time_msec),
+            }
+        }
+
+        fn cancel(time_msec: u32) -> InputEvent<FakeBackend> {
+            InputEvent::TouchCancel {
+                event: FakeTouchEvent::new(0, time_msec),
+            }
+        }
+
+        /// Feed one libinput batch: `events`, then the `TouchFrame` closing it.
+        fn batch<const N: usize>(state: &mut AppState, events: [InputEvent<FakeBackend>; N]) {
+            for event in events {
+                state.handle_input_event(event);
+            }
+            state.handle_input_event(InputEvent::<FakeBackend>::TouchFrame {
+                event: FakeTouchEvent::new(0, 0),
+            });
+        }
+
+        #[test]
+        fn a_scene_swipe_cancels_the_widget_touch() {
+            let mut state = make_cycling_app_state();
+            let mut widget = connect_widget(&mut state);
+
+            batch(&mut state, [down(1, 400.0, 600.0)]);
+            batch(&mut state, [motion(10, 395.0, 600.0)]);
+            assert_eq!(
+                widget.received(&mut state),
+                [
+                    Received::Down,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Frame
+                ],
+                "a move inside the dead zone belongs to the widget"
+            );
+
+            batch(&mut state, [motion(20, 100.0, 600.0)]);
+            assert!(
+                state.scene_drag_active,
+                "a 300 px swipe must start a scene drag"
+            );
+            assert_eq!(
+                widget.received(&mut state),
+                [Received::Motion, Received::Cancel],
+                "the swipe must cancel the widget's touch in the batch that started it"
+            );
+
+            batch(&mut state, [motion(30, 80.0, 600.0)]);
+            batch(&mut state, [up(40)]);
+            assert_eq!(
+                widget.received(&mut state),
+                [],
+                "the swipe owns the rest of the sequence, the lift included"
+            );
+        }
+
+        #[test]
+        fn a_libinput_cancel_after_a_scene_swipe_does_not_cancel_the_widget_again() {
+            let mut state = make_cycling_app_state();
+            let mut widget = connect_widget(&mut state);
+
+            batch(&mut state, [down(1, 400.0, 600.0)]);
+            batch(&mut state, [motion(10, 100.0, 600.0)]);
+            assert!(
+                state.scene_drag_active,
+                "a 300 px swipe must start a scene drag"
+            );
+            assert_eq!(
+                widget.received(&mut state),
+                [
+                    Received::Down,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Cancel
+                ],
+                "the swipe must cancel the widget's touch once"
+            );
+
+            batch(&mut state, [cancel(20)]);
+            assert_eq!(
+                widget.received(&mut state),
+                [],
+                "a libinput cancel after the swipe must not cancel the widget again"
+            );
+        }
+
+        #[test]
+        fn a_top_edge_reveal_cancels_the_widget_touch() {
+            let mut state = make_cycling_app_state();
+            let mut widget = connect_widget(&mut state);
+            let _tray = arm_top_edge(&mut state);
+
+            batch(&mut state, [down(1, 240.0, 100.0)]);
+            batch(&mut state, [motion(10, 240.0, 110.0)]);
+            assert_eq!(
+                widget.received(&mut state),
+                [
+                    Received::Down,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Frame
+                ],
+                "a move short of the reveal threshold belongs to the widget"
+            );
+
+            batch(&mut state, [motion(20, 240.0, 200.0)]);
+            assert!(
+                state.edge_reveal_active,
+                "a 100 px pull from the top must reveal it"
+            );
+            assert_eq!(
+                widget.received(&mut state),
+                [Received::Motion, Received::Cancel],
+                "the reveal must cancel the widget's touch in the batch that started it"
+            );
+
+            batch(&mut state, [cancel(30)]);
+            assert_eq!(
+                widget.received(&mut state),
+                [],
+                "a libinput cancel after the reveal must not cancel the widget again"
+            );
+        }
+
+        #[test]
+        fn a_libinput_cancel_reaches_the_widget_once() {
+            let mut state = make_cycling_app_state();
+            let mut widget = connect_widget(&mut state);
+
+            batch(&mut state, [down(1, 400.0, 600.0)]);
+            batch(&mut state, [motion(10, 395.0, 600.0)]);
+            batch(&mut state, [cancel(20)]);
+
+            assert_eq!(
+                widget.received(&mut state),
+                [
+                    Received::Down,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Cancel
+                ],
+                "a libinput cancel must reach the widget behind a motion to where it last saw the touch"
+            );
+        }
+
+        #[test]
+        fn a_two_finger_libinput_cancel_reaches_the_widget_once() {
+            let mut state = make_cycling_app_state();
+            let mut widget = connect_widget(&mut state);
+            let second_finger = 1;
+
+            batch(&mut state, [down(1, 400.0, 600.0)]);
+            batch(
+                &mut state,
+                [InputEvent::TouchDown {
+                    event: FakeTouchEvent::at(second_finger, 5, 200.0, 600.0),
+                }],
+            );
+            batch(
+                &mut state,
+                [
+                    cancel(20),
+                    InputEvent::TouchCancel {
+                        event: FakeTouchEvent::new(second_finger, 20),
+                    },
+                ],
+            );
+
+            assert_eq!(
+                widget.received(&mut state),
+                [
+                    Received::Down,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Cancel
+                ],
+                "the widget had only the first finger, so cancelling both must reach it once"
+            );
+        }
+
+        #[test]
+        fn a_removed_touch_device_cancels_the_widget_touch() {
+            let mut state = make_cycling_app_state();
+            let mut widget = connect_widget(&mut state);
+
+            batch(&mut state, [down(1, 400.0, 600.0)]);
+            batch(&mut state, [motion(10, 395.0, 600.0)]);
+            state.handle_input_event(InputEvent::<FakeBackend>::DeviceRemoved {
+                device: FakeTouchscreen,
+            });
+
+            assert_eq!(
+                widget.received(&mut state),
+                [
+                    Received::Down,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Cancel
+                ],
+                "a touch device going away mid-touch must cancel the widget's touch with no frame to follow"
+            );
+        }
+
+        #[test]
+        fn a_lift_reaches_the_widget_once() {
+            let mut state = make_cycling_app_state();
+            let mut widget = connect_widget(&mut state);
+
+            batch(&mut state, [down(1, 400.0, 600.0)]);
+            batch(&mut state, [motion(10, 395.0, 600.0)]);
+            batch(&mut state, [up(20)]);
+
+            assert_eq!(
+                widget.received(&mut state),
+                [
+                    Received::Down,
+                    Received::Frame,
+                    Received::Motion,
+                    Received::Frame,
+                    Received::Up,
+                    Received::Frame
+                ],
+                "a lift must end the widget's touch with an up and its frame"
+            );
+        }
     }
 }
