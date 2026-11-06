@@ -26,7 +26,7 @@ use bmc_intl::{Intl, format_message};
 use buffa::{EnumValue, MessageName as _};
 use chrono::NaiveTime;
 use connectrpc::{ConnectError, ErrorDetail};
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::BmcManager;
 use crate::manager::BmcState;
@@ -72,6 +72,21 @@ pub(crate) async fn require_state(
 
 pub fn unchecked_field_violations_status() -> ConnectError {
     ConnectError::internal("Unchecked field violations")
+}
+
+/// A failure that should never happen: `cause` goes to the log and the user gets one sentence.
+pub(crate) fn internal_error(intl: &Intl, cause: &str) -> ConnectError {
+    error!("BUG: {cause}");
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "The device hit an internal error.",
+        description: "Error for a failure that should never happen; the details are in the device's log",
+    ))
+}
+
+/// A parsed value that is absent even though validation reported no violation for it.
+pub(crate) fn unchecked_field(intl: &Intl) -> ConnectError {
+    internal_error(intl, "a field passed validation without a value")
 }
 
 /// A violation of `field`, named by its wire name.

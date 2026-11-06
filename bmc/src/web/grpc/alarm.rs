@@ -28,6 +28,7 @@ use bmc_grpc::web::{
     Weekday,
     snooze_options_wrapper::{self, Kind as SnoozeKind},
 };
+use bmc_intl::{Intl, format_message};
 use bmc_shared_time::time::WeekDay;
 use buffa::EnumValue;
 use buffa_types::google::protobuf::{Empty, StringValue};
@@ -41,12 +42,14 @@ use crate::{
         AlarmController, AlarmData, AlarmError, AlarmId, SnoozeDuration, SnoozeLimit, SnoozeOptions,
     },
     sound::Sounds,
-    web::grpc::shared::unchecked_field_violations_status,
 };
 
 use super::{
-    GrpcError,
-    shared::{FieldViolations, ParseOutput, naive_time_to_hhmm, with_violations},
+    intl::intl,
+    shared::{
+        FieldViolations, ParseOutput, StatusExt as _, ToStatus, bad_request, missing_value,
+        naive_time_to_hhmm, unchecked_field,
+    },
 };
 
 pub(crate) struct AlarmService {
@@ -57,14 +60,6 @@ impl AlarmService {
     pub(crate) fn new(alarm_controller: AlarmController) -> Self {
         Self { alarm_controller }
     }
-}
-
-/// The `InvalidArgument` naming every violated field of an alarm request.
-fn bad_request(violations: FieldViolations) -> ConnectError {
-    with_violations(
-        ConnectError::invalid_argument(GrpcError::BadRequest.to_string()),
-        violations.into(),
-    )
 }
 
 impl GrpcAlarmService for AlarmService {
@@ -114,9 +109,10 @@ impl GrpcAlarmService for AlarmService {
 
     async fn add_alarm(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, AddAlarmRequest>,
     ) -> ServiceResult<Empty> {
+        let intl = intl(&ctx);
         let request = request.to_owned_message();
 
         let repeat = map_weekday_vec(request.repeat);
@@ -132,39 +128,40 @@ impl GrpcAlarmService for AlarmService {
 
         let mut all_field_violations = FieldViolations::new();
 
-        all_field_violations.extend(validate_alarm_name("name", &name));
+        all_field_violations.extend(validate_alarm_name(&intl, "name", &name));
 
-        let (time, violations) = parse_time("time", &time);
+        let (time, violations) = parse_time(&intl, "time", &time);
         all_field_violations.extend(violations);
 
-        let (sound, violations) = parse_sound("sound_id", sound_id);
+        let (sound, violations) = parse_sound(&intl, "sound_id", sound_id);
         all_field_violations.extend(violations);
 
         let (snooze_options, violations) =
-            parse_snooze_options_field("snooze_options", snooze_options.into_option());
+            parse_snooze_options_field(&intl, "snooze_options", snooze_options.into_option());
         all_field_violations.extend(violations);
 
         if !all_field_violations.is_empty() {
-            return Err(bad_request(all_field_violations));
+            return Err(bad_request(&intl, all_field_violations.into()));
         }
 
-        let time = time.ok_or_else(unchecked_field_violations_status)?;
+        let time = time.ok_or_else(|| unchecked_field(&intl))?;
 
         let alarm = AlarmData::new(enabled, name, time, repeat, sound, snooze_options);
 
         self.alarm_controller
             .add_alarm(alarm)
             .await
-            .map_err(Into::<ConnectError>::into)?;
+            .or_status(&intl)?;
 
         Response::ok(Empty::default())
     }
 
     async fn set_alarm(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetAlarmRequest>,
     ) -> ServiceResult<Empty> {
+        let intl = intl(&ctx);
         let request = request.to_owned_message();
 
         let repeat = map_weekday_vec(request.repeat);
@@ -181,76 +178,78 @@ impl GrpcAlarmService for AlarmService {
 
         let mut all_field_violations = FieldViolations::new();
 
-        all_field_violations.extend(validate_alarm_name("name", &name));
+        all_field_violations.extend(validate_alarm_name(&intl, "name", &name));
 
-        let (id, violations) = parse_alarm_id("id", &id);
+        let (id, violations) = parse_alarm_id(&intl, "id", &id);
         all_field_violations.extend(violations);
 
-        let (time, violations) = parse_time("time", &time);
+        let (time, violations) = parse_time(&intl, "time", &time);
         all_field_violations.extend(violations);
 
-        let (sound, violations) = parse_sound("sound_id", sound_id);
+        let (sound, violations) = parse_sound(&intl, "sound_id", sound_id);
         all_field_violations.extend(violations);
 
         let (snooze_options, violations) =
-            parse_snooze_options_field("snooze_options", snooze_options.into_option());
+            parse_snooze_options_field(&intl, "snooze_options", snooze_options.into_option());
         all_field_violations.extend(violations);
 
         if !all_field_violations.is_empty() {
-            return Err(bad_request(all_field_violations));
+            return Err(bad_request(&intl, all_field_violations.into()));
         }
 
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
-        let time = time.ok_or_else(unchecked_field_violations_status)?;
+        let id = id.ok_or_else(|| unchecked_field(&intl))?;
+        let time = time.ok_or_else(|| unchecked_field(&intl))?;
 
         let alarm = AlarmData::new_with_id(id, enabled, name, time, repeat, sound, snooze_options);
 
         self.alarm_controller
             .set_alarm(alarm)
             .await
-            .map_err(Into::<ConnectError>::into)?;
+            .or_status(&intl)?;
 
         Response::ok(Empty::default())
     }
 
     async fn delete_alarm(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, StringValue>,
     ) -> ServiceResult<Empty> {
-        let (id, violations) = parse_alarm_id("id", request.value);
+        let intl = intl(&ctx);
+        let (id, violations) = parse_alarm_id(&intl, "id", request.value);
 
         if !violations.is_empty() {
-            return Err(bad_request(violations));
+            return Err(bad_request(&intl, violations.into()));
         }
 
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
+        let id = id.ok_or_else(|| unchecked_field(&intl))?;
 
         self.alarm_controller
             .remove_alarm(id)
             .await
-            .map_err(Into::<ConnectError>::into)?;
+            .or_status(&intl)?;
 
         Response::ok(Empty::default())
     }
 
     async fn set_alarm_enabled(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: ServiceRequest<'_, SetAlarmEnabledRequest>,
     ) -> ServiceResult<Empty> {
-        let (id, violations) = parse_alarm_id("id", request.id);
+        let intl = intl(&ctx);
+        let (id, violations) = parse_alarm_id(&intl, "id", request.id);
 
         if !violations.is_empty() {
-            return Err(bad_request(violations));
+            return Err(bad_request(&intl, violations.into()));
         }
 
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
+        let id = id.ok_or_else(|| unchecked_field(&intl))?;
 
         self.alarm_controller
             .set_enabled(id, request.enabled)
             .await
-            .map_err(Into::<ConnectError>::into)?;
+            .or_status(&intl)?;
 
         Response::ok(Empty::default())
     }
@@ -282,22 +281,32 @@ impl From<AlarmData> for AlarmProto {
     }
 }
 
-fn parse_time(field: &str, value: &str) -> ParseOutput<NaiveTime> {
+fn parse_time(intl: &Intl, field: &str, value: &str) -> ParseOutput<NaiveTime> {
     let mut field_violations = FieldViolations::new();
 
     let maybe_time = NaiveTime::parse_from_str(value, "%H:%M").ok().tap_none(|| {
-        field_violations.push(field, "Invalid time!");
+        let description = format_message!(
+            intl,
+            default_message: "Invalid time!",
+            description: "Error under an alarm's time field when it is not a time of day",
+        );
+        field_violations.push(field, description);
     });
 
     (maybe_time, field_violations)
 }
 
-fn parse_sound(field: &str, value: Option<String>) -> ParseOutput<Sounds> {
+fn parse_sound(intl: &Intl, field: &str, value: Option<String>) -> ParseOutput<Sounds> {
     let mut field_violations = FieldViolations::new();
 
     let maybe_sound = value.and_then(|sound_id| {
         Sounds::from_str(&sound_id).ok().tap_none(|| {
-            field_violations.push(field, "Invalid sound!");
+            let description = format_message!(
+                intl,
+                default_message: "Invalid sound!",
+                description: "Error under an alarm's sound field when the device does not have the chosen sound",
+            );
+            field_violations.push(field, description);
         })
     });
 
@@ -305,32 +314,46 @@ fn parse_sound(field: &str, value: Option<String>) -> ParseOutput<Sounds> {
 }
 
 fn parse_snooze_options_field(
+    intl: &Intl,
     field: &str,
     input: Option<SnoozeOptionsWrapper>,
 ) -> ParseOutput<SnoozeOptions> {
     let mut field_violations = FieldViolations::new();
 
     let Some(kind) = input.and_then(|wrapper| wrapper.kind) else {
-        field_violations.push(field, "Missing value!");
+        field_violations.push(field, missing_value(intl));
         return (None, field_violations);
     };
 
-    let (snooze_options, violations) = parse_snooze_options(kind);
+    let (snooze_options, violations) = parse_snooze_options(intl, kind);
     field_violations.extend(violations);
     (snooze_options, field_violations)
 }
 
-fn parse_snooze_options(value: snooze_options_wrapper::Kind) -> ParseOutput<SnoozeOptions> {
+fn parse_snooze_options(
+    intl: &Intl,
+    value: snooze_options_wrapper::Kind,
+) -> ParseOutput<SnoozeOptions> {
     let mut field_violations = FieldViolations::new();
 
     let maybe_snooze_options = match value {
         SnoozeKind::Snooze(snooze_options) => {
             let limit = map_snooze_limit_proto(snooze_options.limit).tap_none(|| {
-                field_violations.push("limit", "Unspecified snooze limit!");
+                let description = format_message!(
+                    intl,
+                    default_message: "Choose a snooze limit",
+                    description: "Error under an alarm's snooze limit field when nothing is chosen",
+                );
+                field_violations.push("limit", description);
             });
 
             let duration = map_snooze_duration_proto(snooze_options.duration).tap_none(|| {
-                field_violations.push("duration", "Unspecifield snooze duration!");
+                let description = format_message!(
+                    intl,
+                    default_message: "Choose a snooze duration",
+                    description: "Error under an alarm's snooze duration field when nothing is chosen",
+                );
+                field_violations.push("duration", description);
             });
 
             if let (Some(limit), Some(duration)) = (limit, duration) {
@@ -345,11 +368,16 @@ fn parse_snooze_options(value: snooze_options_wrapper::Kind) -> ParseOutput<Snoo
     (maybe_snooze_options, field_violations)
 }
 
-fn parse_alarm_id(field: &str, input: &str) -> ParseOutput<AlarmId> {
+fn parse_alarm_id(intl: &Intl, field: &str, input: &str) -> ParseOutput<AlarmId> {
     let mut field_violations = FieldViolations::new();
 
     let maybe_id = AlarmId::from_str(input).ok().tap_none(|| {
-        field_violations.push(field, "Invalid alarm ID!");
+        let description = format_message!(
+            intl,
+            default_message: "Invalid alarm ID!",
+            description: "Error when a request names an alarm by an identifier that is malformed",
+        );
+        field_violations.push(field, description);
     });
 
     (maybe_id, field_violations)
@@ -367,17 +395,17 @@ fn parse_alarm_id(field: &str, input: &str) -> ParseOutput<AlarmId> {
 /// than silently truncating it downstream.
 const ALARM_NAME_MAX_BYTES: usize = 256;
 
-fn validate_alarm_name(field: &str, value: &str) -> FieldViolations {
+fn validate_alarm_name(intl: &Intl, field: &str, value: &str) -> FieldViolations {
     let mut field_violations = FieldViolations::new();
     if value.len() > ALARM_NAME_MAX_BYTES {
-        field_violations.push(
-            field,
-            format!(
-                "Alarm name must be at most {ALARM_NAME_MAX_BYTES} bytes \
-                 (got {} bytes)",
-                value.len()
-            ),
+        tracing::warn!("Alarm name of {} bytes is over the limit", value.len());
+        let description = format_message!(
+            intl,
+            default_message: "The alarm name must be at most {max} bytes long.",
+            description: "Error under an alarm's name field when it is too long; max is a whole number",
+            values: { max: ALARM_NAME_MAX_BYTES.to_string() },
         );
+        field_violations.push(field, description);
     }
     field_violations
 }
@@ -470,13 +498,29 @@ impl From<SnoozeLimit> for SnoozeLimitProto {
     }
 }
 
-impl From<AlarmError> for ConnectError {
-    fn from(value: AlarmError) -> Self {
-        match value {
-            AlarmError::SyncToStorage => ConnectError::internal("Failed to save configuration"),
-            AlarmError::NotFound => ConnectError::not_found(value.to_string()),
-            AlarmError::RemoveAlarm => ConnectError::internal("Failed to remove alarm"),
-            AlarmError::ScheduleAlarm => ConnectError::internal("Failed to schedule alarm"),
+impl ToStatus for AlarmError {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        match self {
+            AlarmError::SyncToStorage => ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to save the alarms!",
+                description: "Error when the device could not store a change to its alarms",
+            )),
+            AlarmError::NotFound => ConnectError::not_found(format_message!(
+                intl,
+                default_message: "Alarm not found!",
+                description: "Error when a request names an alarm the device does not have",
+            )),
+            AlarmError::RemoveAlarm => ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to remove the alarm!",
+                description: "Error when the device could not delete an alarm",
+            )),
+            AlarmError::ScheduleAlarm => ConnectError::internal(format_message!(
+                intl,
+                default_message: "Failed to schedule the alarm!",
+                description: "Error when the device could not set up an alarm to ring at its time",
+            )),
         }
     }
 }
@@ -489,10 +533,18 @@ mod tests {
         SnoozeOptionsWrapper, snooze_options_wrapper::Kind as SnoozeKind,
     };
 
-    use super::{SnoozeDuration, SnoozeLimit, parse_snooze_options_field};
+    use super::{ParseOutput, SnoozeDuration, SnoozeLimit, SnoozeOptions};
 
     fn violations_vec(violations: super::FieldViolations) -> Vec<FieldViolation> {
         violations.into()
+    }
+
+    fn parse_snooze_options_field(
+        field: &str,
+        input: Option<SnoozeOptionsWrapper>,
+    ) -> ParseOutput<SnoozeOptions> {
+        let intl = bmc_intl::shared_formatter(bmc_intl::Language::EN);
+        super::parse_snooze_options_field(&intl, field, input)
     }
 
     #[test]

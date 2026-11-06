@@ -79,6 +79,11 @@
     "translation": "应用网络设置失败！",
     "description": "Error when the device could not apply the network settings just saved"
   },
+  "23LBHg/Pgh": {
+    "source": "The device hit an internal error.",
+    "translation": "设备发生内部错误。",
+    "description": "Error for a failure that should never happen; the details are in the device's log"
+  },
   "2D5xRkSeHq": {
     "source": "Verifying firmware",
     "translation": "正在校验固件",
@@ -279,6 +284,11 @@
     "translation": "连接 Wi-Fi 网络失败！",
     "description": "Error when connecting to a Wi-Fi network failed and the cause is neither a wrong password nor a missing network"
   },
+  "IguTkPDg/H": {
+    "source": "Choose a snooze duration",
+    "translation": "请选择贪睡时长",
+    "description": "Error under an alarm's snooze duration field when nothing is chosen"
+  },
   "JdGGKBEmmO": {
     "source": "Complete the setup{br}by accessing",
     "translation": "访问以下地址{br}以完成设置",
@@ -349,6 +359,11 @@
     "translation": "正在启用",
     "description": "Upgrade overlay, short title before a percentage on a small display: activating packages"
   },
+  "PbuJa42pVy": {
+    "source": "Failed to schedule the alarm!",
+    "translation": "设置闹钟时间失败！",
+    "description": "Error when the device could not set up an alarm to ring at its time"
+  },
   "PwddTctIJq": {
     "source": "Ethernet is not connected, so Wi-Fi setup is required.",
     "translation": "未连接以太网，因此必须设置 Wi-Fi。",
@@ -358,6 +373,11 @@
     "source": "Failed to save the data collection setting!",
     "translation": "保存数据收集设置失败！",
     "description": "Error when the device could not store whether it may collect usage data"
+  },
+  "QOg9GHpuiu": {
+    "source": "Invalid time!",
+    "translation": "时间无效！",
+    "description": "Error under an alarm's time field when it is not a time of day"
   },
   "RKPljShnpm": {
     "source": "Update Failed",
@@ -399,6 +419,11 @@
     "translation": "当前密码不正确！",
     "description": "Error under the current password field when changing or removing the password"
   },
+  "TY9EsA30Fh": {
+    "source": "Failed to save the alarms!",
+    "translation": "保存闹钟失败！",
+    "description": "Error when the device could not store a change to its alarms"
+  },
   "Tz1KEWXgJ3": {
     "source": "Failed to set the sound volume!",
     "translation": "设置音量失败！",
@@ -438,6 +463,11 @@
     "source": "Downloading firmware",
     "translation": "正在下载固件",
     "description": "Upgrade overlay title during the firmware download"
+  },
+  "WPebreZslW": {
+    "source": "Invalid alarm ID!",
+    "translation": "闹钟 ID 无效！",
+    "description": "Error when a request names an alarm by an identifier that is malformed"
   },
   "WjT+LdMYru": {
     "source": "Some of the fields are invalid.",
@@ -494,6 +524,11 @@
     "translation": "正在写入固件",
     "description": "Upgrade overlay title while the firmware is written"
   },
+  "Zufrn9swhC": {
+    "source": "Choose a snooze limit",
+    "translation": "请选择贪睡次数上限",
+    "description": "Error under an alarm's snooze limit field when nothing is chosen"
+  },
   "ZytF+u89Vc": {
     "source": "Keep the device plugged in and online during the update",
     "translation": "更新期间请保持设备接通电源并联网",
@@ -508,6 +543,11 @@
     "source": "Failed to set the night mode time interval!",
     "translation": "设置夜间模式时间段失败！",
     "description": "Error when the device could not apply the hours night mode runs between"
+  },
+  "aPSzirCPP0": {
+    "source": "Invalid sound!",
+    "translation": "铃声无效！",
+    "description": "Error under an alarm's sound field when the device does not have the chosen sound"
   },
   "bFKhQ/MiVz": {
     "source": "Downloading packages",
@@ -744,6 +784,11 @@
     "translation": "正在进行更新",
     "description": "Settings tray notice, under its title when the restart is declined: an upgrade is running"
   },
+  "p0jlb76HNw": {
+    "source": "Alarm not found!",
+    "translation": "未找到闹钟！",
+    "description": "Error when a request names an alarm the device does not have"
+  },
   "p1zd18L0pf": {
     "source": "Not configured",
     "translation": "未配置",
@@ -759,6 +804,11 @@
     "translation": "正在校验软件包",
     "description": "Upgrade overlay title while the downloaded packages are checked"
   },
+  "pQLGOoIQLO": {
+    "source": "The alarm name must be at most {max} bytes long.",
+    "translation": "闹钟名称不能超过 {max} 字节。",
+    "description": "Error under an alarm's name field when it is too long; max is a whole number"
+  },
   "pTWfbjgRRY": {
     "source": "{max, plural, one {Use at most {max} character} other {Use at most {max} characters}}",
     "translation": "{max, plural, other {最多使用 {max} 个字符}}",
@@ -768,6 +818,11 @@
     "source": "Night Mode: Off",
     "translation": "夜间模式：关",
     "description": "Settings tray, label under the night mode button while inactive"
+  },
+  "q3XYt4GmCB": {
+    "source": "Failed to remove the alarm!",
+    "translation": "删除闹钟失败！",
+    "description": "Error when the device could not delete an alarm"
   },
   "qBRFBymcul": {
     "source": "Ethernet",
