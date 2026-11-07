@@ -94,6 +94,11 @@
     "translation": "[Ŧħīş ŀȧȧƞɠŭŭȧȧɠḗḗ īş ƞǿǿŧ ȧȧṽȧȧīŀȧȧƀŀḗḗ ǿǿƞ ŧħīş ḓḗḗṽīƈḗḗ.]",
     "description": "Error under the language picker when the chosen language is not on the device"
   },
+  "1TqChrpE9v": {
+    "source": "Cannot check for upgrade: package index fetch failed.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ īƞḓḗḗẋ ƒḗḗŧƈħ ƒȧȧīŀḗḗḓ.]",
+    "description": "Error when checking for an upgrade and the list of available packages cannot be downloaded"
+  },
   "1aAnak/CwP": {
     "source": "{count, plural, one {Must be at most {count} character} other {Must be at most {count} characters}}",
     "translation": "[{count, plural, one {Ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {count} ƈħȧȧřȧȧƈŧḗḗř} other {Ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {count} ƈħȧȧřȧȧƈŧḗḗřş}}]",
@@ -123,6 +128,11 @@
     "source": "{label} {percent}%...",
     "translation": "[{label} {percent}%...]",
     "description": "Upgrade overlay title during a download; label is the phase title (e.g. Downloading firmware), percent a whole number"
+  },
+  "2i5/kMtWOy": {
+    "source": "Cannot check for upgrade: package upgrade plan failed.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ ŭŭƥɠřȧȧḓḗḗ ƥŀȧȧƞ ƒȧȧīŀḗḗḓ.]",
+    "description": "Error when checking for an upgrade and the device cannot work out which packages to change"
   },
   "2mO8NLt/kA": {
     "source": "Failed to apply factory settings!",
@@ -169,6 +179,11 @@
     "translation": "[Ƈǿǿƞƞḗḗƈŧ ŧǿǿ {device_name} Ẇī-Ƒī]",
     "description": "Device-info setup title asking to join the device's own network; device_name is the product name"
   },
+  "5RW3NcOhU6": {
+    "source": "Not enough space on disk to perform upgrade!",
+    "translation": "[Ƞǿǿŧ ḗḗƞǿǿŭŭɠħ şƥȧȧƈḗḗ ǿǿƞ ḓīşķ ŧǿǿ ƥḗḗřƒǿǿřḿ ŭŭƥɠřȧȧḓḗḗ!]",
+    "description": "Error when the device has too little free storage for an upgrade"
+  },
   "5cpSLnDaAQ": {
     "source": "Building packages",
     "translation": "[Ɓŭŭīŀḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
@@ -203,6 +218,11 @@
     "source": "{primary} {secondary}",
     "translation": "[{primary} {secondary}]",
     "description": "Relative time, the two segments side by side: 7m 30s"
+  },
+  "6g85nAn7eL": {
+    "source": "Package upgrade failed!",
+    "translation": "[Ƥȧȧƈķȧȧɠḗḗ ŭŭƥɠřȧȧḓḗḗ ƒȧȧīŀḗḗḓ!]",
+    "description": "Error when an upgrade of the device's software packages did not finish"
   },
   "7UrNWaPTul": {
     "source": "Same as item {position}!",
@@ -309,6 +329,11 @@
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿɠ ǿǿŭŭŧ!]",
     "description": "Error when the device could not end the session after the user chose to log out"
   },
+  "EgohaeVxCG": {
+    "source": "Failed to change automatic updates!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħȧȧƞɠḗḗ ȧȧŭŭŧǿǿḿȧȧŧīƈ ŭŭƥḓȧȧŧḗḗş!]",
+    "description": "Error when turning automatic updates on or off fails"
+  },
   "Ep9jX08a/n": {
     "source": "{downloaded} MB of {total} MB",
     "translation": "[{downloaded} ḾƁ ǿǿƒ {total} ḾƁ]",
@@ -388,6 +413,11 @@
     "source": "OFFLINE",
     "translation": "[ǾƑƑĿĪȠḖ]",
     "description": "Small chip in the screen corner while the device has no network connection; shown in capitals where the script has them"
+  },
+  "IDaiHN/uXI": {
+    "source": "Unexpected Boser response!",
+    "translation": "[Ŭƞḗḗẋƥḗḗƈŧḗḗḓ Ɓǿǿşḗḗř řḗḗşƥǿǿƞşḗḗ!]",
+    "description": "Error when Boser's answer to an upgrade request cannot be understood; Boser is a product name"
   },
   "IFEBgytc3R": {
     "source": "Failed to join the Wi-Fi network!",
@@ -469,6 +499,11 @@
     "translation": "[ǿǿř ƈǿǿƞƞḗḗƈŧ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ]",
     "description": "Device-info setup line under the Wi-Fi instructions, the wired alternative on a board with an Ethernet port"
   },
+  "MA60bY5quH": {
+    "source": "Cannot check for upgrade: no package server offers \"{package}\".",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƞǿǿ ƥȧȧƈķȧȧɠḗḗ şḗḗřṽḗḗř ǿǿƒƒḗḗřş \"{package}\".]",
+    "description": "Error when checking for an upgrade that was to install a package no package server offers; package is its name"
+  },
   "MKzfvLJWUZ": {
     "source": "This is only available while the device's Wi-Fi is being set up.",
     "translation": "[Ŧħīş īş ǿǿƞŀẏ ȧȧṽȧȧīŀȧȧƀŀḗḗ ẇħīŀḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ'ş Ẇī-Ƒī īş ƀḗḗīƞɠ şḗḗŧ ŭŭƥ.]",
@@ -493,6 +528,16 @@
     "source": "Failed to save language!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŀȧȧƞɠŭŭȧȧɠḗḗ!]",
     "description": "Error when the device could not store the language just chosen"
+  },
+  "NLjMorW7LO": {
+    "source": "Lost track of the upgrade; it may still be running.",
+    "translation": "[Ŀǿǿşŧ ŧřȧȧƈķ ǿǿƒ ŧħḗḗ ŭŭƥɠřȧȧḓḗḗ; īŧ ḿȧȧẏ şŧīŀŀ ƀḗḗ řŭŭƞƞīƞɠ.]",
+    "description": "Error when the device stopped seeing the progress of an upgrade it started"
+  },
+  "O/OiMgIk4g": {
+    "source": "Cannot check for upgrade: no packages are published for firmware {firmware} yet.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƞǿǿ ƥȧȧƈķȧȧɠḗḗş ȧȧřḗḗ ƥŭŭƀŀīşħḗḗḓ ƒǿǿř ƒīřḿẇȧȧřḗḗ {firmware} ẏḗḗŧ.]",
+    "description": "Error when checking for an upgrade before the packages for a firmware version are released; firmware is a version such as 26.10"
   },
   "OCm3mUiaLn": {
     "source": "Choose a temperature unit",
@@ -574,6 +619,16 @@
     "translation": "[Ȧŀȧȧřḿ]",
     "description": "Ringing alarm screen, above the time, when the owner gave the alarm no name"
   },
+  "S90IlkNK3l": {
+    "source": "Failed to detect current version!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḓḗḗŧḗḗƈŧ ƈŭŭřřḗḗƞŧ ṽḗḗřşīǿǿƞ!]",
+    "description": "Error when the device cannot tell which firmware version it runs"
+  },
+  "SRD3jRV1NY": {
+    "source": "Upgrade failed!",
+    "translation": "[Ŭƥɠřȧȧḓḗḗ ƒȧȧīŀḗḗḓ!]",
+    "description": "Error when a system upgrade that had started did not finish"
+  },
   "Sd6MP8bjly": {
     "source": "Unknown field!",
     "translation": "[Ŭƞķƞǿǿẇƞ ƒīḗḗŀḓ!]",
@@ -599,6 +654,16 @@
     "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧ ƒīƞīŧḗḗ ƞŭŭḿƀḗḗř]",
     "description": "Error under a numeric widget setting holding infinity"
   },
+  "T74EXvLiN4": {
+    "source": "System upgrade is in progress.",
+    "translation": "[Şẏşŧḗḗḿ ŭŭƥɠřȧȧḓḗḗ īş īƞ ƥřǿǿɠřḗḗşş.]",
+    "description": "Error when an upgrade is asked for while another is running"
+  },
+  "T8w3QvnUMe": {
+    "source": "Failed to verify downloaded firmware!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ṽḗḗřīƒẏ ḓǿǿẇƞŀǿǿȧȧḓḗḗḓ ƒīřḿẇȧȧřḗḗ!]",
+    "description": "Error when a downloaded firmware image cannot be checked against its expected hash"
+  },
   "TDA31Tk5dv": {
     "source": "This credential type already sets where its secret may go.",
     "translation": "[Ŧħīş ƈřḗḗḓḗḗƞŧīȧȧŀ ŧẏƥḗḗ ȧȧŀřḗḗȧȧḓẏ şḗḗŧş ẇħḗḗřḗḗ īŧş şḗḗƈřḗḗŧ ḿȧȧẏ ɠǿǿ.]",
@@ -614,6 +679,11 @@
     "translation": "[Īƞƈǿǿřřḗḗƈŧ ƈŭŭřřḗḗƞŧ ƥȧȧşşẇǿǿřḓ!]",
     "description": "Error under the current password field when changing or removing the password"
   },
+  "TSsTbYxGkT": {
+    "source": "Boser rejected the session.",
+    "translation": "[Ɓǿǿşḗḗř řḗḗĵḗḗƈŧḗḗḓ ŧħḗḗ şḗḗşşīǿǿƞ.]",
+    "description": "Error when Boser does not accept the signed-in user's session for an upgrade; Boser is a product name"
+  },
   "TY9EsA30Fh": {
     "source": "Failed to save the alarms!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ȧȧŀȧȧřḿş!]",
@@ -623,6 +693,11 @@
     "source": "Must be one of the listed options",
     "translation": "[Ḿŭŭşŧ ƀḗḗ ǿǿƞḗḗ ǿǿƒ ŧħḗḗ ŀīşŧḗḗḓ ǿǿƥŧīǿǿƞş]",
     "description": "Error under a widget setting with fixed choices"
+  },
+  "ThipVUkl7p": {
+    "source": "Boser is unreachable.",
+    "translation": "[Ɓǿǿşḗḗř īş ŭŭƞřḗḗȧȧƈħȧȧƀŀḗḗ.]",
+    "description": "Error when the device cannot connect to Boser for an upgrade; Boser is a product name"
   },
   "TrLuG4m0Wz": {
     "source": "Repeats item {position}!",
@@ -648,6 +723,11 @@
     "source": "Failed to save the night mode LED notifications setting!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş şḗḗŧŧīƞɠ!]",
     "description": "Error when the device could not store whether its LEDs show notifications during night mode"
+  },
+  "UHtDYnhEDI": {
+    "source": "Failed to record the pending widget install!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ řḗḗƈǿǿřḓ ŧħḗḗ ƥḗḗƞḓīƞɠ ẇīḓɠḗḗŧ īƞşŧȧȧŀŀ!]",
+    "description": "Error when the device could not save which widget it is about to install"
   },
   "UPbI9LCXjB": {
     "source": "Could not run the check, so this token is unverified.",
@@ -684,6 +764,11 @@
     "translation": "[Ŧħīş ǿǿƥḗḗřȧȧŧīǿǿƞ īş ḿȧȧƞȧȧɠḗḗḓ ƀẏ Ɓǿǿşḗḗř ǿǿƞ ŧħīş ƥŀȧȧŧƒǿǿřḿ.]",
     "description": "Error when the device refuses an operation because Boser owns it on this hardware; Boser is a product name"
   },
+  "VpA1BfAkrG": {
+    "source": "{count, plural, one {Cannot check for upgrade: package source is incomplete; required system package {names} is missing.} other {Cannot check for upgrade: package source is incomplete; required system packages {names} are missing.}}",
+    "translation": "[{count, plural, one {Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ şǿǿŭŭřƈḗḗ īş īƞƈǿǿḿƥŀḗḗŧḗḗ; řḗḗɋŭŭīřḗḗḓ şẏşŧḗḗḿ ƥȧȧƈķȧȧɠḗḗ {names} īş ḿīşşīƞɠ.} other {Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ şǿǿŭŭřƈḗḗ īş īƞƈǿǿḿƥŀḗḗŧḗḗ; řḗḗɋŭŭīřḗḗḓ şẏşŧḗḗḿ ƥȧȧƈķȧȧɠḗḗş {names} ȧȧřḗḗ ḿīşşīƞɠ.}}]",
+    "description": "Error when checking for an upgrade; count is how many packages are missing; names is a comma-separated list of their quoted names"
+  },
   "VstI3V3Hsf": {
     "source": "Wi-Fi SSID",
     "translation": "[Ẇī-Ƒī ŞŞĪḒ]",
@@ -693,6 +778,11 @@
     "source": "Your device is being set up...",
     "translation": "[Ẏǿǿŭŭř ḓḗḗṽīƈḗḗ īş ƀḗḗīƞɠ şḗḗŧ ŭŭƥ...]",
     "description": "Device-info title while a miner leaves its setup network for the chosen one"
+  },
+  "WL8AgmmVmt": {
+    "source": "Cannot check for upgrade: the firmware index is unusable for this system version.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ŧħḗḗ ƒīřḿẇȧȧřḗḗ īƞḓḗḗẋ īş ŭŭƞŭŭşȧȧƀŀḗḗ ƒǿǿř ŧħīş şẏşŧḗḗḿ ṽḗḗřşīǿǿƞ.]",
+    "description": "Error when checking for an upgrade and the downloaded firmware index lists a version twice or offers only a downgrade across a major version"
   },
   "WPLNkBNuHa": {
     "source": "Downloading firmware",
@@ -753,6 +843,11 @@
     "source": "Join this network from your phone to reconfigure Wi-Fi.",
     "translation": "[Ĵǿǿīƞ ŧħīş ƞḗḗŧẇǿǿřķ ƒřǿǿḿ ẏǿǿŭŭř ƥħǿǿƞḗḗ ŧǿǿ řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī.]",
     "description": "Settings tray, hint under the setup network's name"
+  },
+  "YJr+4bxqGL": {
+    "source": "Cannot check for upgrade: package index is unusable.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ īƞḓḗḗẋ īş ŭŭƞŭŭşȧȧƀŀḗḗ.]",
+    "description": "Error when checking for an upgrade and the downloaded list of available packages cannot be used"
   },
   "YMraklGAiK": {
     "source": "Too many widgets are running. The limit is {max}.",
@@ -824,15 +919,20 @@
     "translation": "[Ƈħǿǿǿǿşḗḗ ȧȧ ẇīḓɠḗḗŧ şīẑḗḗ]",
     "description": "Error on a widget's size left unset"
   },
+  "b19qkhY1lT": {
+    "source": "Cannot check for upgrade: package server configuration is unavailable.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ şḗḗřṽḗḗř ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ īş ŭŭƞȧȧṽȧȧīŀȧȧƀŀḗḗ.]",
+    "description": "Error when checking for an upgrade and the list of package servers cannot be read"
+  },
   "bFKhQ/MiVz": {
     "source": "Downloading packages",
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓīƞɠ ƥȧȧƈķȧȧɠḗḗş]",
     "description": "Upgrade overlay title during the package download"
   },
-  "bVRP6dFSGd": {
-    "source": "Failed to detect current version!",
-    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḓḗḗŧḗḗƈŧ ƈŭŭřřḗḗƞŧ ṽḗḗřşīǿǿƞ!]",
-    "description": "Error when the device could not read its own firmware version"
+  "bTk5sO65FP": {
+    "source": "Cannot check for upgrade: no firmware is published for this device.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƞǿǿ ƒīřḿẇȧȧřḗḗ īş ƥŭŭƀŀīşħḗḗḓ ƒǿǿř ŧħīş ḓḗḗṽīƈḗḗ.]",
+    "description": "Error when checking for an upgrade on hardware no firmware image is published for"
   },
   "bZW/Dljxnk": {
     "source": "This is only available once the device has finished its setup.",
@@ -954,10 +1054,20 @@
     "translation": "[Ŧħīş ḓḗḗṽīƈḗḗ ḓǿǿḗḗş ƞǿǿŧ şŭŭƥƥǿǿřŧ Ẇī-Ƒī.]",
     "description": "Error when a Wi-Fi operation is used on a device with no Wi-Fi hardware"
   },
+  "gmK4PbF58e": {
+    "source": "Packages cannot be upgraded on this device.",
+    "translation": "[Ƥȧȧƈķȧȧɠḗḗş ƈȧȧƞƞǿǿŧ ƀḗḗ ŭŭƥɠřȧȧḓḗḗḓ ǿǿƞ ŧħīş ḓḗḗṽīƈḗḗ.]",
+    "description": "Error when an upgrade needs software packages and the device cannot change them right now"
+  },
   "goDNO90+uU": {
     "source": "{count, plural, one {Must have at least {count} item} other {Must have at least {count} items}}",
     "translation": "[{count, plural, one {Ḿŭŭşŧ ħȧȧṽḗḗ ȧȧŧ ŀḗḗȧȧşŧ {count} īŧḗḗḿ} other {Ḿŭŭşŧ ħȧȧṽḗḗ ȧȧŧ ŀḗḗȧȧşŧ {count} īŧḗḗḿş}}]",
     "description": "Error under a widget list setting; count is the fewest rows allowed"
+  },
+  "h1Ush1uqEV": {
+    "source": "Upgrade id is unknown or already consumed.",
+    "translation": "[Ŭƥɠřȧȧḓḗḗ īḓ īş ŭŭƞķƞǿǿẇƞ ǿǿř ȧȧŀřḗḗȧȧḓẏ ƈǿǿƞşŭŭḿḗḗḓ.]",
+    "description": "Error when starting an upgrade offered earlier that is no longer on offer; id is short for identifier"
   },
   "h62fKvG87I": {
     "source": "Account not found!",
@@ -1014,6 +1124,11 @@
     "translation": "[Ŧħḗḗ ḓḗḗṽīƈḗḗ īş ȧȧŀřḗḗȧȧḓẏ ƈǿǿƞƞḗḗƈŧīƞɠ ŧǿǿ ȧȧ Ẇī-Ƒī ƞḗḗŧẇǿǿřķ.]",
     "description": "Error when connecting to a Wi-Fi network while an earlier attempt has not finished"
   },
+  "jiYeDmpZ17": {
+    "source": "Failed to download firmware!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḓǿǿẇƞŀǿǿȧȧḓ ƒīřḿẇȧȧřḗḗ!]",
+    "description": "Error when downloading a firmware image for an upgrade fails"
+  },
   "jlPEslLWc2": {
     "source": "Failed to set password!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ƥȧȧşşẇǿǿřḓ!]",
@@ -1064,6 +1179,16 @@
     "translation": "[Ŧřẏ ȧȧɠȧȧīƞ]",
     "description": "Settings tray notice, under a failure title: the button can be held again"
   },
+  "kxLOgKIH3q": {
+    "source": "Cannot check for upgrade: the firmware index cannot be downloaded.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ŧħḗḗ ƒīřḿẇȧȧřḗḗ īƞḓḗḗẋ ƈȧȧƞƞǿǿŧ ƀḗḗ ḓǿǿẇƞŀǿǿȧȧḓḗḗḓ.]",
+    "description": "Error when checking for an upgrade and the list of firmware versions cannot be downloaded"
+  },
+  "l2ai8dU0pS": {
+    "source": "Boser failed to handle the upgrade request.",
+    "translation": "[Ɓǿǿşḗḗř ƒȧȧīŀḗḗḓ ŧǿǿ ħȧȧƞḓŀḗḗ ŧħḗḗ ŭŭƥɠřȧȧḓḗḗ řḗḗɋŭŭḗḗşŧ.]",
+    "description": "Error when Boser could not complete an upgrade request; Boser is a product name"
+  },
   "lSAYfQugPW": {
     "source": "Restart failed",
     "translation": "[Řḗḗşŧȧȧřŧ ƒȧȧīŀḗḗḓ]",
@@ -1074,10 +1199,20 @@
     "translation": "[Ḓǿǿƞ'ŧ şŧȧȧřŧ ǿǿř ḗḗƞḓ ŧħḗḗ ƞȧȧḿḗḗ ẇīŧħ ȧȧ ḓǿǿŧ, ǿǿř ƥŭŭŧ ŧẇǿǿ ḓǿǿŧş ŧǿǿɠḗḗŧħḗḗř]",
     "description": "Error under the device's hostname field when a dot leads, ends or doubles in the name"
   },
+  "llnktRk313": {
+    "source": "Cannot check for upgrade: no enabled package servers are configured.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƞǿǿ ḗḗƞȧȧƀŀḗḗḓ ƥȧȧƈķȧȧɠḗḗ şḗḗřṽḗḗřş ȧȧřḗḗ ƈǿǿƞƒīɠŭŭřḗḗḓ.]",
+    "description": "Error when checking for an upgrade and the device has no package server turned on"
+  },
   "lpn97WlmC9": {
     "source": "Failed to set the night mode brightness!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ ƀřīɠħŧƞḗḗşş!]",
     "description": "Error when the device could not apply the screen brightness setting for night mode"
+  },
+  "m3MD9fZXiB": {
+    "source": "Invalid firmware image!",
+    "translation": "[Īƞṽȧȧŀīḓ ƒīřḿẇȧȧřḗḗ īḿȧȧɠḗḗ!]",
+    "description": "Error when a firmware image is incompatible with the device or wrongly signed"
   },
   "mEUSxt792/": {
     "source": "Line {line}: an entry cannot be empty.",
@@ -1113,6 +1248,11 @@
     "source": "An upgrade is in progress",
     "translation": "[Ȧƞ ŭŭƥɠřȧȧḓḗḗ īş īƞ ƥřǿǿɠřḗḗşş]",
     "description": "Settings tray notice, under its title when the restart is declined: an upgrade is running"
+  },
+  "o34DrHPp/w": {
+    "source": "Cannot check for upgrade: the current system version is not recognized.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ŧħḗḗ ƈŭŭřřḗḗƞŧ şẏşŧḗḗḿ ṽḗḗřşīǿǿƞ īş ƞǿǿŧ řḗḗƈǿǿɠƞīẑḗḗḓ.]",
+    "description": "Error when checking for an upgrade and the device's own firmware version number cannot be read"
   },
   "p0jlb76HNw": {
     "source": "Alarm not found!",
@@ -1234,6 +1374,21 @@
     "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ: Ǿƞ]",
     "description": "Settings tray, label under the night mode button while active"
   },
+  "tEq+0NJm1u": {
+    "source": "Boser refused the upgrade request as invalid.",
+    "translation": "[Ɓǿǿşḗḗř řḗḗƒŭŭşḗḗḓ ŧħḗḗ ŭŭƥɠřȧȧḓḗḗ řḗḗɋŭŭḗḗşŧ ȧȧş īƞṽȧȧŀīḓ.]",
+    "description": "Error when Boser does not accept what the device asked of it for an upgrade; Boser is a product name"
+  },
+  "tI8BQyJHkD": {
+    "source": "Boser manages upgrades on this platform and its address is not configured.",
+    "translation": "[Ɓǿǿşḗḗř ḿȧȧƞȧȧɠḗḗş ŭŭƥɠřȧȧḓḗḗş ǿǿƞ ŧħīş ƥŀȧȧŧƒǿǿřḿ ȧȧƞḓ īŧş ȧȧḓḓřḗḗşş īş ƞǿǿŧ ƈǿǿƞƒīɠŭŭřḗḗḓ.]",
+    "description": "Error when the device cannot reach Boser for an upgrade because it was never told where Boser is; Boser is a product name"
+  },
+  "tZJ06aiY9s": {
+    "source": "Boser did not answer.",
+    "translation": "[Ɓǿǿşḗḗř ḓīḓ ƞǿǿŧ ȧȧƞşẇḗḗř.]",
+    "description": "Error when Boser stayed silent on an upgrade request; Boser is a product name"
+  },
   "uDS7/RsopS": {
     "source": "Preparing update",
     "translation": "[Ƥřḗḗƥȧȧřīƞɠ ŭŭƥḓȧȧŧḗḗ]",
@@ -1269,6 +1424,11 @@
     "translation": "[{minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}} {seconds, plural, one {{seconds} şḗḗƈǿǿƞḓ} other {{seconds} şḗḗƈǿǿƞḓş}} ȧȧɠǿǿ]",
     "description": "Relative time label for a moment behind, minutes and seconds spelled out; both are whole numbers"
   },
+  "x0c2/RHkVI": {
+    "source": "Cannot check for upgrade: package manifest could not be read.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ ḿȧȧƞīƒḗḗşŧ ƈǿǿŭŭŀḓ ƞǿǿŧ ƀḗḗ řḗḗȧȧḓ.]",
+    "description": "Error when checking for an upgrade and the description of a package cannot be read"
+  },
   "x4mevTHQAW": {
     "source": "Invalid scene ID!",
     "translation": "[Īƞṽȧȧŀīḓ şƈḗḗƞḗḗ ĪḒ!]",
@@ -1293,6 +1453,11 @@
     "source": "A full screen widget cannot be moved.",
     "translation": "[Ȧ ƒŭŭŀŀ şƈřḗḗḗḗƞ ẇīḓɠḗḗŧ ƈȧȧƞƞǿǿŧ ƀḗḗ ḿǿǿṽḗḗḓ.]",
     "description": "Error when changing the position of a full screen scene's widget"
+  },
+  "xYNABT+9uf": {
+    "source": "Cannot check for upgrade: package upgrade cannot be realized.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ ŭŭƥɠřȧȧḓḗḗ ƈȧȧƞƞǿǿŧ ƀḗḗ řḗḗȧȧŀīẑḗḗḓ.]",
+    "description": "Error when checking for an upgrade and no package server offers some of the packages it needs"
   },
   "xyfII58PwR": {
     "source": "Login to continue",
@@ -1324,10 +1489,20 @@
     "translation": "[Ŧħīş ẇīḓɠḗḗŧ ḓǿǿḗḗş ƞǿǿŧ ŭŭşḗḗ ŧħīş ȧȧƈƈǿǿŭŭƞŧ!]",
     "description": "Error for an account given to a widget that has no use for it"
   },
+  "zIhiicJZST": {
+    "source": "Cannot check for upgrade: package servers with the same priority offer different builds of \"{package}\". Check the package server configuration.",
+    "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƥȧȧƈķȧȧɠḗḗ şḗḗřṽḗḗřş ẇīŧħ ŧħḗḗ şȧȧḿḗḗ ƥřīǿǿřīŧẏ ǿǿƒƒḗḗř ḓīƒƒḗḗřḗḗƞŧ ƀŭŭīŀḓş ǿǿƒ \"{package}\". Ƈħḗḗƈķ ŧħḗḗ ƥȧȧƈķȧȧɠḗḗ şḗḗřṽḗḗř ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ.]",
+    "description": "Error when checking for an upgrade that was to install a package which several package servers of the same priority offer in different builds of the same version; package is its name"
+  },
   "zKG/OxShA+": {
     "source": "This device already has a password. Change it instead of creating a new one.",
     "translation": "[Ŧħīş ḓḗḗṽīƈḗḗ ȧȧŀřḗḗȧȧḓẏ ħȧȧş ȧȧ ƥȧȧşşẇǿǿřḓ. Ƈħȧȧƞɠḗḗ īŧ īƞşŧḗḗȧȧḓ ǿǿƒ ƈřḗḗȧȧŧīƞɠ ȧȧ ƞḗḗẇ ǿǿƞḗḗ.]",
     "description": "Error when creating a password on a device that already has one"
+  },
+  "zkpt6TRplE": {
+    "source": "Firmware image checksum mismatch!",
+    "translation": "[Ƒīřḿẇȧȧřḗḗ īḿȧȧɠḗḗ ƈħḗḗƈķşŭŭḿ ḿīşḿȧȧŧƈħ!]",
+    "description": "Error when a downloaded firmware image is not the one the upgrade offered"
   },
   "zs6oB/UJvn": {
     "source": "Line {line}: there is no host before the \":\".",

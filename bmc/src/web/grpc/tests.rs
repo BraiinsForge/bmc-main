@@ -116,13 +116,7 @@ pub(crate) fn violation_fields(error: &ConnectError) -> Vec<String> {
         .collect()
 }
 
-/// Fails unless each refusal reads, in the en-XA pseudo-locale, as its English respelled:
-/// a message the extraction missed stays plain English there, and one glued to a literal
-/// comes out half respelled.
-///
-/// Values must hold no letters, as data is not respelled.
-/// The refusals must differ in English, so an input landing in the wrong branch fails too.
-pub(crate) fn assert_worded(refusals: impl Fn(&Intl) -> Vec<String>) {
+fn pseudo_pack() -> Translations {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(bmc_intl_pseudo::PACK_ROOT);
@@ -133,7 +127,22 @@ pub(crate) fn assert_worded(refusals: impl Fn(&Intl) -> Vec<String>) {
         "no en-XA pack under {}, is it in this crate's nix include?",
         root.display()
     );
+    translations
+}
 
+/// An en-XA formatter that leaves the process's own translations as they are.
+pub(crate) fn pseudo_locale() -> Intl {
+    pseudo_pack().formatter(Language::EN_XA)
+}
+
+/// Fails unless each refusal reads, in the en-XA pseudo-locale, as its English respelled:
+/// a message the extraction missed stays plain English there, and one glued to a literal
+/// comes out half respelled.
+///
+/// Values must hold no letters, as data is not respelled.
+/// The refusals must differ in English, so an input landing in the wrong branch fails too.
+pub(crate) fn assert_worded(refusals: impl Fn(&Intl) -> Vec<String>) {
+    let translations = pseudo_pack();
     let english = refusals(&translations.formatter(Language::EN));
     assert!(!english.is_empty(), "BUG: a list with nothing to check");
     let distinct: BTreeSet<&String> = english.iter().collect();

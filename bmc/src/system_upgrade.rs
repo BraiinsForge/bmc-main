@@ -213,8 +213,10 @@ fn record_pending_install(
     let pending = bmc_nix::pending_install::PendingInstall {
         install: install.to_vec(),
     };
-    bmc_nix::pending_install::write_pending_install(path, &pending)
-        .map_err(|err| SystemUpgradeError::PendingInstallWriteFailed(err.to_string()))
+    bmc_nix::pending_install::write_pending_install(path, &pending).map_err(|err| {
+        error!(error = %err, path = %path.display(), "Failed to record the pending widget install");
+        SystemUpgradeError::PendingInstallWriteFailed(err.to_string())
+    })
 }
 
 /// Best-effort removal of a pending-install handoff after a firmware run that
@@ -655,7 +657,10 @@ fn spawn_packages_run(
                 _ = tx.send(UpgradeRunState::Finished);
             }
             Err(err) => {
-                error!(error = %err, "Package upgrade failed");
+                error!(
+                    error = &err as &dyn std::error::Error,
+                    "Package upgrade failed"
+                );
                 let failure = match err {
                     bmc_upgrade::packages::ApplyError::Install(install_error) => {
                         match install_error {
@@ -942,10 +947,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         &self,
         install: Vec<String>,
     ) -> Result<CheckOutcome, SystemUpgradeError> {
-        let _gate = self
-            .run_gate
-            .try_lock()
-            .map_err(|_| SystemUpgradeError::UpgradeInProgress)?;
+        let _gate = self.run_gate.try_lock().map_err(|_| {
+            warn!("Upgrade already in progress");
+            SystemUpgradeError::UpgradeInProgress
+        })?;
 
         let mut offers = self.system_upgrades.lock().await;
         let prepared = self.prepare_upgrade(install).await?;

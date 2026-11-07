@@ -20,9 +20,11 @@
 
 //! The upgrade RPCs of a Boser-managed product: Boser's wire types and errors in gRPC terms.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use bmc_grpc::web::{CheckForUpgradeResponse, FirmwareUpgrade, UpgradeDisruption, UpgradeProgress};
+use bmc_intl::{Intl, format_message};
 use bmc_upgrade_types::{Disruption, ExecutionId, wire};
 use buffa_types::google::protobuf::Timestamp;
 use chrono::{NaiveDate, NaiveTime};
@@ -31,7 +33,11 @@ use futures::stream::{self, StreamExt};
 use tokio::time::Instant;
 use tracing::warn;
 
-use super::{map_package_upgrade_plan, run_state_to_progress};
+use super::super::shared::{StatusExt as _, ToStatus, internal_error};
+use super::{
+    map_package_upgrade_plan, not_enough_space, run_state_to_progress, upgrade_expired,
+    upgrade_failed, upgrade_in_progress,
+};
 use crate::system_upgrade::boser::client::{BoserUpgrade, ClientError, Rejection};
 use crate::system_upgrade::boser::progress::{FollowError, Followed, follow};
 use crate::system_upgrade::{SystemUpgradeError, UpgradeRunState};
@@ -97,22 +103,25 @@ fn firmware_upgrade(firmware: wire::FirmwareUpgrade) -> FirmwareUpgrade {
 /// A start that failed for any other reason is the stream's only item, as on the local path.
 /// A start Boser did not answer may still have been admitted, so the run
 /// is followed like an accepted one and is lost only if it never appears.
+/// The stream outlives the call, so it holds the caller's `intl` for what it words later.
 pub(super) async fn start(
+    intl: Arc<Intl>,
     boser: &BoserUpgrade,
     session_id: &str,
     upgrade_id: &str,
 ) -> ServiceStream<UpgradeProgress> {
     let Ok(offer) = upgrade_id.parse::<ExecutionId>() else {
-        return only(SystemUpgradeError::UpgradeExpired.into());
+        warn!(upgrade_id, "Upgrade id is not one Boser issued");
+        return only(SystemUpgradeError::UpgradeExpired.to_status(&intl));
     };
     // Subscribed before the request: Boser publishes the execution before it answers.
     let updates = boser.subscribe();
     match boser.start(session_id, offer).await {
         Ok(()) | Err(ClientError::StartUnconfirmed) => {}
-        Err(error) => return only(error.into()),
+        Err(error) => return only(error.to_status(&intl)),
     }
     follow(offer, updates, Instant::now() + START_SEEN_WITHIN)
-        .map(progress)
+        .map(move |item| progress(&intl, item))
         .boxed()
 }
 
@@ -120,14 +129,20 @@ pub(super) fn only(error: ConnectError) -> ServiceStream<UpgradeProgress> {
     stream::once(std::future::ready(Err(error))).boxed()
 }
 
-pub(super) fn boser_unavailable() -> ConnectError {
-    ConnectError::unavailable(
-        "Boser manages upgrades on this platform and its address is not configured",
-    )
+pub(super) fn boser_unavailable(intl: &Intl) -> ConnectError {
+    ConnectError::unavailable(format_message!(
+        intl,
+        default_message: "Boser manages upgrades on this platform and its address is not configured.",
+        description: "Error when the device cannot reach Boser for an upgrade because it was never told where Boser is; Boser is a product name",
+    ))
 }
 
-fn progress(item: Result<Followed, FollowError>) -> Result<UpgradeProgress, ConnectError> {
-    let state = match item? {
+fn progress(
+    intl: &Intl,
+    item: Result<Followed, FollowError>,
+) -> Result<UpgradeProgress, ConnectError> {
+    let followed = item.or_status(intl)?;
+    let state = match followed {
         Followed::Phase(phase) => UpgradeRunState::Phase(phase),
         Followed::Download(download) => UpgradeRunState::Progress {
             downloaded_bytes: download.downloaded_bytes,
@@ -135,36 +150,76 @@ fn progress(item: Result<Followed, FollowError>) -> Result<UpgradeProgress, Conn
         },
         Followed::Finished => UpgradeRunState::Finished,
     };
-    run_state_to_progress(state)
+    run_state_to_progress(intl, state)
 }
 
-impl From<ClientError> for ConnectError {
-    fn from(error: ClientError) -> Self {
-        let message = error.to_string();
-        match error {
-            ClientError::Unreachable | ClientError::NoAnswer | ClientError::StartUnconfirmed => {
-                ConnectError::unavailable(message)
-            }
-            ClientError::Unauthenticated => ConnectError::unauthenticated(message),
-            ClientError::Rejected { rejection, .. } => match rejection {
-                Rejection::Busy => ConnectError::unavailable(message),
-                Rejection::Expired | Rejection::NotEnoughSpace | Rejection::PackagesUnavailable => {
-                    ConnectError::failed_precondition(message)
+impl ToStatus for ClientError {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        match self {
+            ClientError::Unreachable => ConnectError::unavailable(format_message!(
+                intl,
+                default_message: "Boser is unreachable.",
+                description: "Error when the device cannot connect to Boser for an upgrade; Boser is a product name",
+            )),
+            ClientError::NoAnswer => ConnectError::unavailable(format_message!(
+                intl,
+                default_message: "Boser did not answer.",
+                description: "Error when Boser stayed silent on an upgrade request; Boser is a product name",
+            )),
+            ClientError::StartUnconfirmed => internal_error(
+                intl,
+                "a start Boser did not answer is followed, not refused",
+            ),
+            ClientError::Unauthenticated => ConnectError::unauthenticated(format_message!(
+                intl,
+                default_message: "Boser rejected the session.",
+                description: "Error when Boser does not accept the signed-in user's session for an upgrade; Boser is a product name",
+            )),
+            ClientError::Rejected(rejection) => match rejection {
+                Rejection::Busy => ConnectError::unavailable(upgrade_in_progress(intl)),
+                Rejection::Expired => ConnectError::failed_precondition(upgrade_expired(intl)),
+                Rejection::NotEnoughSpace => {
+                    ConnectError::failed_precondition(not_enough_space(intl))
                 }
-                Rejection::InvalidArgument => ConnectError::invalid_argument(message),
-                Rejection::Internal => ConnectError::internal(message),
+                Rejection::PackagesUnavailable => {
+                    ConnectError::failed_precondition(format_message!(
+                        intl,
+                        default_message: "Packages cannot be upgraded on this device.",
+                        description: "Error when an upgrade needs software packages and the device cannot change them right now",
+                    ))
+                }
+                Rejection::InvalidArgument => ConnectError::invalid_argument(format_message!(
+                    intl,
+                    default_message: "Boser refused the upgrade request as invalid.",
+                    description: "Error when Boser does not accept what the device asked of it for an upgrade; Boser is a product name",
+                )),
+                Rejection::Internal => ConnectError::internal(format_message!(
+                    intl,
+                    default_message: "Boser failed to handle the upgrade request.",
+                    description: "Error when Boser could not complete an upgrade request; Boser is a product name",
+                )),
             },
-            ClientError::Unexpected(_) => ConnectError::internal(message),
+            ClientError::Unexpected(_) => ConnectError::internal(format_message!(
+                intl,
+                default_message: "Unexpected Boser response!",
+                description: "Error when Boser's answer to an upgrade request cannot be understood; Boser is a product name",
+            )),
         }
     }
 }
 
-impl From<FollowError> for ConnectError {
-    fn from(error: FollowError) -> Self {
-        let message = error.to_string();
-        match error {
-            FollowError::Failed(_) => ConnectError::internal(message),
-            FollowError::Lost => ConnectError::unavailable(message),
+impl ToStatus for FollowError {
+    fn to_status(&self, intl: &Intl) -> ConnectError {
+        match self {
+            FollowError::Failed(_) => ConnectError::internal(upgrade_failed(intl)),
+            FollowError::Lost => {
+                warn!("Following the Boser upgrade failed: {self}");
+                ConnectError::unavailable(format_message!(
+                    intl,
+                    default_message: "Lost track of the upgrade; it may still be running.",
+                    description: "Error when the device stopped seeing the progress of an upgrade it started",
+                ))
+            }
         }
     }
 }

@@ -23,6 +23,15 @@ use bmc_grpc::web::UpgradeDisruption;
 use bmc_upgrade_types::{Disruption, PackageChange, PackagesPreview, UpgradeKind as WireKind};
 use connectrpc::ErrorCode;
 
+use crate::compositor::{UpgradeGeneration, UpgradeRunSnapshot, UpgradeRunStatus};
+use crate::system_upgrade::RunStatusService;
+use crate::system_upgrade::boser::client::tests::MockBoser;
+use crate::web::grpc::tests::{assert_worded, pseudo_locale, status_text};
+
+fn english() -> Arc<Intl> {
+    bmc_intl::shared_formatter(bmc_intl::Language::EN)
+}
+
 fn message(error: &ConnectError) -> &str {
     error.message.as_deref().unwrap_or_default()
 }
@@ -147,14 +156,11 @@ fn an_unparseable_release_date_is_left_unset() {
 /// except that Boser folds every package source failure into `INTERNAL`.
 #[test]
 fn client_errors_map_to_the_codes_the_local_path_uses() {
-    let rejected = |rejection| ClientError::Rejected {
-        rejection,
-        message: "from boser".to_owned(),
-    };
+    let rejected = ClientError::Rejected;
     let cases = [
         (ClientError::Unreachable, ErrorCode::Unavailable),
         (ClientError::NoAnswer, ErrorCode::Unavailable),
-        (ClientError::StartUnconfirmed, ErrorCode::Unavailable),
+        (ClientError::StartUnconfirmed, ErrorCode::Internal),
         (ClientError::Unauthenticated, ErrorCode::Unauthenticated),
         (rejected(Rejection::Busy), ErrorCode::Unavailable),
         (rejected(Rejection::Expired), ErrorCode::FailedPrecondition),
@@ -177,46 +183,106 @@ fn client_errors_map_to_the_codes_the_local_path_uses() {
         ),
     ];
     for (error, code) in cases {
-        let described = format!("{error:?}");
-        assert_eq!(ConnectError::from(error).code, code, "{described}");
+        assert_eq!(error.to_status(&english()).code, code, "{error:?}");
     }
 }
 
-/// Boser's message is the only explanation the user gets.
+/// One frontend reads both paths, so a refusal Deck also knows reads as it does on Deck.
 #[test]
-fn a_rejection_keeps_bosers_message() {
-    let status = ConnectError::from(ClientError::Rejected {
-        rejection: Rejection::Busy,
-        message: "an upgrade is already running".to_owned(),
-    });
-
-    assert_eq!(message(&status), "an upgrade is already running");
+fn a_rejection_the_local_path_shares_reads_the_same() {
+    for (rejection, local) in [
+        (Rejection::Busy, SystemUpgradeError::UpgradeInProgress),
+        (Rejection::Expired, SystemUpgradeError::UpgradeExpired),
+        (
+            Rejection::NotEnoughSpace,
+            SystemUpgradeError::NotEnoughSpace,
+        ),
+    ] {
+        let managed = ClientError::Rejected(rejection).to_status(&english());
+        let local = local.to_status(&english());
+        assert_eq!(message(&managed), message(&local), "{rejection:?}");
+    }
 }
 
-/// The browser is told that Boser is unreachable, not where the BMC application looked for it.
+/// The browser is told that Boser is unreachable,
+/// not where the BMC application looked for it.
 #[test]
 fn an_unreachable_boser_is_reported_without_its_address() {
-    let status = ConnectError::from(ClientError::Unreachable);
+    let status = ClientError::Unreachable.to_status(&english());
 
-    assert_eq!(message(&status), "Boser is unreachable");
-}
-
-/// An unexpected answer names the HTTP status, for the log reader.
-#[test]
-fn an_unexpected_answer_names_the_http_status() {
-    let status = ConnectError::from(ClientError::Unexpected(reqwest::StatusCode::BAD_GATEWAY));
-
-    assert!(message(&status).contains("502"), "{}", message(&status));
+    assert_eq!(message(&status), "Boser is unreachable.");
 }
 
 /// A failed run is a server-side fault; a lost one clears by retrying.
 #[test]
 fn follow_errors_map_to_internal_and_unavailable() {
-    let failed = ConnectError::from(FollowError::Failed("no space left".to_owned()));
+    let failed = FollowError::Failed("no space left".to_owned()).to_status(&english());
     assert_eq!(failed.code, ErrorCode::Internal);
-    assert_eq!(message(&failed), "no space left");
+    assert_eq!(message(&failed), "Upgrade failed!");
 
-    let lost = ConnectError::from(FollowError::Lost);
+    let lost = FollowError::Lost.to_status(&english());
     assert_eq!(lost.code, ErrorCode::Unavailable);
     assert!(message(&lost).contains("may still be running"));
+}
+
+/// The run fails long after the call that started it,
+/// so only the stream still knows the language of whoever asked.
+#[tokio::test]
+async fn a_run_failing_later_speaks_the_language_of_whoever_started_it() {
+    let boser = MockBoser::default();
+    let address = boser.serve(reqwest::StatusCode::NO_CONTENT, "").await;
+    let display = RunStatusService::new();
+    let upgrade = BoserUpgrade::new(address, display.clone());
+    let offer = ExecutionId::new();
+
+    let mut stream = start(
+        Arc::new(pseudo_locale()),
+        &upgrade,
+        "session",
+        &offer.to_string(),
+    )
+    .await;
+    display.publish(UpgradeRunSnapshot {
+        generation: UpgradeGeneration::new(0),
+        id: Some(offer),
+        state: UpgradeRunStatus::Failed {
+            kind: WireKind::Packages,
+            reason: "1".to_owned(),
+        },
+    });
+    let error = stream
+        .next()
+        .await
+        .expect("BUG: the stream reports how the run ended")
+        .expect_err("BUG: the run failed");
+
+    assert_eq!(message(&error), bmc_intl_pseudo::respell("Upgrade failed!"));
+}
+
+#[test]
+fn every_boser_refusal_is_worded() {
+    assert_worded(|intl| {
+        let mut refusals: Vec<String> = [
+            ClientError::Unreachable,
+            ClientError::NoAnswer,
+            ClientError::StartUnconfirmed,
+            ClientError::Unauthenticated,
+            ClientError::Rejected(Rejection::Busy),
+            ClientError::Rejected(Rejection::Expired),
+            ClientError::Rejected(Rejection::NotEnoughSpace),
+            ClientError::Rejected(Rejection::PackagesUnavailable),
+            ClientError::Rejected(Rejection::InvalidArgument),
+            ClientError::Rejected(Rejection::Internal),
+            ClientError::Unexpected(reqwest::StatusCode::BAD_GATEWAY),
+        ]
+        .iter()
+        .map(|error| status_text(&error.to_status(intl)))
+        .collect();
+        refusals.push(status_text(&boser_unavailable(intl)));
+        refusals.push(status_text(&FollowError::Lost.to_status(intl)));
+        refusals.push(status_text(
+            &FollowError::Failed("1".to_owned()).to_status(intl),
+        ));
+        refusals
+    });
 }

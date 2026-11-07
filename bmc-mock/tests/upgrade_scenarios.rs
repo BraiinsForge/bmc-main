@@ -189,6 +189,7 @@ async fn check_error_surfaces_grpc_error() {
         .await
         .expect_err("check must fail");
     assert_eq!(status.code, ErrorCode::Internal);
+    assert!(message(&status).starts_with("Cannot check for upgrade:"));
 }
 
 #[tokio::test]
@@ -1151,7 +1152,7 @@ async fn unknown_install_target_is_rejected_over_grpc() {
         .expect_err("an unknown install target must surface as a gRPC error");
     assert_eq!(status.code, ErrorCode::FailedPrecondition);
     assert!(
-        message(&status).contains("requested package 'widget-nope' is unavailable"),
+        message(&status).contains(r#"no package server offers "widget-nope""#),
         "unexpected message: {}",
         message(&status)
     );

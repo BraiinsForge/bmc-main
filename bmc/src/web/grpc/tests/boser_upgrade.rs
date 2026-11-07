@@ -359,9 +359,10 @@ async fn a_managed_firmware_start_ends_cleanly_at_the_reboot() {
     assert_eq!(event(&mut stream).await, None);
 }
 
-/// The caller is told why Boser's run failed, in the terms the local path uses for its own.
+/// The caller is told that Boser's run failed, in the terms the local path uses for its own.
+/// Boser's reason goes to the log.
 #[tokio::test]
-async fn a_managed_run_that_fails_reports_the_reason() {
+async fn a_managed_run_that_fails_is_worded_without_its_reason() {
     let boser = MockBoser::default();
     let address = boser.serve(StatusCode::NO_CONTENT, "").await;
     let display = RunStatusService::new();
@@ -379,7 +380,7 @@ async fn a_managed_run_that_fails_reports_the_reason() {
     let error = only_item(stream).await;
 
     assert_eq!(error.code, ErrorCode::Internal);
-    assert_eq!(message(&error), "build failed");
+    assert_eq!(message(&error), "Upgrade failed!");
 }
 
 /// A stale or mangled id is "expired", as on Deck, and Boser is not bothered with it.
@@ -414,7 +415,7 @@ async fn a_start_boser_refuses_is_the_streams_only_item() {
     let error = only_item(start(routes, offer.to_string()).await).await;
 
     assert_eq!(error.code, ErrorCode::Unavailable);
-    assert_eq!(message(&error), "an upgrade is already running");
+    assert_eq!(message(&error), "System upgrade is in progress.");
     assert_eq!(
         boser.requests(),
         [Recorded {

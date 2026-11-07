@@ -270,11 +270,11 @@ The managed frontend still hides the Upgrades tab; these calls exist for widget 
   if Boser had accepted it; one that never connected did not start.
 - **Progress.** `StartUpgrade` does not open a second connection to Boser. The display snapshot carries the execution id
   and the failure reason, and the stream turns the snapshots of its own execution into progress events
-  (`bmc/src/system_upgrade/boser/progress.rs`). A package run ends with `finished`, a failed one with `INTERNAL` and
-  Boser's reason. A firmware run reports `FIRMWARE_UPGRADE_PHASE_APPLYING` and ends cleanly when Boser reaches
-  `REBOOTING`, as a local run does at its handoff. Boser's `FLASHING` is not reported: it precedes the staging of the
-  target firmware's packages, whose phases and failure still reach the stream. A failure Boser reports after the handoff
-  is shown on the display only.
+  (`bmc/src/system_upgrade/boser/progress.rs`). A package run ends with `finished`, a failed one with `INTERNAL` and a
+  fixed sentence, Boser's reason going to the log. A firmware run reports `FIRMWARE_UPGRADE_PHASE_APPLYING` and ends
+  cleanly when Boser reaches `REBOOTING`, as a local run does at its handoff. Boser's `FLASHING` is not reported: it
+  precedes the staging of the target firmware's packages, whose phases and failure still reach the stream. A failure
+  Boser reports after the handoff is shown on the display only.
 - **End on loss.** The stream is a convenience and ends with `UNAVAILABLE` whenever it can no longer follow its run: the
   display was cleared or shows another execution after this one, or the run did not appear within 30 s of the start
   being accepted or left unanswered. A run the observer only ever sees finished is not presented, but its outcome still

@@ -52,6 +52,14 @@ impl<T, E: ToStatus> StatusExt<T> for Result<T, E> {
     }
 }
 
+pub(crate) fn version_undetected(intl: &Intl) -> ConnectError {
+    ConnectError::internal(format_message!(
+        intl,
+        default_message: "Failed to detect current version!",
+        description: "Error when the device cannot tell which firmware version it runs",
+    ))
+}
+
 /// The device's setup state, when `allows` lets the call run in it.
 /// Otherwise the call is refused with `refusal`, and the state it met is logged.
 pub(crate) async fn require_state(
@@ -539,6 +547,7 @@ mod tests {
         assert_worded(|intl| {
             vec![
                 status_text(&internal_error(intl, "1")),
+                status_text(&version_undetected(intl)),
                 status_text(&parse_hhmm_to_naive_time(intl, "1").expect_err("BUG: no time")),
                 missing_value(intl),
             ]

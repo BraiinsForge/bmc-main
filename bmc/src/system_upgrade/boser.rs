@@ -32,6 +32,7 @@ use bmc_upgrade_types::{
 };
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+use tracing::warn;
 
 use super::{RunStatusService, StateService, SystemUpgradeState, UnseenOutcome};
 use crate::boser::{StateSink, StreamConfig};
@@ -173,7 +174,10 @@ impl Projection {
         let outcome = match &state {
             UpgradeRunStatus::Running { .. } | UpgradeRunStatus::Rebooting { .. } => None,
             UpgradeRunStatus::Succeeded { .. } => Some(SystemUpgradeState::Finished),
-            UpgradeRunStatus::Failed { .. } => Some(SystemUpgradeState::Failed),
+            UpgradeRunStatus::Failed { reason, .. } => {
+                warn!("Boser's upgrade failed: {reason}");
+                Some(SystemUpgradeState::Failed)
+            }
         };
         self.display.publish(UpgradeRunSnapshot {
             generation,

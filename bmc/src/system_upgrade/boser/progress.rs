@@ -27,6 +27,7 @@ use bmc_upgrade_types::ExecutionId;
 use futures::Stream;
 use thiserror::Error;
 use tokio::time::Instant;
+use tracing::warn;
 
 use crate::compositor::{DownloadProgress, UpgradePhase, UpgradeRunSnapshot, UpgradeRunStatus};
 use crate::system_upgrade::{RunUpdates, UnseenOutcome};
@@ -146,7 +147,10 @@ impl Follower {
         };
         match outcome.result {
             Ok(()) => self.end(Ok(Followed::Finished)),
-            Err(reason) => self.end(Err(FollowError::Failed(reason))),
+            Err(reason) => {
+                warn!("Boser's upgrade failed before it reached the display: {reason}");
+                self.end(Err(FollowError::Failed(reason)));
+            }
         }
     }
 

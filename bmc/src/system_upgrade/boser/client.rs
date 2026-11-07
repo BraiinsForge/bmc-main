@@ -77,11 +77,8 @@ pub(crate) enum ClientError {
     StartUnconfirmed,
     #[error("Boser rejected the session")]
     Unauthenticated,
-    #[error("{message}")]
-    Rejected {
-        rejection: Rejection,
-        message: String,
-    },
+    #[error("Boser refused with {0:?}")]
+    Rejected(Rejection),
     #[error("unexpected Boser response (HTTP {0})")]
     Unexpected(StatusCode),
 }
@@ -198,6 +195,7 @@ async fn answer(request: RequestBuilder) -> Result<Response, ClientError> {
     }
     // Boser's 401 body carries a gRPC code description, not one of its upgrade codes.
     if status == StatusCode::UNAUTHORIZED {
+        warn!("Boser rejected the session of an upgrade request");
         return Err(ClientError::Unauthenticated);
     }
     let body = match response.bytes().await {
@@ -208,10 +206,13 @@ async fn answer(request: RequestBuilder) -> Result<Response, ClientError> {
         }
     };
     match serde_json::from_slice::<wire::ErrorBody>(&body) {
-        Ok(body) => Err(ClientError::Rejected {
-            rejection: Rejection::from_code(&body.error),
-            message: body.message,
-        }),
+        Ok(body) => {
+            warn!(
+                "Boser refused with HTTP {status}, {}: {}",
+                body.error, body.message
+            );
+            Err(ClientError::Rejected(Rejection::from_code(&body.error)))
+        }
         Err(error) => {
             warn!("Boser's HTTP {status} answer is not an upgrade error: {error}");
             Err(ClientError::Unexpected(status))

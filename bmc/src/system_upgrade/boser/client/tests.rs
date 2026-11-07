@@ -296,16 +296,7 @@ async fn a_refused_start_is_not_unconfirmed() {
 
     let answer = client(address).start(SESSION, ExecutionId::new()).await;
 
-    assert!(
-        matches!(
-            answer,
-            Err(ClientError::Rejected {
-                rejection: Rejection::Busy,
-                ..
-            })
-        ),
-        "{answer:?}"
-    );
+    assert_eq!(answer, Err(ClientError::Rejected(Rejection::Busy)));
 }
 
 /// Boser's 401 body carries a gRPC code description, so the status alone decides.
@@ -374,14 +365,7 @@ async fn each_boser_error_code_is_classified() {
 
         let answer = client(address).check(SESSION, Vec::new()).await;
 
-        assert_eq!(
-            answer,
-            Err(ClientError::Rejected {
-                rejection,
-                message: format!("{code} happened"),
-            }),
-            "{code}"
-        );
+        assert_eq!(answer, Err(ClientError::Rejected(rejection)), "{code}");
     }
 }
 
