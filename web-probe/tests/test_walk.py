@@ -32,6 +32,7 @@ from web_probe.device import TabsMissing, shoot_pages, shot_name
 
 OUT = Path("out")
 EDITOR_SHOT = ("/editor", OUT / "editor.png")
+REFUSED_FORM_SHOT = ("/refused-form", OUT / "refused-form.png")
 
 
 class Page:
@@ -63,6 +64,10 @@ def editor(_probe: Probe, _out: Path) -> Iterator[tuple[str, Path]]:
     yield EDITOR_SHOT
 
 
+def refused_form(_probe: Probe, _out: Path) -> Iterator[tuple[str, Path]]:
+    yield REFUSED_FORM_SHOT
+
+
 def walked(
     monkeypatch: pytest.MonkeyPatch, tabs: dict[str, list[str]], shooter: Shooter | None = None
 ) -> list[tuple[str, Path]]:
@@ -80,6 +85,7 @@ def walked(
     monkeypatch.setattr(device, "pages", pages)
     monkeypatch.setattr(device, "page_tabs", page_tabs)
     monkeypatch.setattr(device, "shoot_combined_editor", editor)
+    monkeypatch.setattr(device, "shoot_refused_form", refused_form)
     return list(shoot_pages(cast(Probe, cast(object, shooter or Shooter())), OUT))
 
 
@@ -90,6 +96,7 @@ def test_a_page_with_tabs_is_shot_once_per_tab(monkeypatch: pytest.MonkeyPatch) 
         ("/settings#general", OUT / "settings_general.png"),
         ("/settings#updates", OUT / "settings_updates.png"),
         EDITOR_SHOT,
+        REFUSED_FORM_SHOT,
     ]
 
 
@@ -107,7 +114,11 @@ def test_each_tab_is_opened_before_its_shot(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_a_page_without_tabs_is_shot_as_itself(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert walked(monkeypatch, {"/alarms": []}) == [("/alarms", OUT / "alarms.png"), EDITOR_SHOT]
+    assert walked(monkeypatch, {"/alarms": []}) == [
+        ("/alarms", OUT / "alarms.png"),
+        EDITOR_SHOT,
+        REFUSED_FORM_SHOT,
+    ]
 
 
 def test_settings_without_tabs_is_refused_not_shot_as_if_walked(

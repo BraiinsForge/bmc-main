@@ -1263,6 +1263,7 @@ class View extends Component<Props, State> {
 
                 <MenuButton label={txt.addNew} kind="primary" id={$('add-scene')} disabled={this.#atCapacity}>
                     <MenuItem
+                        id={$('add-fullscreen')}
                         label={formatMessage({ defaultMessage: 'Full Screen' })}
                         className={css.addMenuButton}
                         onClick={this.#sceneAddChooseKind}

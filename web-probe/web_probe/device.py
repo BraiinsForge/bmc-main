@@ -82,6 +82,20 @@ _PICKED_WIDGET = f"{_PICKER} button[aria-describedby]"
 _WIDGET_FORM = "#display-comp-manifest-form-dialog"
 _WIDGET_FORM_DONE = "#display-comp-manifest-form-done"
 _CONFIRMATION = "#confirmation-modal"
+_ADD_FULLSCREEN = "#display-list-add-fullscreen"
+_FORM_PARAM = "#display-comp-manifest-form-param-"
+# A widget's name comes from its manifest, so it reads the same in every language.
+_REFUSED_FORM_WIDGET = "Params Demo"
+# The view it is shot as, the field, and a value that field refuses.
+_REFUSALS = (
+    ("number-limit", "integer_range", "500"),
+    ("text-length", "string_list-row-1", "12345678901"),
+    ("repeated-item", "string_list-row-2", "BTC"),
+    ("required", "free_string", ""),
+    ("whole-number", "optional_integer", "1.5"),
+)
+# The page reloads its list a second after a change, `#loadScenesDebounced` in `DisplayList.tsx`.
+_LIST_RELOAD_MS = 1_500
 # The budget of the frontend's `SCENE_WRITE_TIMEOUT_MS`, which a view opened by a write can take.
 _EDITOR_TIMEOUT_MS = 30_000
 # The device refuses to delete a scene until its preview ends, which follows the editor closing.
@@ -125,6 +139,10 @@ class LanguageStuck(Exception):  # noqa: N818  names what happened, as `TimeoutE
 
 class EditorUnreached(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
     """The walk could not add the scene its combined-scene editor views are shot in."""
+
+
+class ReasonMissing(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
+    """A field the form marked refused says nothing about why."""
 
 
 class SceneLeft(Exception):  # noqa: N818  names what happened, as `TimeoutError` does
@@ -367,7 +385,7 @@ def shoot_pages(probe: Probe, out: Path) -> Iterator[tuple[str, Path]]:
     A page with tabs is shot once per tab, as `path#tab`, the tabs its device offers.
     Settings always has tabs, so finding none there is refused, not shot as if it had been walked:
     a passing run would hide the sections it never saw.
-    The combined-scene editor, which no link leads to, comes last."""
+    The combined-scene editor and a refused form, which no link leads to, come last."""
     for path in pages(probe):
         tabs = page_tabs(probe)
         if not tabs and path == SETTINGS_PATH:
@@ -380,6 +398,84 @@ def shoot_pages(probe: Probe, out: Path) -> Iterator[tuple[str, Path]]:
             shown = f"{path}#{key}"
             yield shown, probe.shot(out / shot_name(shown))
     yield from shoot_combined_editor(probe, out)
+    yield from shoot_refused_form(probe, out)
+
+
+def shoot_refused_form(probe: Probe, out: Path) -> Iterator[tuple[str, Path]]:
+    """A widget form holding each value in `_REFUSALS`, one at a time, with its reason showing.
+    The widget is added for this and goes again with the dialog's close, which cancels the add."""
+    page = probe.page
+    probe.visit(DISPLAY_PATH)
+    before = _listed_scenes(probe)
+    add = page.locator(_ADD_SCENE)
+    if add.is_disabled():
+        console.warn("adding a scene is disabled, so the refused form went unseen")
+        return
+    add.click()
+    page.locator(_ADD_FULLSCREEN).click()
+    page.locator(_PICKER).wait_for()
+
+    widget = page.locator(f"{_PICKER} button", has_text=_REFUSED_FORM_WIDGET)
+    try:
+        widget.wait_for(timeout=_EDITOR_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        console.warn(f"{_REFUSED_FORM_WIDGET} is not installed, so the refused form went unseen")
+        page.keyboard.press("Escape")
+        return
+    widget.click()
+    page.locator(_WIDGET_FORM).wait_for(timeout=_EDITOR_TIMEOUT_MS)
+
+    try:
+        for view, field, value in _REFUSALS:
+            shown = f"{DISPLAY_PATH}#refused-{view}"
+            selector = f"{_FORM_PARAM}{field}"
+            original = page.locator(selector).input_value()
+            page.locator(selector).fill(value)
+            refused = page.locator(f'{selector}[aria-invalid="true"]')
+            refused.wait_for(timeout=_EDITOR_TIMEOUT_MS)
+            print(f"{shown}: {_show_reason(probe, refused)}")
+            yield shown, probe.shot(out / shot_name(shown))
+            page.locator(selector).fill(original)
+            page.locator(f'{selector}:not([aria-invalid="true"])').wait_for(
+                timeout=_EDITOR_TIMEOUT_MS
+            )
+    except BaseException:
+        try:
+            _cancel_add(probe, before)
+        except (PlaywrightError, SceneLeft) as left:
+            console.error(console.lit(left))
+        raise
+    _cancel_add(probe, before)
+
+
+def _cancel_add(probe: Probe, before: set[str]) -> None:
+    """Close the form of a just-added widget, which removes it, and refuse any scene it leaves.
+    Escape does nothing from the form's first dropdown, so a text field takes the focus first."""
+    page = probe.page
+    page.locator(f"{_FORM_PARAM}{_REFUSALS[0][1]}").focus()
+    page.keyboard.press("Escape")
+    page.locator(_WIDGET_FORM).wait_for(state="hidden", timeout=_EDITOR_TIMEOUT_MS)
+    page.wait_for_timeout(_LIST_RELOAD_MS)
+    if left := _listed_scenes(probe) - before:
+        raise SceneLeft(f"cancelling a just-added widget left {sorted(left)} on the device")
+
+
+def _show_reason(probe: Probe, field: Locator) -> str:
+    """Scroll the reason `field` is refused into view and return it.
+    Below the field it can sit behind the dialog's footer, so a shot of the field would hide it.
+    A number input turns invalid at its limits before the device's reason arrives, so this waits."""
+    ids = (
+        field.get_attribute("aria-errormessage") or field.get_attribute("aria-describedby") or ""
+    ).split()
+    if not ids:
+        raise ReasonMissing(f"a refused field names no reason, at {probe.path()}")
+    reason = probe.page.locator(f'[id="{ids[0]}"]:not(:empty)')
+    try:
+        reason.wait_for(timeout=_EDITOR_TIMEOUT_MS)
+    except PlaywrightTimeoutError as error:
+        raise ReasonMissing(f"a refused field shows no reason, at {probe.path()}") from error
+    reason.scroll_into_view_if_needed()
+    return reason.inner_text().strip()
 
 
 def shoot_combined_editor(probe: Probe, out: Path) -> Iterator[tuple[str, Path]]:

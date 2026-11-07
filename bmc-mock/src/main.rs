@@ -132,6 +132,7 @@ async fn run() -> Result<()> {
         stop,
         config.factory_default,
         config.setup_pending,
+        config.wifi_join_fails,
         config.address.port(),
     );
 

@@ -81,21 +81,26 @@ impl Manager {
         stop: Arc<tokio::sync::Notify>,
         factory_default: bool,
         setup_pending: bool,
+        wifi_join_fails: bool,
         port: u16,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
+        // The mock serves the captive portal from its own HTTP
+        // listener, so the redirect must point back at it.
+        let network_manager = MockNetworkManager::with_provisioning(factory_default, setup_pending)
+            .with_captive_portal_host(format!("localhost:{port}"));
+        let network_manager = if wifi_join_fails {
+            network_manager.with_failing_join()
+        } else {
+            network_manager
+        };
         Self {
             mockfs,
             platform,
             session_manager,
             timezone_sender,
             password,
-            network_manager: Arc::new(
-                MockNetworkManager::with_provisioning(factory_default, setup_pending)
-                    // The mock serves the captive portal from its own HTTP
-                    // listener, so the redirect must point back at it.
-                    .with_captive_portal_host(format!("localhost:{port}")),
-            ),
+            network_manager: Arc::new(network_manager),
             pacing,
             stop,
         }

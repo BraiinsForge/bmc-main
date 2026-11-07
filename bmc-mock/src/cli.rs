@@ -79,6 +79,9 @@ pub struct Config {
     /// Run bmc with a setup-pending flag
     #[clap(long)]
     pub setup_pending: bool,
+    /// Refuse every Wi-Fi join, to see how a failed one reads in the web UI
+    #[clap(long)]
+    pub wifi_join_fails: bool,
     /// Default display brightness. Value between 0-100
     #[clap(long, default_value = "80")]
     pub default_brightness_pct: u8,

@@ -39,6 +39,7 @@ from web_probe.device import (
     LanguageUnknown,
     LoginRefused,
     LoginStalled,
+    ReasonMissing,
     SceneLeft,
     TabsMissing,
     log_in,
@@ -99,6 +100,7 @@ def walk(
             LoginStalled,
             LanguageUnknown,
             EditorUnreached,
+            ReasonMissing,
             SceneLeft,
             TabsMissing,
         ) as error:
