@@ -141,7 +141,9 @@ where
         diagnosis.poll(&device).await;
         debug!("{i}/{attempts} attempt to see {device} associated with {ssid}");
         match CommandUtils::call_iw_cmd(&["dev", &device, "link"]).await {
-            Ok(output) if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid) => {
+            Ok(output)
+                if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid.as_bytes()) =>
+            {
                 debug!("{device} is associated with {ssid}");
                 diagnosis.associated();
                 associated = true;
@@ -197,14 +199,45 @@ async fn join_failure(diagnosis: &mut JoinDiagnosis, ssid: &str, fallback: Error
     diagnosis.verdict(ssid).await.map_or(fallback, Into::into)
 }
 
-/// SSID of the association `iw dev <device> link` reports, `None` while the
-/// station is not connected (`Not connected.`) or the SSID line is missing.
-pub(crate) fn parse_iw_link_ssid(output: &str) -> Option<String> {
+/// SSID of the association `iw dev <device> link` reports, as the bytes iw
+/// escaped through `print_ssid_escaped`; `None` while the station is not
+/// connected (`Not connected.`) or the SSID line is missing.
+pub(crate) fn parse_iw_link_ssid(output: &str) -> Option<Vec<u8>> {
     output
         .lines()
         .find_map(|line| line.trim().strip_prefix("SSID:"))
-        .map(|ssid| ssid.trim().to_owned())
+        .map(|ssid| decode_printf(ssid.trim()))
         .filter(|ssid| !ssid.is_empty())
+}
+
+/// Undoes the escaping wpa_supplicant's `printf_encode` and iw's
+/// `print_ssid_escaped` apply to an SSID: `\xNN` for every byte neither prints
+/// as is, and the supplicant's `\"`, `\\`, `\e`, `\n`, `\r` and `\t`.
+pub(crate) fn decode_printf(field: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(field.len());
+    let mut bytes = field.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte != b'\\' {
+            out.push(byte);
+            continue;
+        }
+        match bytes.next() {
+            Some(b'x') => {
+                let hex: String = bytes.by_ref().take(2).map(char::from).collect();
+                match u8::from_str_radix(&hex, 16) {
+                    Ok(value) => out.push(value),
+                    Err(_) => out.extend_from_slice(format!("\\x{hex}").as_bytes()),
+                }
+            }
+            Some(b'e') => out.push(0x1b),
+            Some(b'n') => out.push(b'\n'),
+            Some(b'r') => out.push(b'\r'),
+            Some(b't') => out.push(b'\t'),
+            Some(other) => out.push(other),
+            None => out.push(b'\\'),
+        }
+    }
+    out
 }
 
 /// Whether `iw dev <device> station dump` reports the peer authorized:
@@ -238,7 +271,8 @@ fn fresh_authorized_session(output: &str, window: Duration) -> bool {
 /// The station dump for `device`, or `None` unless its link names `ssid`.
 async fn station_dump_on(device: &str, ssid: &str) -> Option<String> {
     match CommandUtils::call_iw_cmd(&["dev", device, "link"]).await {
-        Ok(output) if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid) => {}
+        Ok(output)
+            if parse_iw_link_ssid(&output).is_some_and(|joined| joined == ssid.as_bytes()) => {}
         Ok(_) => return None,
         Err(e) => {
             debug!("Unable to query the {device} link: {e}");
@@ -553,7 +587,7 @@ impl WifiCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_sort_by_strongest_signal, fresh_authorized_session, mark_connected,
+        decode_printf, filter_sort_by_strongest_signal, fresh_authorized_session, mark_connected,
         parse_iw_link_ssid, parse_iw_station_authorized, parse_iw_station_connected_time,
         redact_wifi_key,
     };
@@ -592,12 +626,45 @@ mod tests {
     #[test]
     fn parses_the_joined_ssid_from_iw_link() {
         let connected = "Connected to 11:22:33:44:55:66 (on wlan0)\n\tSSID: Home Net\n\tfreq: 2412\n\tsignal: -47 dBm\n";
-        assert_eq!(parse_iw_link_ssid(connected).as_deref(), Some("Home Net"));
+        assert_eq!(
+            parse_iw_link_ssid(connected).as_deref(),
+            Some(b"Home Net".as_slice())
+        );
         assert_eq!(parse_iw_link_ssid("Not connected.\n"), None);
         assert_eq!(
             parse_iw_link_ssid("Connected to 11:22:33:44:55:66 (on wlan0)\n\tSSID: \n"),
             None
         );
+    }
+
+    /// `iw dev wlan0 link` for a station associated with `ssid` as iw prints it.
+    fn iw_link(ssid: &str) -> String {
+        format!("Connected to 11:22:33:44:55:66 (on wlan0)\n\tSSID: {ssid}\n\tfreq: 2412\n")
+    }
+
+    #[test]
+    fn decodes_the_hex_escapes_iw_puts_in_the_joined_ssid() {
+        assert_eq!(
+            parse_iw_link_ssid(&iw_link(r"Dom\xc5\xaf")).as_deref(),
+            Some("Domů".as_bytes()),
+            "iw escapes every non-printable byte, so a UTF-8 SSID never matches verbatim"
+        );
+        assert_eq!(
+            parse_iw_link_ssid(&iw_link(r"\x20Home Net\x20")).as_deref(),
+            Some(b" Home Net ".as_slice()),
+            "a space at either end is escaped and must survive the trim"
+        );
+        assert_eq!(
+            parse_iw_link_ssid(&iw_link(r"back\x5cslash")).as_deref(),
+            Some(br"back\slash".as_slice())
+        );
+    }
+
+    #[test]
+    fn the_encoding_round_trips_the_control_characters() {
+        assert_eq!(decode_printf(r"a\tb\nc\rd\ee"), b"a\tb\nc\rd\x1be");
+        assert_eq!(decode_printf(r"tail\"), b"tail\\");
+        assert_eq!(decode_printf(r"\xzz"), b"\\xzz");
     }
 
     /// `iw dev wlan0 station dump` for a station associated `connected` seconds ago.
