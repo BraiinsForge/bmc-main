@@ -24,15 +24,19 @@ use std::time::Duration;
 
 use bmc_grpc::web::{EncryptionType, NetworkService as _, SetWifiRequest};
 use bmc_net::mock::MockNetworkManager;
+use bmc_net_types::wifi::{
+    EncryptionType as WifiEncryption, WifiConfiguration, WifiMode, WifiStatus,
+};
 use buffa_types::google::protobuf::Empty;
 use connectrpc::{ErrorCode, ServiceResult};
 use futures::FutureExt as _;
+use strum::IntoEnumIterator as _;
 use tokio::sync::{Notify, watch};
 
 use super::boser_managed::StubBmcManager;
 use super::{no_session, wire_request};
 use crate::initial_setup::{InitSetupState, StateService, Uplink, WifiJoins};
-use crate::web::grpc::network::NetworkService;
+use crate::web::grpc::network::{NetworkService, into_grpc_wifi_status, try_into_encryption_type};
 
 /// How long a test waits for a step on the feed; only a step that never comes reaches it.
 const STEP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -187,4 +191,29 @@ async fn a_failed_join_releases_the_guard() {
         ErrorCode::Internal,
         "the second join ran instead of being refused"
     );
+}
+
+#[test]
+fn a_saved_network_reports_the_encryption_type_a_join_sends_back() {
+    for saved in WifiEncryption::iter() {
+        let status = into_grpc_wifi_status(WifiStatus {
+            enabled: true,
+            configuration: Some(WifiConfiguration {
+                mode: WifiMode::Station,
+                ssid: "HomeNet".to_owned(),
+                encryption_type: saved,
+            }),
+            sta_link_state: None,
+        });
+        let reported = status
+            .network
+            .into_option()
+            .expect("BUG: a saved network is reported with its network")
+            .encryption_type;
+        assert_eq!(
+            try_into_encryption_type(reported).ok(),
+            Some(saved),
+            "{saved} must come back as itself"
+        );
+    }
 }
