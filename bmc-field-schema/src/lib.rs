@@ -42,6 +42,8 @@ mod validate;
 pub use validate::{
     Bound, MissingValues, UnreadableValue, Violation, ViolationKind, validate_values,
 };
+#[cfg(feature = "test-support")]
+pub use validate::{BoundDiscriminants, UnreadableValueDiscriminants, ViolationKindDiscriminants};
 
 /// Maximum byte length of a [`ParamKey`]. Under the wire-format `u16` length field, so the
 /// encoder's `u16::try_from` is statically infallible.
@@ -343,6 +345,11 @@ impl ParamValue {
 
 /// Reasons the wayland-side JSON-to-[`ParamValue`] conversion can fail.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[cfg_attr(
+    feature = "test-support",
+    derive(strum::EnumDiscriminants),
+    strum_discriminants(derive(strum::EnumIter))
+)]
 pub enum ParamValueConversionError {
     /// An object key that is not a valid [`ParamKey`].
     #[error("invalid object key {0:?}")]

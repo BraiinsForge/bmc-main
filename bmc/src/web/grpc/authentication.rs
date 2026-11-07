@@ -135,8 +135,19 @@ impl<E: Display> ToStatus for LoginError<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::web::grpc::tests::{assert_worded, status_text};
     use bmc_intl::Language;
     use connectrpc::ErrorCode;
+
+    #[test]
+    fn every_login_refusal_is_worded() {
+        assert_worded(|intl| {
+            vec![
+                status_text(&LoginError::<&str>::BadCredentials.to_status(intl)),
+                status_text(&LoginError::Failed("1").to_status(intl)),
+            ]
+        });
+    }
 
     #[test]
     fn a_wrong_password_is_unauthenticated_and_worded() {

@@ -740,6 +740,9 @@ mod tests {
         WidgetConnectionMode, WidgetInitialConfig, WidgetInstanceKey, WidgetRegistration,
     };
     use crate::scene::{SceneKind, Widget, WidgetPlacement, WidgetPosition};
+    use crate::web::grpc::tests::{
+        assert_worded, field_violations, reasons, status_text, the_reason,
+    };
     use crate::web::grpc::tests::{no_session, violation_fields, wire_request};
     use crate::widget::{Coordinator, WidgetManager};
 
@@ -771,6 +774,74 @@ mod tests {
         let mut violations = FieldViolations::new();
         validate_allow_hosts(&english(), type_id, &entries, &mut violations);
         violations.into()
+    }
+
+    #[test]
+    fn every_refused_account_field_is_worded() {
+        let bad_key = HashMap::from([("1".to_owned(), String::new())]);
+        let bad_lines = [
+            "",
+            "1 2",
+            "1/2",
+            "h:x",
+            ":80",
+            "*.",
+            "*.*.x",
+            "a*.b",
+            "a[::1]",
+            "[::1",
+            "[1.2.3.4]",
+            "[::1]x",
+        ]
+        .map(str::to_owned);
+        let file_token = credential::BuiltinType::LocalFileToken.id();
+        let path = credential::FILE_TOKEN_PATH_FIELD;
+        assert_worded(|intl| {
+            let schema = |type_id: &str, pairs: &[(&str, &str)]| {
+                let mut violations = FieldViolations::new();
+                validate_schema(intl, type_id, &values(pairs), &mut violations);
+                violations
+            };
+            let allow_hosts = |type_id: &str, entries: &[String]| {
+                let mut violations = FieldViolations::new();
+                validate_allow_hosts(intl, type_id, entries, &mut violations);
+                violations
+            };
+            let mut key_violations = FieldViolations::new();
+            let _ = parse_field_values(intl, "field_values", &bad_key, &mut key_violations);
+            let too_long = "x".repeat(51);
+
+            let mut refusals = vec![
+                the_reason(schema("1", &[])),
+                the_reason(schema(file_token, &[(path, "relative")])),
+                the_reason(schema(file_token, &[(path, "/1"), ("extra", "1")])),
+                the_reason(allow_hosts(
+                    credential::BuiltinType::BraiinsPool.id(),
+                    &["1".to_owned()],
+                )),
+                the_reason(parse_account_name(intl, "name", "").1),
+                the_reason(parse_account_name(intl, "name", &too_long).1),
+                the_reason(parse_account_id(intl, "id", "").1),
+                the_reason(key_violations),
+            ];
+            refusals.extend(reasons::<12>(allow_hosts(
+                credential::BuiltinType::GenericToken.id(),
+                &bad_lines,
+            )));
+            let unverified = CredentialCheckError::Unexpected.to_status(intl);
+            refusals.push(status_text(&unverified));
+            refusals.push(the_reason(field_violations(&unverified)));
+            for err in [
+                CredentialCheckError::Invalid,
+                CredentialCheckError::ServiceNotAvailable,
+                CredentialCheckError::ClientInitFailed,
+            ] {
+                refusals.push(the_reason(field_violations(&err.to_status(intl))));
+            }
+            refusals.push(status_text(&account_not_found(intl)));
+            refusals.push(status_text(&failed_accounts_save(intl)));
+            refusals
+        });
     }
 
     #[test]

@@ -533,7 +533,10 @@ mod tests {
         SnoozeOptionsWrapper, snooze_options_wrapper::Kind as SnoozeKind,
     };
 
-    use super::{ParseOutput, SnoozeDuration, SnoozeLimit, SnoozeOptions};
+    use super::{
+        AlarmError, ParseOutput, SnoozeDuration, SnoozeLimit, SnoozeOptions, ToStatus as _,
+    };
+    use crate::web::grpc::tests::{assert_worded, reasons, status_text, the_reason};
 
     fn violations_vec(violations: super::FieldViolations) -> Vec<FieldViolation> {
         violations.into()
@@ -545,6 +548,40 @@ mod tests {
     ) -> ParseOutput<SnoozeOptions> {
         let intl = bmc_intl::shared_formatter(bmc_intl::Language::EN);
         super::parse_snooze_options_field(&intl, field, input)
+    }
+
+    #[test]
+    fn every_refused_alarm_field_is_worded() {
+        assert_worded(|intl| {
+            let nothing_chosen = SnoozeKind::Snooze(bmc_grpc::web::SnoozeOptions::default());
+            let too_long = "x".repeat(super::ALARM_NAME_MAX_BYTES + 1);
+            let mut refusals = vec![
+                the_reason(super::parse_time(intl, "time", "25:00").1),
+                the_reason(super::parse_sound(intl, "sound", Some("1".to_owned())).1),
+                the_reason(super::parse_snooze_options_field(intl, "snooze", None).1),
+                the_reason(super::parse_alarm_id(intl, "id", "").1),
+                the_reason(super::validate_alarm_name(intl, "name", &too_long)),
+            ];
+            refusals.extend(reasons::<2>(
+                super::parse_snooze_options(intl, nothing_chosen).1,
+            ));
+            refusals
+        });
+    }
+
+    #[test]
+    fn every_alarm_status_is_worded() {
+        assert_worded(|intl| {
+            [
+                AlarmError::SyncToStorage,
+                AlarmError::NotFound,
+                AlarmError::RemoveAlarm,
+                AlarmError::ScheduleAlarm,
+            ]
+            .iter()
+            .map(|error| status_text(&error.to_status(intl)))
+            .collect()
+        });
     }
 
     #[test]

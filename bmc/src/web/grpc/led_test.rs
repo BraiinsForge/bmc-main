@@ -137,3 +137,22 @@ fn map_effect(
         web::LedEffectType::Unspecified | web::LedEffectType::None => unreachable!(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::web::grpc::tests::{assert_worded, status_text};
+
+    #[test]
+    fn every_led_test_refusal_is_worded() {
+        assert_worded(|intl| {
+            let refused = |effect_type: web::LedEffectType| {
+                status_text(&map_effect(intl, effect_type.into(), None).expect_err("BUG: refused"))
+            };
+            vec![
+                refused(web::LedEffectType::Unspecified),
+                refused(web::LedEffectType::Solid),
+            ]
+        });
+    }
+}

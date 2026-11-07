@@ -149,11 +149,15 @@ pub fn extract_session<'a, S: session::Manager>(
     headers: &http::HeaderMap,
     extensions: &'a http::Extensions,
 ) -> Result<&'a S::Session, connectrpc::ConnectError> {
-    extensions.get::<S::Session>().ok_or_else(|| {
-        connectrpc::ConnectError::unauthenticated(bmc_intl::format_message!(
-            intl_from_headers(headers),
-            default_message: "Missing or invalid session!",
-            description: "Error when a request needs signing in and the session is missing or has expired",
-        ))
-    })
+    extensions
+        .get::<S::Session>()
+        .ok_or_else(|| missing_session(&intl_from_headers(headers)))
+}
+
+pub(crate) fn missing_session(intl: &bmc_intl::Intl) -> connectrpc::ConnectError {
+    connectrpc::ConnectError::unauthenticated(bmc_intl::format_message!(
+        intl,
+        default_message: "Missing or invalid session!",
+        description: "Error when a request needs signing in and the session is missing or has expired",
+    ))
 }

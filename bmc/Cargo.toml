@@ -8,6 +8,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 # Non-Rust fixtures read by this crate's own tests.
 [package.metadata.nix]
 include = [
+    "../assets/intl/pseudo/**",
     "tests/fixtures/active_widget_limit_v0.json",
     "tests/fixtures/legacy_config_sample.json",
     # Globbed, not listed: the golden suite discovers its cases by reading
@@ -101,7 +102,9 @@ nix = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 async-stream.workspace = true
+bmc-field-schema = { workspace = true, features = ["test-support"] }
 bmc-grpc = { workspace = true, features = ["client"] }
+bmc-intl-pseudo.workspace = true
 bytes.workspace = true
 indoc.workspace = true
 proptest.workspace = true

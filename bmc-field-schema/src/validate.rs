@@ -60,6 +60,11 @@ impl Violation {
 /// A request's edge words it in the request's language.
 /// `Display` is the English for what has no language to ask for, such as a manifest's load error.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "test-support",
+    derive(strum::EnumDiscriminants),
+    strum_discriminants(derive(strum::EnumIter))
+)]
 pub enum ViolationKind {
     Required,
     /// A value the edge could not read.
@@ -142,6 +147,11 @@ impl std::fmt::Display for ViolationKind {
 /// `at` is where it sits below the value, such as `[1]["label"]`,
 /// and empty for the value itself.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "test-support",
+    derive(strum::EnumDiscriminants),
+    strum_discriminants(derive(strum::EnumIter))
+)]
 pub enum UnreadableValue {
     KindUnset {
         at: String,
@@ -188,6 +198,11 @@ impl std::fmt::Display for UnreadableValue {
 
 /// A numeric limit, whole or not as its schema has it.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(
+    feature = "test-support",
+    derive(strum::EnumDiscriminants),
+    strum_discriminants(derive(strum::EnumIter))
+)]
 pub enum Bound {
     Integer(i32),
     Double(f64),

@@ -358,33 +358,9 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for MinerSetup<T, F> {
     ) -> Result<(), ConnectError> {
         // NOTE: every field is checked before anything is written, so a rejected
         // request leaves the device untouched and names each offending field.
-        let mut field_violations = vec![];
-
         let pool = request.pool.clone().into_option();
-        match &pool {
-            None => field_violations.push(violation("pool", missing_value(intl))),
-            Some(pool) => {
-                if url::Url::parse(&pool.url).is_err() {
-                    let description = format_message!(
-                        intl,
-                        default_message: "Invalid URL!",
-                        description: "Error under the mining pool's address field",
-                    );
-                    field_violations.push(violation("pool.url", description));
-                }
-                if pool.user.trim().is_empty() {
-                    field_violations.push(violation("pool.user", missing_value(intl)));
-                }
-            }
-        }
-
         let hostname = request.hostname.clone();
-        if let Some(hostname) = hostname.as_deref()
-            && let Err(err) = bmc_net::validate_hostname(hostname)
-        {
-            warn!("Refused the hostname: {err}");
-            field_violations.push(violation("hostname", hostname_refusal(intl, &err)));
-        }
+        let mut field_violations = miner_form_violations(intl, pool.as_ref(), hostname.as_deref());
 
         let network = match request.network.as_option() {
             None => None,
@@ -509,6 +485,40 @@ impl ToStatus for DeviceSetupError {
             )),
         }
     }
+}
+
+fn miner_form_violations(
+    intl: &Intl,
+    pool: Option<&PoolConfig>,
+    hostname: Option<&str>,
+) -> Vec<FieldViolation> {
+    let mut field_violations = vec![];
+
+    match pool {
+        None => field_violations.push(violation("pool", missing_value(intl))),
+        Some(pool) => {
+            if url::Url::parse(&pool.url).is_err() {
+                let description = format_message!(
+                    intl,
+                    default_message: "Invalid URL!",
+                    description: "Error under the mining pool's address field",
+                );
+                field_violations.push(violation("pool.url", description));
+            }
+            if pool.user.trim().is_empty() {
+                field_violations.push(violation("pool.user", missing_value(intl)));
+            }
+        }
+    }
+
+    if let Some(hostname) = hostname
+        && let Err(err) = bmc_net::validate_hostname(hostname)
+    {
+        warn!("Refused the hostname: {err}");
+        field_violations.push(violation("hostname", hostname_refusal(intl, &err)));
+    }
+
+    field_violations
 }
 
 fn parse_device_setup(
@@ -648,12 +658,70 @@ pub(crate) fn try_from_unit_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::web::grpc::tests::violation_fields;
+    use crate::web::grpc::tests::{
+        assert_worded, reasons, status_text, the_reason, violation_fields,
+    };
     use bmc_grpc::web::{NetworkConfig, NetworkConfigStatic, network_config::Protocol};
     use bmc_intl::Language;
 
     fn english() -> Arc<Intl> {
         bmc_intl::shared_formatter(Language::EN)
+    }
+
+    #[test]
+    fn every_refused_setup_field_is_worded() {
+        let bad_url = PoolConfig {
+            url: "1".to_owned(),
+            user: "1".to_owned(),
+            ..PoolConfig::default()
+        };
+        assert_worded(|intl| {
+            let mut refusals = vec![
+                the_reason(miner_form_violations(intl, None, None)),
+                the_reason(miner_form_violations(intl, Some(&bad_url), None)),
+            ];
+            let [_pool, hostname] = reasons(miner_form_violations(intl, None, Some("-")));
+            refusals.push(hostname);
+            refusals.extend(reasons::<6>(
+                parse_device_setup(intl, SettingsRequest::default())
+                    .expect_err("BUG: an empty form leaves every field unchosen"),
+            ));
+            let hostname = String::new;
+            refusals.extend(
+                [
+                    HostnameError::Character {
+                        hostname: hostname(),
+                    },
+                    HostnameError::TooLong { max: 1 },
+                    HostnameError::TooLong { max: 2 },
+                    HostnameError::EmptyLabel {
+                        hostname: hostname(),
+                    },
+                    HostnameError::LabelTooLong {
+                        hostname: hostname(),
+                        max: 1,
+                    },
+                    HostnameError::LabelTooLong {
+                        hostname: hostname(),
+                        max: 2,
+                    },
+                ]
+                .iter()
+                .map(|error| hostname_refusal(intl, error)),
+            );
+            refusals
+        });
+    }
+
+    #[test]
+    fn every_setup_status_is_worded() {
+        assert_worded(|intl| {
+            vec![
+                status_text(&SkipWifiError::NoEthernet.to_status(intl)),
+                status_text(&SkipWifiError::InProgress.to_status(intl)),
+                status_text(&DeviceSetupError::SetPassword(anyhow::anyhow!("1")).to_status(intl)),
+            ]
+        });
     }
 
     #[test]

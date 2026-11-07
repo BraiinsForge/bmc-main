@@ -59,7 +59,7 @@ where
     }
 }
 
-fn wrong_current_password(intl: &Intl, field: &str) -> ConnectError {
+pub(super) fn wrong_current_password(intl: &Intl, field: &str) -> ConnectError {
     let description = format_message!(
         intl,
         default_message: "Incorrect current password!",
@@ -68,7 +68,16 @@ fn wrong_current_password(intl: &Intl, field: &str) -> ConnectError {
     bad_request(intl, vec![violation(field, description)])
 }
 
-fn failed_password_presence(intl: &Intl) -> ConnectError {
+pub(super) fn invalid_timezone(intl: &Intl) -> ConnectError {
+    let description = format_message!(
+        intl,
+        default_message: "Invalid timezone!",
+        description: "Error under the timezone field when the device does not know the chosen timezone",
+    );
+    invalid_field(intl, "timezone", description)
+}
+
+pub(super) fn failed_password_presence(intl: &Intl) -> ConnectError {
     ConnectError::internal(format_message!(
         intl,
         default_message: "Failed to check whether a password is set!",
@@ -76,7 +85,7 @@ fn failed_password_presence(intl: &Intl) -> ConnectError {
     ))
 }
 
-fn failed_password_check(intl: &Intl) -> ConnectError {
+pub(super) fn failed_password_check(intl: &Intl) -> ConnectError {
     ConnectError::internal(format_message!(
         intl,
         default_message: "Failed to check current password!",
@@ -84,7 +93,7 @@ fn failed_password_check(intl: &Intl) -> ConnectError {
     ))
 }
 
-fn failed_password_set(intl: &Intl) -> ConnectError {
+pub(super) fn failed_password_set(intl: &Intl) -> ConnectError {
     ConnectError::internal(format_message!(
         intl,
         default_message: "Failed to set password!",
@@ -234,14 +243,7 @@ where
         request: ServiceRequest<'_, SetTimezoneRequest>,
     ) -> ServiceResult<Empty> {
         let intl = intl(&ctx);
-        let timezone = Timezone::from_str(request.id).map_err(|_| {
-            let description = format_message!(
-                intl,
-                default_message: "Invalid timezone!",
-                description: "Error under the timezone field when the device does not know the chosen timezone",
-            );
-            invalid_field(&intl, "timezone", description)
-        })?;
+        let timezone = Timezone::from_str(request.id).map_err(|_| invalid_timezone(&intl))?;
 
         self.manager.set_timezone(timezone).await.map_err(|e| {
             warn!("Failed to set timezone: {}", e);

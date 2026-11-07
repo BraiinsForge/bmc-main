@@ -261,7 +261,7 @@ where
     }
 }
 
-fn failed_wifi_status(intl: &Intl) -> ConnectError {
+pub(super) fn failed_wifi_status(intl: &Intl) -> ConnectError {
     ConnectError::internal(format_message!(
         intl,
         default_message: "Failed to get Wi-Fi status!",

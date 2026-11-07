@@ -39,7 +39,7 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use bmc_grpc::web;
-use bmc_intl::format_message;
+use bmc_intl::{Intl, format_message};
 use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::FirmwareIndex;
 use connectrpc::{ConnectError, ConnectRpcService, Router};
@@ -180,14 +180,18 @@ impl<S: SessionManager> AccessGate<S> {
         if self.hardware_capabilities.boser_managed
             && managed_rpc_owner(path) == Some(ManagedRpcOwner::Boser)
         {
-            return Err(ConnectError::unimplemented(format_message!(
-                intl::intl_from_headers(headers),
-                default_message: "This operation is managed by Boser on this platform.",
-                description: "Error when the device refuses an operation because Boser owns it on this hardware; Boser is a product name",
-            )));
+            return Err(managed_by_boser(&intl::intl_from_headers(headers)));
         }
         Ok(())
     }
+}
+
+fn managed_by_boser(intl: &Intl) -> ConnectError {
+    ConnectError::unimplemented(format_message!(
+        intl,
+        default_message: "This operation is managed by Boser on this platform.",
+        description: "Error when the device refuses an operation because Boser owns it on this hardware; Boser is a product name",
+    ))
 }
 
 /// Middleware: answer a refused call in the caller's protocol without reading its body.

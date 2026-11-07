@@ -493,14 +493,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             .first_day_of_week
             .as_known()
             .and_then(map_weekday_from_proto)
-            .ok_or_else(|| {
-                let description = format_message!(
-                    intl,
-                    default_message: "Choose the first day of the week",
-                    description: "Error under the first day of the week field when nothing is chosen",
-                );
-                invalid_field(&intl, "first_day_of_week", description)
-            })?;
+            .ok_or_else(|| first_day_of_week_unchosen(&intl))?;
 
         let mut config = self.config_handle.write().await;
         config.set_first_day_of_week(weekday);
@@ -708,11 +701,20 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
     }
 }
 
+pub(super) fn first_day_of_week_unchosen(intl: &Intl) -> ConnectError {
+    let description = format_message!(
+        intl,
+        default_message: "Choose the first day of the week",
+        description: "Error under the first day of the week field when nothing is chosen",
+    );
+    invalid_field(intl, "first_day_of_week", description)
+}
+
 fn clamp_brightness(value: u32) -> u32 {
     value.clamp(API_BRIGHTNESS_MIN, API_BRIGHTNESS_MAX)
 }
 
-fn validate_sound_volume(intl: &Intl, value: u32) -> Result<(), ConnectError> {
+pub(super) fn validate_sound_volume(intl: &Intl, value: u32) -> Result<(), ConnectError> {
     if value > API_SOUND_VOLUME_MAX {
         return Err(ConnectError::invalid_argument(format_message!(
             intl,

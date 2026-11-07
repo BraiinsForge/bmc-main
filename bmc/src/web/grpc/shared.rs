@@ -367,111 +367,187 @@ pub(crate) fn try_from_number_format(
 
 #[cfg(test)]
 mod tests {
-    use bmc_field_schema::{Bound, ParamValueConversionError};
+    use bmc_field_schema::{
+        Bound, BoundDiscriminants as BoundName, ParamValueConversionError,
+        ParamValueConversionErrorDiscriminants as ConversionName,
+        UnreadableValueDiscriminants as UnreadableName, ViolationKindDiscriminants as KindName,
+    };
     use bmc_intl::Language;
+    use strum::IntoEnumIterator;
 
     use super::*;
+    use crate::web::grpc::tests::{assert_worded, status_text};
 
-    /// No wildcard: a new kind stops compiling here, the cue to add it to the samples below.
-    fn name_every_kind(kind: &ViolationKind) {
-        match kind {
-            ViolationKind::Required
-            | ViolationKind::Unreadable(
-                UnreadableValue::KindUnset { .. }
-                | UnreadableValue::InvalidFieldKey { .. }
-                | UnreadableValue::Conversion(
-                    ParamValueConversionError::InvalidObjectKey(_)
-                    | ParamValueConversionError::UnrepresentableNumber
-                    | ParamValueConversionError::NonFiniteNumber
-                    | ParamValueConversionError::StringTooLong { .. },
-                ),
-            )
-            | ViolationKind::UnknownParam
-            | ViolationKind::UnknownField
-            | ViolationKind::NotAList
-            | ViolationKind::NotAnObject
-            | ViolationKind::NotText
-            | ViolationKind::NotWholeNumber
-            | ViolationKind::NotNumber
-            | ViolationKind::NotTrueOrFalse
-            | ViolationKind::NotTimezone
-            | ViolationKind::InvalidTimezone
-            | ViolationKind::NotFinite
-            | ViolationKind::NotListed
-            | ViolationKind::TooFewItems { .. }
-            | ViolationKind::TooManyItems { .. }
-            | ViolationKind::TooManyBytes { .. }
-            | ViolationKind::TooFewCharacters { .. }
-            | ViolationKind::TooManyCharacters { .. }
-            | ViolationKind::BelowMin(_)
-            | ViolationKind::AboveMax(_)
-            | ViolationKind::RepeatsItem { .. }
-            | ViolationKind::SameAsItem { .. } => {}
+    /// The exhaustive match in `samples` proves every name has an arm,
+    /// but not that the arm is non-empty or that its samples carry that name.
+    fn sampled<Name, Sample>(samples: impl Fn(Name) -> Vec<Sample>) -> Vec<Sample>
+    where
+        Name: IntoEnumIterator + Copy + PartialEq + std::fmt::Debug + for<'a> From<&'a Sample>,
+        Sample: std::fmt::Debug,
+    {
+        Name::iter()
+            .flat_map(|name| {
+                let listed = samples(name);
+                assert!(!listed.is_empty(), "{name:?} has no sample");
+                for sample in &listed {
+                    assert_eq!(
+                        Name::from(sample),
+                        name,
+                        "{sample:?} is listed under {name:?} instead of its own name"
+                    );
+                }
+                listed
+            })
+            .collect()
+    }
+
+    /// A sample for each way a kind is worded,
+    /// such as a count's singular and plural.
+    fn every_kind() -> Vec<ViolationKind> {
+        sampled(|name| match name {
+            KindName::Required => vec![ViolationKind::Required],
+            KindName::Unreadable => sampled(unreadable_samples)
+                .into_iter()
+                .map(ViolationKind::Unreadable)
+                .collect(),
+            KindName::UnknownParam => vec![ViolationKind::UnknownParam],
+            KindName::UnknownField => vec![ViolationKind::UnknownField],
+            KindName::NotAList => vec![ViolationKind::NotAList],
+            KindName::NotAnObject => vec![ViolationKind::NotAnObject],
+            KindName::NotText => vec![ViolationKind::NotText],
+            KindName::NotWholeNumber => vec![ViolationKind::NotWholeNumber],
+            KindName::NotNumber => vec![ViolationKind::NotNumber],
+            KindName::NotTrueOrFalse => vec![ViolationKind::NotTrueOrFalse],
+            KindName::NotTimezone => vec![ViolationKind::NotTimezone],
+            KindName::InvalidTimezone => vec![ViolationKind::InvalidTimezone],
+            KindName::NotFinite => vec![ViolationKind::NotFinite],
+            KindName::NotListed => vec![ViolationKind::NotListed],
+            KindName::TooFewItems => vec![
+                ViolationKind::TooFewItems { min: 1 },
+                ViolationKind::TooFewItems { min: 2 },
+            ],
+            KindName::TooManyItems => vec![
+                ViolationKind::TooManyItems { max: 1 },
+                ViolationKind::TooManyItems { max: 2 },
+            ],
+            KindName::TooManyBytes => vec![ViolationKind::TooManyBytes { max: 1024 }],
+            KindName::TooFewCharacters => vec![
+                ViolationKind::TooFewCharacters { min: 1 },
+                ViolationKind::TooFewCharacters { min: 2 },
+            ],
+            KindName::TooManyCharacters => vec![
+                ViolationKind::TooManyCharacters { max: 1 },
+                ViolationKind::TooManyCharacters { max: 2 },
+            ],
+            KindName::BelowMin => bound_samples(-3, 0.5)
+                .into_iter()
+                .map(ViolationKind::BelowMin)
+                .collect(),
+            KindName::AboveMax => bound_samples(1234, 2.5)
+                .into_iter()
+                .map(ViolationKind::AboveMax)
+                .collect(),
+            KindName::RepeatsItem => vec![ViolationKind::RepeatsItem { item: 1 }],
+            KindName::SameAsItem => vec![ViolationKind::SameAsItem { item: 2 }],
+        })
+    }
+
+    fn bound_samples(integer: i32, double: f64) -> Vec<Bound> {
+        sampled(|name| {
+            vec![match name {
+                BoundName::Integer => Bound::Integer(integer),
+                BoundName::Double => Bound::Double(double),
+            }]
+        })
+    }
+
+    /// `KindUnset` and `InvalidFieldKey` read one way
+    /// for the value itself and another for a part nested in it.
+    fn unreadable_samples(name: UnreadableName) -> Vec<UnreadableValue> {
+        match name {
+            UnreadableName::KindUnset => vec![
+                UnreadableValue::KindUnset { at: String::new() },
+                UnreadableValue::KindUnset {
+                    at: "[1]".to_owned(),
+                },
+            ],
+            UnreadableName::InvalidFieldKey => vec![
+                UnreadableValue::InvalidFieldKey {
+                    at: String::new(),
+                    key: "1".to_owned(),
+                },
+                UnreadableValue::InvalidFieldKey {
+                    at: "[1]".to_owned(),
+                    key: "2".to_owned(),
+                },
+            ],
+            UnreadableName::Conversion => sampled(conversion_samples)
+                .into_iter()
+                .map(UnreadableValue::Conversion)
+                .collect(),
+        }
+    }
+
+    fn conversion_samples(name: ConversionName) -> Vec<ParamValueConversionError> {
+        match name {
+            ConversionName::InvalidObjectKey => {
+                vec![ParamValueConversionError::InvalidObjectKey("1".to_owned())]
+            }
+            ConversionName::UnrepresentableNumber => {
+                vec![ParamValueConversionError::UnrepresentableNumber]
+            }
+            ConversionName::NonFiniteNumber => vec![ParamValueConversionError::NonFiniteNumber],
+            ConversionName::StringTooLong => vec![ParamValueConversionError::StringTooLong {
+                len: 1025,
+                max: 1024,
+            }],
         }
     }
 
     #[test]
     fn every_violation_kind_words_its_display_in_english() {
         let intl = bmc_intl::shared_formatter(Language::EN);
-        for kind in [
-            ViolationKind::Required,
-            ViolationKind::Unreadable(UnreadableValue::KindUnset { at: String::new() }),
-            ViolationKind::Unreadable(UnreadableValue::KindUnset {
-                at: "[1]".to_owned(),
-            }),
-            ViolationKind::Unreadable(UnreadableValue::InvalidFieldKey {
-                at: String::new(),
-                key: "1".to_owned(),
-            }),
-            ViolationKind::Unreadable(UnreadableValue::InvalidFieldKey {
-                at: "[1]".to_owned(),
-                key: "2".to_owned(),
-            }),
-            ViolationKind::Unreadable(UnreadableValue::Conversion(
-                ParamValueConversionError::InvalidObjectKey("1".to_owned()),
-            )),
-            ViolationKind::Unreadable(UnreadableValue::Conversion(
-                ParamValueConversionError::UnrepresentableNumber,
-            )),
-            ViolationKind::Unreadable(UnreadableValue::Conversion(
-                ParamValueConversionError::NonFiniteNumber,
-            )),
-            ViolationKind::Unreadable(UnreadableValue::Conversion(
-                ParamValueConversionError::StringTooLong {
-                    len: 1025,
-                    max: 1024,
-                },
-            )),
-            ViolationKind::UnknownParam,
-            ViolationKind::UnknownField,
-            ViolationKind::NotAList,
-            ViolationKind::NotAnObject,
-            ViolationKind::NotText,
-            ViolationKind::NotWholeNumber,
-            ViolationKind::NotNumber,
-            ViolationKind::NotTrueOrFalse,
-            ViolationKind::NotTimezone,
-            ViolationKind::InvalidTimezone,
-            ViolationKind::NotFinite,
-            ViolationKind::NotListed,
-            ViolationKind::TooFewItems { min: 1 },
-            ViolationKind::TooFewItems { min: 2 },
-            ViolationKind::TooManyItems { max: 1 },
-            ViolationKind::TooManyItems { max: 2 },
-            ViolationKind::TooManyBytes { max: 1024 },
-            ViolationKind::TooFewCharacters { min: 1 },
-            ViolationKind::TooFewCharacters { min: 2 },
-            ViolationKind::TooManyCharacters { max: 1 },
-            ViolationKind::TooManyCharacters { max: 2 },
-            ViolationKind::BelowMin(Bound::Integer(-3)),
-            ViolationKind::BelowMin(Bound::Double(0.5)),
-            ViolationKind::AboveMax(Bound::Integer(1234)),
-            ViolationKind::AboveMax(Bound::Double(2.5)),
-            ViolationKind::RepeatsItem { item: 1 },
-            ViolationKind::SameAsItem { item: 2 },
-        ] {
-            name_every_kind(&kind);
+        for kind in every_kind() {
             assert_eq!(violation_message(&intl, &kind), kind.to_string());
         }
+    }
+
+    #[test]
+    fn every_violation_kind_is_worded() {
+        assert_worded(|intl| {
+            every_kind()
+                .iter()
+                // Reads as another kind's sentence, which the list already holds.
+                .filter(|kind| {
+                    !matches!(
+                        kind,
+                        ViolationKind::Unreadable(UnreadableValue::Conversion(_))
+                    )
+                })
+                .map(|kind| violation_message(intl, kind))
+                .collect()
+        });
+    }
+
+    #[test]
+    fn a_refused_form_is_worded_above_its_fields() {
+        assert_worded(|intl| vec![status_text(&bad_request(intl, vec![]))]);
+    }
+
+    #[test]
+    fn every_shared_refusal_is_worded() {
+        assert_worded(|intl| {
+            vec![
+                status_text(&internal_error(intl, "1")),
+                status_text(&parse_hhmm_to_naive_time(intl, "1").expect_err("BUG: no time")),
+                missing_value(intl),
+            ]
+        });
+    }
+
+    #[test]
+    fn an_unchecked_field_is_worded() {
+        // Words as `internal_error`, so it needs a list of its own.
+        assert_worded(|intl| vec![status_text(&unchecked_field(intl))]);
     }
 }

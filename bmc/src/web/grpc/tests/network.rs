@@ -22,7 +22,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use bmc_grpc::web::{EncryptionType, NetworkService as _, SetWifiRequest, SignalStrength};
+use bmc_grpc::web::{
+    EncryptionType, NetworkConfig, NetworkConfigStatic, NetworkService as _, SetWifiRequest,
+    SignalStrength, network_config::Protocol,
+};
 use bmc_intl::Language;
 use bmc_net::mock::MockNetworkManager;
 use bmc_net_types::wifi::{
@@ -37,15 +40,59 @@ use strum::IntoEnumIterator as _;
 use tokio::sync::{Notify, watch};
 
 use super::boser_managed::StubBmcManager;
-use super::{no_session, wire_request};
-use crate::initial_setup::{InitSetupState, StateService, Uplink, WifiJoins};
+use super::{
+    assert_worded, field_violations, no_session, reasons, status_text, the_reason, wire_request,
+};
+use crate::initial_setup::{InitSetupState, StateService, Uplink, WifiJoins, WifiSetupError};
 use crate::web::grpc::network::{
-    NetworkService, WifiJoinFailure, into_grpc_wifi_status, try_into_encryption_type,
+    NetworkService, WifiJoinFailure, failed_wifi_status, into_grpc_wifi_status,
+    parse_network_config, try_into_encryption_type,
 };
 use crate::web::grpc::shared::ToStatus as _;
 
 /// How long a test waits for a step on the feed; only a step that never comes reaches it.
 const STEP_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[test]
+fn every_refused_network_field_is_worded() {
+    let no_protocol = NetworkConfig::default();
+    let bad_address = NetworkConfig {
+        protocol: Some(Protocol::Static(NetworkConfigStatic {
+            address: String::new(),
+            netmask: "999".to_owned(),
+            gateway: "0.0.0.0".to_owned(),
+            dns_servers: vec![],
+        })),
+    };
+    assert_worded(|intl| {
+        let refused = |config| {
+            parse_network_config(intl, config, "protocol", "")
+                .expect_err("BUG: the config is refused")
+        };
+        let no_encryption = try_into_encryption_type(intl, EncryptionType::Unspecified.into())
+            .expect_err("BUG: nothing is chosen");
+        let mut refusals = vec![
+            the_reason(refused(&no_protocol)),
+            the_reason(field_violations(&no_encryption)),
+        ];
+        refusals.extend(reasons::<2>(refused(&bad_address)));
+        refusals
+    });
+}
+
+#[test]
+fn every_wifi_status_is_worded() {
+    assert_worded(|intl| {
+        let join = |error: anyhow::Error| status_text(&WifiJoinFailure(error).to_status(intl));
+        vec![
+            status_text(&failed_wifi_status(intl)),
+            status_text(&WifiSetupError::InProgress.to_status(intl)),
+            join(WifiJoinError::WrongKey("1".to_owned()).into()),
+            join(WifiJoinError::NetworkNotFound("1".to_owned()).into()),
+            join(anyhow::anyhow!("1")),
+        ]
+    });
+}
 
 fn service(network: MockNetworkManager, progress: &StateService) -> NetworkService<StubBmcManager> {
     let manager = Arc::new(StubBmcManager::with_network(network));

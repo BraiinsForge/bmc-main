@@ -717,6 +717,7 @@ dependencies = [
  "bmc-field-schema",
  "bmc-grpc",
  "bmc-intl",
+ "bmc-intl-pseudo",
  "bmc-ipc",
  "bmc-led",
  "bmc-log",
@@ -802,6 +803,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "strum",
  "thiserror 1.0.69",
  "url",
 ]

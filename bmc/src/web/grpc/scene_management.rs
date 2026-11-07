@@ -2269,7 +2269,9 @@ mod tests {
     use super::*;
 
     use crate::compositor::testing::{ASYNC_TEST_TIMEOUT, RecordingCompositor};
-    use crate::web::grpc::tests::{no_session, wire_request};
+    use crate::web::grpc::tests::{
+        assert_worded, no_session, reasons, status_text, the_reason, wire_request,
+    };
     use bmc_field_schema::ViolationKind;
     use bmc_grpc::google::rpc::bad_request::FieldViolation;
     use connectrpc::ErrorCode;
@@ -3805,6 +3807,128 @@ mod tests {
         );
         let params = fields_one("unknown", boolean_value(true));
         assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn every_refused_scene_field_is_worded() {
+        let manifest =
+            manifest_with_credentials(&[("pool", credential::BuiltinType::BraiinsPool.id(), true)]);
+        let (id, account) = account_of_type("1", credential::BuiltinType::GenericToken.id());
+        let accounts = IndexMap::from([(id, account)]);
+        let unreadable = [
+            web::FieldValue::default(),
+            list_value(vec![web::FieldValue::default()]),
+            object_value(&[("1", boolean_value(true))]),
+            list_value(vec![object_value(&[("1", boolean_value(true))])]),
+        ];
+        assert_worded(|intl| {
+            let binding = |key: &str, id: &str| {
+                let bindings = HashMap::from([(key.to_owned(), id.to_owned())]);
+                super::validate_credential_bindings(intl, &manifest, &bindings, &accounts)
+                    .expect_err("BUG: the binding is refused")
+            };
+            let mut fields = FieldViolations::new();
+            let _ = super::parse_uuid_field(intl, "1", "id", &mut fields);
+            let _ = super::parse_grid_axis(intl, u32::MAX, "row", &mut fields);
+            let _ = super::parse_widget_size(
+                intl,
+                web::WidgetSize::Unspecified.into(),
+                "size",
+                &mut fields,
+            );
+            let _ = super::parse_widget_size(intl, EnumValue::Unknown(9999), "size", &mut fields);
+            let params = fields_one("1", boolean_value(true));
+            let unknown_param =
+                super::validate_widget_params(intl, &manifest, &params, ValidateMode::Add)
+                    .expect_err("BUG: the manifest declares no such param");
+
+            let mut refusals = vec![
+                the_reason(binding("pool", "2")),
+                the_reason(binding("pool", "1")),
+                the_reason(binding("1", "1")),
+                the_reason(unknown_param),
+            ];
+            refusals.extend(reasons::<4>(fields));
+            for transition in [
+                web::SceneCyclingTransition::Unspecified.into(),
+                EnumValue::Unknown(9999),
+            ] {
+                let refused = super::parse_scene_cycling_transition(intl, transition)
+                    .expect_err("BUG: the transition is refused");
+                refusals.push(status_text(&refused));
+            }
+            for value in &unreadable {
+                let unreadable =
+                    decode_wire_value(value).expect_err("BUG: the value cannot be read");
+                refusals.push(violation_message(
+                    intl,
+                    &ViolationKind::Unreadable(unreadable),
+                ));
+            }
+            refusals
+        });
+    }
+
+    #[test]
+    fn every_scene_refusal_status_is_worded() {
+        assert_worded(|intl| {
+            let refused =
+                |result: Result<(), ConnectError>| status_text(&result.expect_err("BUG: refused"));
+            let fullscreen = scene::SceneKind::Fullscreen;
+            let placed = scene_with_widget(Uuid::new_v4(), BTreeMap::new());
+            let widget = placed
+                .widgets
+                .values()
+                .next()
+                .expect("BUG: the scene holds a widget")
+                .clone();
+            let mut past_the_edge = widget.clone();
+            past_the_edge.position.row = 1;
+            vec![
+                refused(super::validate_widget_placement(
+                    intl,
+                    &placed,
+                    &past_the_edge,
+                    None,
+                )),
+                refused(super::validate_widget_placement(
+                    intl, &placed, &widget, None,
+                )),
+                status_text(&super::invalid_scene_id(intl, "1")),
+                status_text(&super::invalid_widget_id(intl, "1")),
+                status_text(&super::scene_not_found(intl, 1)),
+                status_text(&super::widget_not_found(intl, 1)),
+                status_text(&super::widget_not_installed(intl)),
+                status_text(&super::size_not_supported(intl)),
+                status_text(&super::widget_lacks_size(intl, 1)),
+                status_text(&super::cycle_duration_too_short(intl)),
+                status_text(&super::bad_request_status(intl, FieldViolations::new())),
+                status_text(&super::live_params_status(
+                    intl,
+                    &crate::compositor::CompositorError::NotStarted,
+                )),
+                refused(super::reject_combined_when_no_slot_grid(
+                    intl,
+                    &bmc100_caps(None),
+                )),
+                refused(super::reject_remove_widget_in_fullscreen(intl, &fullscreen)),
+                refused(super::reject_update_widget_in_fullscreen(
+                    intl,
+                    &fullscreen,
+                    &web::WidgetPosition { row: 1, col: 0 },
+                    &scene::WidgetPlacement::Fullscreen,
+                )),
+                refused(super::reject_update_widget_in_fullscreen(
+                    intl,
+                    &fullscreen,
+                    &web::WidgetPosition::default(),
+                    &scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                        columns: 1,
+                        rows: 1,
+                    }),
+                )),
+            ]
+        });
     }
 
     #[test]
