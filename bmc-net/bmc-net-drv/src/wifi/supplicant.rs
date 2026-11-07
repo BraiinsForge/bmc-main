@@ -38,6 +38,8 @@ use log::debug;
 use tokio::net::UnixDatagram;
 use tokio::time::{Duration, timeout};
 
+use crate::wifi::utils::decode_printf;
+
 /// Where wpa_supplicant keeps one control socket per WiFi device.
 const CONTROL_SOCKET_DIR: &str = "/var/run/wpa_supplicant";
 /// Our end of the socket pair; the supplicant sends unsolicited events here.
@@ -409,36 +411,6 @@ fn quoted(rest: &str) -> &str {
     rest
 }
 
-/// Undoes wpa_supplicant's `printf_encode`: `\xNN` for a byte outside
-/// printable ASCII, `\"`, `\\`, `\e`, `\n`, `\r` and `\t` for the rest.
-fn decode_printf(field: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(field.len());
-    let mut bytes = field.bytes();
-    while let Some(byte) = bytes.next() {
-        if byte != b'\\' {
-            out.push(byte);
-            continue;
-        }
-        match bytes.next() {
-            Some(b'x') => {
-                let hex: String = bytes.by_ref().take(2).map(char::from).collect();
-                match u8::from_str_radix(&hex, 16) {
-                    Ok(value) => out.push(value),
-                    // Not an escape after all: keep what was read.
-                    Err(_) => out.extend_from_slice(format!("\\x{hex}").as_bytes()),
-                }
-            }
-            Some(b'e') => out.push(0x1b),
-            Some(b'n') => out.push(b'\n'),
-            Some(b'r') => out.push(b'\r'),
-            Some(b't') => out.push(b'\t'),
-            Some(other) => out.push(other),
-            None => out.push(b'\\'),
-        }
-    }
-    out
-}
-
 /// What the events say about a join of `ssid`, read in the order they came.
 ///
 /// A rejected passphrase names the network and is final. A scan that did not
@@ -766,13 +738,6 @@ mod tests {
         );
         assert_eq!(ctrl.ssid, Some(b"SSID='y".to_vec()));
         assert!(ctrl.has_field("reason=WRONG_KEY"));
-    }
-
-    #[test]
-    fn the_encoding_round_trips_the_control_characters() {
-        assert_eq!(decode_printf(r"a\tb\nc\rd\ee"), b"a\tb\nc\rd\x1be");
-        assert_eq!(decode_printf(r"tail\"), b"tail\\");
-        assert_eq!(decode_printf(r"\xzz"), b"\\xzz");
     }
 
     #[test]
