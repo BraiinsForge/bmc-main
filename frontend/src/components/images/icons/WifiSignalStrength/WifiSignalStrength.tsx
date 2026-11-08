@@ -24,6 +24,7 @@ import type { SVGProps } from 'react';
 import * as pb from '@/proto';
 import { WifiOff } from '@carbon/react/icons';
 import { Tick } from '@/components/Tick';
+import { assertUnreachable } from '@/lib/ts';
 
 import cn from 'clsx';
 import css from './WifiSignalStrength.scss';
@@ -34,12 +35,21 @@ export interface WifiSignalStrengthProps extends SVGProps<SVGSVGElement> {
     state: WifiState | pb.SignalStrength;
 }
 
-const signalStrengthToWifiIconState: Record<pb.SignalStrength, WifiState> = {
-    [pb.SignalStrength.UNSPECIFIED]: 'scanning',
-    [pb.SignalStrength.WEAK]: 'low',
-    [pb.SignalStrength.MODERATE]: 'fair',
-    [pb.SignalStrength.STRONG]: 'full',
-} as const;
+function toWifiState(state: WifiState | pb.SignalStrength): WifiState {
+    if (typeof state === 'string') return state;
+    switch (state) {
+        case pb.SignalStrength.UNSPECIFIED:
+            return 'scanning';
+        case pb.SignalStrength.WEAK:
+            return 'low';
+        case pb.SignalStrength.MODERATE:
+            return 'fair';
+        case pb.SignalStrength.STRONG:
+            return 'full';
+        default:
+            return assertUnreachable(state, 'SignalStrength');
+    }
+}
 
 const scanFrames = ['low', 'fair', 'full', 'fair'] as WifiState[];
 function getScanFrame(i: number): WifiState {
@@ -48,10 +58,7 @@ function getScanFrame(i: number): WifiState {
 
 export function WifiSignalStrength(props: WifiSignalStrengthProps) {
     const { state, size, ...rest } = props;
-    const $ =
-        state in signalStrengthToWifiIconState
-            ? (signalStrengthToWifiIconState[state as pb.SignalStrength] as WifiState)
-            : (state as WifiState);
+    const $ = toWifiState(state);
 
     switch ($) {
         case 'scanning':
@@ -73,7 +80,7 @@ export function WifiSignalStrength(props: WifiSignalStrengthProps) {
             return (
                 <svg
                     {...rest}
-                    className={cn(css.svg, css[state as 'low' | 'fair' | 'full'], props.className)}
+                    className={cn(css.svg, css[$], props.className)}
                     focusable="false"
                     preserveAspectRatio="xMidYMid meet"
                     fill="currentColor"
