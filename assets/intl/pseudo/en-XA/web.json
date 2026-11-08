@@ -861,6 +861,11 @@
     "source": "Reset to Factory Defaults",
     "translation": "[Řḗḗşḗḗŧ ŧǿǿ Ƒȧȧƈŧǿǿřẏ Ḓḗḗƒȧȧŭŭŀŧş]"
   },
+  "J1+QqdhpYK": {
+    "source": "IPv4",
+    "translation": "[ĪƤṽ4]",
+    "description": "Label of the device's IPv4 address in the network status list"
+  },
   "J1aHyWGu76": {
     "source": "Widget cycling: {status}",
     "translation": "[Ẇīḓɠḗḗŧ ƈẏƈŀīƞɠ: {status}]"
@@ -953,6 +958,11 @@
   "Lt4OBpG8iT": {
     "source": "Download size:",
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓ şīẑḗḗ:]"
+  },
+  "M+0Y1EeCXb": {
+    "source": "Confirm",
+    "translation": "[Ƈǿǿƞƒīřḿ]",
+    "description": "Confirmation dialog button when the dialog names no action of its own"
   },
   "MdbO645xRR": {
     "source": "Failed to load sound settings!",
@@ -1239,6 +1249,10 @@
     "source": "Configure the content displayed on your Deck. Enable, order, and set durations for each widget to control what’s shown.",
     "translation": "[Ƈǿǿƞƒīɠŭŭřḗḗ ŧħḗḗ ƈǿǿƞŧḗḗƞŧ ḓīşƥŀȧȧẏḗḗḓ ǿǿƞ ẏǿǿŭŭř Ḓḗḗƈķ. Ḗƞȧȧƀŀḗḗ, ǿǿřḓḗḗř, ȧȧƞḓ şḗḗŧ ḓŭŭřȧȧŧīǿǿƞş ƒǿǿř ḗḗȧȧƈħ ẇīḓɠḗḗŧ ŧǿǿ ƈǿǿƞŧřǿǿŀ ẇħȧȧŧ’ş şħǿǿẇƞ.]"
   },
+  "Ug5uNARlnF": {
+    "source": "Network configuration saved!",
+    "translation": "[Ƞḗḗŧẇǿǿřķ ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ şȧȧṽḗḗḓ!]"
+  },
   "UpN2gsF1KK": {
     "source": "Drag and drop widgets to organize your screen layout. You'll see a live preview on your device as you make changes. Changes are saved automatically.",
     "translation": "[Ḓřȧȧɠ ȧȧƞḓ ḓřǿǿƥ ẇīḓɠḗḗŧş ŧǿǿ ǿǿřɠȧȧƞīẑḗḗ ẏǿǿŭŭř şƈřḗḗḗḗƞ ŀȧȧẏǿǿŭŭŧ. Ẏǿǿŭŭ'ŀŀ şḗḗḗḗ ȧȧ ŀīṽḗḗ ƥřḗḗṽīḗḗẇ ǿǿƞ ẏǿǿŭŭř ḓḗḗṽīƈḗḗ ȧȧş ẏǿǿŭŭ ḿȧȧķḗḗ ƈħȧȧƞɠḗḗş. Ƈħȧȧƞɠḗḗş ȧȧřḗḗ şȧȧṽḗḗḓ ȧȧŭŭŧǿǿḿȧȧŧīƈȧȧŀŀẏ.]"
@@ -1425,6 +1439,11 @@
     "source": "You are up to date",
     "translation": "[Ẏǿǿŭŭ ȧȧřḗḗ ŭŭƥ ŧǿǿ ḓȧȧŧḗḗ]"
   },
+  "b1Si4zKup2": {
+    "source": "{count, plural, one {{count} min} other {{count} min}}",
+    "translation": "[{count, plural, one {{count} ḿīƞ} other {{count} ḿīƞ}}]",
+    "description": "Screen auto-off delay of count minutes, abbreviated"
+  },
   "b3QB1rD4Oj": {
     "source": "Select a sound…",
     "translation": "[Şḗḗŀḗḗƈŧ ȧȧ şǿǿŭŭƞḓ…]"
@@ -1597,6 +1616,11 @@
     "source": "Do you really want to reset the device to factory settings?",
     "translation": "[Ḓǿǿ ẏǿǿŭŭ řḗḗȧȧŀŀẏ ẇȧȧƞŧ ŧǿǿ řḗḗşḗḗŧ ŧħḗḗ ḓḗḗṽīƈḗḗ ŧǿǿ ƒȧȧƈŧǿǿřẏ şḗḗŧŧīƞɠş?]"
   },
+  "g4qENiEakQ": {
+    "source": "Hostname",
+    "translation": "[Ħǿǿşŧƞȧȧḿḗḗ]",
+    "description": "Label of the device's hostname in the network status list"
+  },
   "gEYUSsamWk": {
     "source": "Imperial (mi, lb)",
     "translation": "[Īḿƥḗḗřīȧȧŀ (ḿī, ŀƀ)]"
@@ -1626,6 +1650,11 @@
   "hDDA1JhyK5": {
     "source": "Takes a {type} account — pick another, or clear it.",
     "translation": "[Ŧȧȧķḗḗş ȧȧ {type} ȧȧƈƈǿǿŭŭƞŧ — ƥīƈķ ȧȧƞǿǿŧħḗḗř, ǿǿř ƈŀḗḗȧȧř īŧ.]"
+  },
+  "hDwitQYh9L": {
+    "source": "MAC Address",
+    "translation": "[ḾȦƇ Ȧḓḓřḗḗşş]",
+    "description": "Label of the device's hardware address in the network status list"
   },
   "hFYE2MSlqH": {
     "source": "Fri",
@@ -1745,6 +1774,11 @@
   "kgDclasOl9": {
     "source": "Night Mode Saved",
     "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ Şȧȧṽḗḗḓ]"
+  },
+  "kjt6fn4iWd": {
+    "source": "Never",
+    "translation": "[Ƞḗḗṽḗḗř]",
+    "description": "Screen auto-off choice that keeps the screen on through night mode"
   },
   "kkKi1pmaD3": {
     "source": "Screen auto-off timeout saved",
@@ -2028,6 +2062,11 @@
   "sVCrGAa2dh": {
     "source": "Reboot Device",
     "translation": "[Řḗḗƀǿǿǿǿŧ Ḓḗḗṽīƈḗḗ]"
+  },
+  "saEtOOT5Ew": {
+    "source": "{count, plural, one {{count} sec} other {{count} secs}}",
+    "translation": "[{count, plural, one {{count} şḗḗƈ} other {{count} şḗḗƈş}}]",
+    "description": "Screen auto-off delay of count seconds, abbreviated"
   },
   "saNv0u72vI": {
     "source": "{name} (optional)",

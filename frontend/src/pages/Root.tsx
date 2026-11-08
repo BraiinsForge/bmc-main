@@ -19,6 +19,7 @@
 // the grant above.
 
 import { Component } from 'react';
+import { useIntl, type IntlShape } from 'react-intl';
 import { debounce } from 'es-toolkit';
 import { Outlet, useNavigate, type NavigateFunction, useLocation } from 'react-router';
 
@@ -40,6 +41,7 @@ import { Modal } from '@/components';
 import '@/styles/carbon/carbon.global.scss';
 
 interface Props {
+    intl: IntlShape;
     pathname: string;
     navigate: NavigateFunction;
     isRootPath: boolean;
@@ -131,8 +133,14 @@ class View extends Component<Props, State> {
         const size = firstEntry?.size ?? 'xs';
         const title = firstEntry?.title as string;
         const message = firstEntry?.message as string;
-        const labelConfirm = firstEntry?.confirmLabel ?? 'Confirm';
-        const labelCancel = firstEntry?.cancelLabel ?? 'Cancel';
+        const { formatMessage } = this.props.intl;
+        const labelConfirm =
+            firstEntry?.confirmLabel ??
+            formatMessage({
+                defaultMessage: 'Confirm',
+                description: 'Confirmation dialog button when the dialog names no action of its own',
+            });
+        const labelCancel = firstEntry?.cancelLabel ?? formatMessage({ defaultMessage: 'Cancel' });
 
         const confirm = () => firstEntry?.confirm?.();
         const cancel = () => firstEntry?.cancel();
@@ -239,6 +247,7 @@ class View extends Component<Props, State> {
 }
 
 export default function Root() {
+    const intl = useIntl();
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const isRootPath: boolean = pathname === '/';
@@ -246,6 +255,7 @@ export default function Root() {
     const boserLogin = useStore(x => loginOwned(x.state.hardwareCapabilities));
     return (
         <View
+            intl={intl}
             navigate={navigate}
             pathname={pathname}
             isAuthenticated={isAuthenticated}

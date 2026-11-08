@@ -1084,3 +1084,27 @@ describe('Settings language picker', () => {
         expect(screen.queryByText('Language changed')).toBeNull();
     });
 });
+
+describe('Settings display', () => {
+    test.each([
+        [0, 'Never'],
+        [30, '30 secs'],
+        [300, '5 min'],
+    ])('a screen auto-off of %i seconds goes through the catalog', async (seconds, english) => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities());
+        registerMocks(pb.services.ConfigurationService, {
+            getDisplaySettings: () =>
+                pb.create(pb.DisplaySettingsResponseSchema, {
+                    nightmodeEnabled: true,
+                    nightmodeScreenOffTimeoutSecs: seconds,
+                }),
+        });
+        renderPage('#display', pseudoIntl);
+        await advance(300);
+
+        const timeout = document.querySelector<HTMLElement>('[id$="night-screen-off-timeout"]');
+        expect(timeout, 'the screen auto-off choice is rendered').not.toBeNull();
+        expect(timeout?.textContent).not.toContain(english);
+    });
+});

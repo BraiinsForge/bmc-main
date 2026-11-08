@@ -302,7 +302,7 @@ class View extends Component<Props, State> {
             }
 
             await pb.rpc.net.setNetworkConfig(payload, { signal });
-            toast.success('Network configuration saved!');
+            toast.success(this.props.intl.formatMessage({ defaultMessage: 'Network configuration saved!' }));
             await this.#load();
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -429,9 +429,27 @@ class View extends Component<Props, State> {
 
                 <SectionSettings
                     status={[
-                        ['IPv4', netInfo.ipAddress],
-                        ['Hostname', netInfo.hostname],
-                        ['MAC Address', netInfo.macAddress],
+                        [
+                            formatMessage({
+                                defaultMessage: 'IPv4',
+                                description: "Label of the device's IPv4 address in the network status list",
+                            }),
+                            netInfo.ipAddress,
+                        ],
+                        [
+                            formatMessage({
+                                defaultMessage: 'Hostname',
+                                description: "Label of the device's hostname in the network status list",
+                            }),
+                            netInfo.hostname,
+                        ],
+                        [
+                            formatMessage({
+                                defaultMessage: 'MAC Address',
+                                description: "Label of the device's hardware address in the network status list",
+                            }),
+                            netInfo.macAddress,
+                        ],
                     ]}
                     // Currently only shown in the status section
                     hostname={null}

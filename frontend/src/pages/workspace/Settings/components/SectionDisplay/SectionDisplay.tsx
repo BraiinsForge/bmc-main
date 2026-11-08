@@ -55,17 +55,33 @@ interface Props extends SectionDisplayProps {
     intl: IntlShape;
 }
 
-const screenOffTimeoutOptions = [
-    { id: 0, label: 'Never' },
-    { id: 5, label: '5 secs' },
-    { id: 10, label: '10 secs' },
-    { id: 15, label: '15 secs' },
-    { id: 30, label: '30 secs' },
-    { id: 60, label: '1 min' },
-    { id: 120, label: '2 min' },
-    { id: 300, label: '5 min' },
-    { id: 600, label: '10 min' },
-];
+const screenOffTimeoutOptions = [0, 5, 10, 15, 30, 60, 120, 300, 600].map(id => ({ id }));
+type ScreenOffTimeoutOption = (typeof screenOffTimeoutOptions)[number];
+
+function screenOffTimeoutLabel(intl: IntlShape, seconds: number): string {
+    if (seconds === 0) {
+        return intl.formatMessage({
+            defaultMessage: 'Never',
+            description: 'Screen auto-off choice that keeps the screen on through night mode',
+        });
+    }
+    if (seconds < 60) {
+        return intl.formatMessage(
+            {
+                defaultMessage: '{count, plural, one {{count} sec} other {{count} secs}}',
+                description: 'Screen auto-off delay of count seconds, abbreviated',
+            },
+            { count: seconds },
+        );
+    }
+    return intl.formatMessage(
+        {
+            defaultMessage: '{count, plural, one {{count} min} other {{count} min}}',
+            description: 'Screen auto-off delay of count minutes, abbreviated',
+        },
+        { count: seconds / 60 },
+    );
+}
 
 const $ = getID('display').get;
 class View extends Component<Props> {
@@ -91,7 +107,7 @@ class View extends Component<Props> {
             }),
         );
     };
-    #screenOffTimeoutChange = (x: { selectedItem: (typeof screenOffTimeoutOptions)[number] }) => {
+    #screenOffTimeoutChange = (x: { selectedItem: ScreenOffTimeoutOption }) => {
         this.props.nightScreenOffTimeout.onChange?.(x.selectedItem.id);
     };
     #nightIntervalChange = (field: 'from' | 'to') => (e: ChangeEvent<HTMLInputElement>) => {
@@ -217,7 +233,9 @@ class View extends Component<Props> {
                                 label=""
                                 hideLabel
                                 items={screenOffTimeoutOptions}
-                                itemToString={(item: (typeof screenOffTimeoutOptions)[number]) => item?.label ?? ''}
+                                itemToString={(item: null | ScreenOffTimeoutOption) =>
+                                    item ? screenOffTimeoutLabel(intl, item.id) : ''
+                                }
                                 selectedItem={selectedTimeoutItem}
                                 onChange={this.#screenOffTimeoutChange}
                                 disabled={isScreenOffTimeoutDisabled}

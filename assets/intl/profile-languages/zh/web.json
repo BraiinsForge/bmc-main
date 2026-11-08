@@ -861,6 +861,11 @@
     "source": "Reset to Factory Defaults",
     "translation": "恢复出厂设置"
   },
+  "J1+QqdhpYK": {
+    "source": "IPv4",
+    "translation": "IPv4",
+    "description": "Label of the device's IPv4 address in the network status list"
+  },
   "J1aHyWGu76": {
     "source": "Widget cycling: {status}",
     "translation": "小组件轮播：{status}"
@@ -953,6 +958,11 @@
   "Lt4OBpG8iT": {
     "source": "Download size:",
     "translation": "下载大小："
+  },
+  "M+0Y1EeCXb": {
+    "source": "Confirm",
+    "translation": "确认",
+    "description": "Confirmation dialog button when the dialog names no action of its own"
   },
   "MdbO645xRR": {
     "source": "Failed to load sound settings!",
@@ -1239,6 +1249,10 @@
     "source": "Configure the content displayed on your Deck. Enable, order, and set durations for each widget to control what’s shown.",
     "translation": "配置 Deck 上显示的内容。启用、排序并设置每个小组件的显示时长，以控制显示内容。"
   },
+  "Ug5uNARlnF": {
+    "source": "Network configuration saved!",
+    "translation": "网络配置已保存！"
+  },
   "UpN2gsF1KK": {
     "source": "Drag and drop widgets to organize your screen layout. You'll see a live preview on your device as you make changes. Changes are saved automatically.",
     "translation": "拖放小组件来安排屏幕布局。更改时可在设备上实时预览。更改会自动保存。"
@@ -1425,6 +1439,11 @@
     "source": "You are up to date",
     "translation": "已是最新版本"
   },
+  "b1Si4zKup2": {
+    "source": "{count, plural, one {{count} min} other {{count} min}}",
+    "translation": "{count, plural, other {{count} 分钟}}",
+    "description": "Screen auto-off delay of count minutes, abbreviated"
+  },
   "b3QB1rD4Oj": {
     "source": "Select a sound…",
     "translation": "选择铃声…"
@@ -1597,6 +1616,11 @@
     "source": "Do you really want to reset the device to factory settings?",
     "translation": "确定要将设备恢复出厂设置吗？"
   },
+  "g4qENiEakQ": {
+    "source": "Hostname",
+    "translation": "主机名",
+    "description": "Label of the device's hostname in the network status list"
+  },
   "gEYUSsamWk": {
     "source": "Imperial (mi, lb)",
     "translation": "英制（mi、lb）"
@@ -1626,6 +1650,11 @@
   "hDDA1JhyK5": {
     "source": "Takes a {type} account — pick another, or clear it.",
     "translation": "需要 {type} 账户 — 请另选一个，或清除。"
+  },
+  "hDwitQYh9L": {
+    "source": "MAC Address",
+    "translation": "MAC 地址",
+    "description": "Label of the device's hardware address in the network status list"
   },
   "hFYE2MSlqH": {
     "source": "Fri",
@@ -1745,6 +1774,11 @@
   "kgDclasOl9": {
     "source": "Night Mode Saved",
     "translation": "夜间模式已保存"
+  },
+  "kjt6fn4iWd": {
+    "source": "Never",
+    "translation": "从不",
+    "description": "Screen auto-off choice that keeps the screen on through night mode"
   },
   "kkKi1pmaD3": {
     "source": "Screen auto-off timeout saved",
@@ -2028,6 +2062,11 @@
   "sVCrGAa2dh": {
     "source": "Reboot Device",
     "translation": "重启设备"
+  },
+  "saEtOOT5Ew": {
+    "source": "{count, plural, one {{count} sec} other {{count} secs}}",
+    "translation": "{count, plural, other {{count} 秒}}",
+    "description": "Screen auto-off delay of count seconds, abbreviated"
   },
   "saNv0u72vI": {
     "source": "{name} (optional)",
