@@ -170,6 +170,7 @@ impl<S: SessionManager> AccessGate<S> {
         // so the answer is the BMC application's from before them.
         if needs_i18n(path) && !self.i18n.is_set() {
             let procedure = path.strip_prefix('/').unwrap_or(path);
+            // ast-grep-ignore: no-english-status — the dispatcher's own unknown-method answer, word for word.
             return Err(ConnectError::unimplemented(format!(
                 "method not found: {procedure}"
             )));

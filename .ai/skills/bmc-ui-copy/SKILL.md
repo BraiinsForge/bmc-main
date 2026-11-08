@@ -30,6 +30,12 @@ a hoisted `message_descriptor!` whose message takes an argument or a tag, and `n
 `format_message!` nested in another macro (`vec![…]`, `assert!(…)`), which the extractor cannot see into: bind it to a
 local first.
 
+**An error the web shows is worded with the request's language.** Under `bmc/src/web`, a gRPC status, a field violation
+and a widget upload refusal take their text from `format_message!` with the `intl` the request asked for
+(`grpc::intl::intl(&ctx)`, or `intl_from_headers` where there is no context). Technical detail goes to the log, not the
+message. `no-english-status` refuses one built from a literal, `format!`, `.to_string()` or a constant, so pass worded
+text as it is, not through `.to_string()`.
+
 **An argument-free message may be a constant**, a `bmc_intl::message_descriptor!` worded with `bmc_intl::format_lazy`.
 Name it for the place it is drawn rather than for what it is: `TITLE` says nothing of where it appears. Declare it in
 the module that draws it. Never reuse it in another context: one message has one description and one translation, and a

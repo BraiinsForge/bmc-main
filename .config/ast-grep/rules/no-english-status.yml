@@ -1,0 +1,93 @@
+# A status or field violation the web shows reads in the requester's language,
+# so its message comes from `format_message!` with the request's `intl`, never
+# from English in the code.
+#
+# The forms below are where English slips in: a literal, `format!`,
+# a conversion of either, a constant.
+#
+# A macro's arguments reach ast-grep as tokens, so `vec![violation(…)]` is read as text.
+# English held in a local, concatenated or built with `concat!` passes here.
+# Only the worded-refusals tests catch it, so every refusal helper joins their lists.
+#
+# Ignored: tests, which assert the English the device words.
+
+id: no-english-status
+language: rust
+severity: error
+
+message: A status or field violation built from English reads untranslated on every page — word it with `format_message!` and the request's `intl`, logging any technical detail instead.
+
+files:
+  - "bmc/src/web/**/*.rs"
+ignores:
+  - "bmc/src/web/**/tests/**"
+  - "bmc/src/web/**/tests.rs"
+
+utils:
+  in-test-code:
+    inside:
+      stopBy: end
+      any:
+        - kind: mod_item
+        - kind: function_item
+      follows:
+        kind: attribute_item
+        regex: cfg\((test|any\([^)]*\btest\b[^)]*)\)
+        stopBy:
+          not:
+            kind: attribute_item
+
+rule:
+  all:
+    - any:
+        - all:
+            - any:
+                - pattern: ConnectError::$CTOR($MESSAGE)
+                - pattern: connectrpc::ConnectError::$CTOR($MESSAGE)
+                - pattern: ConnectError::new($CODE, $MESSAGE)
+                - pattern: connectrpc::ConnectError::new($CODE, $MESSAGE)
+                - pattern: failure($STATUS, $MESSAGE)
+                - pattern: $PATH::failure($STATUS, $MESSAGE)
+                - pattern: violation($FIELD, $MESSAGE)
+                - pattern: $PATH::violation($FIELD, $MESSAGE)
+                - pattern: invalid_field($INTL, $FIELD, $MESSAGE)
+                - pattern: $PATH::invalid_field($INTL, $FIELD, $MESSAGE)
+                # `Vec::push` takes one argument, so two are `FieldViolations::push`.
+                - pattern: $VIOLATIONS.push($FIELD, $MESSAGE)
+                - pattern: "FieldViolation { $$$BEFORE, description: $MESSAGE, $$$AFTER }"
+                - pattern: "FieldViolation { description: $MESSAGE, $$$AFTER }"
+                - all:
+                    - pattern: Self::$CTOR($MESSAGE)
+                    - inside:
+                        stopBy: end
+                        kind: impl_item
+                        regex: for\s+(connectrpc::)?ConnectError\b
+        - all:
+            - kind: macro_invocation
+            - regex: ^vec!
+            # `violation(` and a second argument that opens English: a literal, `format!`,
+            # a `.to_string()` or a constant.
+            - regex: \bviolation\s*\([^,]*,\s*(r?#*"|format!|[A-Za-z_][\w.]*\.to_string\(\)|[A-Z][A-Z0-9_]+\s*\))
+    - not:
+        matches: in-test-code
+
+constraints:
+  MESSAGE:
+    any:
+      - kind: string_literal
+      - kind: raw_string_literal
+      - pattern: format!($$$)
+      # Any receiver: this is how an error's `Display` reaches the message.
+      - pattern: $TEXT.to_string()
+      # A literal receiver only, as the same conversions carry worded text too.
+      - all:
+          - any:
+              - pattern: $TEXT.to_owned()
+              - pattern: $TEXT.into()
+          - regex: ^r?#*"
+      - all:
+          - pattern: String::from($TEXT)
+          - regex: ^String::from\(r?#*"
+      - all:
+          - kind: identifier
+          - regex: ^[A-Z][A-Z0-9_]+$
