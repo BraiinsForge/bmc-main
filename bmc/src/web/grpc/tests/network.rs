@@ -22,11 +22,12 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use bmc_grpc::web::{EncryptionType, NetworkService as _, SetWifiRequest};
+use bmc_grpc::web::{EncryptionType, NetworkService as _, SetWifiRequest, SignalStrength};
 use bmc_net::mock::MockNetworkManager;
 use bmc_net_types::wifi::{
-    EncryptionType as WifiEncryption, WifiConfiguration, WifiMode, WifiStatus,
+    EncryptionType as WifiEncryption, WifiConfiguration, WifiLinkState, WifiMode, WifiStatus,
 };
+use buffa::EnumValue;
 use buffa_types::google::protobuf::Empty;
 use connectrpc::{ErrorCode, ServiceResult};
 use futures::FutureExt as _;
@@ -229,4 +230,40 @@ fn a_status_without_a_configuration_reports_no_network() {
         status.network.into_option().is_none(),
         "an unconfigured status must not invent an open network"
     );
+}
+
+#[test]
+fn a_saved_network_reports_its_signal_as_a_strength_not_a_level() {
+    let reported_with = |sta_link_state| {
+        into_grpc_wifi_status(WifiStatus {
+            enabled: true,
+            configuration: Some(WifiConfiguration {
+                mode: WifiMode::Station,
+                ssid: "HomeNet".to_owned(),
+                encryption_type: WifiEncryption::Wpa2,
+            }),
+            sta_link_state,
+        })
+        .network
+        .into_option()
+        .expect("BUG: a saved network is reported with its network")
+        .signal_strength
+    };
+
+    assert_eq!(
+        reported_with(None),
+        EnumValue::Known(SignalStrength::Unspecified),
+        "a saved network without a link has no strength to report"
+    );
+    for (level_dbm, strength) in [
+        (-34, SignalStrength::Strong),
+        (-67, SignalStrength::Moderate),
+        (-90, SignalStrength::Weak),
+    ] {
+        assert_eq!(
+            reported_with(Some(WifiLinkState::new("HomeNet", level_dbm))),
+            EnumValue::Known(strength),
+            "{level_dbm} dBm is reported as {strength:?}, not as the level"
+        );
+    }
 }
