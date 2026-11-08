@@ -3,6 +3,17 @@
 This changelog covers the display application, widgets, and web UI delivered as packages. Braiins OS firmware has its
 own release notes in `bos-main`. Features vary by device.
 
+## 26.10.1
+
+### Fixes to everyday use
+
+- Joining a Wi-Fi network whose name contains accented or other non-ASCII characters no longer fails and falls back to
+  the previous network.
+- Saved Wi-Fi networks show their actual encryption type, so rejoining a saved network from the Network tab works again.
+- The connected Wi-Fi network shows its signal strength bars on the Network tab.
+
+The [26.10.1 technical release notes](docs/releases/26.10.1.md) describe the changes behind these fixes.
+
 ## 26.10
 
 ### Highlights
