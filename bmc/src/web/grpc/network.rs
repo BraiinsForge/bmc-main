@@ -426,14 +426,15 @@ pub(crate) fn into_grpc_signal_strength(value: SignalStrength) -> GrpcSignalStre
 }
 
 pub(crate) fn into_grpc_wifi_status(value: bmc_net_types::wifi::WifiStatus) -> GrpcWifiStatus {
-    let network = value.configuration.unwrap_or_default();
     GrpcWifiStatus {
         enabled: value.enabled,
-        network: GrpcWifiNetwork {
-            ssid: network.ssid,
-            encryption_type: into_encryption_type(network.encryption_type).into(),
-            signal_strength: value.sta_link_state.unwrap_or_default().signal_level.into(),
-        }
-        .into(),
+        network: value
+            .configuration
+            .map(|network| GrpcWifiNetwork {
+                ssid: network.ssid,
+                encryption_type: into_encryption_type(network.encryption_type).into(),
+                signal_strength: value.sta_link_state.unwrap_or_default().signal_level.into(),
+            })
+            .into(),
     }
 }

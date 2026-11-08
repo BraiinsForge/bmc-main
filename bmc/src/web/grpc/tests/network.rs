@@ -217,3 +217,16 @@ fn a_saved_network_reports_the_encryption_type_a_join_sends_back() {
         );
     }
 }
+
+#[test]
+fn a_status_without_a_configuration_reports_no_network() {
+    let status = into_grpc_wifi_status(WifiStatus {
+        enabled: false,
+        configuration: None,
+        sta_link_state: None,
+    });
+    assert!(
+        status.network.into_option().is_none(),
+        "an unconfigured status must not invent an open network"
+    );
+}
