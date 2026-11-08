@@ -109,6 +109,27 @@ pub enum InitialSetupError {
     WifiConnectionFailure(String),
 }
 
+/// The first RFC 1123 rule a hostname breaks.
+///
+/// Deliberately exhaustive (no `#[non_exhaustive]`): each rule is worded on its
+/// own to the person who typed the name, so a new one must force every caller
+/// that words them to be updated.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum HostnameError {
+    #[error("hostname must not be empty")]
+    Empty,
+    #[error("hostname may only contain ASCII letters, digits, hyphens and dots: {hostname:?}")]
+    Character { hostname: String },
+    #[error("hostname exceeds {max} bytes")]
+    TooLong { max: usize },
+    #[error("hostname labels must not be empty: {hostname:?}")]
+    EmptyLabel { hostname: String },
+    #[error("hostname labels must be at most {max} bytes: {hostname:?}")]
+    LabelTooLong { hostname: String, max: usize },
+    #[error("hostname labels must not start or end with a hyphen: {hostname:?}")]
+    HyphenAtLabelEdge { hostname: String },
+}
+
 /// Credentials for joining or hosting a Wi-Fi network.
 ///
 /// `Debug` is hand-written to redact `password`, so credentials never reach

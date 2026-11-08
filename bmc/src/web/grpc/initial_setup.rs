@@ -41,6 +41,7 @@ use bmc_grpc::web::{
     TemperatureUnit, TimeFormat, UnitSystem,
 };
 use bmc_intl::{Intl, format_message};
+use bmc_net_types::network::HostnameError;
 use bmc_platform::HardwareProfile;
 use buffa::EnumValue;
 use buffa_types::google::protobuf::{BoolValue, Empty};
@@ -387,12 +388,7 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for MinerSetup<T, F> {
             && let Err(err) = bmc_net::validate_hostname(hostname)
         {
             warn!("Refused the hostname: {err}");
-            let description = format_message!(
-                intl,
-                default_message: "Use only letters, digits and hyphens, separated by dots",
-                description: "Error under the device's hostname field",
-            );
-            field_violations.push(violation("hostname", description));
+            field_violations.push(violation("hostname", hostname_refusal(intl, &err)));
         }
 
         let network = match request.network.as_option() {
@@ -438,6 +434,40 @@ impl<T: BmcManager, F: FirmwareIndex> ProductSetup for MinerSetup<T, F> {
             .await
             .inspect_err(|e| warn!("Error while setting up miner, {}", e))
             .map_err(|e| map_device_setup_error(&e))
+    }
+}
+
+fn hostname_refusal(intl: &Intl, error: &HostnameError) -> String {
+    let count = |max: usize| u64::try_from(max).expect("BUG: a usize limit fits u64");
+    match error {
+        HostnameError::Empty => missing_value(intl),
+        HostnameError::Character { .. } => format_message!(
+            intl,
+            default_message: "Use only letters, digits and hyphens, separated by dots",
+            description: "Error under the device's hostname field",
+        ),
+        HostnameError::TooLong { max } => format_message!(
+            intl,
+            default_message: "{max, plural, one {Use at most {max} character} other {Use at most {max} characters}}",
+            description: "Error under the device's hostname field when the name is too long, max is always 253",
+            values: { max: count(*max) },
+        ),
+        HostnameError::EmptyLabel { .. } => format_message!(
+            intl,
+            default_message: "Don't start or end the name with a dot, or put two dots together",
+            description: "Error under the device's hostname field when a dot leads, ends or doubles in the name",
+        ),
+        HostnameError::LabelTooLong { max, .. } => format_message!(
+            intl,
+            default_message: "{max, plural, one {Use at most {max} character between dots} other {Use at most {max} characters between dots}}",
+            description: "Error under the device's hostname field when a part between dots is too long, max is always 63",
+            values: { max: count(*max) },
+        ),
+        HostnameError::HyphenAtLabelEdge { .. } => format_message!(
+            intl,
+            default_message: "Don't start or end the name, or a part between dots, with a hyphen",
+            description: "Error under the device's hostname field when a part between dots starts or ends with a hyphen",
+        ),
     }
 }
 
@@ -674,5 +704,36 @@ mod tests {
             Some("Some of the fields are invalid.")
         );
         assert_eq!(violation_fields(&error), ["ssid"]);
+    }
+
+    #[test]
+    fn a_refused_hostname_names_the_rule_it_breaks() {
+        let refusal = |hostname: &str| {
+            let error =
+                bmc_net::validate_hostname(hostname).expect_err("BUG: the hostname breaks a rule");
+            hostname_refusal(&english(), &error)
+        };
+
+        let characters = "Use only letters, digits and hyphens, separated by dots";
+        let dots = "Don't start or end the name with a dot, or put two dots together";
+
+        assert_eq!(refusal(""), "Missing value!");
+        assert_eq!(refusal("host name"), characters);
+        assert_eq!(refusal(&"设备".repeat(85)), characters);
+        assert_eq!(
+            refusal(&format!("{}ab", "abc.".repeat(63))),
+            "Use at most 253 characters"
+        );
+        for hostname in ["miner..lan", ".miner", "miner."] {
+            assert_eq!(refusal(hostname), dots, "{hostname:?}");
+        }
+        assert_eq!(
+            refusal(&"a".repeat(64)),
+            "Use at most 63 characters between dots"
+        );
+        assert_eq!(
+            refusal("-miner"),
+            "Don't start or end the name, or a part between dots, with a hyphen"
+        );
     }
 }

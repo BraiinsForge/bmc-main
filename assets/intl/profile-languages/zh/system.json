@@ -104,6 +104,11 @@
     "translation": "请选择加密类型",
     "description": "Error under the Wi-Fi encryption field when nothing is chosen"
   },
+  "7nw60JTpaS": {
+    "source": "Don't start or end the name, or a part between dots, with a hyphen",
+    "translation": "名称及点号之间的各部分不能以连字符开头或结尾",
+    "description": "Error under the device's hostname field when a part between dots starts or ends with a hyphen"
+  },
   "97LQdzs6/Y": {
     "source": "{device_name} is ready!",
     "translation": "{device_name} 已就绪！",
@@ -449,6 +454,11 @@
     "translation": "重启失败",
     "description": "Settings tray notice title when the restart did not happen and no reason came"
   },
+  "lZ4x6W8GoK": {
+    "source": "Don't start or end the name with a dot, or put two dots together",
+    "translation": "名称不能以点号开头或结尾，也不能连续使用两个点号",
+    "description": "Error under the device's hostname field when a dot leads, ends or doubles in the name"
+  },
   "miWTwyBX3v": {
     "source": "Incorrect username or password!",
     "translation": "用户名或密码不正确！",
@@ -474,10 +484,20 @@
     "translation": "未配置",
     "description": "Settings tray, in place of the network name when no Wi-Fi is configured"
   },
+  "p4zzj4kSpT": {
+    "source": "{max, plural, one {Use at most {max} character between dots} other {Use at most {max} characters between dots}}",
+    "translation": "{max, plural, other {点号之间的每一部分最多 {max} 个字符}}",
+    "description": "Error under the device's hostname field when a part between dots is too long, max is always 63"
+  },
   "pNBxerckHU": {
     "source": "Verifying packages",
     "translation": "正在校验软件包",
     "description": "Upgrade overlay title while the downloaded packages are checked"
+  },
+  "pTWfbjgRRY": {
+    "source": "{max, plural, one {Use at most {max} character} other {Use at most {max} characters}}",
+    "translation": "{max, plural, other {最多使用 {max} 个字符}}",
+    "description": "Error under the device's hostname field when the name is too long, max is always 253"
   },
   "pmgW8kKAju": {
     "source": "Night Mode: Off",

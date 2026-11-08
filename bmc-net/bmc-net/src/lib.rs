@@ -37,7 +37,6 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use anyhow::bail;
 use async_trait::async_trait;
 use get_if_addrs::{IfAddr, Interface};
 use tokio::sync::Notify;
@@ -48,8 +47,8 @@ pub mod mock;
 pub mod openwrt;
 pub mod provisioning;
 use bmc_net_types::network::{
-    IfaceData, InitialSetupError, NetworkInfo, NetworkProtocol, NetworkProtocolConfig, WifiData,
-    WifiEvent, WifiNetworkConfig,
+    HostnameError, IfaceData, InitialSetupError, NetworkInfo, NetworkProtocol,
+    NetworkProtocolConfig, WifiData, WifiEvent, WifiNetworkConfig,
 };
 use bmc_net_types::wifi::{EncryptionType, WifiScanItem, WifiStatus};
 use tokio::sync::broadcast;
@@ -330,33 +329,47 @@ pub(crate) fn network_config_summary(
 ///
 /// # Errors
 ///
-/// Returns an error describing the first violated rule.
-pub fn validate_hostname(hostname: &str) -> anyhow::Result<()> {
+/// Returns the first violated rule.
+pub fn validate_hostname(hostname: &str) -> Result<(), HostnameError> {
     /// RFC 1123 maximum total hostname length, in bytes.
     const MAX_HOSTNAME_LEN: usize = 253;
     /// RFC 1123 maximum length of a single dot-separated label, in bytes.
     const MAX_LABEL_LEN: usize = 63;
 
     if hostname.is_empty() {
-        bail!("hostname must not be empty");
+        return Err(HostnameError::Empty);
+    }
+    // Ahead of the lengths, which count bytes: a name in another script must
+    // hear about its characters, not about a length it did not type.
+    if !hostname
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+    {
+        return Err(HostnameError::Character {
+            hostname: hostname.to_owned(),
+        });
     }
     if hostname.len() > MAX_HOSTNAME_LEN {
-        bail!("hostname exceeds {MAX_HOSTNAME_LEN} bytes");
+        return Err(HostnameError::TooLong {
+            max: MAX_HOSTNAME_LEN,
+        });
     }
     for label in hostname.split('.') {
-        if label.is_empty() || label.len() > MAX_LABEL_LEN {
-            bail!("hostname labels must be 1-{MAX_LABEL_LEN} bytes: {hostname:?}");
+        if label.is_empty() {
+            return Err(HostnameError::EmptyLabel {
+                hostname: hostname.to_owned(),
+            });
         }
-        if !label
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        {
-            bail!(
-                "hostname may only contain ASCII letters, digits, hyphens and dots: {hostname:?}"
-            );
+        if label.len() > MAX_LABEL_LEN {
+            return Err(HostnameError::LabelTooLong {
+                hostname: hostname.to_owned(),
+                max: MAX_LABEL_LEN,
+            });
         }
         if label.starts_with('-') || label.ends_with('-') {
-            bail!("hostname labels must not start or end with a hyphen: {hostname:?}");
+            return Err(HostnameError::HyphenAtLabelEdge {
+                hostname: hostname.to_owned(),
+            });
         }
     }
     Ok(())
@@ -369,7 +382,10 @@ mod tests {
     use bmc_net_types::network::{NetworkProtocolConfig, NetworkProtocolConfigStatic};
     use get_if_addrs::{IfAddr, Ifv4Addr};
 
-    use super::{Interface, holds_address, network_config_summary, validate_hostname, wired_ipv4};
+    use super::{
+        HostnameError, Interface, holds_address, network_config_summary, validate_hostname,
+        wired_ipv4,
+    };
 
     #[test]
     fn config_summary_reads_as_the_user_configured_it() {
@@ -475,16 +491,55 @@ mod tests {
 
     #[test]
     fn newline_injection_rejected() {
-        assert!(validate_hostname("deck\ndhcp=true").is_err());
+        assert!(matches!(
+            validate_hostname("deck\ndhcp=true"),
+            Err(HostnameError::Character { .. })
+        ));
     }
 
     #[test]
-    fn malformed_hostnames_rejected() {
-        assert!(validate_hostname("").is_err());
-        assert!(validate_hostname("host name").is_err());
-        assert!(validate_hostname("-miner").is_err());
-        assert!(validate_hostname("miner..lan").is_err());
-        assert!(validate_hostname(&"a".repeat(64)).is_err());
-        assert!(validate_hostname(&"a.".repeat(127)).is_err());
+    fn malformed_hostnames_rejected_by_the_rule_they_break() {
+        let valid_254_bytes = format!("{}ab", "abc.".repeat(63));
+        assert_eq!(valid_254_bytes.len(), 254, "BUG: the name is one byte over");
+
+        assert_eq!(validate_hostname(""), Err(HostnameError::Empty));
+        assert_eq!(
+            validate_hostname(&valid_254_bytes),
+            Err(HostnameError::TooLong { max: 253 })
+        );
+        for hostname in ["miner..lan", ".miner", "miner."] {
+            assert!(
+                matches!(
+                    validate_hostname(hostname),
+                    Err(HostnameError::EmptyLabel { .. })
+                ),
+                "{hostname:?}"
+            );
+        }
+        assert!(matches!(
+            validate_hostname(&"a".repeat(64)),
+            Err(HostnameError::LabelTooLong { max: 63, .. })
+        ));
+        assert!(matches!(
+            validate_hostname("host name"),
+            Err(HostnameError::Character { .. })
+        ));
+        assert!(matches!(
+            validate_hostname("-miner"),
+            Err(HostnameError::HyphenAtLabelEdge { .. })
+        ));
+    }
+
+    #[test]
+    fn a_name_in_another_script_breaks_the_character_rule_not_a_length() {
+        for hostname in ["设备".repeat(85), "一".repeat(22)] {
+            assert!(
+                matches!(
+                    validate_hostname(&hostname),
+                    Err(HostnameError::Character { .. })
+                ),
+                "{hostname:?}"
+            );
+        }
     }
 }
