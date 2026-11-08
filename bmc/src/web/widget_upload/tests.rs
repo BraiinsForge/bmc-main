@@ -20,9 +20,14 @@
 
 use super::*;
 use crate::session;
+use crate::web::grpc::tests::{assert_worded, pseudo_locale, sampled};
 use axum::body::Body;
 use axum::http::{Request, header};
-use bmc_upgrade::packages::WidgetInstallOutcome;
+use bmc_upgrade::packages::WidgetInstallErrorDiscriminants as InstallName;
+use bmc_upgrade::widget_package::{
+    FolderClash, FolderClashDiscriminants as ClashName, MAX_SHOWN_CHARS,
+    WidgetPackageErrorDiscriminants as RejectionName,
+};
 use tokio::io::AsyncReadExt as _;
 use tower::ServiceExt as _;
 use tower_cookies::Cookie;
@@ -99,12 +104,12 @@ impl session::Manager for OneSession {
 /// Drains the upload and answers with a scripted result.
 #[derive(Debug)]
 struct ScriptedInstaller {
-    result: std::sync::Mutex<Option<Result<InstalledWidget, SystemUpgradeError>>>,
+    result: std::sync::Mutex<Option<Result<InstalledWidget, WidgetInstallError>>>,
     received: std::sync::Mutex<Vec<Vec<u8>>>,
 }
 
 impl ScriptedInstaller {
-    fn answering(result: Result<InstalledWidget, SystemUpgradeError>) -> Arc<Self> {
+    fn answering(result: Result<InstalledWidget, WidgetInstallError>) -> Arc<Self> {
         Arc::new(Self {
             result: std::sync::Mutex::new(Some(result)),
             received: std::sync::Mutex::new(Vec::new()),
@@ -124,15 +129,15 @@ impl WidgetPackageInstaller for ScriptedInstaller {
     async fn install(
         &self,
         mut upload: WidgetUpload,
-    ) -> Result<InstalledWidget, SystemUpgradeError> {
+    ) -> Result<InstalledWidget, WidgetInstallError> {
         let mut bytes = Vec::new();
         match upload.nar.read_to_end(&mut bytes).await {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
-                return Err(SystemUpgradeError::WidgetUploadStalled);
+                return Err(WidgetInstallError::UploadStalled);
             }
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionAborted => {
-                return Err(SystemUpgradeError::WidgetUploadAborted);
+                return Err(WidgetInstallError::UploadAborted);
             }
             Err(error) => panic!("BUG: the test body is in memory: {error}"),
         }
@@ -252,8 +257,8 @@ async fn an_announced_oversized_archive_is_refused_without_uploading() {
 
 #[tokio::test]
 async fn a_rejected_archive_is_the_clients_fault() {
-    let installer = ScriptedInstaller::answering(Err(SystemUpgradeError::WidgetPackageRejected(
-        "bin/flip-clock is a native binary".to_owned(),
+    let installer = ScriptedInstaller::answering(Err(WidgetInstallError::Rejected(
+        WidgetPackageError::NativeBinary("bin/flip-clock".to_owned()),
     )));
 
     let (status, body) = send(
@@ -266,16 +271,18 @@ async fn a_rejected_archive_is_the_clients_fault() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
         body["error"],
-        "Widget package rejected: bin/flip-clock is a native binary"
+        "Widget package rejected: \"bin/flip-clock\" is a native widget binary; \
+         only WASM widgets can be installed."
     );
 }
 
 #[tokio::test]
 async fn a_refused_downgrade_conflicts_with_the_installed_version() {
-    let installer = ScriptedInstaller::answering(Err(SystemUpgradeError::WidgetDowngradeRefused(
-        "widget-flip-clock 2.0.0 is installed; uploading the older 1.0.0 would downgrade it"
-            .to_owned(),
-    )));
+    let installer = ScriptedInstaller::answering(Err(WidgetInstallError::Downgrade {
+        package_name: "widget-flip-clock".to_owned(),
+        installed: "2.0.0".to_owned(),
+        uploaded: "1.0.0".to_owned(),
+    }));
 
     let (status, _body) = send(
         installer,
@@ -293,9 +300,10 @@ async fn a_refused_downgrade_conflicts_with_the_installed_version() {
 
 #[tokio::test]
 async fn a_taken_folder_conflicts_with_the_installed_widget() {
-    let installer = ScriptedInstaller::answering(Err(SystemUpgradeError::WidgetFolderTaken(
-        "acme/clock cannot be installed next to the installed widget acme".to_owned(),
-    )));
+    let installer = ScriptedInstaller::answering(Err(WidgetInstallError::FolderTaken {
+        uploaded: "acme/clock".into(),
+        installed: FolderClash::FlatWidget("acme".to_owned()),
+    }));
 
     let (status, _body) = send(
         installer,
@@ -313,9 +321,10 @@ async fn a_taken_folder_conflicts_with_the_installed_widget() {
 
 #[tokio::test]
 async fn a_taken_uid_conflicts_with_the_installed_widget() {
-    let installer = ScriptedInstaller::answering(Err(SystemUpgradeError::WidgetUidTaken(
-        "clock has the uid of the installed widget acme/clock".to_owned(),
-    )));
+    let installer = ScriptedInstaller::answering(Err(WidgetInstallError::UidTaken {
+        uploaded: "clock".into(),
+        installed: "acme/clock".into(),
+    }));
 
     let (status, _body) = send(
         installer,
@@ -396,7 +405,7 @@ async fn an_upload_that_stalls_is_cut_off_at_the_deadline() {
     let (status, body) = send(installer.clone(), InstallTarget::Local, request).await;
 
     assert_eq!(status, StatusCode::REQUEST_TIMEOUT, "{body}");
-    assert_eq!(body["error"], "upload did not finish within 5 minutes");
+    assert_eq!(body["error"], "Upload did not finish within 5 minutes!");
     assert!(installer.received().is_empty());
 }
 
@@ -418,7 +427,7 @@ async fn a_body_that_breaks_off_reaches_the_installer_as_the_clients_disconnect(
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(
         body["error"],
-        "the upload ended before the archive was complete"
+        "The upload ended before the archive was complete."
     );
     assert!(installer.received().is_empty());
 }
@@ -454,22 +463,23 @@ async fn an_echoed_previous_version_is_cut_to_what_a_toast_shows() {
 
 #[tokio::test]
 async fn a_device_side_failure_answers_with_its_own_server_status() {
-    for (error, expected) in [
+    for (error, expected, message) in [
         (
-            SystemUpgradeError::WidgetInstallBusy,
+            WidgetInstallError::ProfileBusy,
             StatusCode::SERVICE_UNAVAILABLE,
+            "Another install or upgrade is in progress.",
         ),
         (
-            SystemUpgradeError::WidgetInstallNoSpace,
+            not_enough_space(),
             StatusCode::INSUFFICIENT_STORAGE,
+            "Not enough space on the device to install the widget!",
         ),
         (
-            SystemUpgradeError::WidgetInstallFailed,
+            WidgetInstallError::Failed("1".to_owned()),
             StatusCode::INTERNAL_SERVER_ERROR,
+            "Widget install failed. See the device log for details.",
         ),
     ] {
-        let message = error.to_string();
-
         let (status, body) = send(
             ScriptedInstaller::answering(Err(error)),
             InstallTarget::Local,
@@ -481,6 +491,314 @@ async fn a_device_side_failure_answers_with_its_own_server_status() {
             status, expected,
             "busy, full and failed are not the uploader's fault: {message}"
         );
-        assert_eq!(body["error"], message.as_str());
+        assert_eq!(body["error"], message);
+    }
+}
+
+fn not_enough_space() -> WidgetInstallError {
+    WidgetInstallError::Install(bmc_nix::upgrade::InstallError::NotEnoughSpace {
+        free_bytes: 1,
+        required_bytes: 2,
+        unpacked_bytes: 2,
+    })
+}
+
+#[test]
+fn a_device_fault_keeps_its_detail_out_of_the_answer() {
+    const DETAIL: &str = "/mnt/data/bmc/staging/x: Permission denied";
+    let english = bmc_intl::shared_formatter(bmc_intl::Language::EN);
+    for error in [
+        WidgetInstallError::Store(bmc_nix::store::StoreCommandError::Exited {
+            command: "--restore",
+            status: std::process::ExitStatus::default(),
+            stderr: DETAIL.to_owned(),
+        }),
+        WidgetInstallError::Staging(std::io::Error::other(DETAIL)),
+        WidgetInstallError::ReadProfile(bmc_nix::manifest::ReadManifestError::Read(
+            std::io::Error::other(DETAIL),
+        )),
+        WidgetInstallError::Install(bmc_nix::upgrade::InstallError::ReadManifest(
+            bmc_nix::manifest::ReadManifestError::Read(std::io::Error::other(DETAIL)),
+        )),
+        WidgetInstallError::Failed(DETAIL.to_owned()),
+    ] {
+        let answer = wording::install_failure(&english, &error);
+        assert!(!answer.contains(DETAIL), "{error:?} leaks into {answer}");
+    }
+}
+
+#[test]
+fn a_rejected_read_keeps_the_systems_own_text_out_of_the_answer() {
+    const OS_TEXT: &str = "Permission denied";
+    let english = bmc_intl::shared_formatter(bmc_intl::Language::EN);
+    let error = WidgetPackageError::Io {
+        path: "1".to_owned(),
+        source: std::io::Error::other(OS_TEXT),
+    };
+
+    let answer = wording::package_rejected(&english, &error);
+
+    assert!(!answer.contains(OS_TEXT), "{answer}");
+}
+
+#[test]
+fn a_broken_manifest_quotes_its_detail_for_the_widgets_author() {
+    let parse_failure = serde_json::from_str::<u8>("x").expect_err("BUG: x is no number");
+    let manifest = bmc_widget_manifest::ManifestError::from(parse_failure);
+    let detail = shown(&manifest.to_string());
+
+    assert_eq!(
+        wording::package_rejected(&pseudo_locale(), &WidgetPackageError::Manifest(manifest)),
+        bmc_intl_pseudo::respell("Widget package rejected: manifest.json is invalid: {detail}.")
+            .replace("{detail}", &detail),
+        "the sentence is worded and the detail stays as written"
+    );
+}
+
+/// A sample for each way a rejection is worded,
+/// such as finding no widget and finding others.
+fn every_rejection() -> Vec<WidgetPackageError> {
+    let path = || "1".to_owned();
+    sampled(|name| match name {
+        RejectionName::TooLarge => vec![WidgetPackageError::TooLarge],
+        RejectionName::Archive => vec![WidgetPackageError::Archive(path())],
+        RejectionName::TooManyArchiveEntries => vec![WidgetPackageError::TooManyArchiveEntries],
+        RejectionName::Io => vec![WidgetPackageError::Io {
+            path: path(),
+            source: std::io::Error::other("1"),
+        }],
+        RejectionName::FileTooLarge => vec![WidgetPackageError::FileTooLarge {
+            path: path(),
+            limit: 7,
+        }],
+        RejectionName::NotOneWidget => vec![
+            WidgetPackageError::NotOneWidget(path()),
+            WidgetPackageError::NotOneWidget(String::new()),
+        ],
+        RejectionName::NotADirectory => vec![
+            WidgetPackageError::NotADirectory(path()),
+            WidgetPackageError::NotADirectory("2".repeat(MAX_SHOWN_CHARS + 1)),
+        ],
+        RejectionName::BadWidgetName => vec![WidgetPackageError::BadWidgetName(path())],
+        RejectionName::NotUtf8Name => vec![WidgetPackageError::NotUtf8Name(path())],
+        RejectionName::Missing => vec![WidgetPackageError::Missing(path())],
+        RejectionName::NativeBinary => vec![WidgetPackageError::NativeBinary(path())],
+        RejectionName::Symlink => vec![WidgetPackageError::Symlink(path())],
+        RejectionName::TooDeep => vec![WidgetPackageError::TooDeep(path())],
+        RejectionName::TooManyEntries => vec![WidgetPackageError::TooManyEntries(path())],
+        RejectionName::Unexpected => vec![WidgetPackageError::Unexpected(path())],
+        RejectionName::UnexpectedExecutable => {
+            vec![WidgetPackageError::UnexpectedExecutable(path())]
+        }
+        RejectionName::Manifest => {
+            let parse_failure = serde_json::from_str::<u8>("x").expect_err("BUG: x is no number");
+            vec![WidgetPackageError::Manifest(parse_failure.into())]
+        }
+        RejectionName::BinaryPath => vec![WidgetPackageError::BinaryPath {
+            declared: path(),
+            expected: "2".to_owned(),
+        }],
+        RejectionName::Programs => vec![WidgetPackageError::Programs],
+        RejectionName::Icon => vec![WidgetPackageError::Icon(path())],
+        RejectionName::WrapperNotExecutable => {
+            vec![WidgetPackageError::WrapperNotExecutable(path())]
+        }
+        RejectionName::ProtocolMajor => vec![WidgetPackageError::ProtocolMajor {
+            package: 1,
+            device: 2,
+        }],
+        RejectionName::Wrapper => vec![WidgetPackageError::Wrapper(path())],
+        RejectionName::NotWasm => vec![WidgetPackageError::NotWasm(path())],
+    })
+}
+
+/// A sample of every failure, and one for each way a failure is worded,
+/// such as a full disk and any other install fault.
+fn every_install_failure() -> Vec<WidgetInstallError> {
+    let os_error = || std::io::Error::other("1");
+    sampled(|name| match name {
+        InstallName::Rejected => vec![WidgetInstallError::Rejected(WidgetPackageError::TooLarge)],
+        InstallName::Downgrade => vec![WidgetInstallError::Downgrade {
+            package_name: "1".to_owned(),
+            installed: "2".to_owned(),
+            uploaded: "3".to_owned(),
+        }],
+        InstallName::FolderTaken => sampled(|clash| {
+            vec![match clash {
+                ClashName::FlatWidget => FolderClash::FlatWidget("2".to_owned()),
+                ClashName::MaintainerFolder => FolderClash::MaintainerFolder("2".to_owned()),
+            }]
+        })
+        .into_iter()
+        .map(|installed| WidgetInstallError::FolderTaken {
+            uploaded: "1".into(),
+            installed,
+        })
+        .collect(),
+        InstallName::UidTaken => vec![WidgetInstallError::UidTaken {
+            uploaded: "1".into(),
+            installed: "2".into(),
+        }],
+        InstallName::UploadStalled => vec![WidgetInstallError::UploadStalled],
+        InstallName::ProfileBusy => vec![WidgetInstallError::ProfileBusy],
+        InstallName::UploadAborted => vec![WidgetInstallError::UploadAborted],
+        InstallName::ReadProfile => vec![WidgetInstallError::ReadProfile(
+            bmc_nix::manifest::ReadManifestError::Read(os_error()),
+        )],
+        InstallName::Staging => vec![WidgetInstallError::Staging(os_error())],
+        InstallName::Store => vec![WidgetInstallError::Store(
+            bmc_nix::store::StoreCommandError::Exited {
+                command: "1",
+                status: std::process::ExitStatus::default(),
+                stderr: "1".to_owned(),
+            },
+        )],
+        InstallName::Install => vec![
+            not_enough_space(),
+            WidgetInstallError::Install(bmc_nix::upgrade::InstallError::ReadManifest(
+                bmc_nix::manifest::ReadManifestError::Read(os_error()),
+            )),
+        ],
+        InstallName::Failed => vec![WidgetInstallError::Failed("1".to_owned())],
+    })
+}
+
+/// What `install_failure` should answer where another sample already yields that sentence:
+/// the carried rejection's, or the generic one `Failed` stands for.
+fn repeated_sentence(intl: &bmc_intl::Intl, error: &WidgetInstallError) -> Option<String> {
+    match error {
+        WidgetInstallError::Install(bmc_nix::upgrade::InstallError::NotEnoughSpace { .. })
+        | WidgetInstallError::Downgrade { .. }
+        | WidgetInstallError::FolderTaken { .. }
+        | WidgetInstallError::UidTaken { .. }
+        | WidgetInstallError::UploadStalled
+        | WidgetInstallError::ProfileBusy
+        | WidgetInstallError::UploadAborted
+        | WidgetInstallError::Failed(_) => None,
+        WidgetInstallError::Rejected(rejected) => Some(wording::package_rejected(intl, rejected)),
+        WidgetInstallError::ReadProfile(_)
+        | WidgetInstallError::Staging(_)
+        | WidgetInstallError::Store(_)
+        | WidgetInstallError::Install(_) => Some(wording::install_failure(
+            intl,
+            &WidgetInstallError::Failed("1".to_owned()),
+        )),
+    }
+}
+
+#[test]
+fn every_refused_upload_is_worded() {
+    let rejected = every_rejection();
+    let failed = every_install_failure();
+    assert_worded(|intl| {
+        let mut refusals = vec![wording::wrong_content_type(intl, "1")];
+        refusals.extend(
+            rejected
+                .iter()
+                // Quotes the parser's English, which en-XA leaves as written.
+                .filter(|error| !matches!(error, WidgetPackageError::Manifest(_)))
+                .map(|error| wording::package_rejected(intl, error)),
+        );
+        for error in &failed {
+            let answer = wording::install_failure(intl, error);
+            match repeated_sentence(intl, error) {
+                Some(repeated) => assert_eq!(answer, repeated, "{error:?}"),
+                None => refusals.push(answer),
+            }
+        }
+        refusals
+    });
+}
+
+fn as_sentence(display: &str) -> String {
+    let mut chars = display.chars();
+    let first = chars.next().map(|c| c.to_uppercase().to_string());
+    let sentence = format!("{}{}", first.unwrap_or_default(), chars.as_str());
+    if sentence.ends_with('.') {
+        sentence
+    } else {
+        format!("{sentence}.")
+    }
+}
+
+/// True where the wording drops the parser's or the OS's detail `Display` appends.
+fn leaves_detail_to_the_log(error: &WidgetPackageError) -> bool {
+    match error {
+        WidgetPackageError::Archive(_) | WidgetPackageError::Io { .. } => true,
+        WidgetPackageError::TooLarge
+        | WidgetPackageError::TooManyArchiveEntries
+        | WidgetPackageError::FileTooLarge { .. }
+        | WidgetPackageError::NotOneWidget(_)
+        | WidgetPackageError::NotADirectory(_)
+        | WidgetPackageError::BadWidgetName(_)
+        | WidgetPackageError::NotUtf8Name(_)
+        | WidgetPackageError::Missing(_)
+        | WidgetPackageError::NativeBinary(_)
+        | WidgetPackageError::Symlink(_)
+        | WidgetPackageError::TooDeep(_)
+        | WidgetPackageError::TooManyEntries(_)
+        | WidgetPackageError::Unexpected(_)
+        | WidgetPackageError::UnexpectedExecutable(_)
+        | WidgetPackageError::Manifest(_)
+        | WidgetPackageError::BinaryPath { .. }
+        | WidgetPackageError::Programs
+        | WidgetPackageError::Icon(_)
+        | WidgetPackageError::WrapperNotExecutable(_)
+        | WidgetPackageError::ProtocolMajor { .. }
+        | WidgetPackageError::Wrapper(_)
+        | WidgetPackageError::NotWasm(_) => false,
+    }
+}
+
+/// False for those reworded on purpose or worded generically with their detail in the log,
+/// and for `Rejected`, which the rejection test pins.
+fn restates_its_display(error: &WidgetInstallError) -> bool {
+    match error {
+        WidgetInstallError::Downgrade { .. }
+        | WidgetInstallError::FolderTaken { .. }
+        | WidgetInstallError::UidTaken { .. }
+        | WidgetInstallError::UploadAborted => true,
+        WidgetInstallError::Rejected(_)
+        | WidgetInstallError::UploadStalled
+        | WidgetInstallError::ProfileBusy
+        | WidgetInstallError::ReadProfile(_)
+        | WidgetInstallError::Staging(_)
+        | WidgetInstallError::Store(_)
+        | WidgetInstallError::Install(_)
+        | WidgetInstallError::Failed(_) => false,
+    }
+}
+
+#[test]
+fn every_rejection_words_its_display_in_english() {
+    let english = bmc_intl::shared_formatter(bmc_intl::Language::EN);
+    for error in every_rejection() {
+        let display = error.to_string();
+        let worded = if leaves_detail_to_the_log(&error) {
+            display
+                .split_once(": ")
+                .expect("BUG: the detail follows a colon")
+                .0
+        } else {
+            &display
+        };
+        assert_eq!(
+            wording::package_rejected(&english, &error),
+            as_sentence(&format!("Widget package rejected: {worded}")),
+        );
+    }
+}
+
+#[test]
+fn every_install_failure_restating_its_display_words_it_in_english() {
+    let english = bmc_intl::shared_formatter(bmc_intl::Language::EN);
+    for error in every_install_failure()
+        .iter()
+        .filter(|error| restates_its_display(error))
+    {
+        assert_eq!(
+            wording::install_failure(&english, error),
+            as_sentence(&error.to_string()),
+        );
     }
 }

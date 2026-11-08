@@ -187,11 +187,15 @@ impl<S: SessionManager> AccessGate<S> {
 }
 
 fn managed_by_boser(intl: &Intl) -> ConnectError {
-    ConnectError::unimplemented(format_message!(
+    ConnectError::unimplemented(managed_by_boser_message(intl))
+}
+
+pub(crate) fn managed_by_boser_message(intl: &Intl) -> String {
+    format_message!(
         intl,
         default_message: "This operation is managed by Boser on this platform.",
         description: "Error when the device refuses an operation because Boser owns it on this hardware; Boser is a product name",
-    ))
+    )
 }
 
 /// Middleware: answer a refused call in the caller's protocol without reading its body.
@@ -359,4 +363,4 @@ fn gated<S: SessionManager>(
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

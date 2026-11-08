@@ -38,6 +38,7 @@ import { assertUnreachable } from '@/lib/ts';
 
 // App
 import * as pb from '@/proto';
+import { getRequestLanguage } from '@/proto/transport';
 import type { Capabilities } from '@/lib/system';
 import { widgetPackageInstallable } from '@/lib/capabilities';
 import { store, useStore } from '@/store';
@@ -402,7 +403,10 @@ class View extends Component<Props, State> {
         try {
             const response = await fetch(URLS.api.installWidgetPackage, {
                 method: 'POST',
-                headers: { 'Content-Type': WIDGET_PACKAGE_CONTENT_TYPE },
+                headers: {
+                    'Content-Type': WIDGET_PACKAGE_CONTENT_TYPE,
+                    'Accept-Language': getRequestLanguage(),
+                },
                 body: file,
                 credentials: 'same-origin',
                 signal: AbortSignal.timeout(INSTALL_WIDGET_PACKAGE_TIMEOUT_MS),

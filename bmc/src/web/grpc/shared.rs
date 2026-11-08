@@ -381,33 +381,9 @@ mod tests {
         UnreadableValueDiscriminants as UnreadableName, ViolationKindDiscriminants as KindName,
     };
     use bmc_intl::Language;
-    use strum::IntoEnumIterator;
 
     use super::*;
-    use crate::web::grpc::tests::{assert_worded, status_text};
-
-    /// The exhaustive match in `samples` proves every name has an arm,
-    /// but not that the arm is non-empty or that its samples carry that name.
-    fn sampled<Name, Sample>(samples: impl Fn(Name) -> Vec<Sample>) -> Vec<Sample>
-    where
-        Name: IntoEnumIterator + Copy + PartialEq + std::fmt::Debug + for<'a> From<&'a Sample>,
-        Sample: std::fmt::Debug,
-    {
-        Name::iter()
-            .flat_map(|name| {
-                let listed = samples(name);
-                assert!(!listed.is_empty(), "{name:?} has no sample");
-                for sample in &listed {
-                    assert_eq!(
-                        Name::from(sample),
-                        name,
-                        "{sample:?} is listed under {name:?} instead of its own name"
-                    );
-                }
-                listed
-            })
-            .collect()
-    }
+    use crate::web::grpc::tests::{assert_worded, sampled, status_text};
 
     /// A sample for each way a kind is worded,
     /// such as a count's singular and plural.

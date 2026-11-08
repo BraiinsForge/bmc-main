@@ -61,13 +61,13 @@ const ICON_EXTENSIONS: [&str; 5] = ["svg", "png", "webp", "jpg", "jpeg"];
 const MAX_WRAPPER_BYTES: usize = 4 * 1024;
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 /// Directory levels below the widget directory; the walk recurses per level.
-const MAX_DEPTH: usize = 32;
+pub const MAX_DEPTH: usize = 32;
 /// Entries listed per directory before giving up; an archive of a million
 /// empty files is not a widget and must not cost a million-name allocation.
-const MAX_DIR_ENTRIES: usize = 4096;
+pub const MAX_DIR_ENTRIES: usize = 4096;
 /// Characters of a package-controlled value a reason quotes; a toast has no
 /// room for a manifest field or directory listing of any length.
-const MAX_SHOWN_CHARS: usize = 80;
+pub const MAX_SHOWN_CHARS: usize = 80;
 /// The wrapper `nix/wasm-widgets.nix` installs for a profile-mode widget,
 /// shared with the build so the check cannot drift from what it produces.
 const WRAPPER_TEMPLATE: &str = include_str!("../assets/wasm-widget-wrapper.sh");
@@ -85,6 +85,11 @@ pub fn shown(value: &str) -> String {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[cfg_attr(
+    feature = "test-support",
+    derive(strum::EnumDiscriminants),
+    strum_discriminants(derive(strum::EnumIter))
+)]
 pub enum WidgetPackageError {
     #[error("archive is larger than the {MAX_ARCHIVE_MIB} MiB limit")]
     TooLarge,
@@ -92,54 +97,51 @@ pub enum WidgetPackageError {
     Archive(String),
     #[error("archive holds more than {MAX_ARCHIVE_ENTRIES} files and folders")]
     TooManyArchiveEntries,
-    #[error("cannot read '{}': {source}", shown(.path))]
+    #[error("cannot read \"{}\": {source}", shown(.path))]
     Io {
         path: String,
         #[source]
         source: std::io::Error,
     },
-    #[error("'{}' is larger than the {limit}-byte limit", shown(.path))]
+    #[error("\"{}\" is larger than the {limit}-byte limit", shown(.path))]
     FileTooLarge { path: String, limit: usize },
-    #[error(
-        "archive must contain exactly one widget folder (holding manifest.json) under lib/bmc-widgets/, found: {}",
-        shown(.0)
-    )]
+    #[error("{}", not_one_widget(.0))]
     NotOneWidget(String),
-    #[error("'{}' is not a directory", shown(.0))]
+    #[error("\"{}\" is not a directory", shown(.0))]
     NotADirectory(String),
     #[error(
-        "directory name '{}' must be at most {MAX_WIDGET_NAME_LEN} lowercase letters, digits and dashes, not starting with a dash",
+        "directory name \"{}\" must be at most {MAX_WIDGET_NAME_LEN} lowercase letters, digits and dashes, not starting with a dash",
         shown(.0)
     )]
     BadWidgetName(String),
-    #[error("'{}' is not a UTF-8 name", shown(.0))]
+    #[error("\"{}\" is not a UTF-8 name", shown(.0))]
     NotUtf8Name(String),
-    #[error("missing '{}'", shown(.0))]
+    #[error("missing \"{}\"", shown(.0))]
     Missing(String),
-    #[error("'{}' is a native widget binary; only WASM widgets can be installed", shown(.0))]
+    #[error("\"{}\" is a native widget binary; only WASM widgets can be installed", shown(.0))]
     NativeBinary(String),
-    #[error("'{}' is a symlink; the package may not contain symlinks", shown(.0))]
+    #[error("\"{}\" is a symlink; the package may not contain symlinks", shown(.0))]
     Symlink(String),
-    #[error("'{}' is nested deeper than {MAX_DEPTH} directories", shown(.0))]
+    #[error("\"{}\" is nested deeper than {MAX_DEPTH} directories", shown(.0))]
     TooDeep(String),
-    #[error("'{}' holds more than {MAX_DIR_ENTRIES} entries", shown(.0))]
+    #[error("\"{}\" holds more than {MAX_DIR_ENTRIES} entries", shown(.0))]
     TooManyEntries(String),
-    #[error("'{}' is not part of a WASM widget package", shown(.0))]
+    #[error("\"{}\" is not part of a WASM widget package", shown(.0))]
     Unexpected(String),
-    #[error("'{}' must not be executable", shown(.0))]
+    #[error("\"{}\" must not be executable", shown(.0))]
     UnexpectedExecutable(String),
     #[error("manifest.json is invalid: {}", shown(&.0.to_string()))]
     Manifest(#[source] ManifestError),
-    #[error("manifest.json declares binary '{}', expected '{}'", shown(.declared), shown(.expected))]
+    #[error("manifest.json declares binary \"{}\", expected \"{}\"", shown(.declared), shown(.expected))]
     BinaryPath { declared: String, expected: String },
     #[error("manifest.json declares programs, which an upload cannot ship yet")]
     Programs,
     #[error(
-        "manifest.json icon '{}' must be an svg, png, webp, jpg or jpeg file under assets/",
+        "manifest.json icon \"{}\" must be an svg, png, webp, jpg or jpeg file under assets/",
         shown(.0)
     )]
     Icon(String),
-    #[error("'{}' must be executable", shown(.0))]
+    #[error("\"{}\" must be executable", shown(.0))]
     WrapperNotExecutable(String),
     #[error(
         "widget was built with WASM protocol v{package}, \
@@ -148,10 +150,19 @@ pub enum WidgetPackageError {
          or update the device if the widget's protocol is newer."
     )]
     ProtocolMajor { package: u16, device: u16 },
-    #[error("'{}' is not the launcher wrapper the widget SDK generates", shown(.0))]
+    #[error("\"{}\" is not the launcher wrapper the widget SDK generates", shown(.0))]
     Wrapper(String),
-    #[error("'{}' is not a WASM module", shown(.0))]
+    #[error("\"{}\" is not a WASM module", shown(.0))]
     NotWasm(String),
+}
+
+fn not_one_widget(found: &str) -> String {
+    const EXPECTED: &str = "archive must contain exactly one widget folder (holding manifest.json) under lib/bmc-widgets/";
+    if found.is_empty() {
+        format!("{EXPECTED}, found none")
+    } else {
+        format!("{EXPECTED}, found: {}", shown(found))
+    }
 }
 
 /// A validated upload: the widget's directory names and its manifest.
@@ -164,6 +175,11 @@ pub struct WidgetPackage {
 
 /// An installed folder an upload cannot sit next to.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "test-support",
+    derive(strum::EnumDiscriminants),
+    strum_discriminants(derive(strum::EnumIter))
+)]
 pub enum FolderClash {
     /// A flat widget named like the upload's maintainer folder.
     FlatWidget(String),
@@ -504,7 +520,7 @@ fn directory(path: &Path, rel: &str) -> Result<PathBuf, WidgetPackageError> {
 /// Nix refuses store names over 211 bytes. Two names at this cap keep
 /// `bmc-widget-<maintainer>_<widget>` well below it,
 /// so a long name is a rejection the uploader sees, not an import failure.
-const MAX_WIDGET_NAME_LEN: usize = 64;
+pub const MAX_WIDGET_NAME_LEN: usize = 64;
 
 fn is_widget_name(name: &str) -> bool {
     let mut chars = name.chars();

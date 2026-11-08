@@ -33,6 +33,10 @@ export function setRequestLanguage(tag: string): void {
     requestLanguage = tag;
 }
 
+export function getRequestLanguage(): string {
+    return requestLanguage;
+}
+
 /** Has the device word its errors in the language the page speaks, not the browser's list. */
 export const languageInterceptor: Interceptor = next => request => {
     request.header.set('Accept-Language', requestLanguage);

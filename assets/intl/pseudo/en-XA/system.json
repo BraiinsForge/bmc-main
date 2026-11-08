@@ -154,6 +154,11 @@
     "translation": "[Řḗḗşŧȧȧřŧīƞɠ {device_name}...]",
     "description": "Device-info setup failure line while the BMC application restarts the device; device_name is the product name"
   },
+  "3quk+sAOTG": {
+    "source": "{limit, plural, one {Widget package rejected: archive holds more than {limit} file or folder.} other {Widget package rejected: archive holds more than {limit} files and folders.}}",
+    "translation": "[{limit, plural, one {Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ȧȧřƈħīṽḗḗ ħǿǿŀḓş ḿǿǿřḗḗ ŧħȧȧƞ {limit} ƒīŀḗḗ ǿǿř ƒǿǿŀḓḗḗř.} other {Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ȧȧřƈħīṽḗḗ ħǿǿŀḓş ḿǿǿřḗḗ ŧħȧȧƞ {limit} ƒīŀḗḗş ȧȧƞḓ ƒǿǿŀḓḗḗřş.}}]",
+    "description": "Error when an uploaded widget package has too many files; limit is the most files and folders it may hold"
+  },
   "40UMft8l9G": {
     "source": "Missing or invalid session!",
     "translation": "[Ḿīşşīƞɠ ǿǿř īƞṽȧȧŀīḓ şḗḗşşīǿǿƞ!]",
@@ -244,6 +249,11 @@
     "translation": "[Ḓǿǿƞ'ŧ şŧȧȧřŧ ǿǿř ḗḗƞḓ ŧħḗḗ ƞȧȧḿḗḗ, ǿǿř ȧȧ ƥȧȧřŧ ƀḗḗŧẇḗḗḗḗƞ ḓǿǿŧş, ẇīŧħ ȧȧ ħẏƥħḗḗƞ]",
     "description": "Error under the device's hostname field when a part between dots starts or ends with a hyphen"
   },
+  "7on05V2ELv": {
+    "source": "Widget package rejected: manifest.json declares binary \"{declared}\", expected \"{expected}\".",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ḿȧȧƞīƒḗḗşŧ.ĵşǿǿƞ ḓḗḗƈŀȧȧřḗḗş ƀīƞȧȧřẏ \"{declared}\", ḗḗẋƥḗḗƈŧḗḗḓ \"{expected}\".]",
+    "description": "Error on an uploaded widget package naming the wrong program; declared and expected are paths in the package; manifest.json stays as it is"
+  },
   "7yohenZMri": {
     "source": "Line {line}: one leading \"*.\" is the only wildcard there is.",
     "translation": "[Ŀīƞḗḗ {line}: ǿǿƞḗḗ ŀḗḗȧȧḓīƞɠ \"*.\" īş ŧħḗḗ ǿǿƞŀẏ ẇīŀḓƈȧȧřḓ ŧħḗḗřḗḗ īş.]",
@@ -258,6 +268,11 @@
     "source": "Invalid field name at {at}: {key}!",
     "translation": "[Īƞṽȧȧŀīḓ ƒīḗḗŀḓ ƞȧȧḿḗḗ ȧȧŧ {at}: {key}!]",
     "description": "Error on a widget setting's nested value with a malformed field; key is the field's name, at its position"
+  },
+  "9552cBcduS": {
+    "source": "Widget package rejected: \"{path}\" must be executable.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" ḿŭŭşŧ ƀḗḗ ḗḗẋḗḗƈŭŭŧȧȧƀŀḗḗ.]",
+    "description": "Error on an uploaded widget package with a launcher not marked as a program; path is its path in the package"
   },
   "97LQdzs6/Y": {
     "source": "{device_name} is ready!",
@@ -324,6 +339,11 @@
     "translation": "[Ḿŭŭşŧ ƀḗḗ ȧȧ ŧīḿḗḗẑǿǿƞḗḗ]",
     "description": "Error under a timezone widget setting"
   },
+  "EUqEQTTdQr": {
+    "source": "Widget package rejected: manifest.json is invalid: {detail}.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ḿȧȧƞīƒḗḗşŧ.ĵşǿǿƞ īş īƞṽȧȧŀīḓ: {detail}.]",
+    "description": "Error on an uploaded widget package with a broken manifest; detail is an untranslated technical explanation for the widget's author; manifest.json stays as it is"
+  },
   "EXlo7pbX6t": {
     "source": "Failed to log out!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿɠ ǿǿŭŭŧ!]",
@@ -338,6 +358,11 @@
     "source": "{downloaded} MB of {total} MB",
     "translation": "[{downloaded} ḾƁ ǿǿƒ {total} ḾƁ]",
     "description": "Upgrade overlay, below the progress bar; downloaded and total are amounts in megabytes, e.g. 82 and 151"
+  },
+  "EpfB6Wk/6D": {
+    "source": "Not enough space on the device to install the widget!",
+    "translation": "[Ƞǿǿŧ ḗḗƞǿǿŭŭɠħ şƥȧȧƈḗḗ ǿǿƞ ŧħḗḗ ḓḗḗṽīƈḗḗ ŧǿǿ īƞşŧȧȧŀŀ ŧħḗḗ ẇīḓɠḗḗŧ!]",
+    "description": "Error when the device has too little free storage for an uploaded widget"
   },
   "EwQyQi22lh": {
     "source": "Line {line}: \"/\" makes this a CIDR range, and it does not parse as one.",
@@ -369,10 +394,25 @@
     "translation": "[Ŧǿǿ ȧȧƈƈḗḗşş ŧħḗḗ ƈǿǿƞŧřǿǿŀş, ĪƤ ȧȧƞḓ Ẇī-Ƒī īƞƒǿǿ, <b>şẇīƥḗḗ ḓǿǿẇƞ</b>]",
     "description": "Device-info connect screen, corner hint; <b> marks the gesture that opens the settings tray, drawn bold, and may go wherever the sentence needs it"
   },
+  "G5SyeWXGmD": {
+    "source": "Widget package rejected: \"{path}\" must not be executable.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" ḿŭŭşŧ ƞǿǿŧ ƀḗḗ ḗḗẋḗḗƈŭŭŧȧȧƀŀḗḗ.]",
+    "description": "Error on an uploaded widget package with a file wrongly marked as a program; path is its path in the package"
+  },
+  "G6HOmKPErt": {
+    "source": "Another install or upgrade is in progress.",
+    "translation": "[Ȧƞǿǿŧħḗḗř īƞşŧȧȧŀŀ ǿǿř ŭŭƥɠřȧȧḓḗḗ īş īƞ ƥřǿǿɠřḗḗşş.]",
+    "description": "Error when uploading a widget package while the device is changing its software"
+  },
   "G6sIhVSHoo": {
     "source": "The widget does not fit in that slot.",
     "translation": "[Ŧħḗḗ ẇīḓɠḗḗŧ ḓǿǿḗḗş ƞǿǿŧ ƒīŧ īƞ ŧħȧȧŧ şŀǿǿŧ.]",
     "description": "Error when placing a widget in a combined scene past the screen's edge"
+  },
+  "GV73Mv0z8i": {
+    "source": "Widget package rejected: archive must contain exactly one widget folder (holding manifest.json) under lib/bmc-widgets/, found none.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ȧȧřƈħīṽḗḗ ḿŭŭşŧ ƈǿǿƞŧȧȧīƞ ḗḗẋȧȧƈŧŀẏ ǿǿƞḗḗ ẇīḓɠḗḗŧ ƒǿǿŀḓḗḗř (ħǿǿŀḓīƞɠ ḿȧȧƞīƒḗḗşŧ.ĵşǿǿƞ) ŭŭƞḓḗḗř ŀīƀ/ƀḿƈ-ẇīḓɠḗḗŧş/, ƒǿǿŭŭƞḓ ƞǿǿƞḗḗ.]",
+    "description": "Error on an uploaded widget package with no widget in it; manifest.json and lib/bmc-widgets/ stay as they are"
   },
   "GX3xtlUQ6P": {
     "source": "Could not reach Braiins Pool, so this token is unverified.",
@@ -449,6 +489,11 @@
     "translation": "[{hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}} {minutes, plural, one {{minutes} ḿīƞŭŭŧḗḗ} other {{minutes} ḿīƞŭŭŧḗḗş}} ȧȧɠǿǿ]",
     "description": "Relative time label for a moment behind, hours and minutes spelled out; both are whole numbers"
   },
+  "JmnNjQ/nYo": {
+    "source": "Widget package rejected: \"{path}\" is not a WASM module.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ƞǿǿŧ ȧȧ ẆȦŞḾ ḿǿǿḓŭŭŀḗḗ.]",
+    "description": "Error on an uploaded widget package whose program is of the wrong kind; path is its path in the package; WASM is a technology name"
+  },
   "Jt/Y49BQJQ": {
     "source": "The value at {at} has no type!",
     "translation": "[Ŧħḗḗ ṽȧȧŀŭŭḗḗ ȧȧŧ {at} ħȧȧş ƞǿǿ ŧẏƥḗḗ!]",
@@ -478,6 +523,11 @@
     "source": "Line {line}: a wildcard needs a domain right after \"*.\".",
     "translation": "[Ŀīƞḗḗ {line}: ȧȧ ẇīŀḓƈȧȧřḓ ƞḗḗḗḗḓş ȧȧ ḓǿǿḿȧȧīƞ řīɠħŧ ȧȧƒŧḗḗř \"*.\".]",
     "description": "Error under an account's allowed hosts list; line is the entry's line number"
+  },
+  "LhOOlpx6Af": {
+    "source": "The upload ended before the archive was complete.",
+    "translation": "[Ŧħḗḗ ŭŭƥŀǿǿȧȧḓ ḗḗƞḓḗḗḓ ƀḗḗƒǿǿřḗḗ ŧħḗḗ ȧȧřƈħīṽḗḗ ẇȧȧş ƈǿǿḿƥŀḗḗŧḗḗ.]",
+    "description": "Error when a widget package upload broke off midway"
   },
   "LloWt957Ez": {
     "source": "This slot does not exist!",
@@ -579,10 +629,20 @@
     "translation": "[Ḗŧħḗḗřƞḗḗŧ īş ƞǿǿŧ ƈǿǿƞƞḗḗƈŧḗḗḓ, şǿǿ Ẇī-Ƒī şḗḗŧŭŭƥ īş řḗḗɋŭŭīřḗḗḓ.]",
     "description": "Error when skipping the setup's Wi-Fi step while no Ethernet cable is plugged in"
   },
+  "Q1wMBRqo8Z": {
+    "source": "{uploaded} has the uid of the installed widget {installed}: only one of them would show.",
+    "translation": "[{uploaded} ħȧȧş ŧħḗḗ ŭŭīḓ ǿǿƒ ŧħḗḗ īƞşŧȧȧŀŀḗḗḓ ẇīḓɠḗḗŧ {installed}: ǿǿƞŀẏ ǿǿƞḗḗ ǿǿƒ ŧħḗḗḿ ẇǿǿŭŭŀḓ şħǿǿẇ.]",
+    "description": "Error when an uploaded widget has the identifier of an installed one; uploaded and installed are folder names; uid is short for unique identifier"
+  },
   "Q2f5ufkQwL": {
     "source": "Failed to save the data collection setting!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ḓȧȧŧȧȧ ƈǿǿŀŀḗḗƈŧīǿǿƞ şḗḗŧŧīƞɠ!]",
     "description": "Error when the device could not store whether it may collect usage data"
+  },
+  "Q8SgKnJKOg": {
+    "source": "Widget package rejected: widget was built with WASM protocol v{package}, but this device supports only v{device}. Rebuild it with a matching SDK, or update the device if the widget's protocol is newer.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ẇīḓɠḗḗŧ ẇȧȧş ƀŭŭīŀŧ ẇīŧħ ẆȦŞḾ ƥřǿǿŧǿǿƈǿǿŀ ṽ{package}, ƀŭŭŧ ŧħīş ḓḗḗṽīƈḗḗ şŭŭƥƥǿǿřŧş ǿǿƞŀẏ ṽ{device}. Řḗḗƀŭŭīŀḓ īŧ ẇīŧħ ȧȧ ḿȧȧŧƈħīƞɠ ŞḒĶ, ǿǿř ŭŭƥḓȧȧŧḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ īƒ ŧħḗḗ ẇīḓɠḗḗŧ'ş ƥřǿǿŧǿǿƈǿǿŀ īş ƞḗḗẇḗḗř.]",
+    "description": "Error on an uploaded widget package built for another version of the device's interface; package and device are whole version numbers; WASM and SDK are technology names"
   },
   "QOg9GHpuiu": {
     "source": "Invalid time!",
@@ -614,6 +674,11 @@
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƞŭŭḿƀḗḗř ƒǿǿřḿȧȧŧ!]",
     "description": "Error when the device could not store how numbers are grouped and punctuated"
   },
+  "S615Bp6/AD": {
+    "source": "Widget package rejected: not a valid NAR archive.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ƞǿǿŧ ȧȧ ṽȧȧŀīḓ ȠȦŘ ȧȧřƈħīṽḗḗ.]",
+    "description": "Error when an uploaded file cannot be read as an archive; NAR is a file format"
+  },
   "S6DYT1b/D3": {
     "source": "Alarm",
     "translation": "[Ȧŀȧȧřḿ]",
@@ -628,6 +693,11 @@
     "source": "Upgrade failed!",
     "translation": "[Ŭƥɠřȧȧḓḗḗ ƒȧȧīŀḗḗḓ!]",
     "description": "Error when a system upgrade that had started did not finish"
+  },
+  "ST1ER9g1Xg": {
+    "source": "{uploaded} cannot be installed next to the widgets installed under {name}/: only one of them would show.",
+    "translation": "[{uploaded} ƈȧȧƞƞǿǿŧ ƀḗḗ īƞşŧȧȧŀŀḗḗḓ ƞḗḗẋŧ ŧǿǿ ŧħḗḗ ẇīḓɠḗḗŧş īƞşŧȧȧŀŀḗḗḓ ŭŭƞḓḗḗř {name}/: ǿǿƞŀẏ ǿǿƞḗḗ ǿǿƒ ŧħḗḗḿ ẇǿǿŭŭŀḓ şħǿǿẇ.]",
+    "description": "Error when an uploaded widget's folder clashes with a folder of installed widgets; uploaded and name are folder names"
   },
   "Sd6MP8bjly": {
     "source": "Unknown field!",
@@ -648,6 +718,11 @@
     "source": "Failed to get MAC address!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ɠḗḗŧ ḾȦƇ ȧȧḓḓřḗḗşş!]",
     "description": "Error when the device could not read its own MAC address, the network card's hardware address"
+  },
+  "SyLMkEaaR6": {
+    "source": "The archive must be sent as {content_type}.",
+    "translation": "[Ŧħḗḗ ȧȧřƈħīṽḗḗ ḿŭŭşŧ ƀḗḗ şḗḗƞŧ ȧȧş {content_type}.]",
+    "description": "Error when a widget package upload does not say it is an archive; content_type is a technical name"
   },
   "T5TLaa0vPb": {
     "source": "Must be a finite number",
@@ -899,6 +974,11 @@
     "translation": "[Ǿƥḗḗƞ ŧħḗḗ ẇḗḗƀ ƀřǿǿẇşḗḗř ȧȧŧ]",
     "description": "Device-info wired setup, title above the setup wizard's address"
   },
+  "aGOmDrXS9I": {
+    "source": "Widget package rejected: manifest.json declares programs, which an upload cannot ship yet.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ḿȧȧƞīƒḗḗşŧ.ĵşǿǿƞ ḓḗḗƈŀȧȧřḗḗş ƥřǿǿɠřȧȧḿş, ẇħīƈħ ȧȧƞ ŭŭƥŀǿǿȧȧḓ ƈȧȧƞƞǿǿŧ şħīƥ ẏḗḗŧ.]",
+    "description": "Error on an uploaded widget package whose manifest lists extra programs; manifest.json stays as it is"
+  },
   "aHGy/uJJGR": {
     "source": "Failed to set the night mode time interval!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şḗḗŧ ŧħḗḗ ƞīɠħŧ ḿǿǿḓḗḗ ŧīḿḗḗ īƞŧḗḗřṽȧȧŀ!]",
@@ -913,6 +993,11 @@
     "source": "Invalid sound!",
     "translation": "[Īƞṽȧȧŀīḓ şǿǿŭŭƞḓ!]",
     "description": "Error under an alarm's sound field when the device does not have the chosen sound"
+  },
+  "awDGbtfzaX": {
+    "source": "Widget install failed. See the device log for details.",
+    "translation": "[Ẇīḓɠḗḗŧ īƞşŧȧȧŀŀ ƒȧȧīŀḗḗḓ. Şḗḗḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ ŀǿǿɠ ƒǿǿř ḓḗḗŧȧȧīŀş.]",
+    "description": "Error when the device could not install an uploaded widget for a reason of its own"
   },
   "awfSZJ0erv": {
     "source": "Choose a widget size",
@@ -959,6 +1044,11 @@
     "translation": "[Ŭƞķƞǿǿẇƞ ƈřḗḗḓḗḗƞŧīȧȧŀ ŧẏƥḗḗ {type_id}!]",
     "description": "Error when saving an account of a type the device does not know; type_id is its identifier"
   },
+  "cO4YOH0q/x": {
+    "source": "Widget package rejected: \"{path}\" is larger than the {limit}-byte limit.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ŀȧȧřɠḗḗř ŧħȧȧƞ ŧħḗḗ {limit}-ƀẏŧḗḗ ŀīḿīŧ.]",
+    "description": "Error when a file in an uploaded widget package is too big; path is its path in the package; limit is a whole number"
+  },
   "cPNcF89Mog": {
     "source": "No IP address assigned",
     "translation": "[Ƞǿǿ ĪƤ ȧȧḓḓřḗḗşş ȧȧşşīɠƞḗḗḓ]",
@@ -968,6 +1058,11 @@
     "source": "in {days, plural, one {{days} day} other {{days} days}} {hours, plural, one {{hours} hour} other {{hours} hours}}",
     "translation": "[īƞ {days, plural, one {{days} ḓȧȧẏ} other {{days} ḓȧȧẏş}} {hours, plural, one {{hours} ħǿǿŭŭř} other {{hours} ħǿǿŭŭřş}}]",
     "description": "Relative time label for a moment ahead, days and hours spelled out; both are whole numbers"
+  },
+  "cUQVT6jxW2": {
+    "source": "Widget package rejected: \"{path}\" is a symlink; the package may not contain symlinks.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ȧȧ şẏḿŀīƞķ; ŧħḗḗ ƥȧȧƈķȧȧɠḗḗ ḿȧȧẏ ƞǿǿŧ ƈǿǿƞŧȧȧīƞ şẏḿŀīƞķş.]",
+    "description": "Error on an uploaded widget package with a symbolic link in it; path is its path in the package"
   },
   "csfAr9c73Q": {
     "source": "Failed to get IP address!",
@@ -1008,6 +1103,16 @@
     "source": "Missing value!",
     "translation": "[Ḿīşşīƞɠ ṽȧȧŀŭŭḗḗ!]",
     "description": "Error under a required form field left empty"
+  },
+  "ebEOGLilLw": {
+    "source": "Widget package rejected: manifest.json icon \"{path}\" must be an svg, png, webp, jpg or jpeg file under assets/.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ḿȧȧƞīƒḗḗşŧ.ĵşǿǿƞ īƈǿǿƞ \"{path}\" ḿŭŭşŧ ƀḗḗ ȧȧƞ şṽɠ, ƥƞɠ, ẇḗḗƀƥ, ĵƥɠ ǿǿř ĵƥḗḗɠ ƒīŀḗḗ ŭŭƞḓḗḗř ȧȧşşḗḗŧş/.]",
+    "description": "Error on an uploaded widget package with an unusable icon; path is the icon's path in the package; manifest.json and assets/ stay as they are"
+  },
+  "ex5zxgZF6U": {
+    "source": "Widget package rejected: \"{path}\" is not part of a WASM widget package.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ƞǿǿŧ ƥȧȧřŧ ǿǿƒ ȧȧ ẆȦŞḾ ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ.]",
+    "description": "Error on an uploaded widget package with a file that does not belong; path is its path in the package; WASM is a technology name"
   },
   "f+3IQb8cxo": {
     "source": "in {duration}",
@@ -1179,6 +1284,11 @@
     "translation": "[Ŧřẏ ȧȧɠȧȧīƞ]",
     "description": "Settings tray notice, under a failure title: the button can be held again"
   },
+  "kvtlLtNGnn": {
+    "source": "Widget package rejected: missing \"{path}\".",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ḿīşşīƞɠ \"{path}\".]",
+    "description": "Error on an uploaded widget package lacking a required file; path is that file's path in the package"
+  },
   "kxLOgKIH3q": {
     "source": "Cannot check for upgrade: the firmware index cannot be downloaded.",
     "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ŧħḗḗ ƒīřḿẇȧȧřḗḗ īƞḓḗḗẋ ƈȧȧƞƞǿǿŧ ƀḗḗ ḓǿǿẇƞŀǿǿȧȧḓḗḗḓ.]",
@@ -1203,6 +1313,11 @@
     "source": "Cannot check for upgrade: no enabled package servers are configured.",
     "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ƞǿǿ ḗḗƞȧȧƀŀḗḗḓ ƥȧȧƈķȧȧɠḗḗ şḗḗřṽḗḗřş ȧȧřḗḗ ƈǿǿƞƒīɠŭŭřḗḗḓ.]",
     "description": "Error when checking for an upgrade and the device has no package server turned on"
+  },
+  "loRuKObX/o": {
+    "source": "Widget package rejected: \"{path}\" is not a directory.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ƞǿǿŧ ȧȧ ḓīřḗḗƈŧǿǿřẏ.]",
+    "description": "Error on an uploaded widget package; path is a path in the package"
   },
   "lpn97WlmC9": {
     "source": "Failed to set the night mode brightness!",
@@ -1229,6 +1344,11 @@
     "translation": "[Īƞƈǿǿřřḗḗƈŧ ŭŭşḗḗřƞȧȧḿḗḗ ǿǿř ƥȧȧşşẇǿǿřḓ!]",
     "description": "Error on the login page when the password is wrong"
   },
+  "n+s424PJwT": {
+    "source": "{package_name} {installed} is installed; uploading the older {uploaded} would downgrade it.",
+    "translation": "[{package_name} {installed} īş īƞşŧȧȧŀŀḗḗḓ; ŭŭƥŀǿǿȧȧḓīƞɠ ŧħḗḗ ǿǿŀḓḗḗř {uploaded} ẇǿǿŭŭŀḓ ḓǿǿẇƞɠřȧȧḓḗḗ īŧ.]",
+    "description": "Error when uploading a widget older than the installed one; package_name is its name; installed and uploaded are versions"
+  },
   "n/w3M2BuWT": {
     "source": "No Wi-Fi network named {ssid} was found.",
     "translation": "[Ƞǿǿ Ẇī-Ƒī ƞḗḗŧẇǿǿřķ ƞȧȧḿḗḗḓ {ssid} ẇȧȧş ƒǿǿŭŭƞḓ.]",
@@ -1244,6 +1364,11 @@
     "translation": "[Ƈǿǿƞƞḗḗƈŧ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ]",
     "description": "Device-info setup title on a board without Wi-Fi, before its cable is plugged in"
   },
+  "o1/XD2VQM6": {
+    "source": "Widget package rejected: cannot read \"{path}\".",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ƈȧȧƞƞǿǿŧ řḗḗȧȧḓ \"{path}\".]",
+    "description": "Error when a file in an uploaded widget package cannot be read; path is its path in the package"
+  },
   "o1Bb3Mh6rm": {
     "source": "An upgrade is in progress",
     "translation": "[Ȧƞ ŭŭƥɠřȧȧḓḗḗ īş īƞ ƥřǿǿɠřḗḗşş]",
@@ -1253,6 +1378,16 @@
     "source": "Cannot check for upgrade: the current system version is not recognized.",
     "translation": "[Ƈȧȧƞƞǿǿŧ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ: ŧħḗḗ ƈŭŭřřḗḗƞŧ şẏşŧḗḗḿ ṽḗḗřşīǿǿƞ īş ƞǿǿŧ řḗḗƈǿǿɠƞīẑḗḗḓ.]",
     "description": "Error when checking for an upgrade and the device's own firmware version number cannot be read"
+  },
+  "o54gXE1X9Z": {
+    "source": "{limit, plural, one {Widget package rejected: \"{path}\" holds more than {limit} entry.} other {Widget package rejected: \"{path}\" holds more than {limit} entries.}}",
+    "translation": "[{limit, plural, one {Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" ħǿǿŀḓş ḿǿǿřḗḗ ŧħȧȧƞ {limit} ḗḗƞŧřẏ.} other {Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" ħǿǿŀḓş ḿǿǿřḗḗ ŧħȧȧƞ {limit} ḗḗƞŧřīḗḗş.}}]",
+    "description": "Error on an uploaded widget package with too many files in one folder; path is that folder's path in the package; limit is the most entries a folder may hold"
+  },
+  "oSUU8Z+Lff": {
+    "source": "{minutes, plural, one {Upload did not finish within {minutes} minute!} other {Upload did not finish within {minutes} minutes!}}",
+    "translation": "[{minutes, plural, one {Ŭƥŀǿǿȧȧḓ ḓīḓ ƞǿǿŧ ƒīƞīşħ ẇīŧħīƞ {minutes} ḿīƞŭŭŧḗḗ!} other {Ŭƥŀǿǿȧȧḓ ḓīḓ ƞǿǿŧ ƒīƞīşħ ẇīŧħīƞ {minutes} ḿīƞŭŭŧḗḗş!}}]",
+    "description": "Error when a widget package upload took too long; minutes is how many minutes it may take"
   },
   "p0jlb76HNw": {
     "source": "Alarm not found!",
@@ -1289,6 +1424,11 @@
     "translation": "[{max, plural, one {Ŭşḗḗ ȧȧŧ ḿǿǿşŧ {max} ƈħȧȧřȧȧƈŧḗḗř} other {Ŭşḗḗ ȧȧŧ ḿǿǿşŧ {max} ƈħȧȧřȧȧƈŧḗḗřş}}]",
     "description": "Error under the device's hostname field when the name is too long, max is always 253"
   },
+  "pU1cDG8ooQ": {
+    "source": "{limit, plural, one {Widget package rejected: \"{path}\" is nested deeper than {limit} directory.} other {Widget package rejected: \"{path}\" is nested deeper than {limit} directories.}}",
+    "translation": "[{limit, plural, one {Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ƞḗḗşŧḗḗḓ ḓḗḗḗḗƥḗḗř ŧħȧȧƞ {limit} ḓīřḗḗƈŧǿǿřẏ.} other {Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ƞḗḗşŧḗḗḓ ḓḗḗḗḗƥḗḗř ŧħȧȧƞ {limit} ḓīřḗḗƈŧǿǿřīḗḗş.}}]",
+    "description": "Error on an uploaded widget package with folders too deep; path is a path in the package; limit is the most levels of folders allowed"
+  },
   "pV73uM/iLx": {
     "source": "This scene is being previewed, so it cannot be removed.",
     "translation": "[Ŧħīş şƈḗḗƞḗḗ īş ƀḗḗīƞɠ ƥřḗḗṽīḗḗẇḗḗḓ, şǿǿ īŧ ƈȧȧƞƞǿǿŧ ƀḗḗ řḗḗḿǿǿṽḗḗḓ.]",
@@ -1314,6 +1454,16 @@
     "translation": "[Ḗŧħḗḗřƞḗḗŧ]",
     "description": "Settings tray, in place of the network name while the device is online through its cable"
   },
+  "qiQbGTKfBS": {
+    "source": "Widget package rejected: \"{name}\" is not a UTF-8 name.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{name}\" īş ƞǿǿŧ ȧȧ ŬŦƑ-8 ƞȧȧḿḗḗ.]",
+    "description": "Error on an uploaded widget package holding a file name in the wrong encoding; name is that name; UTF-8 is an encoding"
+  },
+  "quORW6clAG": {
+    "source": "{uploaded} cannot be installed next to the installed widget {name}: only one of them would show.",
+    "translation": "[{uploaded} ƈȧȧƞƞǿǿŧ ƀḗḗ īƞşŧȧȧŀŀḗḗḓ ƞḗḗẋŧ ŧǿǿ ŧħḗḗ īƞşŧȧȧŀŀḗḗḓ ẇīḓɠḗḗŧ {name}: ǿǿƞŀẏ ǿǿƞḗḗ ǿǿƒ ŧħḗḗḿ ẇǿǿŭŭŀḓ şħǿǿẇ.]",
+    "description": "Error when an uploaded widget's folder clashes with an installed widget; uploaded and name are folder names"
+  },
   "r3hpBf61VY": {
     "source": "Line {line}: \"*\" is only valid as a leading \"*.\" label.",
     "translation": "[Ŀīƞḗḗ {line}: \"*\" īş ǿǿƞŀẏ ṽȧȧŀīḓ ȧȧş ȧȧ ŀḗḗȧȧḓīƞɠ \"*.\" ŀȧȧƀḗḗŀ.]",
@@ -1323,6 +1473,11 @@
     "source": "Couldn't start Wi-Fi setup",
     "translation": "[Ƈǿǿŭŭŀḓƞ'ŧ şŧȧȧřŧ Ẇī-Ƒī şḗḗŧŭŭƥ]",
     "description": "Settings tray notice title when Wi-Fi setup did not start in time"
+  },
+  "r9X0YJycgU": {
+    "source": "Widget package rejected: \"{path}\" is a native widget binary; only WASM widgets can be installed.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ȧȧ ƞȧȧŧīṽḗḗ ẇīḓɠḗḗŧ ƀīƞȧȧřẏ; ǿǿƞŀẏ ẆȦŞḾ ẇīḓɠḗḗŧş ƈȧȧƞ ƀḗḗ īƞşŧȧȧŀŀḗḗḓ.]",
+    "description": "Error on an uploaded widget package with a program built for the device; path is its path in the package; WASM is a technology name"
   },
   "rFhSMy8WRC": {
     "source": "The widgets are being set up. Try again in a moment.",
@@ -1389,6 +1544,11 @@
     "translation": "[Ɓǿǿşḗḗř ḓīḓ ƞǿǿŧ ȧȧƞşẇḗḗř.]",
     "description": "Error when Boser stayed silent on an upgrade request; Boser is a product name"
   },
+  "tpw4MjU4Gk": {
+    "source": "{limit, plural, one {Widget package rejected: directory name \"{name}\" must be at most {limit} lowercase letter, digit or dash, not starting with a dash.} other {Widget package rejected: directory name \"{name}\" must be at most {limit} lowercase letters, digits and dashes, not starting with a dash.}}",
+    "translation": "[{limit, plural, one {Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ḓīřḗḗƈŧǿǿřẏ ƞȧȧḿḗḗ \"{name}\" ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {limit} ŀǿǿẇḗḗřƈȧȧşḗḗ ŀḗḗŧŧḗḗř, ḓīɠīŧ ǿǿř ḓȧȧşħ, ƞǿǿŧ şŧȧȧřŧīƞɠ ẇīŧħ ȧȧ ḓȧȧşħ.} other {Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ḓīřḗḗƈŧǿǿřẏ ƞȧȧḿḗḗ \"{name}\" ḿŭŭşŧ ƀḗḗ ȧȧŧ ḿǿǿşŧ {limit} ŀǿǿẇḗḗřƈȧȧşḗḗ ŀḗḗŧŧḗḗřş, ḓīɠīŧş ȧȧƞḓ ḓȧȧşħḗḗş, ƞǿǿŧ şŧȧȧřŧīƞɠ ẇīŧħ ȧȧ ḓȧȧşħ.}}]",
+    "description": "Error on an uploaded widget package whose folder name is not allowed; name is that name; limit is the most characters it may have"
+  },
   "uDS7/RsopS": {
     "source": "Preparing update",
     "translation": "[Ƥřḗḗƥȧȧřīƞɠ ŭŭƥḓȧȧŧḗḗ]",
@@ -1399,10 +1559,20 @@
     "translation": "[Ƥřǿǿŧǿǿƈǿǿŀ ḿŭŭşŧ ƀḗḗ şƥḗḗƈīƒīḗḗḓ.]",
     "description": "Error when neither automatic (DHCP) nor manual network settings are chosen"
   },
+  "usdZzpBanc": {
+    "source": "Widget package rejected: \"{path}\" is not the launcher wrapper the widget SDK generates.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: \"{path}\" īş ƞǿǿŧ ŧħḗḗ ŀȧȧŭŭƞƈħḗḗř ẇřȧȧƥƥḗḗř ŧħḗḗ ẇīḓɠḗḗŧ ŞḒĶ ɠḗḗƞḗḗřȧȧŧḗḗş.]",
+    "description": "Error on an uploaded widget package with a launcher someone changed; path is its path in the package; SDK is a technology name"
+  },
   "v8yqe1Qm2t": {
     "source": "Stop Alarm",
     "translation": "[Şŧǿǿƥ Ȧŀȧȧřḿ]",
     "description": "Ringing alarm screen, button that dismisses the alarm"
+  },
+  "vPR+ubYHrq": {
+    "source": "Widget package rejected: archive is larger than the {limit} MiB limit.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ȧȧřƈħīṽḗḗ īş ŀȧȧřɠḗḗř ŧħȧȧƞ ŧħḗḗ {limit} ḾīƁ ŀīḿīŧ.]",
+    "description": "Error when an uploaded widget package is too big; limit is a whole number"
   },
   "vRbCrkZYmj": {
     "source": "Failed to set the night mode sound volume!",
@@ -1478,6 +1648,11 @@
     "source": "The widget cycling settings are missing!",
     "translation": "[Ŧħḗḗ ẇīḓɠḗḗŧ ƈẏƈŀīƞɠ şḗḗŧŧīƞɠş ȧȧřḗḗ ḿīşşīƞɠ!]",
     "description": "Error when saving widget cycling with no settings in the request"
+  },
+  "yGWLOBVkoP": {
+    "source": "Widget package rejected: archive must contain exactly one widget folder (holding manifest.json) under lib/bmc-widgets/, found: {found}.",
+    "translation": "[Ẇīḓɠḗḗŧ ƥȧȧƈķȧȧɠḗḗ řḗḗĵḗḗƈŧḗḗḓ: ȧȧřƈħīṽḗḗ ḿŭŭşŧ ƈǿǿƞŧȧȧīƞ ḗḗẋȧȧƈŧŀẏ ǿǿƞḗḗ ẇīḓɠḗḗŧ ƒǿǿŀḓḗḗř (ħǿǿŀḓīƞɠ ḿȧȧƞīƒḗḗşŧ.ĵşǿǿƞ) ŭŭƞḓḗḗř ŀīƀ/ƀḿƈ-ẇīḓɠḗḗŧş/, ƒǿǿŭŭƞḓ: {found}.]",
+    "description": "Error on an uploaded widget package without one widget in it; found lists the folders it does have; manifest.json and lib/bmc-widgets/ stay as they are"
   },
   "yRA94B7J/1": {
     "source": "Must be at most {max}",

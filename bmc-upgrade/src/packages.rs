@@ -220,6 +220,11 @@ pub struct InstalledWidget {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[cfg_attr(
+    feature = "test-support",
+    derive(strum::EnumDiscriminants),
+    strum_discriminants(derive(strum::EnumIter))
+)]
 pub enum WidgetInstallError {
     #[error("{0}")]
     Rejected(#[source] WidgetPackageError),

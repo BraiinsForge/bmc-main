@@ -30,7 +30,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use bmc_upgrade::packages::{InstalledWidget, WidgetInstallOutcome};
+use bmc_upgrade::packages::{InstalledWidget, WidgetInstallError, WidgetInstallOutcome};
 use bmc_upgrade::widget_package::{
     ArchiveStream, MAX_ARCHIVE_BYTES, WidgetPackageError, WidgetUpload, deadline_archive, shown,
 };
@@ -38,13 +38,17 @@ use futures::TryStreamExt as _;
 use serde::Serialize;
 use tokio_util::io::StreamReader;
 
+use super::grpc::intl::intl_from_headers;
+use super::grpc::managed_by_boser_message;
 use super::no_password::NoPasswordLayer;
 use super::session::{SessionLayer, extract_session};
 use crate::BmcManager;
 use crate::session::Manager as SessionManager;
+use crate::system_upgrade::SystemUpgradeService;
 use crate::system_upgrade::boser::UpgradeRoute;
-use crate::system_upgrade::{SystemUpgradeError, SystemUpgradeService};
 use bmc_upgrade::firmware::FirmwareIndex;
+
+mod wording;
 
 pub(crate) const PATH: &str = "/api/install_widget_package";
 /// Required on every upload. On a device without a password the session
@@ -56,12 +60,12 @@ pub(crate) const ARCHIVE_CONTENT_TYPE: &str = "application/x-nix-archive";
 /// A widget package install, free of the upgrade service's generics.
 #[async_trait::async_trait]
 pub(crate) trait WidgetPackageInstaller: Send + Sync + 'static {
-    async fn install(&self, upload: WidgetUpload) -> Result<InstalledWidget, SystemUpgradeError>;
+    async fn install(&self, upload: WidgetUpload) -> Result<InstalledWidget, WidgetInstallError>;
 }
 
 #[async_trait::async_trait]
 impl<T: FirmwareIndex, U: BmcManager> WidgetPackageInstaller for SystemUpgradeService<T, U> {
-    async fn install(&self, upload: WidgetUpload) -> Result<InstalledWidget, SystemUpgradeError> {
+    async fn install(&self, upload: WidgetUpload) -> Result<InstalledWidget, WidgetInstallError> {
         self.install_widget_package(upload).await
     }
 }
@@ -164,6 +168,7 @@ async fn handle<S: SessionManager, I: WidgetPackageInstaller>(
     if let Err(error) = extract_session::<S>(request.headers(), request.extensions()) {
         return failure(StatusCode::UNAUTHORIZED, error.message.unwrap_or_default());
     }
+    let intl = intl_from_headers(request.headers());
     if request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -172,14 +177,11 @@ async fn handle<S: SessionManager, I: WidgetPackageInstaller>(
     {
         return failure(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            format!("the archive must be sent as {ARCHIVE_CONTENT_TYPE}"),
+            wording::wrong_content_type(&intl, ARCHIVE_CONTENT_TYPE),
         );
     }
     if let InstallTarget::BoserManaged = uploads.target {
-        return failure(
-            StatusCode::CONFLICT,
-            "widget packages are installed on the BMC only; this platform is managed by Boser",
-        );
+        return failure(StatusCode::CONFLICT, managed_by_boser_message(&intl));
     }
     // The stream cap would catch this too;
     // an announced size is refused before the upload starts.
@@ -191,7 +193,7 @@ async fn handle<S: SessionManager, I: WidgetPackageInstaller>(
     if announced_bytes.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
         return failure(
             StatusCode::PAYLOAD_TOO_LARGE,
-            WidgetPackageError::TooLarge.to_string(),
+            wording::package_rejected(&intl, &WidgetPackageError::TooLarge),
         );
     }
     let body: ArchiveStream = Box::pin(StreamReader::new(
@@ -207,38 +209,29 @@ async fn handle<S: SessionManager, I: WidgetPackageInstaller>(
     };
     match uploads.installer.install(upload).await {
         Ok(installed) => Json(Installed::from(installed)).into_response(),
-        Err(error) => failure(status_of(&error), error.to_string()),
+        Err(error) => failure(status_of(&error), wording::install_failure(&intl, &error)),
     }
 }
 
-fn status_of(error: &SystemUpgradeError) -> StatusCode {
+fn status_of(error: &WidgetInstallError) -> StatusCode {
     match error {
-        SystemUpgradeError::WidgetPackageRejected(_) | SystemUpgradeError::WidgetUploadAborted => {
+        WidgetInstallError::Rejected(WidgetPackageError::TooLarge) => StatusCode::PAYLOAD_TOO_LARGE,
+        WidgetInstallError::Rejected(_) | WidgetInstallError::UploadAborted => {
             StatusCode::BAD_REQUEST
         }
-        SystemUpgradeError::WidgetPackageTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-        SystemUpgradeError::WidgetDowngradeRefused(_)
-        | SystemUpgradeError::WidgetFolderTaken(_)
-        | SystemUpgradeError::WidgetUidTaken(_) => StatusCode::CONFLICT,
-        SystemUpgradeError::WidgetUploadStalled => StatusCode::REQUEST_TIMEOUT,
-        SystemUpgradeError::UpgradeInProgress | SystemUpgradeError::WidgetInstallBusy => {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
-        SystemUpgradeError::NotEnoughSpace | SystemUpgradeError::WidgetInstallNoSpace => {
+        WidgetInstallError::Downgrade { .. }
+        | WidgetInstallError::FolderTaken { .. }
+        | WidgetInstallError::UidTaken { .. } => StatusCode::CONFLICT,
+        WidgetInstallError::UploadStalled => StatusCode::REQUEST_TIMEOUT,
+        WidgetInstallError::ProfileBusy => StatusCode::SERVICE_UNAVAILABLE,
+        WidgetInstallError::Install(bmc_nix::upgrade::InstallError::NotEnoughSpace { .. }) => {
             StatusCode::INSUFFICIENT_STORAGE
         }
-        SystemUpgradeError::FailedToDetectCurrentVersion
-        | SystemUpgradeError::DownloadedImageHashMismatch { .. }
-        | SystemUpgradeError::VerifyFailed
-        | SystemUpgradeError::FailedToDownload(_)
-        | SystemUpgradeError::UnableToCheckForUpgrade(_)
-        | SystemUpgradeError::UpgradeFailed
-        | SystemUpgradeError::InvalidImage
-        | SystemUpgradeError::UpgradeExpired
-        | SystemUpgradeError::PackageUpgradeFailed(_)
-        | SystemUpgradeError::WidgetInstallFailed
-        | SystemUpgradeError::PendingInstallWriteFailed(_)
-        | SystemUpgradeError::PackageCheckFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        WidgetInstallError::ReadProfile(_)
+        | WidgetInstallError::Staging(_)
+        | WidgetInstallError::Store(_)
+        | WidgetInstallError::Install(_)
+        | WidgetInstallError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 

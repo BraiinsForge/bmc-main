@@ -46,7 +46,6 @@ pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
 };
-use bmc_upgrade::widget_package::WidgetPackageError;
 use bmc_upgrade_types::ExecutionId;
 use futures::StreamExt;
 use reqwest::Client;
@@ -1006,9 +1005,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     pub(crate) async fn install_widget_package(
         &self,
         upload: bmc_upgrade::widget_package::WidgetUpload,
-    ) -> Result<InstalledWidget, SystemUpgradeError> {
+    ) -> Result<InstalledWidget, WidgetInstallError> {
         let Ok(gate) = Arc::clone(&self.run_gate).try_lock_owned() else {
-            return Err(SystemUpgradeError::WidgetInstallBusy);
+            return Err(WidgetInstallError::ProfileBusy);
         };
         // The request future dies with the client's connection; a half-done
         // activation must not die with it, so the install runs detached.
@@ -1020,66 +1019,41 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         .await
         .unwrap_or_else(|join| {
             error!(error = %join, "Widget package install task died");
-            Err(SystemUpgradeError::WidgetInstallFailed)
+            Err(WidgetInstallError::Failed(join.to_string()))
         })
     }
 
     async fn run_widget_install(
         &self,
         upload: bmc_upgrade::widget_package::WidgetUpload,
-    ) -> Result<InstalledWidget, SystemUpgradeError> {
+    ) -> Result<InstalledWidget, WidgetInstallError> {
         let installed = self
             .package_backend
             .install_widget_package(upload)
             .await
-            .map_err(|err| match err {
+            .inspect_err(|err| match err {
                 // The uploader's doing, answered to them; not a device fault.
-                WidgetInstallError::Rejected(WidgetPackageError::TooLarge) => {
+                WidgetInstallError::Rejected(_)
+                | WidgetInstallError::Downgrade { .. }
+                | WidgetInstallError::FolderTaken { .. }
+                | WidgetInstallError::UidTaken { .. } => {
                     warn!(error = %err, "Widget package refused");
-                    SystemUpgradeError::WidgetPackageTooLarge
-                }
-                WidgetInstallError::Rejected(rejected) => {
-                    warn!(error = %rejected, "Widget package refused");
-                    SystemUpgradeError::WidgetPackageRejected(rejected.to_string())
-                }
-                downgrade @ WidgetInstallError::Downgrade { .. } => {
-                    warn!(error = %downgrade, "Widget package refused");
-                    SystemUpgradeError::WidgetDowngradeRefused(downgrade.to_string())
-                }
-                taken @ WidgetInstallError::FolderTaken { .. } => {
-                    warn!(error = %taken, "Widget package refused");
-                    SystemUpgradeError::WidgetFolderTaken(taken.to_string())
-                }
-                taken @ WidgetInstallError::UidTaken { .. } => {
-                    warn!(error = %taken, "Widget package refused");
-                    SystemUpgradeError::WidgetUidTaken(taken.to_string())
                 }
                 WidgetInstallError::UploadStalled => {
                     warn!(error = %err, "Widget package upload stalled");
-                    SystemUpgradeError::WidgetUploadStalled
                 }
                 WidgetInstallError::UploadAborted => {
                     warn!(error = %err, "Widget package upload aborted by the client");
-                    SystemUpgradeError::WidgetUploadAborted
                 }
                 WidgetInstallError::ProfileBusy => {
                     warn!(error = %err, "Widget package install found the profile busy");
-                    SystemUpgradeError::WidgetInstallBusy
                 }
-                WidgetInstallError::Install(bmc_nix::upgrade::InstallError::NotEnoughSpace {
-                    ..
-                }) => {
-                    error!(error = %err, "Widget package install failed");
-                    SystemUpgradeError::WidgetInstallNoSpace
-                }
-                other @ (WidgetInstallError::ReadProfile(_)
+                WidgetInstallError::ReadProfile(_)
                 | WidgetInstallError::Staging(_)
                 | WidgetInstallError::Store(_)
                 | WidgetInstallError::Install(_)
-                | WidgetInstallError::Failed(_)) => {
-                    error!(error = %other, "Widget package install failed");
-                    // The detail names device paths and nix output, so it stays in the log.
-                    SystemUpgradeError::WidgetInstallFailed
+                | WidgetInstallError::Failed(_) => {
+                    error!(error = %err, "Widget package install failed");
                 }
             })?;
         self.widget_lifecycle.refresh_widgets().await;
@@ -1539,26 +1513,6 @@ pub(crate) enum SystemUpgradeError {
     PendingInstallWriteFailed(String),
     #[error("Cannot check for upgrade: {0}.")]
     PackageCheckFailed(PackageProbeError),
-    #[error("Widget package rejected: {0}")]
-    WidgetPackageRejected(String),
-    #[error("Widget package rejected: {}", WidgetPackageError::TooLarge)]
-    WidgetPackageTooLarge,
-    #[error("{0}")]
-    WidgetDowngradeRefused(String),
-    #[error("{0}")]
-    WidgetFolderTaken(String),
-    #[error("{0}")]
-    WidgetUidTaken(String),
-    #[error("{}", WidgetInstallError::UploadStalled)]
-    WidgetUploadStalled,
-    #[error("{}", WidgetInstallError::UploadAborted)]
-    WidgetUploadAborted,
-    #[error("Another install or upgrade is in progress")]
-    WidgetInstallBusy,
-    #[error("Not enough space on the device to install the widget")]
-    WidgetInstallNoSpace,
-    #[error("Widget install failed; see the device log for details")]
-    WidgetInstallFailed,
 }
 
 impl From<FirmwareUpgradeError> for SystemUpgradeError {

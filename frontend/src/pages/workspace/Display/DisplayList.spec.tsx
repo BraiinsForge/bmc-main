@@ -29,7 +29,8 @@ import DisplayList from './DisplayList';
 import * as pb from '@/proto';
 import { store } from '@/store';
 import { deckCapabilities } from './capabilities.fixture';
-import { mocks } from '@/proto/transport';
+import { mocks, setRequestLanguage } from '@/proto/transport';
+import { SOURCE_LOCALE } from '@/lib/intl';
 import type { ServiceMocks } from '@/lib/proto';
 import { deferred } from '@/lib/async';
 import { unloadGuard } from '@/lib/dom';
@@ -1747,6 +1748,7 @@ describe('widget package upload', () => {
     afterEach(() => {
         globalThis.fetch = REAL_FETCH;
         rstest.restoreAllMocks();
+        setRequestLanguage(SOURCE_LOCALE);
     });
 
     test('the Install Widget button states the third-party risk before anything is chosen', async () => {
@@ -1815,7 +1817,10 @@ describe('widget package upload', () => {
             expect.objectContaining({
                 method: 'POST',
                 body: file,
-                headers: { 'Content-Type': 'application/x-nix-archive' },
+                headers: {
+                    'Content-Type': 'application/x-nix-archive',
+                    'Accept-Language': SOURCE_LOCALE,
+                },
             }),
         );
         expect(document.body.textContent).toContain('Hello 1.2.0 can now be added to a scene.');
@@ -1950,6 +1955,19 @@ describe('widget package upload', () => {
         } finally {
             timeout.mockRestore();
         }
+    });
+
+    test('the upload asks for its errors in the language the page speaks', async () => {
+        setRequestLanguage('en-XA');
+        const upload = stubUpload(400, { error: 'refused' });
+        renderPage();
+        await flush();
+
+        await choose(new File(['nar'], 'broken.nar'));
+        await flush();
+
+        const [init] = upload.mock.lastCall ?? [];
+        expect((init as RequestInit).headers).toMatchObject({ 'Accept-Language': 'en-XA' });
     });
 
     test('a rejected package shows the backend reason and leaves the list alone', async () => {

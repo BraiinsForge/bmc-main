@@ -105,6 +105,7 @@ async-stream.workspace = true
 bmc-field-schema = { workspace = true, features = ["test-support"] }
 bmc-grpc = { workspace = true, features = ["client"] }
 bmc-intl-pseudo.workspace = true
+bmc-upgrade = { workspace = true, features = ["test-support"] }
 bytes.workspace = true
 indoc.workspace = true
 proptest.workspace = true

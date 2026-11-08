@@ -219,10 +219,7 @@ async fn a_rejected_archive_is_the_clients_fault_and_refreshes_nothing() {
         .await
         .expect_err("BUG: scripted rejection");
 
-    assert!(matches!(
-        error,
-        SystemUpgradeError::WidgetPackageRejected(_)
-    ));
+    assert!(matches!(error, WidgetInstallError::Rejected(_)));
     assert_eq!(lifecycle.0.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
@@ -240,10 +237,7 @@ async fn a_refused_downgrade_is_reported_as_one() {
         .await
         .expect_err("BUG: scripted downgrade");
 
-    assert!(matches!(
-        error,
-        SystemUpgradeError::WidgetDowngradeRefused(_)
-    ));
+    assert!(matches!(error, WidgetInstallError::Downgrade { .. }));
 }
 
 #[tokio::test]
@@ -260,7 +254,7 @@ async fn a_folder_an_installed_widget_holds_is_reported_as_taken() {
         .expect_err("BUG: scripted folder clash");
 
     assert!(
-        matches!(&error, SystemUpgradeError::WidgetFolderTaken(_)),
+        matches!(&error, WidgetInstallError::FolderTaken { .. }),
         "{error}"
     );
 }
@@ -279,7 +273,7 @@ async fn a_uid_an_installed_widget_holds_is_reported_as_taken() {
         .expect_err("BUG: scripted uid clash");
 
     assert!(
-        matches!(&error, SystemUpgradeError::WidgetUidTaken(_)),
+        matches!(&error, WidgetInstallError::UidTaken { .. }),
         "{error}"
     );
 }
@@ -296,7 +290,7 @@ async fn a_running_upgrade_turns_the_upload_away_before_the_backend() {
         .await
         .expect_err("BUG: a held gate must refuse");
 
-    assert!(matches!(error, SystemUpgradeError::WidgetInstallBusy));
+    assert!(matches!(error, WidgetInstallError::ProfileBusy));
     assert_eq!(backend.uploads(), 0);
 }
 
@@ -315,7 +309,7 @@ async fn a_stalled_upload_is_the_clients_deadline_not_a_device_fault() {
         .await
         .expect_err("BUG: scripted stall");
 
-    assert!(matches!(error, SystemUpgradeError::WidgetUploadStalled));
+    assert!(matches!(error, WidgetInstallError::UploadStalled));
     assert_eq!(lifecycle.0.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
@@ -365,7 +359,7 @@ async fn an_abandoned_upload_is_the_clients_doing_not_a_device_fault() {
         .await
         .expect_err("BUG: scripted abort");
 
-    assert!(matches!(error, SystemUpgradeError::WidgetUploadAborted));
+    assert!(matches!(error, WidgetInstallError::UploadAborted));
     assert_eq!(lifecycle.0.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
@@ -381,13 +375,13 @@ async fn a_busy_profile_answers_retry_later() {
         .expect_err("BUG: scripted busy profile");
 
     assert!(
-        matches!(error, SystemUpgradeError::WidgetInstallBusy),
+        matches!(error, WidgetInstallError::ProfileBusy),
         "another writer holding the profile is a retry-later, not a device fault: {error}"
     );
 }
 
 #[tokio::test]
-async fn a_device_fault_keeps_its_detail_out_of_the_answer() {
+async fn a_device_fault_reaches_the_upload_with_its_kind() {
     let backend = ScriptedBackend::answering(Err(WidgetInstallError::Store(
         bmc_nix::store::StoreCommandError::Exited {
             command: "--restore",
@@ -404,16 +398,11 @@ async fn a_device_fault_keeps_its_detail_out_of_the_answer() {
         .await
         .expect_err("BUG: scripted device fault");
 
-    assert!(matches!(error, SystemUpgradeError::WidgetInstallFailed));
-    let answer = error.to_string();
-    assert!(
-        !answer.contains("/mnt/data") && !answer.contains("Permission denied"),
-        "the uploader gets no device paths or nix output: {answer}"
-    );
+    assert!(matches!(error, WidgetInstallError::Store(_)));
 }
 
 #[tokio::test]
-async fn a_crashed_install_keeps_its_panic_out_of_the_answer() {
+async fn a_crashed_install_fails_and_releases_the_gate() {
     let lifecycle = Arc::new(RefreshCounter::default());
     let (service, _timezone) = service_with(ScriptedBackend::crashing(), lifecycle.clone()).await;
 
@@ -422,12 +411,7 @@ async fn a_crashed_install_keeps_its_panic_out_of_the_answer() {
         .await
         .expect_err("BUG: the scripted backend panics");
 
-    assert!(matches!(error, SystemUpgradeError::WidgetInstallFailed));
-    let answer = error.to_string();
-    assert!(
-        !answer.contains("panicked") && !answer.contains("answers one upload"),
-        "the uploader gets no panic text: {answer}"
-    );
+    assert!(matches!(error, WidgetInstallError::Failed(_)));
     assert!(
         service.run_gate.try_lock().is_ok(),
         "a crashed install still releases the gate"
@@ -450,9 +434,8 @@ async fn a_full_store_is_reported_as_the_widget_install_not_an_upgrade() {
         .await
         .expect_err("BUG: scripted full store");
 
-    assert!(matches!(error, SystemUpgradeError::WidgetInstallNoSpace));
-    assert!(
-        !error.to_string().contains("upgrade"),
-        "the uploader installed a widget, not an upgrade: {error}"
-    );
+    assert!(matches!(
+        error,
+        WidgetInstallError::Install(bmc_nix::upgrade::InstallError::NotEnoughSpace { .. })
+    ));
 }

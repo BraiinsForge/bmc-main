@@ -1525,6 +1525,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "strum",
  "sysinfo",
  "tempfile",
  "thiserror 1.0.69",

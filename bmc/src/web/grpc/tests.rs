@@ -135,6 +135,30 @@ pub(crate) fn pseudo_locale() -> Intl {
     pseudo_pack().formatter(Language::EN_XA)
 }
 
+/// The samples of every name of an enum.
+/// The exhaustive match in `samples` proves every name has an arm,
+/// but not that the arm is non-empty or that its samples carry that name.
+pub(crate) fn sampled<Name, Sample>(samples: impl Fn(Name) -> Vec<Sample>) -> Vec<Sample>
+where
+    Name: strum::IntoEnumIterator + Copy + PartialEq + std::fmt::Debug + for<'a> From<&'a Sample>,
+    Sample: std::fmt::Debug,
+{
+    Name::iter()
+        .flat_map(|name| {
+            let listed = samples(name);
+            assert!(!listed.is_empty(), "{name:?} has no sample");
+            for sample in &listed {
+                assert_eq!(
+                    Name::from(sample),
+                    name,
+                    "{sample:?} is listed under {name:?} instead of its own name"
+                );
+            }
+            listed
+        })
+        .collect()
+}
+
 /// Fails unless each refusal reads, in the en-XA pseudo-locale, as its English respelled:
 /// a message the extraction missed stays plain English there, and one glued to a literal
 /// comes out half respelled.

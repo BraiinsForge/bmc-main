@@ -45,7 +45,7 @@ use tracing::{error, warn};
 use super::SystemUpgradeService;
 use super::intl::intl;
 use super::scene_management::{PlatformDescriptor, supported_sizes_for_constraints};
-use super::shared::{StatusExt as _, ToStatus, internal_error, version_undetected};
+use super::shared::{StatusExt as _, ToStatus, version_undetected};
 use crate::BmcManager;
 use crate::compositor::UpgradePhase;
 use crate::config::ConfigHandle;
@@ -486,18 +486,6 @@ impl ToStatus for SystemUpgradeError {
             SystemUpgradeError::UpgradeExpired => {
                 ConnectError::failed_precondition(upgrade_expired(intl))
             }
-            SystemUpgradeError::WidgetPackageRejected(_)
-            | SystemUpgradeError::WidgetPackageTooLarge
-            | SystemUpgradeError::WidgetDowngradeRefused(_)
-            | SystemUpgradeError::WidgetFolderTaken(_)
-            | SystemUpgradeError::WidgetUidTaken(_)
-            | SystemUpgradeError::WidgetUploadStalled
-            | SystemUpgradeError::WidgetUploadAborted
-            | SystemUpgradeError::WidgetInstallBusy
-            | SystemUpgradeError::WidgetInstallNoSpace
-            | SystemUpgradeError::WidgetInstallFailed => {
-                internal_error(intl, "a widget install error reached an upgrade call")
-            }
         }
     }
 }
@@ -657,7 +645,6 @@ mod tests {
                 SystemUpgradeError::InvalidImage,
                 SystemUpgradeError::NotEnoughSpace,
                 SystemUpgradeError::UpgradeExpired,
-                SystemUpgradeError::WidgetInstallFailed,
             ]
             .iter()
             .map(|error| status_text(&error.to_status(intl)))
