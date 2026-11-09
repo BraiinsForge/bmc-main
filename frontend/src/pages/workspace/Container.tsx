@@ -18,16 +18,16 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component } from 'react';
 import { Outlet } from 'react-router';
-import { LayoutWorkspace } from '@/layouts';
+import { LayoutWorkspace } from '@/layouts/LayoutWorkspace';
+import { useStore } from '@/store';
 
-export default class WorkspaceContainer extends Component {
-    render() {
-        return (
-            <LayoutWorkspace>
-                <Outlet />
-            </LayoutWorkspace>
-        );
-    }
+export default function WorkspaceContainer() {
+    const isAuthenticated = useStore(x => x.state.sessionInfo.isAuthenticated);
+
+    // A page mounts only if the last session check said yes,
+    // so a visit without a session loads nothing the device would refuse.
+    const content = isAuthenticated === true ? <Outlet /> : null;
+
+    return <LayoutWorkspace children={content} />;
 }
