@@ -345,6 +345,18 @@ async fn a_failure_never_displayed_carries_the_reason() {
     );
 }
 
+/// A run too quick to reach the display ends here,
+/// so this is where its reason is logged.
+#[tokio::test]
+async fn a_failure_never_displayed_logs_its_reason() {
+    let mut bench = bench();
+    let (logs, _capturing) = crate::test_support::LogCapture::capture();
+
+    let _ended = bench.unseen(bench.offer, Err("no space".to_owned()));
+
+    assert!(logs.text().contains("no space"), "{}", logs.text());
+}
+
 /// Boser retains the last outcome for hours, so the one told may belong to an older run.
 #[tokio::test]
 async fn another_runs_undisplayed_outcome_is_skipped() {

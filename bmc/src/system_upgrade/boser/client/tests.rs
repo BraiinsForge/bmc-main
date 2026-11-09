@@ -299,6 +299,19 @@ async fn a_refused_start_is_not_unconfirmed() {
     assert_eq!(answer, Err(ClientError::Rejected(Rejection::Busy)));
 }
 
+/// The browser gets a fixed sentence, so the log
+/// is the only place Boser's own words are kept.
+#[tokio::test]
+async fn a_refusal_logs_bosers_own_text() {
+    let boser = MockBoser::default();
+    let address = boser.serve(StatusCode::CONFLICT, error_body("BUSY")).await;
+    let (logs, _capturing) = crate::test_support::LogCapture::capture();
+
+    let _refused = client(address).start(SESSION, ExecutionId::new()).await;
+
+    assert!(logs.text().contains("BUSY happened"), "{}", logs.text());
+}
+
 /// Boser's 401 body carries a gRPC code description, so the status alone decides.
 #[tokio::test]
 async fn a_rejected_session_is_unauthenticated_whatever_the_body() {

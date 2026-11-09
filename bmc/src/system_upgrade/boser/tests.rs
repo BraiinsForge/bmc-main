@@ -221,6 +221,20 @@ fn a_failed_terminal_continuing_the_current_execution_presents_the_failure() {
     assert!(!state.blocks_restart());
 }
 
+/// The browser gets a fixed sentence, so the log is the only place
+/// Boser's reason is kept, whether or not anyone follows the run.
+#[test]
+fn a_failed_run_logs_its_reason() {
+    let mut bench = bench();
+    let id = ExecutionId::new();
+    bench.observe(&running(id, WirePhase::Packages(PackagePhase::Building)));
+    let (logs, _capturing) = crate::test_support::LogCapture::capture();
+
+    bench.observe(&failed(id));
+
+    assert!(logs.text().contains("build failed"), "{}", logs.text());
+}
+
 #[test]
 fn a_stale_terminal_at_boot_is_ignored() {
     let mut bench = bench();

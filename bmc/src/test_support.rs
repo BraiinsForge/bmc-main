@@ -222,6 +222,19 @@ pub(crate) fn answering_migrator(overlay: &serde_json::Value) -> String {
 pub(crate) struct LogCapture(Arc<Mutex<Vec<u8>>>);
 
 impl LogCapture {
+    /// Captures what this thread logs until the guard drops.
+    pub(crate) fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let logs = Self::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(logs.clone()),
+        );
+        (logs, tracing::subscriber::set_default(subscriber))
+    }
+
     pub(crate) fn text(&self) -> String {
         String::from_utf8_lossy(&self.0.lock().expect("BUG: log buffer poisoned")).into_owned()
     }
