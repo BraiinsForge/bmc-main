@@ -18,11 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { beforeEach, describe, expect, rstest, test } from '@rstest/core';
-import { cleanup, render, fireEvent } from '@testing-library/react/pure';
+import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/core';
+import { act, cleanup, render, fireEvent, screen } from '@testing-library/react/pure';
 import { useState } from 'react';
 import { IntlProvider } from 'react-intl';
 import * as pb from '@/proto';
+import { mocks } from '@/proto/transport';
+import type { ServiceMocks } from '@/lib/proto';
+import { store } from '@/store';
 import { BoundRadioGroup, ParamField } from './ParamField';
 import { listItem, type FieldValue, type ListItem, type RowError } from './value';
 
@@ -45,9 +48,114 @@ const renderField = (format: pb.StringFormat, value = 'sk-secret') =>
 const input = () => document.body.querySelector<HTMLInputElement>('#f');
 
 describe('ParamField date format', () => {
-    test('the ISO date it stores passes the input’s own pattern', () => {
-        renderField(pb.StringFormat.DATE, '2026-01-01');
-        expect(input()?.validity.patternMismatch).toBe(false);
+    async function prefer(settings: { dateFormat?: pb.DateFormat; firstDayOfWeek?: pb.Weekday }): Promise<void> {
+        const methods: Partial<ServiceMocks<typeof pb.ConfigurationService>> = {
+            getGeneralSettingsData: () => pb.create(pb.GeneralSettingsDataResponseSchema, settings),
+        };
+        mocks.service(pb.ConfigurationService, methods as ServiceMocks<typeof pb.ConfigurationService>);
+        await act(() => store.loadFormats());
+    }
+
+    afterEach(async () => {
+        await prefer({});
+        mocks.clear();
+    });
+
+    function renderDate(value: string, onChange: (value: FieldValue) => void = () => {}, locale = 'en') {
+        return render(
+            <IntlProvider locale={locale}>
+                <ParamField
+                    id="f"
+                    definition={stringField(pb.StringFormat.DATE)}
+                    value={value}
+                    onChange={onChange}
+                    timezones={[]}
+                />
+            </IntlProvider>,
+        );
+    }
+
+    test('shows the stored ISO date in the device’s layout', async () => {
+        await prefer({ dateFormat: pb.DateFormat.M_D_YYYY_SLASH });
+
+        renderDate('2026-01-05');
+
+        expect(input()?.value).toBe('1/5/2026');
+    });
+
+    test.each(pb.dateFormatOptions.map(x => [pb.dateFormatToString(x), x] as const))(
+        'a date shown as %s passes the input’s own pattern',
+        async (_layout, dateFormat) => {
+            await prefer({ dateFormat });
+
+            renderDate('2026-01-05');
+
+            expect(input()?.value, 'the input shows the date').not.toBe('');
+            expect(input()?.validity.patternMismatch).toBe(false);
+        },
+    );
+
+    test('a date in another layout fails the input’s pattern', async () => {
+        await prefer({ dateFormat: pb.DateFormat.DD_MM_YYYY_DOT });
+        renderDate('');
+
+        const field = input() as HTMLInputElement;
+        field.value = '2026-01-05';
+
+        expect(field.validity.patternMismatch).toBe(true);
+    });
+
+    test.each([
+        ['a date in the device’s layout', '05.01.2026'],
+        ['a day the month lacks', '2026-02-31'],
+        ['an ISO date with a trailing space', '2026-01-05 '],
+    ])('a stored value that is no ISO date shows as empty: %s', async (_case, stored) => {
+        await prefer({ dateFormat: pb.DateFormat.DD_MM_YYYY_DOT });
+
+        renderDate(stored);
+
+        expect(input()?.value).toBe('');
+    });
+
+    test('stores a date typed in the device’s layout as ISO', async () => {
+        await prefer({ dateFormat: pb.DateFormat.DD_MM_YYYY_DOT });
+        const onChange = rstest.fn();
+        renderDate('', onChange);
+
+        const field = input() as HTMLInputElement;
+        fireEvent.change(field, { target: { value: '31.12.2026' } });
+        fireEvent.keyDown(field, { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith('token', '2026-12-31');
+    });
+
+    test('names the months in the page’s language', () => {
+        renderDate('2026-01-05', undefined, 'zh');
+
+        fireEvent.click(input() as HTMLInputElement);
+
+        expect(screen.getByText('一月')).toBeTruthy();
+    });
+
+    test('starts the week on the device’s first day', async () => {
+        await prefer({ firstDayOfWeek: pb.Weekday.MONDAY });
+        renderDate('2026-01-05');
+
+        fireEvent.click(input() as HTMLInputElement);
+
+        const weekdays = screen.getAllByText(/^(S|M|T|W|Th|F)$/).map(x => x.textContent);
+        expect(weekdays).toEqual(['M', 'T', 'W', 'Th', 'F', 'S', 'S']);
+    });
+
+    test('follows a change of the device’s first day while it is shown', async () => {
+        await prefer({ firstDayOfWeek: pb.Weekday.MONDAY });
+        renderDate('2026-01-05');
+
+        await prefer({ firstDayOfWeek: pb.Weekday.SUNDAY });
+        fireEvent.click(input() as HTMLInputElement);
+
+        const weekdays = screen.getAllByText(/^(S|M|T|W|Th|F)$/).map(x => x.textContent);
+        expect(weekdays).toEqual(['S', 'M', 'T', 'W', 'Th', 'F', 'S']);
     });
 });
 

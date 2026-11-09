@@ -21,7 +21,7 @@
 
 import type { Timestamp as PbTimestamp } from '@/proto';
 import { DateFormat, TimeFormat } from '@/proto/gen/web/shared_pb';
-import { isPlainObject } from 'es-toolkit';
+import { escapeRegExp, isPlainObject } from 'es-toolkit';
 import { timeFormat } from 'd3-time-format';
 
 export * from './tz';
@@ -85,6 +85,35 @@ const DATE_LAYOUTS: Record<DateFormat, string> = {
 
 export function dateLayout(format: DateFormat): string {
     return DATE_LAYOUTS[format];
+}
+
+function rewriteDateLayout(
+    format: DateFormat,
+    tokens: Partial<Record<string, string>>,
+    literal: (text: string) => string,
+): string {
+    // Splitting on a captured token leaves the literal text at even indices and the tokens at odd ones.
+    const parts = DATE_LAYOUTS[format].split(/(%-?[a-zA-Z])/);
+    return parts
+        .map((part, i) => {
+            if (i % 2 === 0) return literal(part);
+            const token = tokens[part];
+            if (token === undefined) throw new Error(`BUG: date layout token ${part} has no rewrite`);
+            return token;
+        })
+        .join('');
+}
+
+/** The device's date layout in flatpickr's notation, for a date picker. */
+export function flatpickrDateLayout(format: DateFormat): string {
+    return rewriteDateLayout(format, { '%d': 'd', '%-d': 'j', '%m': 'm', '%-m': 'n', '%Y': 'Y' }, x => x);
+}
+
+/** An input `pattern` that a date written in the device's layout matches. */
+export function dateInputPattern(format: DateFormat): string {
+    const day = '\\d{1,2}';
+    const tokens = { '%d': '\\d{2}', '%-d': day, '%m': '\\d{2}', '%-m': day, '%Y': '\\d{4}' };
+    return rewriteDateLayout(format, tokens, escapeRegExp);
 }
 
 /**

@@ -38,7 +38,10 @@ import {
     Information as IconInfo,
     SubtractAlt as IconSubtract,
 } from '@carbon/react/icons';
+import { timeFormat, timeParse } from 'd3-time-format';
 import * as pb from '@/proto';
+import { useStore } from '@/store';
+import { dateInputPattern, flatpickrDateLayout } from '@/lib/time';
 import { useID, type iField } from '@/lib/form';
 import { useIsTouchDevice } from '@/lib/react';
 import { assertUnreachable, ownValue } from '@/lib/ts';
@@ -294,6 +297,78 @@ interface ScalarFieldProps {
     timezones: pb.Timezone[];
 }
 
+const ISO_DATE = '%Y-%m-%d';
+const formatIsoDate = timeFormat(ISO_DATE);
+const parseLenientIsoDate = timeParse(ISO_DATE);
+/** d3 takes `2026-02-31` as 3 March, so a date only counts when it writes back as the same text. */
+function parseIsoDate(value: string): null | Date {
+    const date = parseLenientIsoDate(value);
+    return date && formatIsoDate(date) === value ? date : null;
+}
+
+interface DateFieldProps {
+    id: string;
+    labelText: string;
+    hideLabel?: boolean;
+    helperText?: string;
+    placeholder?: string;
+    error?: ReactNode;
+    /** An ISO date, as the widget stores it. */
+    value: string;
+    onChange(value: string): void;
+}
+
+/**
+ * Carbon draws its own calendar and indicator, so the control
+ * follows the theme — native date chrome ignores it.
+ * It shows and takes dates in the device's layout, while the value stays ISO.
+ */
+function DateField(props: DateFieldProps) {
+    const { id, labelText, hideLabel, helperText, placeholder, error, value, onChange } = props;
+    const intl = useIntl();
+    const { date: dateFormat, firstDay } = useStore(x => x.formats);
+    const language = new Intl.Locale(intl.locale).language;
+    // Carbon sets the date again whenever `value` changes identity, moving the calendar back to it.
+    // Anything but an ISO date shows as empty, rather than flatpickr misreading it in the device's layout.
+    const picked = useMemo(() => parseIsoDate(value) ?? '', [value]);
+    return (
+        <DatePicker
+            // Carbon reads the locale only when it creates the calendar.
+            key={`${language}:${firstDay}`}
+            className={css.datePicker}
+            datePickerType="single"
+            dateFormat={flatpickrDateLayout(dateFormat)}
+            locale={{
+                locale: language,
+                // flatpickr counts from Sunday, the device from Monday.
+                firstDayOfWeek: firstDay % 7,
+            }}
+            nextMonthAriaLabel={intl.formatMessage({
+                defaultMessage: 'Next month',
+                description: 'Date picker button that shows the following month',
+            })}
+            prevMonthAriaLabel={intl.formatMessage({
+                defaultMessage: 'Previous month',
+                description: 'Date picker button that shows the preceding month',
+            })}
+            value={picked}
+            onChange={([date]) => onChange(date ? formatIsoDate(date) : '')}
+        >
+            <DatePickerInput
+                id={id}
+                labelText={labelText}
+                hideLabel={hideLabel}
+                helperText={helperText}
+                invalid={!!error}
+                invalidText={error}
+                placeholder={placeholder ?? ((dateFormat && pb.dateFormatToString(dateFormat)) || undefined)}
+                // Carbon's own default only fits slash layouts with the year last.
+                pattern={dateInputPattern(dateFormat)}
+            />
+        </DatePicker>
+    );
+}
+
 function ScalarField(props: ScalarFieldProps) {
     const { id, kind, labelText, hideLabel, helperText, isOptional, value, onChange, timezones } = props;
     // A row error stays this field's message, hidden, so assistive tech still reads it on focus.
@@ -326,29 +401,16 @@ function ScalarField(props: ScalarFieldProps) {
             }
             if (format === pb.StringFormat.DATE) {
                 return (
-                    // Carbon draws its own calendar and indicator, so the control
-                    // follows the theme — native date chrome ignores it.
-                    //
-                    // flatpickr's second argument is the value already formatted
-                    // to `dateFormat`, which keeps the wire value ISO.
-                    <DatePicker
-                        className={css.datePicker}
-                        datePickerType="single"
-                        dateFormat="Y-m-d"
+                    <DateField
+                        id={id}
+                        labelText={labelText}
+                        hideLabel={hideLabel}
+                        helperText={helperText}
+                        placeholder={placeholder}
+                        error={error}
                         value={asString(value)}
-                        onChange={(_dates, dateStr) => onChange(dateStr)}
-                    >
-                        <DatePickerInput
-                            id={id}
-                            labelText={labelText}
-                            hideLabel={hideLabel}
-                            helperText={helperText}
-                            invalid={!!error}
-                            invalidText={error}
-                            placeholder={placeholder ?? 'yyyy-mm-dd'}
-                            pattern="\d{4}-\d{2}-\d{2}"
-                        />
-                    </DatePicker>
+                        onChange={onChange}
+                    />
                 );
             }
             if (format === pb.StringFormat.PASSWORD) {

@@ -1500,6 +1500,11 @@
     "source": "Failed to save LED notifications setting!",
     "translation": "保存 LED 通知设置失败！"
   },
+  "cogITTSIcl": {
+    "source": "Previous month",
+    "translation": "上个月",
+    "description": "Date picker button that shows the preceding month"
+  },
   "cyR7KhiuaU": {
     "source": "Back",
     "translation": "返回"
@@ -1575,6 +1580,11 @@
   "fCu/+nE6Za": {
     "source": "Static",
     "translation": "静态"
+  },
+  "fEgeY9SDtN": {
+    "source": "Next month",
+    "translation": "下个月",
+    "description": "Date picker button that shows the following month"
   },
   "fK3IL8V9tc": {
     "source": "Start and end time cannot be the same!",

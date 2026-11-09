@@ -1500,6 +1500,11 @@
     "source": "Failed to save LED notifications setting!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş şḗḗŧŧīƞɠ!]"
   },
+  "cogITTSIcl": {
+    "source": "Previous month",
+    "translation": "[Ƥřḗḗṽīǿǿŭŭş ḿǿǿƞŧħ]",
+    "description": "Date picker button that shows the preceding month"
+  },
   "cyR7KhiuaU": {
     "source": "Back",
     "translation": "[Ɓȧȧƈķ]"
@@ -1575,6 +1580,11 @@
   "fCu/+nE6Za": {
     "source": "Static",
     "translation": "[Şŧȧȧŧīƈ]"
+  },
+  "fEgeY9SDtN": {
+    "source": "Next month",
+    "translation": "[Ƞḗḗẋŧ ḿǿǿƞŧħ]",
+    "description": "Date picker button that shows the following month"
   },
   "fK3IL8V9tc": {
     "source": "Start and end time cannot be the same!",
