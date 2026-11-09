@@ -255,12 +255,14 @@ pub(in crate::runtime) fn ws_background_thread(
 
         match socket.read() {
             Ok(Message::Text(text)) => {
-                if event_tx.send(WsEvent::Message(text.into_bytes())).is_err() {
+                if event_tx.send(WsEvent::Message(text)).is_err() {
                     return;
                 }
             }
             Ok(Message::Binary(data)) => {
-                if event_tx.send(WsEvent::Message(data.clone())).is_err() {
+                // Checked here, natively, so the widget need not spend its fuel on it.
+                let text = String::from_utf8(data).unwrap_or_default();
+                if event_tx.send(WsEvent::Message(text)).is_err() {
                     return;
                 }
             }
@@ -667,6 +669,40 @@ mod tests {
             server.join().expect("BUG: the test server panicked"),
             Some(CloseCode::Size),
             "the peer is told why"
+        );
+    }
+
+    #[test]
+    fn a_binary_message_arrives_as_text_only_when_it_is_utf8() {
+        let (listener, addr) = loopback_listener();
+        std::thread::spawn(move || {
+            let (tcp, _) = listener.accept().expect("BUG: accept test client");
+            let mut socket = tungstenite::accept(tcp).expect("BUG: accept the handshake");
+            for data in [b"ok".to_vec(), vec![0xff, 0xfe]] {
+                socket
+                    .send(Message::binary(data))
+                    .expect("BUG: send a test message");
+            }
+            let _ = socket.close(None);
+            while socket.read().is_ok() {}
+        });
+
+        let (event_tx, event_rx) = mpsc::channel();
+        let (_msg_tx, msg_rx) = mpsc::channel();
+        let url = format!("ws://{addr}/");
+        ws_background_thread(1, request(&url), &url, LIMITS, event_tx, msg_rx);
+
+        let messages: Vec<String> = event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                WsEvent::Message(text) => Some(text),
+                WsEvent::Open | WsEvent::Close(_) | WsEvent::HostClosed(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            ["ok", ""],
+            "the host checks a binary message, so the widget need not",
         );
     }
 

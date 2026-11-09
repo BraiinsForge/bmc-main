@@ -283,6 +283,12 @@ mod wasm {
                 let text = core::str::from_utf8(&data).unwrap_or_default();
                 WsEvent::Message(text)
             }
+            // Checking it again would run per byte inside the widget's fuel budget,
+            // enough to spend all of it on a large reply in a non-Latin script.
+            // SAFETY: the host sends `WsEventKind::CheckedText` only for text it has checked is UTF-8.
+            WsEventKind::CheckedText => {
+                WsEvent::Message(unsafe { core::str::from_utf8_unchecked(&data) })
+            }
             WsEventKind::Close => {
                 let code = if data.len() >= 2 {
                     u16::from_le_bytes([data[0], data[1]])
@@ -405,5 +411,35 @@ mod tests {
         deliver(id);
 
         assert!(!is_registered(id));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[link(wasm_import_module = "env")]
+    unsafe extern "C" {
+        fn host_fuel_remaining() -> u64;
+    }
+
+    /// The fuel `__on_ws_event` spends handing `text` over as `event_type`.
+    #[cfg(target_arch = "wasm32")]
+    fn fuel_to_deliver(event_type: u32, text: &str) -> u64 {
+        let ws = connect(record);
+        // A boxed slice's capacity is its length, as the event's `from_raw_parts` expects.
+        let data = Box::into_raw(Box::<[u8]>::from(text.as_bytes()));
+        let len = u32::try_from(data.len()).expect("BUG: a test message fits a wasm32 length");
+        let before = unsafe { host_fuel_remaining() };
+        super::wasm::__on_ws_event(ws.0.to_wire(), event_type, data.cast::<u8>() as u32, len);
+        before - unsafe { host_fuel_remaining() }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_test]
+    fn text_the_host_checked_costs_no_fuel_per_byte() {
+        let cyrillic = "щ".repeat(32 * 1024);
+        let checked = fuel_to_deliver(4, &cyrillic);
+        let unchecked = fuel_to_deliver(1, &cyrillic);
+        assert!(
+            checked * 10 < unchecked,
+            "64 KiB of two-byte text: {checked} fuel checked by the host, {unchecked} checked here",
+        );
     }
 }

@@ -1110,7 +1110,7 @@ fn each_widget_gets_the_websocket_events_its_protocol_reads() {
         ),
         (
             bmc_wasm_protocol::PROTOCOL_VERSION,
-            WsEventKind::Text,
+            WsEventKind::CheckedText,
             0,
             Some(WsHostClose::Credential),
         ),

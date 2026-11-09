@@ -85,7 +85,8 @@ impl WasmWidgetRuntime {
                 }
                 FixtureEventKind::WsMessage { ws_id, data } => {
                     if let Some(tx) = ef.ws_event_txs.get(ws_id) {
-                        let _ = tx.send(WsEvent::Message(data.clone()));
+                        let text = String::from_utf8(data.clone()).unwrap_or_default();
+                        let _ = tx.send(WsEvent::Message(text));
                         true
                     } else {
                         false
@@ -623,9 +624,9 @@ impl WasmWidgetRuntime {
             for (ws_id, event) in &events {
                 let kind = match event {
                     WsEvent::Open => FixtureEventKind::WsOpen { ws_id: *ws_id },
-                    WsEvent::Message(data) => FixtureEventKind::WsMessage {
+                    WsEvent::Message(text) => FixtureEventKind::WsMessage {
                         ws_id: *ws_id,
-                        data: data.clone(),
+                        data: text.clone().into_bytes(),
                     },
                     WsEvent::Close(code) => FixtureEventKind::WsClose {
                         ws_id: *ws_id,
@@ -649,10 +650,13 @@ impl WasmWidgetRuntime {
     /// Drain WebSocket events from all active connections and deliver them
     /// to WASM by calling `__on_ws_event(ws_id, event_type, data_ptr, data_len)`.
     ///
-    /// Event types: 0 = Open, 1 = Message, 2 = Close (data_ptr/data_len carry
-    /// the close code as two little-endian bytes), 3 = HostClosed (one byte,
-    /// the `WsHostClose` wire value). A widget built before 3 existed
-    /// gets the host's close as a 2 with its legacy code.
+    /// Event types:
+    /// 0 = Open;
+    /// 1 = Message;
+    /// 2 = Close, data_ptr/data_len carrying the close code as two little-endian bytes;
+    /// 3 = HostClosed, one byte holding the `WsHostClose` wire value;
+    /// 4 = Message the host checked is UTF-8, sent in place of 1 to a widget built after 4 existed.
+    /// A widget built before 3 existed gets the host's close as a 2 with its legacy code.
     pub fn deliver_ws_messages(&mut self) -> bool {
         self.stage_ws_messages();
         self.deliver_staged_ws_messages()
@@ -686,10 +690,14 @@ impl WasmWidgetRuntime {
         };
 
         let reads_host_close = self.store.data().reads_ws_host_close();
+        let reads_checked_text = self.store.data().reads_checked_ws_text();
         for (ws_id, event) in events {
             let (kind, data): (WsEventKind, &[u8]) = match &event {
                 WsEvent::Open => (WsEventKind::Open, &[]),
-                WsEvent::Message(bytes) => (WsEventKind::Text, bytes),
+                WsEvent::Message(text) if reads_checked_text => {
+                    (WsEventKind::CheckedText, text.as_bytes())
+                }
+                WsEvent::Message(text) => (WsEventKind::Text, text.as_bytes()),
                 WsEvent::Close(code) => (WsEventKind::Close, &code.to_le_bytes()),
                 WsEvent::HostClosed(reason) if reads_host_close => {
                     (WsEventKind::HostClosed, &[reason.to_wire()])

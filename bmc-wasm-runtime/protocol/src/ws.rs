@@ -32,12 +32,15 @@
 pub enum WsEventKind {
     /// The handshake finished. No data.
     Open,
-    /// A text message. Data: its bytes, which the widget checks are UTF-8.
+    /// A text message, unchecked: any bytes, for a widget older than
+    /// [`WS_CHECKED_TEXT_PROTOCOL`](crate::version::WS_CHECKED_TEXT_PROTOCOL).
     Text,
     /// The peer closed the socket, or it dropped. Data: the close code, two bytes little-endian.
     Close,
     /// The host closed the socket. Data: one byte, a [`WsHostClose`].
     HostClosed,
+    /// A text message the host has checked is UTF-8.
+    CheckedText,
 }
 
 impl WsEventKind {
@@ -48,6 +51,7 @@ impl WsEventKind {
             Self::Text => 1,
             Self::Close => 2,
             Self::HostClosed => 3,
+            Self::CheckedText => 4,
         }
     }
 
@@ -59,6 +63,7 @@ impl WsEventKind {
             1 => Some(Self::Text),
             2 => Some(Self::Close),
             3 => Some(Self::HostClosed),
+            4 => Some(Self::CheckedText),
             _ => None,
         }
     }
@@ -126,10 +131,11 @@ mod tests {
             WsEventKind::Text,
             WsEventKind::Close,
             WsEventKind::HostClosed,
+            WsEventKind::CheckedText,
         ] {
             assert_eq!(WsEventKind::from_wire(kind.to_wire()), Some(kind));
         }
-        assert_eq!(WsEventKind::from_wire(4), None);
+        assert_eq!(WsEventKind::from_wire(5), None);
     }
 
     #[test]

@@ -38,6 +38,10 @@ pub const PROTOCOL_VERSION: (u16, u16, u16) = (0, 10, 0);
 /// and keeps refusing a connect past the socket limit with no socket at all.
 pub const WS_HOST_CLOSE_PROTOCOL: (u16, u16, u16) = (0, 10, 0);
 
+/// The first protocol whose widgets take a WebSocket message the host has checked is UTF-8
+/// without checking it again inside the widget's fuel budget.
+pub const WS_CHECKED_TEXT_PROTOCOL: (u16, u16, u16) = (0, 10, 0);
+
 /// The instantiation-handshake export: returns the version, installs the hook.
 pub const SDK_INIT_EXPORT: &str = "__bmc_sdk_init";
 

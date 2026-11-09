@@ -634,8 +634,8 @@ pub struct FixtureEventState {
 pub enum WsEvent {
     /// Connection successfully opened.
     Open,
-    /// A text message was received.
-    Message(Vec<u8>),
+    /// A message was received. A binary one that is not UTF-8 arrives empty.
+    Message(String),
     /// The peer closed the connection with this code, or it failed.
     Close(u16),
     /// The host closed the connection, or never opened it.
@@ -1543,6 +1543,14 @@ impl HostState {
             .is_some_and(|version| version >= bmc_wasm_protocol::WS_HOST_CLOSE_PROTOCOL)
     }
 
+    /// Whether the widget takes a WebSocket message as text the host checked;
+    /// not before its version is known.
+    #[must_use]
+    pub fn reads_checked_ws_text(&self) -> bool {
+        self.widget_protocol_version
+            .is_some_and(|version| version >= bmc_wasm_protocol::WS_CHECKED_TEXT_PROTOCOL)
+    }
+
     /// Create new host state with default `system` / `params` snapshots
     /// (version 0). The runtime constructor stages the operator-supplied
     /// initial snapshots via `.replace(...)` to bump both to version 1
@@ -2204,9 +2212,11 @@ mod tests {
         );
 
         assert!(!state.reads_ws_host_close());
+        assert!(!state.reads_checked_ws_text());
 
         state.widget_protocol_version = Some(bmc_wasm_protocol::PROTOCOL_VERSION);
         assert!(state.reads_ws_host_close());
+        assert!(state.reads_checked_ws_text());
     }
 
     #[cfg(feature = "audio")]
