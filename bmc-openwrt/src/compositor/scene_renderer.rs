@@ -80,10 +80,7 @@ fn compose_fence() -> bool {
     *FENCE.get_or_init(|| matches!(std::env::var("BMC_COMPOSE_FENCE").as_deref(), Ok("1")))
 }
 
-/// Scanout transform for buffers whose rows run bottom-up,
-/// because their client paints straight into the exported buffer
-/// instead of blitting through a staging surface:
-/// the wasm host's widgets and the system overlays.
+/// Scanout transform for buffers whose rows run bottom-up (see [`RowOrder`]).
 ///
 /// `zwp_linux_buffer_params_v1::Flags::YInvert` is the obvious signal, and it is
 /// unusable: smithay's `render_texture_from_to` (`gles/mod.rs:2716`, unchanged
@@ -97,20 +94,13 @@ fn compose_fence() -> bool {
 ///
 /// Only `Deg270` (Bmc100) has been seen on hardware; `Deg0` (Bmm100, Bmm101)
 /// and `Deg90` (Bfm100) follow from the same derivation.
-///
-/// ⚠ Applied to every widget surface, so it assumes all of them submit
-/// bottom-up buffers — true of anything painting straight into its export
-/// buffer, false of one blitting through a staging surface, which gets its Y
-/// flip from that blit's own UVs. No client says which it does:
-/// `create_buffer_from_dmabuf` sends `Flags::empty()`, and `YInvert` — the one
-/// the protocol offers — is the broken flag above. Layer surfaces go by their
-/// buffer type instead (see [`RowOrder`]). **Verified on hardware for the wasm
-/// widget path only, not yet for the system overlays.**
 fn bottom_up_transform(profile: DisplayTransform) -> Transform {
     with_row_flip(scanout_transform(profile))
 }
 
-/// Which way a layer surface's buffer rows run.
+/// Which way a client buffer's rows run, which no client states:
+/// `create_buffer_from_dmabuf` sends `Flags::empty()`,
+/// and `YInvert` is the broken flag [`bottom_up_transform`] describes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowOrder {
     TopDown,
@@ -118,7 +108,7 @@ enum RowOrder {
 }
 
 impl RowOrder {
-    /// Every DMA-BUF layer client in this repo paints straight into its buffer
+    /// Every DMA-BUF client in this repo paints straight into its buffer
     /// through a GL framebuffer, which writes the bottom row first;
     /// one presenting through an EGL window surface would arrive top-down and show inverted.
     /// An SHM client writes rows top-down, as `layer-shell-test-client` does.
@@ -738,7 +728,6 @@ impl SceneRenderer {
             self.import_buffer_texture(buffer, dirty, ShmImport::WhenDirty, "layer");
         }
 
-        // Collect render items: (buffer_id, placement, x_offset, alpha)
         let mut to_render = Vec::new();
         // Rendered combined scenes in view; each gets a separator grid,
         // sliding and fading with its scene. Scenes that show the logo
@@ -815,7 +804,7 @@ impl SceneRenderer {
         let mut renderable_items = Vec::new();
 
         ii_stopwatch::stopwatch_start!(self.compose_w);
-        for (buffer_id, placement, x_offset, alpha) in &to_render {
+        for (buffer_id, placement, x_offset, alpha, row_order) in &to_render {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
                 tracing::warn!("No cached texture for buffer {:?}", buffer_id);
                 continue;
@@ -847,6 +836,7 @@ impl SceneRenderer {
                 placement.instance_id.clone(),
                 dst,
                 *alpha,
+                *row_order,
             ));
         }
 
@@ -855,8 +845,8 @@ impl SceneRenderer {
         // clear must reach under them or the previous frame ghosts through.
         let drawn_regions: Vec<_> = renderable_items
             .iter()
-            .filter(|(_, _, _, alpha)| *alpha >= 1.0)
-            .map(|(_, _, dst, _)| *dst)
+            .filter(|(_, _, _, alpha, _)| *alpha >= 1.0)
+            .map(|(_, _, dst, _, _)| *dst)
             .collect();
 
         // Clear regions not covered by any opaque widget before drawing widgets.
@@ -888,7 +878,7 @@ impl SceneRenderer {
             &combined_scene_grids,
         );
 
-        for (buffer_id, instance_id, dst, alpha) in &renderable_items {
+        for (buffer_id, instance_id, dst, alpha, row_order) in &renderable_items {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
                 tracing::warn!("No cached texture for buffer {:?}", buffer_id);
                 continue;
@@ -899,7 +889,7 @@ impl SceneRenderer {
                 (f64::from(tex_size.w), f64::from(tex_size.h)),
             );
             let damage = texture_damage_rect(*dst);
-            let transform = bottom_up_transform(self.scanout_transform);
+            let transform = row_order.scanout_transform(self.scanout_transform);
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
@@ -1236,7 +1226,13 @@ fn collect_scene_widgets(
     buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
     x_offset: i32,
     alpha: f32,
-    out: &mut Vec<(ObjectId, bmc::compositor::WidgetPlacement, i32, f32)>,
+    out: &mut Vec<(
+        ObjectId,
+        bmc::compositor::WidgetPlacement,
+        i32,
+        f32,
+        RowOrder,
+    )>,
 ) {
     for (client_buffer, instance_id) in buffers {
         if let Some(placement) = scene
@@ -1244,7 +1240,13 @@ fn collect_scene_widgets(
             .iter()
             .find(|w| &w.instance_id == instance_id && w.visible)
         {
-            out.push((client_buffer.id(), placement.clone(), x_offset, alpha));
+            out.push((
+                client_buffer.id(),
+                placement.clone(),
+                x_offset,
+                alpha,
+                RowOrder::of(client_buffer),
+            ));
         }
     }
 }
