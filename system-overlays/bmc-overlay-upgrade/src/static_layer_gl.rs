@@ -97,11 +97,18 @@ fn a_progress_run_paints_as_a_full_paint_does() {
         [[CAPTURED].as_slice(), &[REUSED; 9]].concat(),
         "the card without a total captures once and reuses it while the bar moves"
     );
-    for (step, pair) in outcomes[10..].chunks(2).enumerate() {
+    let (first_step, later_steps) = outcomes[10..].split_at(2);
+    assert_eq!(
+        first_step,
+        [CAPTURED, REUSED],
+        "the first progress step draws the determinate card's static half anew"
+    );
+    for (step, pair) in later_steps.chunks(2).enumerate() {
         assert_eq!(
             pair,
-            [CAPTURED, REUSED],
-            "progress step {step} captures its new static half and reuses it"
+            [REUSED, REUSED],
+            "progress step {} keeps the static half, as only the progress moved",
+            step + 1
         );
     }
 }
@@ -127,6 +134,8 @@ fn two_cards_of_one_kind_keep_their_own_layers() {
     );
 }
 
+/// The card has no total, as a determinate card's text is unbounded
+/// and every replay of it would repaint the whole surface.
 #[test]
 fn moving_damage_on_a_progress_card_paints_as_a_full_paint_does() {
     let surface = Surface {
@@ -134,7 +143,7 @@ fn moving_damage_on_a_progress_card_paints_as_a_full_paint_does() {
         height: SIZE.1,
         tier: SurfaceTier::fullscreen_for_width(SIZE.0),
     };
-    let view = downloading(Some(1_000), 400);
+    let view = downloading(None, 400);
     let intl = bmc_intl::formatter(bmc_intl::Language::default());
     let _ = assert_moving_damage_matches_full_paint(SIZE, crate::icons::register_icons, |icons| {
         crate::ui::build_upgrade_tree(&view, surface, *icons, &intl)

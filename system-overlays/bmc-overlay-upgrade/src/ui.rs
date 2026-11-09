@@ -345,6 +345,12 @@ fn safety_draw(intl: &Intl, safety: SafetyText, width: f32, center_y: f32, size:
     }
 }
 
+/// `draw` marked dynamic, so a progress report that changes it
+/// blits the static layer instead of capturing it again.
+fn changes_each_report(draw: Draw, key: &str) -> Draw {
+    draw.transition(key, 0, Easing::Linear)
+}
+
 fn active_bar(draws: &mut Vec<Draw>, x: f32, y: f32, width: f32, height: f32) {
     draws.push(Draw::Rect {
         x,
@@ -468,14 +474,8 @@ pub fn build_upgrade_tree(
                         description: "Upgrade overlay title during a download; label is the phase title (e.g. Downloading firmware), percent a whole number",
                         values: { label: label, percent: percent },
                     );
-                    draws.push(text_draw(
-                        width / 2.0 + tier.caption_nudge,
-                        title_center_y,
-                        caption,
-                        title_size,
-                        WHITE,
-                        FontWeight::BOLD,
-                    ));
+                    // Every draw after a dynamic one leaves the static layer too,
+                    // so the track goes first to stay in it.
                     draws.push(Draw::Rect {
                         x: bar_x,
                         y: below_title_y,
@@ -483,24 +483,41 @@ pub fn build_upgrade_tree(
                         h: bar_height,
                         fill: Fill::Solid(GRAY_50),
                     });
-                    draws.push(Draw::Rect {
-                        x: bar_x,
-                        y: below_title_y,
-                        w: bar_w * fraction,
-                        h: bar_height,
-                        fill: Fill::Solid(VIOLET_60),
-                    });
+                    draws.push(changes_each_report(
+                        text_draw(
+                            width / 2.0 + tier.caption_nudge,
+                            title_center_y,
+                            caption,
+                            title_size,
+                            WHITE,
+                            FontWeight::BOLD,
+                        ),
+                        "download-caption",
+                    ));
+                    draws.push(changes_each_report(
+                        Draw::Rect {
+                            x: bar_x,
+                            y: below_title_y,
+                            w: bar_w * fraction,
+                            h: bar_height,
+                            fill: Fill::Solid(VIOLET_60),
+                        },
+                        "download-fill",
+                    ));
                     if let Some(progress) = (*progress)
                         .filter(|_| tier.transfer_line)
                         .and_then(|progress| transfer_text(intl, progress))
                     {
-                        draws.push(text_draw(
-                            width / 2.0,
-                            below_title_y + bar_height + gap + body_size as f32 / 2.0,
-                            progress,
-                            body_size,
-                            GRAY_50,
-                            FontWeight::REGULAR,
+                        draws.push(changes_each_report(
+                            text_draw(
+                                width / 2.0,
+                                below_title_y + bar_height + gap + body_size as f32 / 2.0,
+                                progress,
+                                body_size,
+                                GRAY_50,
+                                FontWeight::REGULAR,
+                            ),
+                            "download-transfer",
                         ));
                     }
                 }
@@ -620,6 +637,24 @@ mod tests {
         surface_draws(view, size, tier)
     }
 
+    /// `draw` without a transition-only wrapper, which changes how the draw moves
+    /// between frames but not where it lays out.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "every other draw passes through unchanged, whatever variants come"
+    )]
+    fn without_transition(draw: Draw) -> Draw {
+        match draw {
+            Draw::Modified {
+                animations,
+                transition: Some(_),
+                inner,
+                ..
+            } if animations.is_empty() => *inner,
+            draw => draw,
+        }
+    }
+
     fn surface_draws(view: &UpgradeView, size: (u32, u32), tier: SurfaceTier) -> Vec<Draw> {
         let surface = Surface {
             width: size.0,
@@ -631,7 +666,7 @@ mod tests {
         else {
             panic!("BUG: upgrade presentation must remain a canvas");
         };
-        draws
+        draws.into_iter().map(without_transition).collect()
     }
 
     /// Compact-card draws with the background and edge dividers dropped,
@@ -644,11 +679,16 @@ mod tests {
     }
 
     fn caption_style(view: &UpgradeView, size: (u32, u32)) -> (u32, FontWeight) {
-        let draws = tree_draws(view, size);
-        let Draw::Text { style, .. } = &draws[2] else {
-            panic!("BUG: the phase caption must be the third draw");
-        };
-        (style.size, style.weight)
+        tree_draws(view, size)
+            .iter()
+            .find_map(|draw| {
+                if let Draw::Text { style, .. } = draw {
+                    Some((style.size, style.weight))
+                } else {
+                    None
+                }
+            })
+            .expect("BUG: the phase caption is the first text")
     }
 
     fn running_view(
@@ -760,14 +800,14 @@ mod tests {
         );
 
         assert!(matches!(
-            &draws[2],
+            &draws[3],
             Draw::Text { x: 650.0, text, style, .. }
                 if text == "Downloading firmware 54%..."
                     && style.size == 24
                     && style.weight == FontWeight::BOLD
         ));
         assert!(matches!(
-            &draws[3],
+            &draws[2],
             Draw::Rect {
                 x: 128.0,
                 w: 1024.0,
@@ -1052,7 +1092,7 @@ mod tests {
         );
 
         assert!(matches!(
-            &draws[4],
+            &draws[5],
             Draw::Text { text, style, .. }
                 if text == "Downloading 54%..." && style.size == 18
         ));
@@ -1079,7 +1119,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            &draws[1],
+            &draws[2],
             Draw::Text { text, .. } if text == "Downloading packages 54%..."
         ));
         assert!(draws.iter().any(|draw| matches!(
@@ -1156,12 +1196,12 @@ mod tests {
         );
 
         assert!(matches!(
-            &draws[2],
+            &draws[3],
             Draw::Text { x: 240.0, text, style, .. }
                 if text == "Downloading firmware 54%..." && style.size == 24
         ));
         assert!(matches!(
-            &draws[3],
+            &draws[2],
             Draw::Rect {
                 x: 48.0,
                 w: 384.0,
@@ -1220,11 +1260,37 @@ mod tests {
     }
 
     #[test]
-    fn a_determinate_progress_step_moves_the_static_key() {
-        // The bar and its percentage are plain draws, not dynamic ones.
-        assert_ne!(
+    fn a_determinate_progress_step_keeps_the_static_key() {
+        assert_eq!(
             static_key(&firmware_download_tree(Some(downloaded(250_000)))),
             static_key(&firmware_download_tree(Some(downloaded(750_000)))),
+        );
+    }
+
+    #[test]
+    fn the_bar_track_stays_in_the_static_layer() {
+        let tree = firmware_download_tree(Some(downloaded(250_000)));
+        let mut recoloured = tree.clone();
+        let Node::Canvas { draws, .. } = &mut recoloured else {
+            panic!("BUG: upgrade presentation must remain a canvas");
+        };
+        let track = draws
+            .iter_mut()
+            .find_map(|draw| {
+                if let Draw::Rect { fill, .. } = draw
+                    && *fill == Fill::Solid(GRAY_50)
+                {
+                    Some(fill)
+                } else {
+                    None
+                }
+            })
+            .expect("BUG: the determinate bar has a track");
+        *track = Fill::Solid(GRAY_70);
+        assert_ne!(
+            static_key(&tree),
+            static_key(&recoloured),
+            "a recoloured track must change the static layer it is in"
         );
     }
 
