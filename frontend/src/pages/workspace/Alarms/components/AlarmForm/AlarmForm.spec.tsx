@@ -81,6 +81,16 @@ describe('<AlarmForm /> day buttons', () => {
     });
 });
 
+describe('<AlarmForm /> sound', () => {
+    afterEach(cleanup);
+
+    test('names its dropdown by the label shown above it', () => {
+        renderForm();
+
+        expect(screen.getByRole('combobox', { name: 'Alarm Sound' })).toBeTruthy();
+    });
+});
+
 describe('<AlarmForm /> on a 12-hour clock', () => {
     afterEach(cleanup);
 

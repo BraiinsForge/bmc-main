@@ -137,6 +137,7 @@ class View extends Component<Props, State> {
         const { isPlaying } = this.state;
         const { formatMessage } = intl;
         const notAvailable = pb.notAvailable(intl);
+        const soundLabel = formatMessage({ defaultMessage: 'Alarm Sound' });
 
         const [timeValue, period] = is12h
             ? (() => {
@@ -226,13 +227,14 @@ class View extends Component<Props, State> {
                     />
                 </CarbonFormField>
 
-                <CarbonFormField className={css.fullWidth} labelText={formatMessage({ defaultMessage: 'Alarm Sound' })}>
+                <CarbonFormField className={css.fullWidth} labelText={soundLabel}>
                     <div className={css.soundRow}>
                         <Dropdown<null | pb.SoundInfo>
                             id={$('sound')}
                             className={css.soundDropdown}
                             autoAlign
-                            titleText=""
+                            titleText={soundLabel}
+                            hideLabel
                             label={formatMessage({ defaultMessage: 'Select a sound…' })}
                             items={sound.options}
                             selectedItem={sound.options.find(x => x.id === sound.value) ?? null}

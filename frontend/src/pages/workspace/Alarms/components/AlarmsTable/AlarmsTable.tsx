@@ -109,6 +109,14 @@ class View extends Component<Props> {
                     state: (
                         <Toggle
                             id={$('state', id)}
+                            aria-label={formatMessage(
+                                {
+                                    defaultMessage: 'Alarm at {time}',
+                                    description:
+                                        "Screen-reader name of an alarm's on/off switch in the alarm list; time is the alarm's time, such as 10:15 PM",
+                                },
+                                { time: formatAlarmTime(time, timeFormat) },
+                            )}
                             toggled={enabled}
                             labelA={formatMessage({ defaultMessage: 'Off' })}
                             labelB={formatMessage({ defaultMessage: 'On' })}

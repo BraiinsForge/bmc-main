@@ -748,6 +748,11 @@
     "translation": "[Ŧħḗḗ ṽȧȧŀŭŭḗḗ “{correctedValue}” ẇȧȧş ƈǿǿřřḗḗƈŧḗḗḓ ŧǿǿ ŧħḗḗ ƞḗḗȧȧřḗḗşŧ ȧȧŀŀǿǿẇḗḗḓ ṽȧȧŀŭŭḗḗ.]",
     "description": "Alert under a slider's number field after it moved a typed value into its range; correctedValue is the value typed, such as 150"
   },
+  "FusirkyRx+": {
+    "source": "Alarm at {time}",
+    "translation": "[Ȧŀȧȧřḿ ȧȧŧ {time}]",
+    "description": "Screen-reader name of an alarm's on/off switch in the alarm list; time is the alarm's time, such as 10:15 PM"
+  },
   "GJwREVlv5b": {
     "source": "Failed to load accounts!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ȧȧƈƈǿǿŭŭƞŧş!]"

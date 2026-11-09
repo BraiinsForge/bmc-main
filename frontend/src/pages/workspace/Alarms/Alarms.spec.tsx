@@ -158,6 +158,17 @@ describe('Alarms', () => {
         expect(screen.queryByText(/unreachable/)).toBeNull();
     });
 
+    test("each alarm's switch is named by its time and still shows its state", async () => {
+        answerAlarms([alarm('wake')]);
+        answerGeneralSettings(() => settings(pb.TimeFormat.TIME_FORMAT_24_HOUR));
+        render(pageTree());
+        await advance(0);
+
+        const row = within(screen.getByRole('table'));
+        expect(row.getByRole('switch', { name: 'Alarm at 14:30' })).toBeTruthy();
+        expect(row.getByText('On')).toBeTruthy();
+    });
+
     test('the alarm times follow a later change of the device clock', async () => {
         answerAlarms([alarm('wake')]);
         let held = settings(pb.TimeFormat.TIME_FORMAT_24_HOUR);
