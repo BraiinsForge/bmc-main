@@ -1070,6 +1070,44 @@ const PRESSABLE: [&str; 7] = [
     ui::WIFI_RECONFIG_KEY,
 ];
 
+/// The tree a tray at `viewport` draws for `view`, with `pressed` shown held down.
+fn tray_tree(
+    view: &SettingsTrayView,
+    viewport: OverlayViewport,
+    icons: icons::TrayIcons,
+    intl: &Intl,
+    pressed: Option<&str>,
+) -> bmc_render::tree::Node {
+    let controls = ui::Controls {
+        brightness: view.show_brightness.then_some(view.brightness),
+        volume: view.show_volume.then_some(view.volume),
+        night_mode: view.night_mode.as_ref().map(|n| ui::NightMode {
+            active: n.active,
+            until: n.until.as_deref(),
+        }),
+        restart: view.show_restart,
+        pressed,
+    };
+    ui::build_tree(
+        intl,
+        view.hostname.as_deref(),
+        view.ip.as_deref(),
+        view.wifi_signal,
+        view.ssid.as_deref(),
+        icons.wifi,
+        Panel {
+            shape: viewport.shape,
+            width: viewport.width,
+            height: viewport.height,
+            wifi_button: view.wifi_button,
+        },
+        wifi_view(view),
+        icons.controls,
+        controls,
+        view.status.as_ref(),
+    )
+}
+
 pub fn render_settings_tray(
     renderer: &mut dyn Renderer,
     viewport: OverlayViewport,
@@ -1087,37 +1125,7 @@ pub fn render_settings_tray(
     let pressed_derived = PRESSABLE.iter().copied().find(|k| state.tree.is_pressed(k));
     let pressed = view.pressed_key.as_deref().or(pressed_derived);
 
-    let wifi_view = wifi_view(view);
-    let controls = ui::Controls {
-        brightness: view.show_brightness.then_some(view.brightness),
-        volume: view.show_volume.then_some(view.volume),
-        night_mode: view.night_mode.as_ref().map(|n| ui::NightMode {
-            active: n.active,
-            until: n.until.as_deref(),
-        }),
-        restart: view.show_restart,
-        pressed,
-    };
-    let build = || {
-        ui::build_tree(
-            intl,
-            view.hostname.as_deref(),
-            view.ip.as_deref(),
-            view.wifi_signal,
-            view.ssid.as_deref(),
-            icons.wifi,
-            Panel {
-                shape: viewport.shape,
-                width: viewport.width,
-                height: viewport.height,
-                wifi_button: view.wifi_button,
-            },
-            wifi_view,
-            icons.controls,
-            controls,
-            view.status.as_ref(),
-        )
-    };
+    let build = || tray_tree(view, viewport, icons, intl, pressed);
 
     let tree_frame = match state
         .tree

@@ -20,6 +20,7 @@
 
 use bmc_system_overlay::gl_check::{
     CAPTURED, GlRun, REUSED, assert_layered_run_matches_full_paint,
+    assert_moving_damage_matches_full_paint,
 };
 use bmc_system_overlay::{DownloadProgress, FrameKind, UpgradeKind, UpgradePhase};
 
@@ -57,16 +58,21 @@ impl Card {
             tier: SurfaceTier::fullscreen_for_width(SIZE.0),
         };
         let state = &mut self.state;
-        run.paint(kind, |renderer, frame| {
-            render_upgrade(
-                renderer,
-                surface,
-                state,
-                view,
-                &bmc_intl::formatter(bmc_intl::Language::default()),
-                frame,
-            )
-        });
+        run.paint(
+            kind,
+            state,
+            |state| Some(&mut state.tree),
+            |state, renderer, frame| {
+                render_upgrade(
+                    renderer,
+                    surface,
+                    state,
+                    view,
+                    &bmc_intl::formatter(bmc_intl::Language::default()),
+                    frame,
+                )
+            },
+        );
     }
 }
 
@@ -119,4 +125,18 @@ fn two_cards_of_one_kind_keep_their_own_layers() {
         outcomes[2..].iter().all(|outcome| *outcome == REUSED),
         "a shared layer would be captured over by the other card every frame: {outcomes:?}"
     );
+}
+
+#[test]
+fn moving_damage_on_a_progress_card_paints_as_a_full_paint_does() {
+    let surface = Surface {
+        width: SIZE.0,
+        height: SIZE.1,
+        tier: SurfaceTier::fullscreen_for_width(SIZE.0),
+    };
+    let view = downloading(Some(1_000), 400);
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
+    let _ = assert_moving_damage_matches_full_paint(SIZE, crate::icons::register_icons, |icons| {
+        crate::ui::build_upgrade_tree(&view, surface, *icons, &intl)
+    });
 }

@@ -357,3 +357,104 @@ pub fn read_pixels_top_down(
     }
     out
 }
+
+/// A framebuffer with a stencil and one colour texture per export buffer,
+/// attached in turn as a host rotates the buffers it paints into.
+///
+/// A texture keeps whatever the last frame attached to it painted,
+/// so a frame that keeps its target finds the frame before last there.
+#[derive(Debug)]
+pub struct RotatingTarget {
+    fbo: glow::Framebuffer,
+    textures: [glow::Texture; crate::repaint::EXPORT_BUFFERS],
+    width: u32,
+    height: u32,
+}
+
+impl RotatingTarget {
+    /// Allocate the framebuffer at `width`×`height`, with the first texture attached.
+    #[expect(clippy::cast_possible_wrap)]
+    #[must_use]
+    pub fn new(gl: &glow::Context, width: u32, height: u32) -> Self {
+        use glow::HasContext as _;
+        unsafe {
+            let textures = std::array::from_fn(|_| {
+                let texture = gl.create_texture().expect("BUG: create_texture failed");
+                gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGBA as i32,
+                    width as i32,
+                    height as i32,
+                    0,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(None),
+                );
+                for parameter in [glow::TEXTURE_MIN_FILTER, glow::TEXTURE_MAG_FILTER] {
+                    gl.tex_parameter_i32(glow::TEXTURE_2D, parameter, glow::NEAREST as i32);
+                }
+                texture
+            });
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            let fbo = gl
+                .create_framebuffer()
+                .expect("BUG: create_framebuffer failed");
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            let stencil = gl
+                .create_renderbuffer()
+                .expect("BUG: create_renderbuffer failed");
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(stencil));
+            gl.renderbuffer_storage(
+                glow::RENDERBUFFER,
+                glow::STENCIL_INDEX8,
+                width as i32,
+                height as i32,
+            );
+            gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(stencil),
+            );
+            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            let target = Self {
+                fbo,
+                textures,
+                width,
+                height,
+            };
+            target.attach(gl, 0);
+            target
+        }
+    }
+
+    /// The framebuffer's GL name, for a renderer's screen target.
+    #[must_use]
+    pub fn fbo_id(&self) -> u32 {
+        self.fbo.0.get()
+    }
+
+    /// Point the framebuffer at the `index`th buffer's texture.
+    pub fn attach(&self, gl: &glow::Context, index: usize) {
+        use glow::HasContext as _;
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+            gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(self.textures[index]),
+                0,
+            );
+        }
+        assert_complete(gl);
+    }
+
+    /// The attached buffer, as [`read_pixels_top_down`] reads it.
+    #[must_use]
+    pub fn read(&self, gl: &glow::Context) -> Vec<[u8; 4]> {
+        read_pixels_top_down(gl, self.fbo, self.width, self.height)
+    }
+}

@@ -133,8 +133,9 @@ required-features = ["capture"]
 
 [dev-dependencies]
 bmc-wasm-assets = { path = "../bmc-wasm-assets" }
-# A renderer for unit tests of the host's layer bookkeeping, which needs no GL.
-bmc-render = { path = "../bmc-render", features = ["test-support"] }
+# A renderer for unit tests of the host's layer bookkeeping, which needs no GL,
+# and the rotating GL target the damage-tracking test paints into.
+bmc-render = { path = "../bmc-render", features = ["gl-harness", "test-support"] }
 wasm-encoder.workspace = true
 # Hand-rolled WAT fixtures for `tests/lifecycle.rs` — avoids a cross-target
 # build dependency on the example widgets.

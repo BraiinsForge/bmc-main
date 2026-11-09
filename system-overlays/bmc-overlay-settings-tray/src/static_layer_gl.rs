@@ -22,7 +22,9 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::test_support::ShapingRecorder;
 use bmc_system_overlay::gl_check::{
-    CAPTURED, FRAME_STEP, GlRun, MISSED, REUSED, UNCACHED, assert_layered_run_matches_full_paint,
+    CAPTURED, FRAME_STEP, GlRun, MISSED, REUSED, UNCACHED,
+    assert_damage_tracked_run_matches_full_paint, assert_layered_run_matches_full_paint,
+    assert_moving_damage_matches_full_paint,
 };
 
 use super::*;
@@ -104,17 +106,22 @@ impl Tray {
         let view = view(self.ip, self.brightness, self.held);
         let viewport = OverlayViewport::rectangular(self.size.0, self.size.1);
         let state = &mut self.state;
-        run.paint(kind, |renderer, frame| {
-            render_settings_tray(
-                renderer,
-                viewport,
-                state,
-                &view,
-                &bmc_intl::formatter(bmc_intl::Language::default()),
-                frame,
-            )
-            .outcome
-        });
+        run.paint(
+            kind,
+            state,
+            |state| Some(&mut state.tree),
+            |state, renderer, frame| {
+                render_settings_tray(
+                    renderer,
+                    viewport,
+                    state,
+                    &view,
+                    &bmc_intl::formatter(bmc_intl::Language::default()),
+                    frame,
+                )
+                .outcome
+            },
+        );
     }
 
     /// Paint `frames` more of a restart hold at `(x, y)`, advancing the hold by hand
@@ -196,8 +203,9 @@ fn a_slider_drag_paints_as_a_full_paint_does() {
             "the cancellation lets go"
         );
         tray.lose_layer_and_hide(run);
-        for _ in 0..9 {
-            tray.paint(run, FrameKind::Fresh);
+        tray.paint(run, FrameKind::Fresh);
+        for _ in 0..8 {
+            tray.paint(run, FrameKind::AnimationOnly);
         }
     });
     let Some(outcomes) = outcomes else { return };
@@ -274,4 +282,48 @@ fn a_restart_hold_paints_as_a_full_paint_does() {
         ]
         .concat()
     );
+}
+
+/// Each step of a slow drag repaints the whole track, so the replays between steps
+/// repaint only the track, and the old thumb is always inside it.
+#[test]
+fn a_slow_slider_drag_repaints_only_the_track() {
+    const STEPS: u8 = 8;
+    const REPLAYS: usize = 3;
+    let repainted = assert_damage_tracked_run_matches_full_paint(BMM101, |run| {
+        let mut tray = Tray::new(run, BMM101);
+        tray.paint(run, FrameKind::Fresh);
+        let (x, y) = on_track(0.1);
+        tray.touch(TouchEvent::Down { id: 0, x, y });
+        tray.paint(run, FrameKind::Fresh);
+        for step in 1..=STEPS {
+            let brightness = 10 + 10 * step;
+            let (x, y) = on_track(f32::from(brightness) / 100.0);
+            tray.touch(TouchEvent::Motion { id: 0, x, y });
+            tray.brightness = brightness;
+            tray.paint(run, FrameKind::Fresh);
+            for _ in 0..REPLAYS {
+                tray.paint(run, FrameKind::AnimationOnly);
+            }
+        }
+    });
+    let Some(repainted) = repainted else { return };
+    let surface = usize::try_from(BMM101.0 * BMM101.1).expect("BUG: the panel fits usize");
+    let partial = repainted.iter().filter(|pixels| **pixels < surface).count();
+    assert_eq!(
+        partial,
+        usize::from(STEPS) * REPLAYS,
+        "every replay repaints only the track: {repainted:?}"
+    );
+}
+
+/// A slider step repaints the whole track, so a square moved on every rebuild
+/// checks that the damage spans both buffers' history.
+#[test]
+fn moving_damage_on_the_tray_paints_as_a_full_paint_does() {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
+    let viewport = OverlayViewport::rectangular(BMM101.0, BMM101.1);
+    let _ = assert_moving_damage_matches_full_paint(BMM101, icons::register_icons, |icons| {
+        tray_tree(&view(FIRST_IP, 50, None), viewport, *icons, &intl, None)
+    });
 }

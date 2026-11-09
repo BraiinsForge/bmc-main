@@ -32,11 +32,11 @@ use std::f32::consts::PI;
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::FrameBackground;
 use bmc_render::renderer::prelude::*;
+use bmc_render::test_harness::RotatingTarget;
 use bmc_ui::{
     AnimProperty, ArcCap, ArcSegments, Color, Draw, Easing, LoopMode, PropsData, canvas, encode,
 };
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
-use glow::HasContext as _;
 
 #[path = "common/asset_fixtures.rs"]
 #[expect(
@@ -120,107 +120,6 @@ fn two_tree_wat(trees: &[Vec<u8>; 2]) -> String {
     )
 }
 
-/// A framebuffer with a stencil and two colour textures to attach in turn.
-struct RotatingTarget {
-    fbo: glow::Framebuffer,
-    textures: [glow::Texture; 2],
-}
-
-impl RotatingTarget {
-    #[expect(
-        clippy::cast_possible_wrap,
-        reason = "test surface dimensions are tiny"
-    )]
-    fn new(gl: &glow::Context) -> Self {
-        // SAFETY: HeadlessGl keeps its GL context current for the whole test.
-        unsafe {
-            let textures = [0, 1].map(|_| {
-                let texture = gl.create_texture().expect("BUG: create_texture failed");
-                gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-                gl.tex_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    glow::RGBA as i32,
-                    i32::from(W),
-                    i32::from(H),
-                    0,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::Slice(None),
-                );
-                for parameter in [glow::TEXTURE_MIN_FILTER, glow::TEXTURE_MAG_FILTER] {
-                    gl.tex_parameter_i32(glow::TEXTURE_2D, parameter, glow::NEAREST as i32);
-                }
-                texture
-            });
-            let fbo = gl
-                .create_framebuffer()
-                .expect("BUG: create_framebuffer failed");
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-            let stencil = gl
-                .create_renderbuffer()
-                .expect("BUG: create_renderbuffer failed");
-            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(stencil));
-            gl.renderbuffer_storage(
-                glow::RENDERBUFFER,
-                glow::STENCIL_INDEX8,
-                i32::from(W),
-                i32::from(H),
-            );
-            gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::STENCIL_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(stencil),
-            );
-            let target = Self { fbo, textures };
-            target.attach(gl, 0);
-            target
-        }
-    }
-
-    fn fbo_id(&self) -> u32 {
-        self.fbo.0.get()
-    }
-
-    fn attach(&self, gl: &glow::Context, index: usize) {
-        // SAFETY: HeadlessGl keeps its GL context current for the whole test.
-        unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
-            gl.framebuffer_texture_2d(
-                glow::FRAMEBUFFER,
-                glow::COLOR_ATTACHMENT0,
-                glow::TEXTURE_2D,
-                Some(self.textures[index]),
-                0,
-            );
-            assert_eq!(
-                gl.check_framebuffer_status(glow::FRAMEBUFFER),
-                glow::FRAMEBUFFER_COMPLETE,
-                "BUG: the rotating target must stay complete"
-            );
-        }
-    }
-
-    fn read(&self, gl: &glow::Context) -> Vec<u8> {
-        let mut pixels = vec![0_u8; usize::from(W) * usize::from(H) * 4];
-        // SAFETY: HeadlessGl keeps its GL context current for the whole test.
-        unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
-            gl.read_pixels(
-                0,
-                0,
-                i32::from(W),
-                i32::from(H),
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                glow::PixelPackData::Slice(Some(&mut pixels)),
-            );
-        }
-        pixels
-    }
-}
-
 struct Painter {
     runtime: WasmWidgetRuntime,
     renderer: FemtoVgRenderer,
@@ -229,7 +128,7 @@ struct Painter {
 
 impl Painter {
     fn new(gl: &headless_egl::HeadlessGl, wasm: &[u8]) -> Self {
-        let target = RotatingTarget::new(gl.as_ref());
+        let target = RotatingTarget::new(gl.as_ref(), u32::from(W), u32::from(H));
         let mut proc = gl.proc_address();
         // SAFETY: HeadlessGl keeps the GL context current.
         let renderer = unsafe {
@@ -299,20 +198,17 @@ fn assert_damage_tracking_matches_full_repaints(trees: &[Vec<u8>; 2]) {
 
         let expected = reference.target.read(gl.as_ref());
         let actual = tracked.target.read(gl.as_ref());
-        let row_bytes = usize::from(W) * 4;
-        // Readback rows run bottom-up.
+        let width = usize::from(W);
         let differing: Vec<(usize, usize, &[u8; 4], &[u8; 4])> = expected
-            .chunks_exact(row_bytes)
-            .zip(actual.chunks_exact(row_bytes))
+            .chunks_exact(width)
+            .zip(actual.chunks_exact(width))
             .enumerate()
-            .flat_map(|(row, (want, got))| {
-                want.as_chunks::<4>()
-                    .0
-                    .iter()
-                    .zip(got.as_chunks::<4>().0)
+            .flat_map(|(y, (want, got))| {
+                want.iter()
+                    .zip(got)
                     .enumerate()
                     .filter(|(_, (want, got))| want != got)
-                    .map(move |(x, (want, got))| (x, usize::from(H) - 1 - row, want, got))
+                    .map(move |(x, (want, got))| (x, y, want, got))
             })
             .collect();
         if let Some(&(x, y, want, got)) = differing.first() {

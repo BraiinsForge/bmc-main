@@ -21,6 +21,7 @@
 use bmc_render::renderer::test_support::ShapingRecorder;
 use bmc_system_overlay::gl_check::{
     CAPTURED, GlRun, REUSED, assert_layered_run_matches_full_paint,
+    assert_moving_damage_matches_full_paint,
 };
 
 use super::*;
@@ -38,17 +39,22 @@ fn view() -> AlarmView {
 
 fn paint(run: &mut GlRun<'_>, state: &mut AlarmRenderState, kind: FrameKind) {
     let view = view();
-    run.paint(kind, |renderer, frame| {
-        render_alarm(
-            renderer,
-            SIZE,
-            state,
-            &view,
-            &bmc_intl::formatter(bmc_intl::Language::default()),
-            frame,
-        )
-        .outcome
-    });
+    run.paint(
+        kind,
+        state,
+        |state| Some(&mut state.tree),
+        |state, renderer, frame| {
+            render_alarm(
+                renderer,
+                SIZE,
+                state,
+                &view,
+                &bmc_intl::formatter(bmc_intl::Language::default()),
+                frame,
+            )
+            .outcome
+        },
+    );
 }
 
 /// The centre of the stop button, where a recorded frame laid it out.
@@ -100,5 +106,16 @@ fn a_stop_press_paints_as_a_full_paint_does() {
         outcomes,
         [capture, &ringing, capture, &ringing, capture, &ringing,].concat(),
         "the press and the release each capture again"
+    );
+}
+
+/// A square moved on every rebuild gives the alarm's replays damage that spans both buffers.
+#[test]
+fn moving_damage_on_the_alarm_paints_as_a_full_paint_does() {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
+    let _ = assert_moving_damage_matches_full_paint(
+        SIZE,
+        |_| (),
+        |()| build_alarm_ui_tree(&view(), SIZE, &intl),
     );
 }

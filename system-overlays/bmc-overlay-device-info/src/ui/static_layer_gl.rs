@@ -22,12 +22,13 @@ use std::net::Ipv4Addr;
 
 use bmc_system_overlay::gl_check::{
     CAPTURED, GlRun, REUSED, assert_layered_run_matches_full_paint,
+    assert_moving_damage_matches_full_paint,
 };
 use bmc_system_overlay::{AccessPoint, FrameKind, Language, TouchEvent};
 
 use super::{
-    DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Uplinks, language_key,
-    offers_language_switch, render_device_info,
+    DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Uplinks, build_device_info_tree,
+    language_key, offers_language_switch, render_device_info, tier_for,
 };
 
 const SIZE: (u32, u32) = (1_280, 480);
@@ -52,20 +53,25 @@ fn paint_speaking(
     let switch = current.map_or(LanguageSwitch::Hidden, |current| LanguageSwitch::Shown {
         current: Some(current),
     });
-    run.paint(kind, |renderer, frame| {
-        render_device_info(
-            renderer,
-            SIZE,
-            state,
-            view,
-            &bmc_intl::formatter(bmc_intl::Language::default()),
-            "Braiins Deck",
-            false,
-            switch,
-            frame,
-        )
-        .outcome
-    });
+    run.paint(
+        kind,
+        state,
+        |state| Some(&mut state.tree),
+        |state, renderer, frame| {
+            render_device_info(
+                renderer,
+                SIZE,
+                state,
+                view,
+                &bmc_intl::formatter(bmc_intl::Language::default()),
+                "Braiins Deck",
+                false,
+                switch,
+                frame,
+            )
+            .outcome
+        },
+    );
 }
 
 fn screen(run: &mut GlRun<'_>, state: &mut DeviceInfoRenderState, view: &DeviceInfoView) {
@@ -148,4 +154,22 @@ fn a_flag_press_on_the_language_switch_paints_as_a_full_paint_does() {
         ]
         .concat()
     );
+}
+
+/// A square moved on every rebuild gives each screen's replays damage that spans both buffers.
+#[test]
+fn moving_damage_on_a_screen_paints_as_a_full_paint_does() {
+    let intl = bmc_intl::formatter(bmc_intl::Language::default());
+    let _ = assert_moving_damage_matches_full_paint(SIZE, crate::icons::register_icons, |icons| {
+        build_device_info_tree(
+            &intl,
+            &DeviceInfoView::TurningApOff,
+            *icons,
+            tier_for(SIZE),
+            "Braiins Deck",
+            false,
+            None,
+        )
+        .expect("BUG: every view but Done builds a tree")
+    });
 }
