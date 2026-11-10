@@ -1267,18 +1267,17 @@ describe('dialog session lifecycle', () => {
 
         test('until the accounts load, the picker says so instead of judging the binding', async () => {
             mockServer(() => ({}));
+            const accountsHeld = deferred<void>();
             registerMocks(pb.services.AccountManagementService, {
-                getAllAccounts: ({ conf }) => {
-                    conf({ delay: 1000 });
-                    return { accounts: [] };
-                },
+                getAllAccounts: () => accountsHeld.then(() => ({ accounts: [] })),
             });
 
             await openEditor();
-            const beforeLoad = document.body.textContent;
-            await flush(1000);
+            expect(document.body.textContent).toContain('Accounts not loaded');
 
-            expect(beforeLoad).toContain('Accounts not loaded');
+            accountsHeld.resolve();
+            await flush();
+            expect(document.body.textContent).not.toContain('Accounts not loaded');
         });
 
         test('Done leaves untouched bindings to the server', async () => {
