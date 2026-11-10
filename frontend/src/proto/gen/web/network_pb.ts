@@ -32,7 +32,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file web/network.proto.
  */
 export const file_web_network: GenFile = /*@__PURE__*/
-  fileDesc("ChF3ZWIvbmV0d29yay5wcm90bxIPYnJhaWlucy5ibWMud2ViIlAKE05ldHdvcmtJbmZvUmVzcG9uc2USEwoLbWFjX2FkZHJlc3MYASABKAkSEgoKaXBfYWRkcmVzcxgCIAEoCRIQCghob3N0bmFtZRgDIAEoCSJ7Cg1OZXR3b3JrQ29uZmlnEiYKBGRoY3AYASABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIABI2CgZzdGF0aWMYAiABKAsyJC5icmFpaW5zLmJtYy53ZWIuTmV0d29ya0NvbmZpZ1N0YXRpY0gAQgoKCHByb3RvY29sIl0KE05ldHdvcmtDb25maWdTdGF0aWMSDwoHYWRkcmVzcxgBIAEoCRIPCgduZXRtYXNrGAIgASgJEg8KB2dhdGV3YXkYAyABKAkSEwoLZG5zX3NlcnZlcnMYBCADKAkiGgoKV2lmaUNvbmZpZxIMCgRzc2lkGAEgASgJInwKDlNldFdpZmlSZXF1ZXN0EgwKBHNzaWQYASABKAkSFQoIcGFzc3dvcmQYAiABKAlIAIgBARI4Cg9lbmNyeXB0aW9uX3R5cGUYAyABKA4yHy5icmFpaW5zLmJtYy53ZWIuRW5jcnlwdGlvblR5cGVCCwoJX3Bhc3N3b3JkIkIKEFNjYW5XaWZpUmVzcG9uc2USLgoIbmV0d29ya3MYASADKAsyHC5icmFpaW5zLmJtYy53ZWIuV2lmaU5ldHdvcmsijwEKC1dpZmlOZXR3b3JrEgwKBHNzaWQYASABKAkSOAoPZW5jcnlwdGlvbl90eXBlGAIgASgOMh8uYnJhaWlucy5ibWMud2ViLkVuY3J5cHRpb25UeXBlEjgKD3NpZ25hbF9zdHJlbmd0aBgDIAEoDjIfLmJyYWlpbnMuYm1jLndlYi5TaWduYWxTdHJlbmd0aCJMCgpXaWZpU3RhdHVzEg8KB2VuYWJsZWQYASABKAgSLQoHbmV0d29yaxgCIAEoCzIcLmJyYWlpbnMuYm1jLndlYi5XaWZpTmV0d29yayJBChJXaWZpU3RhdHVzUmVzcG9uc2USKwoGc3RhdHVzGAEgASgLMhsuYnJhaWlucy5ibWMud2ViLldpZmlTdGF0dXMiSAoZV2lmaVNhdmVkTmV0d29ya3NSZXNwb25zZRIrCgZzdGF0dXMYASADKAsyGy5icmFpaW5zLmJtYy53ZWIuV2lmaVN0YXR1cyqJAgoORW5jcnlwdGlvblR5cGUSHwobRU5DUllQVElPTl9UWVBFX1VOU1BFQ0lGSUVEEAASGAoURU5DUllQVElPTl9UWVBFX05PTkUQARIXChNFTkNSWVBUSU9OX1RZUEVfV0VQEAISHgoaRU5DUllQVElPTl9UWVBFX1dFUF9TSEFSRUQQAxIXChNFTkNSWVBUSU9OX1RZUEVfV1BBEAQSGgoWRU5DUllQVElPTl9UWVBFX1dQQTFfMhAFEhgKFEVOQ1JZUFRJT05fVFlQRV9XUEEyEAYSGgoWRU5DUllQVElPTl9UWVBFX1dQQTJfMxAHEhgKFEVOQ1JZUFRJT05fVFlQRV9XUEEzEAgqhQEKDlNpZ25hbFN0cmVuZ3RoEh8KG1NJR05BTF9TVFJFTkdUSF9VTlNQRUNJRklFRBAAEhgKFFNJR05BTF9TVFJFTkdUSF9XRUFLEAESHAoYU0lHTkFMX1NUUkVOR1RIX01PREVSQVRFEAISGgoWU0lHTkFMX1NUUkVOR1RIX1NUUk9ORxADMq0ECg5OZXR3b3JrU2VydmljZRJOCg5HZXROZXR3b3JrSW5mbxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRokLmJyYWlpbnMuYm1jLndlYi5OZXR3b3JrSW5mb1Jlc3BvbnNlEkoKEEdldE5ldHdvcmtDb25maWcSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaHi5icmFpaW5zLmJtYy53ZWIuTmV0d29ya0NvbmZpZxJKChBTZXROZXR3b3JrQ29uZmlnEh4uYnJhaWlucy5ibWMud2ViLk5ldHdvcmtDb25maWcaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSTAoNR2V0V2lmaVN0YXR1cxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRojLmJyYWlpbnMuYm1jLndlYi5XaWZpU3RhdHVzUmVzcG9uc2USWgoUR2V0V2lmaVNhdmVkTmV0d29ya3MSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaKi5icmFpaW5zLmJtYy53ZWIuV2lmaVNhdmVkTmV0d29ya3NSZXNwb25zZRJCCgdTZXRXaWZpEh8uYnJhaWlucy5ibWMud2ViLlNldFdpZmlSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkUKCFNjYW5XaWZpEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiEuYnJhaWlucy5ibWMud2ViLlNjYW5XaWZpUmVzcG9uc2ViBnByb3RvMw", [file_google_protobuf_empty]);
+  fileDesc("ChF3ZWIvbmV0d29yay5wcm90bxIPYnJhaWlucy5ibWMud2ViIlAKE05ldHdvcmtJbmZvUmVzcG9uc2USEwoLbWFjX2FkZHJlc3MYASABKAkSEgoKaXBfYWRkcmVzcxgCIAEoCRIQCghob3N0bmFtZRgDIAEoCSJ7Cg1OZXR3b3JrQ29uZmlnEiYKBGRoY3AYASABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIABI2CgZzdGF0aWMYAiABKAsyJC5icmFpaW5zLmJtYy53ZWIuTmV0d29ya0NvbmZpZ1N0YXRpY0gAQgoKCHByb3RvY29sIl0KE05ldHdvcmtDb25maWdTdGF0aWMSDwoHYWRkcmVzcxgBIAEoCRIPCgduZXRtYXNrGAIgASgJEg8KB2dhdGV3YXkYAyABKAkSEwoLZG5zX3NlcnZlcnMYBCADKAkiJgoSU2V0SG9zdG5hbWVSZXF1ZXN0EhAKCGhvc3RuYW1lGAEgASgJIhoKCldpZmlDb25maWcSDAoEc3NpZBgBIAEoCSJ8Cg5TZXRXaWZpUmVxdWVzdBIMCgRzc2lkGAEgASgJEhUKCHBhc3N3b3JkGAIgASgJSACIAQESOAoPZW5jcnlwdGlvbl90eXBlGAMgASgOMh8uYnJhaWlucy5ibWMud2ViLkVuY3J5cHRpb25UeXBlQgsKCV9wYXNzd29yZCJCChBTY2FuV2lmaVJlc3BvbnNlEi4KCG5ldHdvcmtzGAEgAygLMhwuYnJhaWlucy5ibWMud2ViLldpZmlOZXR3b3JrIo8BCgtXaWZpTmV0d29yaxIMCgRzc2lkGAEgASgJEjgKD2VuY3J5cHRpb25fdHlwZRgCIAEoDjIfLmJyYWlpbnMuYm1jLndlYi5FbmNyeXB0aW9uVHlwZRI4Cg9zaWduYWxfc3RyZW5ndGgYAyABKA4yHy5icmFpaW5zLmJtYy53ZWIuU2lnbmFsU3RyZW5ndGgiTAoKV2lmaVN0YXR1cxIPCgdlbmFibGVkGAEgASgIEi0KB25ldHdvcmsYAiABKAsyHC5icmFpaW5zLmJtYy53ZWIuV2lmaU5ldHdvcmsiQQoSV2lmaVN0YXR1c1Jlc3BvbnNlEisKBnN0YXR1cxgBIAEoCzIbLmJyYWlpbnMuYm1jLndlYi5XaWZpU3RhdHVzIkgKGVdpZmlTYXZlZE5ldHdvcmtzUmVzcG9uc2USKwoGc3RhdHVzGAEgAygLMhsuYnJhaWlucy5ibWMud2ViLldpZmlTdGF0dXMqiQIKDkVuY3J5cHRpb25UeXBlEh8KG0VOQ1JZUFRJT05fVFlQRV9VTlNQRUNJRklFRBAAEhgKFEVOQ1JZUFRJT05fVFlQRV9OT05FEAESFwoTRU5DUllQVElPTl9UWVBFX1dFUBACEh4KGkVOQ1JZUFRJT05fVFlQRV9XRVBfU0hBUkVEEAMSFwoTRU5DUllQVElPTl9UWVBFX1dQQRAEEhoKFkVOQ1JZUFRJT05fVFlQRV9XUEExXzIQBRIYChRFTkNSWVBUSU9OX1RZUEVfV1BBMhAGEhoKFkVOQ1JZUFRJT05fVFlQRV9XUEEyXzMQBxIYChRFTkNSWVBUSU9OX1RZUEVfV1BBMxAIKoUBCg5TaWduYWxTdHJlbmd0aBIfChtTSUdOQUxfU1RSRU5HVEhfVU5TUEVDSUZJRUQQABIYChRTSUdOQUxfU1RSRU5HVEhfV0VBSxABEhwKGFNJR05BTF9TVFJFTkdUSF9NT0RFUkFURRACEhoKFlNJR05BTF9TVFJFTkdUSF9TVFJPTkcQAzL5BAoOTmV0d29ya1NlcnZpY2USTgoOR2V0TmV0d29ya0luZm8SFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJC5icmFpaW5zLmJtYy53ZWIuTmV0d29ya0luZm9SZXNwb25zZRJKChBHZXROZXR3b3JrQ29uZmlnEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5Gh4uYnJhaWlucy5ibWMud2ViLk5ldHdvcmtDb25maWcSSgoQU2V0TmV0d29ya0NvbmZpZxIeLmJyYWlpbnMuYm1jLndlYi5OZXR3b3JrQ29uZmlnGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5EkoKC1NldEhvc3RuYW1lEiMuYnJhaWlucy5ibWMud2ViLlNldEhvc3RuYW1lUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJMCg1HZXRXaWZpU3RhdHVzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiMuYnJhaWlucy5ibWMud2ViLldpZmlTdGF0dXNSZXNwb25zZRJaChRHZXRXaWZpU2F2ZWROZXR3b3JrcxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRoqLmJyYWlpbnMuYm1jLndlYi5XaWZpU2F2ZWROZXR3b3Jrc1Jlc3BvbnNlEkIKB1NldFdpZmkSHy5icmFpaW5zLmJtYy53ZWIuU2V0V2lmaVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSRQoIU2NhbldpZmkSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaIS5icmFpaW5zLmJtYy53ZWIuU2NhbldpZmlSZXNwb25zZWIGcHJvdG8z", [file_google_protobuf_empty]);
 
 /**
  * @generated from message braiins.bmc.web.NetworkInfoResponse
@@ -123,6 +123,23 @@ export const NetworkConfigStaticSchema: GenMessage<NetworkConfigStatic> = /*@__P
   messageDesc(file_web_network, 2);
 
 /**
+ * @generated from message braiins.bmc.web.SetHostnameRequest
+ */
+export type SetHostnameRequest = Message<"braiins.bmc.web.SetHostnameRequest"> & {
+  /**
+   * @generated from field: string hostname = 1;
+   */
+  hostname: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.SetHostnameRequest.
+ * Use `create(SetHostnameRequestSchema)` to create a new message.
+ */
+export const SetHostnameRequestSchema: GenMessage<SetHostnameRequest> = /*@__PURE__*/
+  messageDesc(file_web_network, 3);
+
+/**
  * @generated from message braiins.bmc.web.WifiConfig
  */
 export type WifiConfig = Message<"braiins.bmc.web.WifiConfig"> & {
@@ -137,7 +154,7 @@ export type WifiConfig = Message<"braiins.bmc.web.WifiConfig"> & {
  * Use `create(WifiConfigSchema)` to create a new message.
  */
 export const WifiConfigSchema: GenMessage<WifiConfig> = /*@__PURE__*/
-  messageDesc(file_web_network, 3);
+  messageDesc(file_web_network, 4);
 
 /**
  * @generated from message braiins.bmc.web.SetWifiRequest
@@ -164,7 +181,7 @@ export type SetWifiRequest = Message<"braiins.bmc.web.SetWifiRequest"> & {
  * Use `create(SetWifiRequestSchema)` to create a new message.
  */
 export const SetWifiRequestSchema: GenMessage<SetWifiRequest> = /*@__PURE__*/
-  messageDesc(file_web_network, 4);
+  messageDesc(file_web_network, 5);
 
 /**
  * @generated from message braiins.bmc.web.ScanWifiResponse
@@ -181,7 +198,7 @@ export type ScanWifiResponse = Message<"braiins.bmc.web.ScanWifiResponse"> & {
  * Use `create(ScanWifiResponseSchema)` to create a new message.
  */
 export const ScanWifiResponseSchema: GenMessage<ScanWifiResponse> = /*@__PURE__*/
-  messageDesc(file_web_network, 5);
+  messageDesc(file_web_network, 6);
 
 /**
  * @generated from message braiins.bmc.web.WifiNetwork
@@ -208,7 +225,7 @@ export type WifiNetwork = Message<"braiins.bmc.web.WifiNetwork"> & {
  * Use `create(WifiNetworkSchema)` to create a new message.
  */
 export const WifiNetworkSchema: GenMessage<WifiNetwork> = /*@__PURE__*/
-  messageDesc(file_web_network, 6);
+  messageDesc(file_web_network, 7);
 
 /**
  * @generated from message braiins.bmc.web.WifiStatus
@@ -230,7 +247,7 @@ export type WifiStatus = Message<"braiins.bmc.web.WifiStatus"> & {
  * Use `create(WifiStatusSchema)` to create a new message.
  */
 export const WifiStatusSchema: GenMessage<WifiStatus> = /*@__PURE__*/
-  messageDesc(file_web_network, 7);
+  messageDesc(file_web_network, 8);
 
 /**
  * @generated from message braiins.bmc.web.WifiStatusResponse
@@ -247,7 +264,7 @@ export type WifiStatusResponse = Message<"braiins.bmc.web.WifiStatusResponse"> &
  * Use `create(WifiStatusResponseSchema)` to create a new message.
  */
 export const WifiStatusResponseSchema: GenMessage<WifiStatusResponse> = /*@__PURE__*/
-  messageDesc(file_web_network, 8);
+  messageDesc(file_web_network, 9);
 
 /**
  * @generated from message braiins.bmc.web.WifiSavedNetworksResponse
@@ -264,7 +281,7 @@ export type WifiSavedNetworksResponse = Message<"braiins.bmc.web.WifiSavedNetwor
  * Use `create(WifiSavedNetworksResponseSchema)` to create a new message.
  */
 export const WifiSavedNetworksResponseSchema: GenMessage<WifiSavedNetworksResponse> = /*@__PURE__*/
-  messageDesc(file_web_network, 9);
+  messageDesc(file_web_network, 10);
 
 /**
  * @generated from enum braiins.bmc.web.EncryptionType
@@ -381,6 +398,16 @@ export const NetworkService: GenService<{
   setNetworkConfig: {
     methodKind: "unary";
     input: typeof NetworkConfigSchema;
+    output: typeof EmptySchema;
+  },
+  /**
+   * Returns UNIMPLEMENTED on boser_managed platforms.
+   *
+   * @generated from rpc braiins.bmc.web.NetworkService.SetHostname
+   */
+  setHostname: {
+    methodKind: "unary";
+    input: typeof SetHostnameRequestSchema;
     output: typeof EmptySchema;
   },
   /**

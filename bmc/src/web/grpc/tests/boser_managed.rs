@@ -35,9 +35,10 @@ use bmc_grpc::web::{
     GetAutoUpgradeResponse, GetInstallableWidgetsResponse, GetTimezoneListResponse,
     GetTimezoneResponse, InitialSetupServiceClient, NetworkConfig, NetworkConfigStatic,
     NetworkInfoResponse, NetworkService, NetworkServiceClient, RemovePasswordRequest,
-    ScanWifiResponse, SetAutoUpgradeRequest, SetTimezoneRequest, SetWifiRequest, SettingsRequest,
-    StartUpgradeRequest, SystemService, SystemServiceClient, UpgradeProgress, UpgradeService,
-    UpgradeServiceClient, WifiSavedNetworksResponse, WifiStatusResponse, network_config::Protocol,
+    ScanWifiResponse, SetAutoUpgradeRequest, SetHostnameRequest, SetTimezoneRequest,
+    SetWifiRequest, SettingsRequest, StartUpgradeRequest, SystemService, SystemServiceClient,
+    UpgradeProgress, UpgradeService, UpgradeServiceClient, WifiSavedNetworksResponse,
+    WifiStatusResponse, network_config::Protocol,
 };
 use bmc_led::led_driver::LedDriver;
 use bmc_net::mock::MockNetworkManager;
@@ -439,6 +440,14 @@ impl NetworkService for RecordingNetworkService {
         &self,
         _ctx: RequestContext,
         _request: ServiceRequest<'_, NetworkConfig>,
+    ) -> ServiceResult<Empty> {
+        self.record()
+    }
+
+    async fn set_hostname(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, SetHostnameRequest>,
     ) -> ServiceResult<Empty> {
         self.record()
     }
@@ -935,7 +944,7 @@ async fn a_bmc_owned_call_passes_the_gate_on_a_managed_platform() {
         .expect("a BMC-owned method stays available");
 }
 
-const EXPECTED_MANAGED_RPC_OWNERS: [(&str, &str, ManagedRpcOwner); 21] = [
+const EXPECTED_MANAGED_RPC_OWNERS: [(&str, &str, ManagedRpcOwner); 22] = [
     (
         web::SYSTEM_SERVICE_SERVICE_NAME,
         "HasPassword",
@@ -994,6 +1003,11 @@ const EXPECTED_MANAGED_RPC_OWNERS: [(&str, &str, ManagedRpcOwner); 21] = [
     (
         web::NETWORK_SERVICE_SERVICE_NAME,
         "SetNetworkConfig",
+        ManagedRpcOwner::Boser,
+    ),
+    (
+        web::NETWORK_SERVICE_SERVICE_NAME,
+        "SetHostname",
         ManagedRpcOwner::Boser,
     ),
     (

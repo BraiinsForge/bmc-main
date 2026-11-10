@@ -6832,6 +6832,10 @@ pub type OwnedNetworkInfoResponseView = ::buffa::view::OwnedView<
 pub type OwnedNetworkConfigView = ::buffa::view::OwnedView<
     crate::proto::braiins::bmc::web::__buffa::view::NetworkConfigView<'static>,
 >;
+///Shorthand for `OwnedView<SetHostnameRequestView<'static>>`.
+pub type OwnedSetHostnameRequestView = ::buffa::view::OwnedView<
+    crate::proto::braiins::bmc::web::__buffa::view::SetHostnameRequestView<'static>,
+>;
 ///Shorthand for `OwnedView<WifiStatusResponseView<'static>>`.
 pub type OwnedWifiStatusResponseView = ::buffa::view::OwnedView<
     crate::proto::braiins::bmc::web::__buffa::view::WifiStatusResponseView<'static>,
@@ -7042,6 +7046,12 @@ pub const NETWORK_SERVICE_SET_NETWORK_CONFIG_SPEC: ::connectrpc::Spec = ::connec
         ::connectrpc::StreamType::Unary,
     )
     .with_idempotency_level(::connectrpc::IdempotencyLevel::Unknown);
+/// Static [`Spec`](::connectrpc::Spec) for the `SetHostname` RPC, as seen by the server; the generated client passes it with [`origin`](::connectrpc::Spec::origin) `Client` (compare across sides with [`Spec::same_method`](::connectrpc::Spec::same_method)).
+pub const NETWORK_SERVICE_SET_HOSTNAME_SPEC: ::connectrpc::Spec = ::connectrpc::Spec::server(
+        "/braiins.bmc.web.NetworkService/SetHostname",
+        ::connectrpc::StreamType::Unary,
+    )
+    .with_idempotency_level(::connectrpc::IdempotencyLevel::Unknown);
 /// Static [`Spec`](::connectrpc::Spec) for the `GetWifiStatus` RPC, as seen by the server; the generated client passes it with [`origin`](::connectrpc::Spec::origin) `Client` (compare across sides with [`Spec::same_method`](::connectrpc::Spec::same_method)).
 pub const NETWORK_SERVICE_GET_WIFI_STATUS_SPEC: ::connectrpc::Spec = ::connectrpc::Spec::server(
         "/braiins.bmc.web.NetworkService/GetWifiStatus",
@@ -7172,6 +7182,29 @@ pub trait NetworkService: Send + Sync + 'static {
         request: ::connectrpc::ServiceRequest<
             '_,
             crate::proto::braiins::bmc::web::NetworkConfig,
+        >,
+    ) -> impl ::std::future::Future<
+        Output = ::connectrpc::ServiceResult<
+            impl ::connectrpc::Encodable<
+                ::buffa_types::google::protobuf::Empty,
+            > + Send + use<'a, Self>,
+        >,
+    > + Send;
+    /// Returns UNIMPLEMENTED on boser_managed platforms.
+    ///
+    /// `'a` lets the response body borrow from `&self` (e.g. server-resident state).
+    ///
+    /// `request` is borrowed from the request body and is valid for the
+    /// duration of the call; message fields are read directly on it
+    /// (zero-copy). The response cannot borrow from `request` — use
+    /// `.to_owned_message()` (or copy the specific fields) for anything
+    /// returned, stored, or moved into `tokio::spawn`.
+    fn set_hostname<'a>(
+        &'a self,
+        ctx: ::connectrpc::RequestContext,
+        request: ::connectrpc::ServiceRequest<
+            '_,
+            crate::proto::braiins::bmc::web::SetHostnameRequest,
         >,
     ) -> impl ::std::future::Future<
         Output = ::connectrpc::ServiceResult<
@@ -7382,6 +7415,33 @@ impl<S: NetworkService> NetworkServiceExt for S {
             .with_spec(NETWORK_SERVICE_SET_NETWORK_CONFIG_SPEC)
             .route_view(
                 NETWORK_SERVICE_SERVICE_NAME,
+                "SetHostname",
+                {
+                    let svc = ::std::sync::Arc::clone(&self);
+                    ::connectrpc::view_handler_fn(move |
+                        ctx,
+                        req: ::buffa::view::OwnedView<
+                            crate::proto::braiins::bmc::web::__buffa::view::SetHostnameRequestView<
+                                'static,
+                            >,
+                        >,
+                        format|
+                    {
+                        let svc = ::std::sync::Arc::clone(&svc);
+                        async move {
+                            let sreq = ::connectrpc::ServiceRequest::<
+                                crate::proto::braiins::bmc::web::SetHostnameRequest,
+                            >::from_parts(req.reborrow(), req.bytes());
+                            svc.set_hostname(ctx, sreq)
+                                .await?
+                                .encode::<::buffa_types::google::protobuf::Empty>(format)
+                        }
+                    })
+                },
+            )
+            .with_spec(NETWORK_SERVICE_SET_HOSTNAME_SPEC)
+            .route_view(
+                NETWORK_SERVICE_SERVICE_NAME,
                 "GetWifiStatus",
                 {
                     let svc = ::std::sync::Arc::clone(&self);
@@ -7566,6 +7626,12 @@ impl<T: NetworkService> ::connectrpc::Dispatcher for NetworkServiceServer<T> {
                         .with_spec(NETWORK_SERVICE_SET_NETWORK_CONFIG_SPEC),
                 )
             }
+            "SetHostname" => {
+                Some(
+                    ::connectrpc::dispatcher::codegen::MethodDescriptor::unary(false)
+                        .with_spec(NETWORK_SERVICE_SET_HOSTNAME_SPEC),
+                )
+            }
             "GetWifiStatus" => {
                 Some(
                     ::connectrpc::dispatcher::codegen::MethodDescriptor::unary(false)
@@ -7663,6 +7729,26 @@ impl<T: NetworkService> ::connectrpc::Dispatcher for NetworkServiceServer<T> {
                         crate::proto::braiins::bmc::web::NetworkConfig,
                     >::from_parts(&req, &body);
                     svc.set_network_config(ctx, req)
+                        .await?
+                        .encode::<::buffa_types::google::protobuf::Empty>(format)
+                })
+            }
+            "SetHostname" => {
+                let svc = ::std::sync::Arc::clone(&self.inner);
+                Box::pin(async move {
+                    let body = ::connectrpc::dispatcher::codegen::request_proto_bytes::<
+                        crate::proto::braiins::bmc::web::SetHostnameRequest,
+                    >(request.encoded()?, format)?;
+                    let req: crate::proto::braiins::bmc::web::__buffa::view::SetHostnameRequestView<
+                        '_,
+                    > = ::connectrpc::dispatcher::codegen::decode_borrowed_request_view(
+                        &body,
+                        ctx.decode_options(),
+                    )?;
+                    let req = ::connectrpc::ServiceRequest::<
+                        crate::proto::braiins::bmc::web::SetHostnameRequest,
+                    >::from_parts(&req, &body);
+                    svc.set_hostname(ctx, req)
                         .await?
                         .encode::<::buffa_types::google::protobuf::Empty>(format)
                 })
@@ -8008,6 +8094,47 @@ where
                 &self.transport,
                 &self.config,
                 NETWORK_SERVICE_SET_NETWORK_CONFIG_SPEC
+                    .with_origin(::connectrpc::SpecOrigin::Client),
+                request,
+                options,
+            )
+            .await
+    }
+    /// Call the SetHostname RPC. Sends a request to /braiins.bmc.web.NetworkService/SetHostname.
+    pub async fn set_hostname(
+        &self,
+        request: crate::proto::braiins::bmc::web::SetHostnameRequest,
+    ) -> Result<
+        ::connectrpc::client::UnaryResponse<
+            ::buffa::view::OwnedView<
+                ::buffa_types::google::protobuf::__buffa::view::EmptyView<'static>,
+            >,
+        >,
+        ::connectrpc::ConnectError,
+    > {
+        self.set_hostname_with_options(
+                request,
+                ::connectrpc::client::CallOptions::default(),
+            )
+            .await
+    }
+    /// Call the SetHostname RPC with explicit per-call options. Options override [`ClientConfig`](::connectrpc::client::ClientConfig) defaults.
+    pub async fn set_hostname_with_options(
+        &self,
+        request: crate::proto::braiins::bmc::web::SetHostnameRequest,
+        options: ::connectrpc::client::CallOptions,
+    ) -> Result<
+        ::connectrpc::client::UnaryResponse<
+            ::buffa::view::OwnedView<
+                ::buffa_types::google::protobuf::__buffa::view::EmptyView<'static>,
+            >,
+        >,
+        ::connectrpc::ConnectError,
+    > {
+        ::connectrpc::client::call_unary(
+                &self.transport,
+                &self.config,
+                NETWORK_SERVICE_SET_HOSTNAME_SPEC
                     .with_origin(::connectrpc::SpecOrigin::Client),
                 request,
                 options,

@@ -22,7 +22,7 @@
 use bmc_grpc::google::rpc::bad_request::FieldViolation;
 use bmc_grpc::web::{
     EncryptionType as GrpcEncryptionType, NetworkConfig, NetworkConfigStatic, NetworkInfoResponse,
-    NetworkService as GrpcNetworkService, ScanWifiResponse, SetWifiRequest,
+    NetworkService as GrpcNetworkService, ScanWifiResponse, SetHostnameRequest, SetWifiRequest,
     SignalStrength as GrpcSignalStrength, WifiNetwork as GrpcWifiNetwork, WifiNetwork,
     WifiSavedNetworksResponse, WifiStatus as GrpcWifiStatus, WifiStatusResponse,
     network_config::Protocol,
@@ -150,6 +150,30 @@ where
             .map_err(|e| {
                 warn!("Failed to set network config: {e}");
                 ConnectError::internal("Failed to set network config")
+            })?;
+
+        Response::ok(Empty::default())
+    }
+
+    async fn set_hostname(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, SetHostnameRequest>,
+    ) -> ServiceResult<Empty> {
+        self.check_precondition(BmcState::Operational).await?;
+
+        let hostname = request.to_owned_message().hostname;
+        if let Err(err) = bmc_net::validate_hostname(&hostname) {
+            return Err(bad_request(vec![violation("hostname", err.to_string())]));
+        }
+
+        self.manager
+            .network_manager()
+            .set_hostname(hostname)
+            .await
+            .map_err(|e| {
+                warn!("Failed to set hostname: {e}");
+                ConnectError::internal("Failed to set hostname")
             })?;
 
         Response::ok(Empty::default())

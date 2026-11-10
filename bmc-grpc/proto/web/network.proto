@@ -44,6 +44,10 @@ message NetworkConfigStatic {
   repeated string dns_servers = 4;
 }
 
+message SetHostnameRequest {
+  string hostname = 1;
+}
+
 message WifiConfig {
   string ssid = 1;
 }
@@ -101,6 +105,8 @@ service NetworkService {
   rpc GetNetworkConfig(google.protobuf.Empty) returns (NetworkConfig);
   // Returns UNIMPLEMENTED on boser_managed platforms.
   rpc SetNetworkConfig(NetworkConfig) returns (google.protobuf.Empty);
+  // Returns UNIMPLEMENTED on boser_managed platforms.
+  rpc SetHostname(SetHostnameRequest) returns (google.protobuf.Empty);
   rpc GetWifiStatus(google.protobuf.Empty) returns (WifiStatusResponse);
   rpc GetWifiSavedNetworks(google.protobuf.Empty) returns (WifiSavedNetworksResponse);
   // Returns UNIMPLEMENTED on boser_managed platforms.

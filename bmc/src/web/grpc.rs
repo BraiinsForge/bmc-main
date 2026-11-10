@@ -96,7 +96,7 @@ fn managed_rpc_owner(path: &str) -> Option<ManagedRpcOwner> {
             web::UPGRADE_SERVICE_SERVICE_NAME,
             "CheckForUpgrade" | "GetInstallableWidgets" | "StartUpgrade",
         ) => Some(ManagedRpcOwner::Bmc),
-        (web::NETWORK_SERVICE_SERVICE_NAME, "SetNetworkConfig" | "SetWifi")
+        (web::NETWORK_SERVICE_SERVICE_NAME, "SetNetworkConfig" | "SetHostname" | "SetWifi")
         | (
             web::SYSTEM_SERVICE_SERVICE_NAME,
             "CreatePassword" | "ChangePassword" | "RemovePassword" | "SetTimezone" | "FactoryReset"

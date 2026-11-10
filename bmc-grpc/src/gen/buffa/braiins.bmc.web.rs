@@ -9717,6 +9717,87 @@ impl ::buffa::Message for NetworkConfigStatic {
     }
 }
 #[derive(Clone, PartialEq, Default)]
+pub struct SetHostnameRequest {
+    /// Field 1: `hostname`
+    pub hostname: ::buffa::alloc::string::String,
+}
+impl ::core::fmt::Debug for SetHostnameRequest {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("SetHostnameRequest").field("hostname", &self.hostname).finish()
+    }
+}
+impl SetHostnameRequest {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.SetHostnameRequest";
+}
+::buffa::impl_default_instance!(SetHostnameRequest);
+impl ::buffa::MessageName for SetHostnameRequest {
+    const PACKAGE: &'static str = "braiins.bmc.web";
+    const NAME: &'static str = "SetHostnameRequest";
+    const FULL_NAME: &'static str = "braiins.bmc.web.SetHostnameRequest";
+    const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.SetHostnameRequest";
+}
+impl ::buffa::Message for SetHostnameRequest {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if !self.hostname.is_empty() {
+            size += 1u64 + ::buffa::types::string_encoded_len(&self.hostname) as u64;
+        }
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if !self.hostname.is_empty() {
+            ::buffa::types::put_string_field(1u32, &self.hostname, buf);
+        }
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(&mut self.hostname, buf)?;
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, buf, ctx.depth())?;
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.hostname.clear();
+    }
+}
+#[derive(Clone, PartialEq, Default)]
 pub struct WifiConfig {
     /// Field 1: `ssid`
     pub ssid: ::buffa::alloc::string::String,
@@ -37465,6 +37546,231 @@ pub mod __buffa {
             type ViewHandle = NetworkConfigStaticOwnedView;
         }
         #[derive(Clone, Debug, Default)]
+        pub struct SetHostnameRequestView<'a> {
+            /// Field 1: `hostname`
+            pub hostname: &'a str,
+        }
+        impl<'a> ::buffa::MessageView<'a> for SetHostnameRequestView<'a> {
+            type Owned = super::super::SetHostnameRequest;
+            fn decode_view(
+                buf: &'a [u8],
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                let __limit = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT,
+                );
+                let __elem = ::core::cell::Cell::new(
+                    ::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT,
+                );
+                <Self as ::buffa::MessageView>::decode_view_ctx(
+                    buf,
+                    ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                        .with_element_memory(&__elem),
+                )
+            }
+            fn decode_view_with_ctx(
+                buf: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+            }
+            #[inline]
+            fn merge_view_field(
+                &mut self,
+                tag: ::buffa::encoding::Tag,
+                cur: &'a [u8],
+                _before_tag: &'a [u8],
+                ctx: ::buffa::DecodeContext<'_>,
+            ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+                let _ = ctx;
+                #[allow(unused_variables)]
+                let view = self;
+                let mut cur = cur;
+                match tag.field_number() {
+                    1u32 => {
+                        ::buffa::encoding::check_wire_type(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        )?;
+                        view.hostname = ::buffa::types::borrow_str(&mut cur)?;
+                    }
+                    _ => {
+                        ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    }
+                }
+                ::core::result::Result::Ok(cur)
+            }
+            fn to_owned_message(
+                &self,
+            ) -> ::core::result::Result<
+                super::super::SetHostnameRequest,
+                ::buffa::DecodeError,
+            > {
+                self.to_owned_from_source(None)
+            }
+            #[allow(clippy::useless_conversion, clippy::needless_update)]
+            fn to_owned_from_source(
+                &self,
+                __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+            ) -> ::core::result::Result<
+                super::super::SetHostnameRequest,
+                ::buffa::DecodeError,
+            > {
+                #[allow(unused_imports)]
+                use ::buffa::alloc::string::ToString as _;
+                let _ = __buffa_src;
+                ::core::result::Result::Ok(super::super::SetHostnameRequest {
+                    hostname: self.hostname.to_string(),
+                    ..::core::default::Default::default()
+                })
+            }
+        }
+        impl<'a> ::buffa::ViewEncode<'a> for SetHostnameRequestView<'a> {
+            #[allow(clippy::needless_borrow, clippy::let_and_return)]
+            fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                let mut size = 0u64;
+                if !self.hostname.is_empty() {
+                    size
+                        += 1u64
+                            + ::buffa::types::string_encoded_len(&self.hostname) as u64;
+                }
+                ::buffa::saturate_size(size)
+            }
+            #[allow(clippy::needless_borrow)]
+            fn write_to(
+                &self,
+                _cache: &mut ::buffa::SizeCache,
+                buf: &mut impl ::buffa::EncodeSink,
+            ) {
+                #[allow(unused_imports)]
+                use ::buffa::Enumeration as _;
+                if !self.hostname.is_empty() {
+                    ::buffa::types::put_string_field(1u32, &self.hostname, buf);
+                }
+            }
+        }
+        impl<'a> ::buffa::MessageName for SetHostnameRequestView<'a> {
+            const PACKAGE: &'static str = "braiins.bmc.web";
+            const NAME: &'static str = "SetHostnameRequest";
+            const FULL_NAME: &'static str = "braiins.bmc.web.SetHostnameRequest";
+            const TYPE_URL: &'static str = "type.googleapis.com/braiins.bmc.web.SetHostnameRequest";
+        }
+        ::buffa::impl_default_view_instance!(SetHostnameRequestView);
+        ::buffa::impl_view_reborrow!(SetHostnameRequestView);
+        /** Self-contained, `'static` owned view of a `SetHostnameRequest` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`SetHostnameRequestView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`SetHostnameRequestView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+        #[derive(Clone, Debug)]
+        pub struct SetHostnameRequestOwnedView(
+            ::buffa::OwnedView<SetHostnameRequestView<'static>>,
+        );
+        impl SetHostnameRequestOwnedView {
+            /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+            ///
+            /// The view borrows directly from the buffer's data; the buffer is
+            /// retained inside the returned handle.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+            /// protobuf data.
+            pub fn decode(
+                bytes: ::buffa::bytes::Bytes,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    SetHostnameRequestOwnedView(::buffa::OwnedView::decode(bytes)?),
+                )
+            }
+            /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+            /// max message size).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+            /// exceeds the configured limits.
+            pub fn decode_with_options(
+                bytes: ::buffa::bytes::Bytes,
+                opts: &::buffa::DecodeOptions,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    SetHostnameRequestOwnedView(
+                        ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+                    ),
+                )
+            }
+            /// Build from an owned message via an encode → decode round-trip.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+            /// message's encoded size exceeds the 2 GiB protobuf limit, or
+            /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+            /// somehow invalid (should not happen for well-formed messages).
+            pub fn from_owned(
+                msg: &super::super::SetHostnameRequest,
+            ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+                ::core::result::Result::Ok(
+                    SetHostnameRequestOwnedView(::buffa::OwnedView::from_owned(msg)?),
+                )
+            }
+            /// Borrow the full [`SetHostnameRequestView`] with its lifetime tied to `&self`.
+            #[must_use]
+            pub fn view(&self) -> &SetHostnameRequestView<'_> {
+                self.0.reborrow()
+            }
+            /// Convert to the owned message type.
+            ///
+            /// Infallible: this type's constructors wire-decode their
+            /// buffer, and a view produced by wire decoding always
+            /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+            /// whose contract also governs handles converted from a raw
+            /// [`::buffa::OwnedView`].
+            #[must_use]
+            pub fn to_owned_message(&self) -> super::super::SetHostnameRequest {
+                self.0.to_owned_message()
+            }
+            /// The underlying bytes buffer.
+            #[must_use]
+            pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+                self.0.bytes()
+            }
+            /// Consume the handle, returning the underlying bytes buffer.
+            #[must_use]
+            pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+                self.0.into_bytes()
+            }
+            /// Field 1: `hostname`
+            #[must_use]
+            pub fn hostname(&self) -> &'_ str {
+                self.0.reborrow().hostname
+            }
+        }
+        impl ::core::convert::From<::buffa::OwnedView<SetHostnameRequestView<'static>>>
+        for SetHostnameRequestOwnedView {
+            fn from(inner: ::buffa::OwnedView<SetHostnameRequestView<'static>>) -> Self {
+                SetHostnameRequestOwnedView(inner)
+            }
+        }
+        impl ::core::convert::From<SetHostnameRequestOwnedView>
+        for ::buffa::OwnedView<SetHostnameRequestView<'static>> {
+            fn from(wrapper: SetHostnameRequestOwnedView) -> Self {
+                wrapper.0
+            }
+        }
+        impl ::core::convert::AsRef<::buffa::OwnedView<SetHostnameRequestView<'static>>>
+        for SetHostnameRequestOwnedView {
+            fn as_ref(&self) -> &::buffa::OwnedView<SetHostnameRequestView<'static>> {
+                &self.0
+            }
+        }
+        impl ::buffa::HasMessageView for super::super::SetHostnameRequest {
+            type View<'a> = SetHostnameRequestView<'a>;
+            type ViewHandle = SetHostnameRequestOwnedView;
+        }
+        #[derive(Clone, Debug, Default)]
         pub struct WifiConfigView<'a> {
             /// Field 1: `ssid`
             pub ssid: &'a str,
@@ -57506,6 +57812,10 @@ pub use self::__buffa::view::NetworkConfigOwnedView;
 pub use self::__buffa::view::NetworkConfigStaticView;
 #[doc(inline)]
 pub use self::__buffa::view::NetworkConfigStaticOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::SetHostnameRequestView;
+#[doc(inline)]
+pub use self::__buffa::view::SetHostnameRequestOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::WifiConfigView;
 #[doc(inline)]
