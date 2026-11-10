@@ -130,6 +130,12 @@ and nothing executes them. Finish with `just check nextest` and confirm the test
 **GL tools and tests** need the machine's EGL or the `ci` profile in `nix/profiles.nix`. Without it a capture run fails
 at `EGL device enumeration not supported`, and `mdns_coexistence` / `multi_runtime_teardown` fail locally by design.
 
+**The first sound can freeze the window.** The audio output opens inside the guest's first `audio_play`, and the UI
+thread waits for that frame. Where ALSA routes to PipeWire, the open hangs for good about once in a hundred tries when
+no server is reachable — `pw_thread_loop_stop` loses its wakeup when it races the loop thread's start, reported as
+[pipewire#5581](https://gitlab.freedesktop.org/pipewire/pipewire/-/issues/5581) — and takes seconds to minutes when the
+server has no sinks. With a sink it opens in milliseconds.
+
 **params-demo prints `display_info()` on screen** — the cheapest check that geometry reaches the guest, which must read
 `display 1280x480 rectangular dpi=217`. For a general smoke run prefer hello-widget: it animates itself, so a stalled
 view shows without touching anything.
