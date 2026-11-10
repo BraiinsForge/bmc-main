@@ -36,6 +36,7 @@ import { toast } from '@/lib/toast';
 import AppContext, { type AppContextType } from '@/context';
 import { useStore } from '@/store';
 import * as pb from '@/proto';
+import { renamedAddress } from './renamedAddress';
 import type { Capabilities } from '@/lib/system';
 import { networkConfigurable, wifiConfigurable } from '@/lib/capabilities';
 
@@ -107,6 +108,11 @@ interface State {
 
     globalErrors: Maybe<string[]>;
     confStaticErrors: null | pb.FormErrors<NetStaticConf>['fields'];
+
+    // `null` until the user edits the field; the saved name is `netInfo.hostname`.
+    hostnameTemp: null | string;
+    hostnameError: null | string;
+    hostnameSaving: boolean;
 }
 const getInitialState = (): State => ({
     activeTab: Tab.settings,
@@ -131,6 +137,10 @@ const getInitialState = (): State => ({
 
     globalErrors: null,
     confStaticErrors: null,
+
+    hostnameTemp: null,
+    hostnameError: null,
+    hostnameSaving: false,
 });
 
 class View extends Component<Props, State> {
@@ -179,6 +189,8 @@ class View extends Component<Props, State> {
                 };
 
                 newState.netInfo = netInfo;
+                newState.hostnameTemp = null;
+                newState.hostnameError = null;
                 newState.wifi = {
                     ...newState.wifi,
                     status: wifiStatus,
@@ -265,6 +277,44 @@ class View extends Component<Props, State> {
         }
     };
     #wifiConnectCancel = (): void => this.wifiConnectAbort.abort();
+
+    #hostnameChange = (value: string): void => {
+        this.setState({ hostnameTemp: value, hostnameError: null });
+    };
+    private hostnameAbort = pb.abort.get();
+    #hostnameSave = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { hostnameTemp } = this.state;
+        if (hostnameTemp == null) return;
+
+        await setState(this, { hostnameSaving: true, hostnameError: null });
+        try {
+            const { signal } = this.hostnameAbort.replace();
+            await pb.rpc.net.setHostname(pb.create(pb.SetHostnameRequestSchema, { hostname: hostnameTemp }), {
+                signal,
+            });
+            const { netInfo } = this.state;
+            const moved = renamedAddress(window.location.hostname, netInfo.hostname, hostnameTemp, netInfo.ipAddress);
+            if (moved != null) {
+                window.location.hostname = moved;
+                return;
+            }
+            toast.success(formatMessage({ defaultMessage: 'Hostname saved!' }));
+            await this.#load();
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            const { global, fields } = pb.parseFormErrors<pb.SetHostnameRequest>($, ['hostname']);
+            this.setState({
+                hostnameError:
+                    pb.renderFieldErrorsAsList(fields.hostname) ??
+                    pb.renderFieldErrorsAsList(global) ??
+                    formatMessage({ defaultMessage: 'Hostname: Unknown error!' }),
+            });
+        } finally {
+            this.setState({ hostnameSaving: false });
+        }
+    };
 
     private saveAbort = pb.abort.get();
     #save = async (): Promise<void> => {
@@ -401,12 +451,17 @@ class View extends Component<Props, State> {
             globalErrors,
             // confStaticErrors: err,
 
+            hostnameTemp,
+            hostnameError,
+            hostnameSaving,
+
             // Fields
             // confSaved,
             // confTemp,
         } = this.state;
 
         // const isDisabled: boolean = isLoading || isSaving;
+        const hostname = hostnameTemp ?? netInfo.hostname;
         const hasUnsavedChanges: boolean = this.#hasUnsavedChanges();
 
         const wifiNetworks: Map<pb.WifiNetwork['ssid'], pb.WifiNetwork> = new Map(wifi.nets.map(x => [x.ssid, x]));
@@ -433,8 +488,19 @@ class View extends Component<Props, State> {
                         ['Hostname', netInfo.hostname],
                         ['MAC Address', netInfo.macAddress],
                     ]}
-                    // Currently only shown in the status section
-                    hostname={null}
+                    hostname={{
+                        value: hostname,
+                        error: hostnameError,
+                        disabled: hostnameSaving,
+                        onChange: this.#hostnameChange,
+                        address: formatMessage(
+                            { defaultMessage: 'Reachable on the local network at http://{hostname}.local' },
+                            { hostname: netInfo.hostname },
+                        ),
+                        changed: hostnameTemp != null && hostnameTemp !== netInfo.hostname,
+                        saving: hostnameSaving,
+                        onSave: this.#hostnameSave,
+                    }}
                     // protocol={{
                     //     value: confTemp.case,
                     //     disabled: isDisabled,

@@ -60,10 +60,17 @@ export interface WifiProps {
         onRefresh(): void;
     };
 }
+export interface HostnameProps extends iField<string> {
+    // The address the name resolves to on the local network, shown under the input.
+    address: string;
+    changed: boolean;
+    saving: boolean;
+    onSave(): void;
+}
 export interface SectionSettingsProps {
     status: Array<[label: ReactNode, value: ReactNode]>;
 
-    hostname: null | iField<string>;
+    hostname: null | HostnameProps;
     // protocol: iField<NetProto>;
     // staticAddress: iField<string>;
     // staticNetmask: iField<string>;
@@ -666,7 +673,18 @@ class View extends Component<Props, State> {
                                 onChange={e => hostname.onChange?.(e.target.value)}
                                 invalid={!!hostname.error}
                                 invalidText={hostname.error}
+                                helperText={hostname.address}
                             />
+                            {hostname.changed ? (
+                                <Button
+                                    id={$('hostname-save')}
+                                    kind="primary"
+                                    size="sm"
+                                    disabled={hostname.disabled || hostname.saving}
+                                    onClick={hostname.onSave}
+                                    children={formatMessage({ defaultMessage: 'Save hostname' })}
+                                />
+                            ) : null}
                         </Field>
                     ) : null}
 

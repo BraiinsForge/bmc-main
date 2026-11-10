@@ -572,6 +572,10 @@
     "source": "10 minutes",
     "translation": "[10 ḿīƞŭŭŧḗḗş]"
   },
+  "CV6yfBiw+Q": {
+    "source": "Hostname: Unknown error!",
+    "translation": "[Ħǿǿşŧƞȧȧḿḗḗ: Ŭƞķƞǿǿẇƞ ḗḗřřǿǿř!]"
+  },
   "CaZ2W20Icy": {
     "source": "Failed to delete widget!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ḓḗḗŀḗḗŧḗḗ ẇīḓɠḗḗŧ!]"
@@ -615,6 +619,10 @@
   "EGe5tCAxZi": {
     "source": "{name} was upgraded from {previous} to {version}.",
     "translation": "[{name} ẇȧȧş ŭŭƥɠřȧȧḓḗḗḓ ƒřǿǿḿ {previous} ŧǿǿ {version}.]"
+  },
+  "EKxEzS2YT6": {
+    "source": "Reachable on the local network at http://{hostname}.local",
+    "translation": "[Řḗḗȧȧƈħȧȧƀŀḗḗ ǿǿƞ ŧħḗḗ ŀǿǿƈȧȧŀ ƞḗḗŧẇǿǿřķ ȧȧŧ ħŧŧƥ://{hostname}.ŀǿǿƈȧȧŀ]"
   },
   "Ev6SEFBkdw": {
     "source": "New Password",
@@ -872,6 +880,10 @@
   "NOryR7jM7l": {
     "source": "Alarm has been successfully toggled.",
     "translation": "[Ȧŀȧȧřḿ ħȧȧş ƀḗḗḗḗƞ şŭŭƈƈḗḗşşƒŭŭŀŀẏ ŧǿǿɠɠŀḗḗḓ.]"
+  },
+  "NmmXocBhzi": {
+    "source": "Hostname saved!",
+    "translation": "[Ħǿǿşŧƞȧȧḿḗḗ şȧȧṽḗḗḓ!]"
   },
   "NuJ+vlDJ2V": {
     "source": "LED Notification Lights",
@@ -1531,6 +1543,10 @@
   "oS/naeSX/F": {
     "source": "Building",
     "translation": "[Ɓŭŭīŀḓīƞɠ]"
+  },
+  "oYg3amJLhi": {
+    "source": "Save hostname",
+    "translation": "[Şȧȧṽḗḗ ħǿǿşŧƞȧȧḿḗḗ]"
   },
   "olRvTFoZAp": {
     "source": "Password must be at least 6 characters long",

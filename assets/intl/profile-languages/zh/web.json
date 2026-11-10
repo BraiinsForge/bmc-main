@@ -572,6 +572,10 @@
     "source": "10 minutes",
     "translation": "10 分钟"
   },
+  "CV6yfBiw+Q": {
+    "source": "Hostname: Unknown error!",
+    "translation": "主机名：未知错误！"
+  },
   "CaZ2W20Icy": {
     "source": "Failed to delete widget!",
     "translation": "删除小组件失败！"
@@ -615,6 +619,10 @@
   "EGe5tCAxZi": {
     "source": "{name} was upgraded from {previous} to {version}.",
     "translation": "{name} 已从 {previous} 升级到 {version}。"
+  },
+  "EKxEzS2YT6": {
+    "source": "Reachable on the local network at http://{hostname}.local",
+    "translation": "可在本地网络中通过 http://{hostname}.local 访问"
   },
   "Ev6SEFBkdw": {
     "source": "New Password",
@@ -872,6 +880,10 @@
   "NOryR7jM7l": {
     "source": "Alarm has been successfully toggled.",
     "translation": "闹钟状态已切换。"
+  },
+  "NmmXocBhzi": {
+    "source": "Hostname saved!",
+    "translation": "主机名已保存！"
   },
   "NuJ+vlDJ2V": {
     "source": "LED Notification Lights",
@@ -1531,6 +1543,10 @@
   "oS/naeSX/F": {
     "source": "Building",
     "translation": "正在构建"
+  },
+  "oYg3amJLhi": {
+    "source": "Save hostname",
+    "translation": "保存主机名"
   },
   "olRvTFoZAp": {
     "source": "Password must be at least 6 characters long",
