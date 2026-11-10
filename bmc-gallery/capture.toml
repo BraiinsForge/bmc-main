@@ -265,6 +265,28 @@ Screen = "SetupStart"
 [shot.globals]
 Language = "en-GB"
 
+# A set-up device redoing its Wi-Fi: the eyebrow names the reconfiguration,
+# and a miner switching to its cable says so rather than claiming a setup.
+[[shot]]
+name = "device-info-bmc100-reconfigure-connecting"
+scene = "bmc_gallery::overlays::device_info_bmc100::Device Info"
+size = "1400x640"
+frames = 2
+
+[shot.knobs]
+Screen = "SetupConnecting"
+"Wi-Fi reconfiguration" = true
+
+[[shot]]
+name = "device-info-bmm101-reconfigure-turning-ap-off"
+scene = "bmc_gallery::overlays::device_info_bmm101::Device Info"
+size = "640x480"
+frames = 2
+
+[shot.knobs]
+Screen = "TurningApOff"
+"Wi-Fi reconfiguration" = true
+
 # The Deck's connect screen, whose corner hint is one sentence with a bold gesture
 # that each language places where its grammar wants it.
 [[shot]]

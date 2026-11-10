@@ -34,7 +34,8 @@ use bmc_gallery::prelude::*;
 
 use bmc_overlay_alarm::{AlarmRenderState, AlarmView, RingMotion, render_alarm};
 use bmc_overlay_device_info::{
-    DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Link, Uplinks, render_device_info,
+    DeviceInfoRenderState, DeviceInfoView, FlowKind, LanguageSwitch, Link, Uplinks,
+    render_device_info,
 };
 use bmc_overlay_offline::{Connectivity, OfflineView, Status, decide, render_offline};
 use bmc_overlay_settings_tray::ui::{Action, BRIGHTNESS_UP_KEY, Hold, Phase, Status as TrayStatus};
@@ -190,6 +191,7 @@ fn device_info_cell(
     state_key: &'static LocalKey<RefCell<DeviceInfoStage>>,
     flat: bool,
     board: Board,
+    flow_kind: FlowKind,
 ) -> CustomRenderFn {
     Box::new(move |r, interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
@@ -208,9 +210,16 @@ fn device_info_cell(
                 &intl,
                 board.name,
                 board.miner,
-                language().map_or(LanguageSwitch::Hidden, |current| LanguageSwitch::Shown {
-                    current: Some(current),
-                }),
+                flow_kind,
+                // As on the device: a set-up device redoing its Wi-Fi offers no switch.
+                match (flow_kind, language()) {
+                    (FlowKind::FirstBoot, Some(current)) => LanguageSwitch::Shown {
+                        current: Some(current),
+                    },
+                    (FlowKind::FirstBoot, None) | (FlowKind::WifiReconfiguration, _) => {
+                        LanguageSwitch::Hidden
+                    }
+                },
                 OverlayFrame::unlayered(FrameKind::Fresh),
             );
             stage.picked = drawn.picked;
@@ -510,7 +519,7 @@ fn offline(ctx: &mut SceneCtx, ui: &mut Ui) {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "one stage, spelled out: the heading, the caption, the view, and where it renders"
+    reason = "one stage, spelled out: the heading, the caption, the view, its flow, and where it renders"
 )]
 fn device_info_stage(
     ctx: &mut SceneCtx,
@@ -519,13 +528,15 @@ fn device_info_stage(
     heading: &str,
     caption: &str,
     view: DeviceInfoView,
+    flow_kind: FlowKind,
     state: &'static LocalKey<RefCell<DeviceInfoStage>>,
     flat: bool,
 ) {
     ui.heading(heading);
     ui.label(caption);
     // Input, for the setup screens' language switch; the other screens ignore it.
-    let _ = ctx.custom_stage_input(ui, board.size, device_info_cell(view, state, flat, board));
+    let cell = device_info_cell(view, state, flat, board, flow_kind);
+    let _ = ctx.custom_stage_input(ui, board.size, cell);
     // The stage draws before it returns, so this frame's pick is already in.
     if let Some(picked) = state.with_borrow_mut(|stage| stage.picked.take()) {
         let written = ctx.set_global(LANGUAGE, picked);
@@ -591,9 +602,22 @@ const DEVICE_INFO_SCREENS: &[&str] = &[
     "Failed (cable)",
 ];
 
+/// The screens a set-up device redoing its Wi-Fi shows under its own eyebrow,
+/// which the `Wi-Fi reconfiguration` knob stages alone.
+const RECONFIGURATION_SCREENS: &[&str] = &[
+    "SetupStart",
+    "SetupStart (AP pending)",
+    "TurningApOff",
+    "SetupConnecting",
+    "SetupConnected",
+    "SetupError",
+    "SetupError (dismissible)",
+];
+
 /// One card per screen of the device-info flows a product can show:
 /// the first-boot setup sequence over its setup AP and over its cable,
 /// the error states, and the operational connect-info sequence.
+/// The `Wi-Fi reconfiguration` knob shows the screens that name that flow instead.
 #[expect(
     clippy::too_many_lines,
     reason = "a flat catalogue: one stage per screen, which reads worse split \
@@ -601,6 +625,11 @@ const DEVICE_INFO_SCREENS: &[&str] = &[
 )]
 fn device_info_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
     let flat = ctx.toggle("Flat backdrop", false);
+    let flow_kind = if ctx.toggle("Wi-Fi reconfiguration", false) {
+        FlowKind::WifiReconfiguration
+    } else {
+        FlowKind::FirstBoot
+    };
     let picked = DEVICE_INFO_SCREENS[ctx.select("Screen", DEVICE_INFO_SCREENS, 0)];
     let board = board(product);
     let Uplinks { wifi, ethernet } = board.uplinks;
@@ -625,15 +654,20 @@ fn device_info_screens(ctx: &mut SceneCtx, ui: &mut Ui, product: Product) {
             DEVICE_INFO_SCREENS.contains(&heading),
             "{heading} is not in DEVICE_INFO_SCREENS, so no capture can pick it"
         );
-        if picked == "All" || picked == heading {
-            device_info_stage(ctx, ui, board, heading, caption, view, state, flat);
+        // Only a board with Wi-Fi can redo it.
+        let reaches = flow_kind == FlowKind::FirstBoot
+            || (wifi && RECONFIGURATION_SCREENS.contains(&heading));
+        if reaches && (picked == "All" || picked == heading) {
+            device_info_stage(
+                ctx, ui, board, heading, caption, view, flow_kind, state, flat,
+            );
         }
     };
 
     if wifi {
         stage(
             "SetupStart",
-            "first boot: AP SSID",
+            "AP SSID",
             DeviceInfoView::SetupStart {
                 ap,
                 uplinks: board.uplinks,

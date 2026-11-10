@@ -31,9 +31,9 @@ a hoisted `message_descriptor!` whose message takes an argument or a tag, and `n
 local first.
 
 **An argument-free message may be a constant**, a `bmc_intl::message_descriptor!` worded with `bmc_intl::format_lazy`.
-Name it for the place it is drawn (`SETUP_EYEBROW`, not `TITLE`) and declare it in the module that draws it. Never reuse
-it in another context: one message has one description and one translation, and a button and a title that read alike in
-English may not in another language, so the second place declares its own.
+Name it for the place it is drawn rather than for what it is: `TITLE` says nothing of where it appears. Declare it in
+the module that draws it. Never reuse it in another context: one message has one description and one translation, and a
+button and a title that read alike in English may not in another language, so the second place declares its own.
 
 **A sentence is one message, never halves laid side by side.** Two messages fix their order, and a language that wants
 it the other way cannot follow. A stretch drawn differently, such as a bold gesture, is a `<b>…</b>` tag in that one

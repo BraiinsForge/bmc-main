@@ -269,6 +269,11 @@
     "translation": "[ŞḖŦŬƤ]",
     "description": "Settings tray, short badge in capitals beside the Wi-Fi setup network's name; five characters or fewer"
   },
+  "V+YnZmrE3v": {
+    "source": "Reconfigure Wi-Fi",
+    "translation": "[Řḗḗƈǿǿƞƒīɠŭŭřḗḗ Ẇī-Ƒī]",
+    "description": "Device-info eyebrow above the setup screens while a device redoes its Wi-Fi"
+  },
   "VstI3V3Hsf": {
     "source": "Wi-Fi SSID",
     "translation": "[Ẇī-Ƒī ŞŞĪḒ]",
@@ -373,6 +378,11 @@
     "source": "Restart",
     "translation": "[Řḗḗşŧȧȧřŧ]",
     "description": "Settings tray, label under the restart button"
+  },
+  "dfahNQHOhF": {
+    "source": "Switching to the Ethernet cable...",
+    "translation": "[Şẇīŧƈħīƞɠ ŧǿǿ ŧħḗḗ Ḗŧħḗḗřƞḗḗŧ ƈȧȧƀŀḗḗ...]",
+    "description": "Device-info title while a device redoing its Wi-Fi gives up its setup network and continues over its Ethernet cable"
   },
   "dnBRMZe2Go": {
     "source": "hold {seconds, plural, one {{seconds} second} other {{seconds} seconds}}",

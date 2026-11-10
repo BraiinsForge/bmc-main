@@ -27,8 +27,8 @@ use bmc_system_overlay::gl_check::{
 use bmc_system_overlay::{AccessPoint, FrameKind, Language, TouchEvent};
 
 use super::{
-    DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Uplinks, build_device_info_tree,
-    language_key, offers_language_switch, render_device_info, tier_for,
+    DeviceInfoRenderState, DeviceInfoView, FlowKind, LanguageSwitch, Uplinks,
+    build_device_info_tree, language_key, offers_language_switch, render_device_info, tier_for,
 };
 
 const SIZE: (u32, u32) = (1_280, 480);
@@ -66,6 +66,7 @@ fn paint_speaking(
                 &bmc_intl::formatter(bmc_intl::Language::default()),
                 "Braiins Deck",
                 false,
+                FlowKind::FirstBoot,
                 switch,
                 frame,
             )
@@ -168,6 +169,7 @@ fn moving_damage_on_a_screen_paints_as_a_full_paint_does() {
             tier_for(SIZE),
             "Braiins Deck",
             false,
+            FlowKind::FirstBoot,
             None,
         )
         .expect("BUG: every view but Done builds a tree")

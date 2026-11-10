@@ -186,10 +186,22 @@ impl DeviceInfoRenderState {
     }
 }
 
-const SETUP_EYEBROW: Message = message_descriptor!(
+const EYEBROW_FIRST_BOOT: Message = message_descriptor!(
     default_message: "Initial Setup",
     description: "Device-info eyebrow above every first-boot setup screen",
 );
+const EYEBROW_WIFI_RECONFIGURATION: Message = message_descriptor!(
+    default_message: "Reconfigure Wi-Fi",
+    description: "Device-info eyebrow above the setup screens while a device redoes its Wi-Fi",
+);
+
+/// The flow the setup screens walk through, which their eyebrow names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlowKind {
+    FirstBoot,
+    WifiReconfiguration,
+}
+
 const SETUP_AP_PENDING_TITLE: Message = message_descriptor!(
     default_message: "Starting setup Wi-Fi...",
     description: "Device-info setup title while the device's own network is coming up",
@@ -410,9 +422,13 @@ fn style(
     }
 }
 
-fn eyebrow(intl: &Intl, tier: Tier) -> Node {
+fn eyebrow(intl: &Intl, tier: Tier, flow_kind: FlowKind) -> Node {
+    let message = match flow_kind {
+        FlowKind::FirstBoot => &EYEBROW_FIRST_BOOT,
+        FlowKind::WifiReconfiguration => &EYEBROW_WIFI_RECONFIGURATION,
+    };
     text(
-        format_lazy(intl, &SETUP_EYEBROW),
+        format_lazy(intl, message),
         style(
             tier.eyebrow,
             GRAY_40,
@@ -921,14 +937,14 @@ fn ssid_lines(intl: &Intl, tier: Tier, ssid: Option<&str>) -> Vec<Node> {
 fn template_children(
     intl: &Intl,
     tier: Tier,
-    show_eyebrow: bool,
+    flow_kind: Option<FlowKind>,
     icon_node: Node,
     title_text: &str,
     lines: Vec<Node>,
 ) -> Vec<Node> {
     let mut children = Vec::new();
-    if show_eyebrow {
-        children.push(eyebrow(intl, tier));
+    if let Some(flow_kind) = flow_kind {
+        children.push(eyebrow(intl, tier, flow_kind));
     }
     children.push(icon_node);
     children.push(title(tier, title_text, TextAlign::Center));
@@ -941,7 +957,7 @@ fn template_tree(
     intl: &Intl,
     tier: Tier,
     justify: Justify,
-    show_eyebrow: bool,
+    flow_kind: Option<FlowKind>,
     icon_id: Icon,
     title_text: &str,
     lines: Vec<Node>,
@@ -951,7 +967,7 @@ fn template_tree(
         tier,
         tier.icon_width.other,
         justify,
-        show_eyebrow,
+        flow_kind,
         icon_id,
         title_text,
         lines,
@@ -968,7 +984,7 @@ fn template_tree_with_icon_width(
     tier: Tier,
     icon_width: f32,
     justify: Justify,
-    show_eyebrow: bool,
+    flow_kind: Option<FlowKind>,
     icon_id: Icon,
     title_text: &str,
     lines: Vec<Node>,
@@ -981,7 +997,7 @@ fn template_tree_with_icon_width(
             template_children(
                 intl,
                 tier,
-                show_eyebrow,
+                flow_kind,
                 icon_within(icon_id, icon_width),
                 title_text,
                 lines,
@@ -1006,6 +1022,7 @@ struct QrColumn<'a> {
 fn template_tree_with_qr(
     intl: &Intl,
     tier: Tier,
+    flow_kind: FlowKind,
     icon_id: Icon,
     title_text: &str,
     lines: Vec<Node>,
@@ -1024,7 +1041,7 @@ fn template_tree_with_qr(
                 template_children(
                     intl,
                     tier,
-                    true,
+                    Some(flow_kind),
                     icon_within(icon_id, tier.icon_width.ap_up),
                     title_text,
                     lines,
@@ -1201,13 +1218,19 @@ fn connecting_parts(
 
 /// The setup flow's connect progress: shown while joining the chosen network,
 /// and again while the uplink's address is still pending.
-fn setup_connecting_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link) -> Node {
+fn setup_connecting_tree(
+    intl: &Intl,
+    tier: Tier,
+    flow_kind: FlowKind,
+    icons: DeviceInfoIcons,
+    link: &Link,
+) -> Node {
     let (icon_id, title_text, lines) = connecting_parts(intl, tier, icons, link);
     template_tree(
         intl,
         tier,
         Justify::Start,
-        true,
+        Some(flow_kind),
         icon_id,
         &title_text,
         lines,
@@ -1227,7 +1250,7 @@ fn connecting_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link)
         intl,
         tier,
         Justify::Center,
-        false,
+        None,
         icon_id,
         &title_text,
         lines,
@@ -1239,11 +1262,12 @@ fn connecting_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link)
 /// or asks for the cable where there is no AP to wait for.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the formatter, the panel, the artwork, the device, its AP and uplinks, and the switch"
+    reason = "the formatter, the panel, the flow, the artwork, the device, its AP and uplinks, and the switch"
 )]
 fn setup_start_tree(
     intl: &Intl,
     tier: Tier,
+    flow_kind: FlowKind,
     icons: DeviceInfoIcons,
     device_icon: Icon,
     device_name: &str,
@@ -1289,6 +1313,7 @@ fn setup_start_tree(
             let tree = template_tree_with_qr(
                 intl,
                 tier,
+                flow_kind,
                 tier.ap_up_icon.pick(icons),
                 &join,
                 lines,
@@ -1306,7 +1331,7 @@ fn setup_start_tree(
                 intl,
                 tier,
                 Justify::Start,
-                true,
+                Some(flow_kind),
                 device_icon,
                 &connect_cable,
                 switch_line.into_iter().collect(),
@@ -1321,7 +1346,7 @@ fn setup_start_tree(
             tier,
             tier.icon_width.ap_pending,
             Justify::Start,
-            true,
+            Some(flow_kind),
             icons.wifi_connect,
             &format_lazy(intl, &SETUP_AP_PENDING_TITLE),
             uplinks.ethernet.then(cable_hint).into_iter().collect(),
@@ -1330,9 +1355,14 @@ fn setup_start_tree(
 }
 
 /// The device's address for the wizard, or the connect progress while it has none.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the formatter, the panel, the flow, the artwork, the device, its address and link, and the switch"
+)]
 fn setup_connect_info_tree(
     intl: &Intl,
     tier: Tier,
+    flow_kind: FlowKind,
     icons: DeviceInfoIcons,
     device_icon: Icon,
     ip: Option<Ipv4Addr>,
@@ -1349,7 +1379,7 @@ fn setup_connect_info_tree(
             );
             connected_info_tree(intl, tier, device_icon, &title_text, ip, switch)
         }
-        None => setup_connecting_tree(intl, tier, icons, link),
+        None => setup_connecting_tree(intl, tier, flow_kind, icons, link),
     }
 }
 
@@ -1383,24 +1413,31 @@ fn setup_fatal_tree(
         intl,
         tier,
         Justify::Center,
-        false,
+        None,
         icon_id,
         &format_lazy(intl, &SETUP_FATAL_TITLE),
         vec![content(tier, &line, TextAlign::Center)],
     )
 }
 
-fn turning_ap_off_tree(intl: &Intl, tier: Tier, ethernet: Icon) -> Node {
-    let title_text = format_message!(
-        intl,
-        default_message: "Your device is being set up...",
-        description: "Device-info title while a miner leaves its setup network for the chosen one",
-    );
+fn turning_ap_off_tree(intl: &Intl, tier: Tier, flow_kind: FlowKind, ethernet: Icon) -> Node {
+    let title_text = match flow_kind {
+        FlowKind::FirstBoot => format_message!(
+            intl,
+            default_message: "Your device is being set up...",
+            description: "Device-info title while a miner leaves its setup network for the chosen one",
+        ),
+        FlowKind::WifiReconfiguration => format_message!(
+            intl,
+            default_message: "Switching to the Ethernet cable...",
+            description: "Device-info title while a device redoing its Wi-Fi gives up its setup network and continues over its Ethernet cable",
+        ),
+    };
     template_tree(
         intl,
         tier,
         Justify::Start,
-        true,
+        Some(flow_kind),
         ethernet,
         &title_text,
         Vec::new(),
@@ -1410,6 +1447,7 @@ fn turning_ap_off_tree(intl: &Intl, tier: Tier, ethernet: Icon) -> Node {
 fn setup_connected_tree(
     intl: &Intl,
     tier: Tier,
+    flow_kind: FlowKind,
     wifi: Icon,
     device_name: &str,
     ssid: Option<&str>,
@@ -1424,14 +1462,20 @@ fn setup_connected_tree(
         intl,
         tier,
         Justify::Start,
-        true,
+        Some(flow_kind),
         wifi,
         &title_text,
         ssid_lines(intl, tier, ssid),
     )
 }
 
-fn setup_completed_tree(intl: &Intl, tier: Tier, success: Icon, device_name: &str) -> Node {
+fn setup_completed_tree(
+    intl: &Intl,
+    tier: Tier,
+    flow_kind: FlowKind,
+    success: Icon,
+    device_name: &str,
+) -> Node {
     let title_text = format_message!(
         intl,
         default_message: "{device_name} is ready!",
@@ -1447,14 +1491,14 @@ fn setup_completed_tree(intl: &Intl, tier: Tier, success: Icon, device_name: &st
         intl,
         tier,
         Justify::Start,
-        true,
+        Some(flow_kind),
         success,
         &title_text,
         vec![content(tier, &login, TextAlign::Center)],
     )
 }
 
-fn setup_error_tree(intl: &Intl, tier: Tier, wifi_error: Icon) -> Node {
+fn setup_error_tree(intl: &Intl, tier: Tier, flow_kind: FlowKind, wifi_error: Icon) -> Node {
     let title_text = format_message!(
         intl,
         default_message: "Could not connect. Please try again.",
@@ -1464,7 +1508,7 @@ fn setup_error_tree(intl: &Intl, tier: Tier, wifi_error: Icon) -> Node {
         intl,
         tier,
         Justify::Start,
-        true,
+        Some(flow_kind),
         wifi_error,
         &title_text,
         Vec::new(),
@@ -1476,7 +1520,7 @@ fn upgrade_success_tree(intl: &Intl, tier: Tier, success: Icon) -> Node {
         intl,
         tier,
         Justify::Center,
-        false,
+        None,
         success,
         &format_lazy(intl, &UPGRADE_SUCCESS_TITLE),
         Vec::new(),
@@ -1535,7 +1579,7 @@ fn failed_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link) -> 
         intl,
         tier,
         Justify::Center,
-        false,
+        None,
         icon_id,
         &title_text,
         lines,
@@ -1543,6 +1587,10 @@ fn failed_tree(intl: &Intl, tier: Tier, icons: DeviceInfoIcons, link: &Link) -> 
 }
 
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the formatter, the view, its artwork and panel, the device, the flow and the switch"
+)]
 pub fn build_device_info_tree(
     intl: &Intl,
     view: &DeviceInfoView,
@@ -1550,6 +1598,7 @@ pub fn build_device_info_tree(
     tier: Tier,
     device_name: &str,
     miner: bool,
+    flow_kind: FlowKind,
     switch: Option<Switch<'_>>,
 ) -> Option<Node> {
     // The screens picture the device itself; a miner is not a desktop clock.
@@ -1563,6 +1612,7 @@ pub fn build_device_info_tree(
         DeviceInfoView::SetupStart { ap, uplinks } => setup_start_tree(
             intl,
             tier,
+            flow_kind,
             icons,
             device_icon,
             device_name,
@@ -1570,18 +1620,27 @@ pub fn build_device_info_tree(
             *uplinks,
             switch,
         ),
-        DeviceInfoView::TurningApOff => turning_ap_off_tree(intl, tier, icons.ethernet),
-        DeviceInfoView::SetupConnecting { link } => setup_connecting_tree(intl, tier, icons, link),
-        DeviceInfoView::SetupConnected { ssid } => {
-            setup_connected_tree(intl, tier, icons.wifi, device_name, ssid.as_deref())
+        DeviceInfoView::TurningApOff => turning_ap_off_tree(intl, tier, flow_kind, icons.ethernet),
+        DeviceInfoView::SetupConnecting { link } => {
+            setup_connecting_tree(intl, tier, flow_kind, icons, link)
         }
+        DeviceInfoView::SetupConnected { ssid } => setup_connected_tree(
+            intl,
+            tier,
+            flow_kind,
+            icons.wifi,
+            device_name,
+            ssid.as_deref(),
+        ),
         DeviceInfoView::SetupConnectInfo { ip, link } => {
-            setup_connect_info_tree(intl, tier, icons, device_icon, *ip, link, switch)
+            setup_connect_info_tree(intl, tier, flow_kind, icons, device_icon, *ip, link, switch)
         }
         DeviceInfoView::SetupCompleted => {
-            setup_completed_tree(intl, tier, icons.success, device_name)
+            setup_completed_tree(intl, tier, flow_kind, icons.success, device_name)
         }
-        DeviceInfoView::SetupError { .. } => setup_error_tree(intl, tier, icons.wifi_error),
+        DeviceInfoView::SetupError { .. } => {
+            setup_error_tree(intl, tier, flow_kind, icons.wifi_error)
+        }
         DeviceInfoView::SetupFatal { restarting, .. } => {
             setup_fatal_tree(intl, tier, icons, device_name, *restarting)
         }
@@ -1611,7 +1670,7 @@ pub struct DeviceInfoFrame {
 /// Draw `view`, with the language switch where `language_switch` shows it.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the view, its wording, the board it addresses, the language switch and the frame"
+    reason = "the view, its wording, the board it addresses, the flow, the language switch and the frame"
 )]
 pub fn render_device_info(
     r: &mut dyn Renderer,
@@ -1621,6 +1680,7 @@ pub fn render_device_info(
     intl: &Intl,
     device_name: &str,
     miner: bool,
+    flow_kind: FlowKind,
     language_switch: LanguageSwitch,
     frame: OverlayFrame,
 ) -> DeviceInfoFrame {
@@ -1650,6 +1710,7 @@ pub fn render_device_info(
             tier_for(size),
             device_name,
             miner,
+            flow_kind,
             switch,
         )
         .expect("BUG: every view but Done has a tree")
@@ -1673,9 +1734,10 @@ pub fn render_device_info(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccessPoint, DeviceInfoRenderState, DeviceInfoView, FLAG_RING, FLAG_SIZE, LanguageSwitch,
-        Link, SetupApIcon, TIER_COMPACT, TIER_WIDE, Tier, Uplinks, build_device_info_tree,
-        dismisses_on_touch, flag_extent, render_device_info, tier_for, tray_hint,
+        AccessPoint, DeviceInfoRenderState, DeviceInfoView, FLAG_RING, FLAG_SIZE, FlowKind,
+        LanguageSwitch, Link, SetupApIcon, TIER_COMPACT, TIER_WIDE, Tier, Uplinks,
+        build_device_info_tree, dismisses_on_touch, flag_extent, render_device_info, tier_for,
+        tray_hint,
     };
     use bmc_render::partition::test_support::{add_animated_draw, move_dynamic_content};
     use bmc_render::partition::tree_static_key;
@@ -1949,6 +2011,10 @@ mod tests {
     }
 
     fn tree_for(view: &DeviceInfoView) -> Node {
+        tree_for_flow(view, FlowKind::FirstBoot)
+    }
+
+    fn tree_for_flow(view: &DeviceInfoView, flow_kind: FlowKind) -> Node {
         build_device_info_tree(
             &english(),
             view,
@@ -1956,6 +2022,7 @@ mod tests {
             tier_for(DECK_PANEL),
             DEVICE_NAME,
             false,
+            flow_kind,
             None,
         )
         .expect("BUG: every view but Done builds a tree")
@@ -1981,6 +2048,7 @@ mod tests {
                 tier_for(DECK_PANEL),
                 DEVICE_NAME,
                 false,
+                FlowKind::FirstBoot,
                 None,
             );
             assert_eq!(
@@ -2128,6 +2196,55 @@ mod tests {
         assert_screens_say(cases);
     }
 
+    #[test]
+    fn a_wifi_reconfiguration_is_never_called_the_initial_setup() {
+        let views = [
+            DeviceInfoView::SetupStart {
+                ap: Some(setup_ap()),
+                uplinks: Uplinks::WIFI_ONLY,
+            },
+            DeviceInfoView::SetupStart {
+                ap: None,
+                uplinks: Uplinks::WIFI_ONLY,
+            },
+            DeviceInfoView::SetupConnecting {
+                link: Link::Wifi { ssid: None },
+            },
+            DeviceInfoView::SetupConnected { ssid: None },
+            DeviceInfoView::SetupError { dismissible: true },
+            DeviceInfoView::TurningApOff,
+        ];
+        for view in views {
+            let rendered = texts(&tree_for_flow(&view, FlowKind::WifiReconfiguration));
+            assert!(
+                rendered.iter().any(|line| line == "Reconfigure Wi-Fi"),
+                "{view:?} never names the reconfiguration; it says {rendered:?}"
+            );
+            assert!(
+                !rendered.iter().any(|line| line.contains("Initial Setup")),
+                "{view:?} calls a reconfiguration the initial setup; it says {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reconfiguration_switching_to_its_cable_does_not_claim_a_setup() {
+        let rendered = texts(&tree_for_flow(
+            &DeviceInfoView::TurningApOff,
+            FlowKind::WifiReconfiguration,
+        ));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line == "Switching to the Ethernet cable..."),
+            "{rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|line| line.contains("being set up")),
+            "{rendered:?}"
+        );
+    }
+
     fn assert_screens_say(cases: Vec<(DeviceInfoView, &[&str])>) {
         for (view, wanted) in cases {
             let rendered = texts(&tree_for(&view));
@@ -2194,6 +2311,7 @@ mod tests {
             tier_for(DECK_PANEL),
             DEVICE_NAME,
             true,
+            FlowKind::FirstBoot,
             None,
         )
         .expect("BUG: view builds a tree");
@@ -2343,6 +2461,7 @@ mod tests {
                 tier,
                 DEVICE_NAME,
                 false,
+                FlowKind::FirstBoot,
                 None,
             )
             .expect("BUG: the setup screen builds a tree");
@@ -2365,6 +2484,7 @@ mod tests {
                 tier_for(DECK_PANEL),
                 DEVICE_NAME,
                 false,
+                FlowKind::FirstBoot,
                 None,
             ) else {
                 continue;
@@ -2436,6 +2556,7 @@ mod tests {
             &english(),
             DEVICE_NAME,
             false,
+            FlowKind::FirstBoot,
             LanguageSwitch::Hidden,
             OverlayFrame::unlayered(frame),
         );
@@ -2521,6 +2642,7 @@ mod tests {
                         tier,
                         DEVICE_NAME,
                         miner,
+                        FlowKind::FirstBoot,
                         None,
                     )
                     .expect("BUG: every view but Done builds a tree");

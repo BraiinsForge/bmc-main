@@ -32,7 +32,8 @@ mod icons;
 mod ui;
 
 pub use ui::{
-    DeviceInfoRenderState, DeviceInfoView, LanguageSwitch, Link, Uplinks, render_device_info,
+    DeviceInfoRenderState, DeviceInfoView, FlowKind, LanguageSwitch, Link, Uplinks,
+    render_device_info,
 };
 
 use std::net::Ipv4Addr;
@@ -202,22 +203,51 @@ impl Screen {
     }
 }
 
-/// Advance the screen's own timers for one tick. Pure; returns the next
-/// screen and whether it changed.
+/// The flow `screen` belongs to.
+///
+/// The lifecycle names it, except on Operational, which a set-up device's
+/// joins run on and which bmc reaches while a wizard's closing screens
+/// are still up: there the screen decides.
+fn flow_kind(screen: Screen, mode: Mode) -> FlowKind {
+    match mode {
+        Mode::WifiReconfiguration => FlowKind::WifiReconfiguration,
+        Mode::Operational => match screen {
+            Screen::SetupConnectInfo { .. } | Screen::SetupCompleted { .. } => FlowKind::FirstBoot,
+            Screen::Hidden
+            | Screen::SetupStart
+            | Screen::SetupSwitching
+            | Screen::SetupConnecting
+            | Screen::SetupConnected { .. }
+            | Screen::SetupError { .. }
+            | Screen::SetupFatal { .. }
+            | Screen::OpConnecting { .. }
+            | Screen::OpUpgraded { .. }
+            | Screen::OpSuccess { .. }
+            | Screen::OpFailed { .. }
+            | Screen::Done => FlowKind::WifiReconfiguration,
+        },
+        Mode::FactoryDefault | Mode::SetupPending | Mode::Unknown => FlowKind::FirstBoot,
+    }
+}
+
+/// Advance the screen's own timers for one tick.
+/// Pure; returns the next screen and whether it changed.
 fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) -> (Screen, bool) {
     let next = match screen {
         Screen::SetupSwitching => {
-            // Left by the lifecycle, not a timer: the switchover is done once
-            // the device has advanced past the setup AP.
-            if mode == Mode::SetupPending {
-                Screen::SetupConnecting
-            } else {
-                screen
+            // Left by the lifecycle, not a timer: the switchover
+            // is done once the device has advanced past the setup AP.
+            // A set-up device redoing its Wi-Fi advances to Operational,
+            // where its cable's address is what the operational flow shows.
+            match mode {
+                Mode::SetupPending => Screen::SetupConnecting,
+                Mode::Operational => Screen::OpConnecting { since: now },
+                Mode::FactoryDefault | Mode::WifiReconfiguration | Mode::Unknown => screen,
             }
         }
         Screen::SetupConnecting => {
-            // Only a SetupPending boot self-advances on the address: in AP
-            // mode the join outcome arrives as an explicit setup event.
+            // Only a SetupPending boot self-advances on the address:
+            // in AP mode the join outcome arrives as an explicit setup event.
             if mode == Mode::SetupPending && station_ip.is_some() {
                 Screen::SetupConnectInfo { ip: station_ip }
             } else {
@@ -707,8 +737,7 @@ impl SystemOverlay for DeviceInfoOverlay {
 
     fn on_setup_progress(&mut self, step: SetupStep, wifi_ssid: &str) {
         let now = Instant::now();
-        // Any real step (re)enters the setup flow,
-        // including from a dismissed reconfiguration screen (`Done`).
+        // Any real step (re)enters the setup flow, including from a dismissed reconfiguration screen (`Done`).
         // Mirrors the legacy listener, which set the screen unconditionally.
         self.screen = match step {
             SetupStep::Idle => return,
@@ -833,6 +862,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             self.localized.intl(),
             &self.device_name,
             self.miner,
+            flow_kind(self.screen, self.mode),
             switch,
             OverlayFrame::on_surface(frame),
         );
@@ -1570,6 +1600,189 @@ mod tests {
         assert!(!tick.visible);
     }
 
+    const EYEBROW_FIRST_BOOT: &str = "Initial Setup";
+    const EYEBROW_WIFI_RECONFIGURATION: &str = "Reconfigure Wi-Fi";
+
+    /// The eyebrow the screen on show draws, if any.
+    fn eyebrow_drawn(overlay: &mut DeviceInfoOverlay) -> Option<&'static str> {
+        let mut recorder = recorder_for(PANEL);
+        let _ = overlay.render(&mut recorder, PANEL, &english(), FrameKind::Fresh);
+        let texts = recorder.drawn_texts();
+        [EYEBROW_FIRST_BOOT, EYEBROW_WIFI_RECONFIGURATION]
+            .into_iter()
+            .find(|eyebrow| texts.contains(eyebrow))
+    }
+
+    #[test]
+    fn a_reconfiguration_is_named_as_one_through_its_flip_to_operational() {
+        let (mut overlay, prober) = overlay_with_prober(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+
+        // In bmc's order: the lifecycle leaves the reconfiguration before its success.
+        overlay.on_device_state(DeviceState::Operational, false);
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+        prober.publish(Some(Ipv4Addr::new(192, 168, 1, 20)));
+        overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+    }
+
+    #[test]
+    fn a_reconfiguration_begun_mid_setup_hands_back_to_the_initial_setup() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+
+        // In bmc's order: leaving the reconfiguration lands the unfinished device on SetupPending,
+        // whose screens are the wizard's again, as on the cable path.
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+        overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+
+        // No address yet, so the wizard's connect screen draws its connect progress.
+        let _ = overlay.tick(t0() + HOLD);
+        assert_eq!(overlay.screen, Screen::SetupConnectInfo { ip: None });
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+        overlay.on_setup_progress(SetupStep::DeviceSetupSuccess, "");
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+    }
+
+    #[test]
+    fn a_reconfiguration_begun_mid_setup_that_skips_to_the_cable_hands_back_to_the_initial_setup() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::SwitchingUplink, "");
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        assert_eq!(overlay.screen, Screen::SetupConnecting);
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+    }
+
+    #[test]
+    fn a_first_boot_ready_handled_after_its_operational_is_named_the_initial_setup() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        // Both drained in one frame, and the runner applies the lifecycle before the step.
+        overlay.on_device_state(DeviceState::Operational, false);
+        overlay.on_setup_progress(SetupStep::DeviceSetupSuccess, "");
+        assert!(matches!(overlay.screen, Screen::SetupCompleted { .. }));
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+    }
+
+    #[test]
+    fn a_first_boot_is_named_the_initial_setup_through_its_last_screen() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+
+        // In bmc's order: the setup's success comes before
+        // the lifecycle's Operational, with a frame between them.
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        overlay.on_setup_progress(SetupStep::DeviceSetupSuccess, "");
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+        overlay.on_device_state(DeviceState::Operational, false);
+        assert!(matches!(overlay.screen, Screen::SetupCompleted { .. }));
+        assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
+    }
+
+    #[test]
+    fn a_join_asked_for_in_the_settings_is_named_a_reconfiguration() {
+        let (mut overlay, _prober) = settled_overlay(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+        overlay.on_setup_progress(SetupStep::WifiConnectionSuccess, "");
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+    }
+
+    #[test]
+    fn a_join_asked_for_in_the_settings_that_fails_is_named_a_reconfiguration() {
+        let (mut overlay, _prober) = settled_overlay(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
+        assert!(matches!(overlay.screen, Screen::SetupError { .. }));
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+    }
+
+    /// The flow named on Operational is a reconfiguration's,
+    /// which a plain boot's screens must never show.
+    #[test]
+    fn an_operational_boot_draws_no_eyebrow() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::Operational, false);
+        assert!(matches!(overlay.screen, Screen::OpConnecting { .. }));
+        assert_eq!(eyebrow_drawn(&mut overlay), None);
+        let _ = overlay.tick(t0());
+        assert!(matches!(overlay.screen, Screen::OpSuccess { .. }));
+        assert_eq!(eyebrow_drawn(&mut overlay), None);
+
+        let mut upgraded = overlay_with_ip(None);
+        upgraded.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
+        upgraded.on_device_state(DeviceState::Operational, false);
+        assert!(matches!(upgraded.screen, Screen::OpUpgraded { .. }));
+        assert_eq!(eyebrow_drawn(&mut upgraded), None);
+    }
+
+    #[test]
+    fn a_set_up_device_skipping_wifi_while_redoing_it_leaves_the_switchover() {
+        let (mut overlay, _prober) = settled_overlay(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::SwitchingUplink, "");
+        assert_eq!(overlay.screen, Screen::SetupSwitching);
+
+        // Skipping clears only the reconfiguration, so the lifecycle lands on Operational.
+        overlay.on_device_state(DeviceState::Operational, false);
+        let _ = overlay.tick(t0());
+        assert!(matches!(overlay.screen, Screen::OpConnecting { .. }));
+    }
+
+    #[test]
+    fn a_join_asked_for_while_the_first_boot_says_ready_is_named_a_reconfiguration() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
+        overlay.on_device_state(DeviceState::SetupPending, false);
+        overlay.on_setup_progress(SetupStep::DeviceSetupSuccess, "");
+        overlay.on_device_state(DeviceState::Operational, false);
+        assert!(matches!(overlay.screen, Screen::SetupCompleted { .. }));
+
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(
+            eyebrow_drawn(&mut overlay),
+            Some(EYEBROW_WIFI_RECONFIGURATION)
+        );
+    }
+
     /// An operational device whose boot screens have already run.
     fn settled_overlay(ip: Option<Ipv4Addr>) -> (DeviceInfoOverlay, Prober) {
         let (mut overlay, prober) = overlay_with_prober(ip);
@@ -1682,7 +1895,12 @@ mod tests {
             prober.publish(Some(new_ip));
             if success_first {
                 overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
+                assert_eq!(
+                    eyebrow_drawn(&mut overlay),
+                    Some(EYEBROW_WIFI_RECONFIGURATION)
+                );
                 overlay.on_device_state(DeviceState::SetupPending, false);
+                assert_eq!(eyebrow_drawn(&mut overlay), Some(EYEBROW_FIRST_BOOT));
             } else {
                 overlay.on_device_state(DeviceState::SetupPending, false);
                 // A poll in between self-advances the connecting screen
