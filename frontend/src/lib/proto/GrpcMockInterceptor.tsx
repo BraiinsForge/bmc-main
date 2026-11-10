@@ -58,8 +58,8 @@ type MockFn<Method extends DescMethod, Input extends Message, Output extends Mes
 ) => Method['methodKind'] extends 'server_streaming'
     ? // List of response for server streaming methods
       PlainMessage<Output>[] | AsyncIterable<PlainMessage<Output>>
-    : // Unary response
-      PlainMessage<Output>;
+    : // Unary response, or a promise of one
+      PlainMessage<Output> | Promise<PlainMessage<Output>>;
 
 /** Describes a mapping of service method names to their mockers */
 export type ServiceMocks<Service extends GenService<any>> = {
@@ -204,15 +204,12 @@ export class GrpcMockInterceptor {
                         const method = request.method;
                         switch (method.methodKind) {
                             case 'unary': {
-                                const responseData = mocker(mockerInput);
-                                logMockerResponse(responseData);
-
-                                const response = {
-                                    ...responseBase,
-                                    message: responseData,
-                                } as UnaryResponse;
-                                const timer = setTimeout(() => resolveRequest(response), getResponseDelay());
+                                let timer: ReturnType<typeof setTimeout> | undefined;
                                 // Rejects on abort the way fetch does.
+                                if (request.signal.aborted) {
+                                    rejectRequest(request.signal.reason);
+                                    return;
+                                }
                                 request.signal.addEventListener(
                                     'abort',
                                     () => {
@@ -221,6 +218,16 @@ export class GrpcMockInterceptor {
                                     },
                                     { once: true },
                                 );
+                                Promise.resolve(mocker(mockerInput)).then(responseData => {
+                                    if (request.signal.aborted) return;
+                                    logMockerResponse(responseData);
+
+                                    const response = {
+                                        ...responseBase,
+                                        message: responseData,
+                                    } as UnaryResponse;
+                                    timer = setTimeout(() => resolveRequest(response), getResponseDelay());
+                                }, rejectRequest);
                                 return;
                             }
 

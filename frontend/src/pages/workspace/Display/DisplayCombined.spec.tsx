@@ -843,8 +843,6 @@ describe('editing a placed widget', () => {
             fireEvent.change(count, { target: { value: '8' } });
             await waitFor(() => expect(requested).toEqual([8]));
             fireEvent.change(count, { target: { value: '3' } });
-            // GrpcMockInterceptor hands the page a pending reply on a setTimeout; fail it once the page holds it.
-            await nextTask();
             firstHeld.resolve();
             await nextTask();
 

@@ -1242,8 +1242,6 @@ describe('dialog session lifecycle', () => {
             fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
             await flush(300);
             fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '3' } });
-            // GrpcMockInterceptor hands the page a pending reply on a setTimeout; fail it once the page holds it.
-            await flush();
             firstHeld.resolve();
             await flush();
 
