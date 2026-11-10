@@ -22,7 +22,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use bmc_grpc::web::{EncryptionType, NetworkService as _, SetWifiRequest, SignalStrength};
+use bmc_grpc::web::{
+    EncryptionType, NetworkService as _, SetHostnameRequest, SetWifiRequest, SignalStrength,
+};
 use bmc_net::mock::MockNetworkManager;
 use bmc_net_types::wifi::{
     EncryptionType as WifiEncryption, WifiConfiguration, WifiLinkState, WifiMode, WifiStatus,
@@ -36,6 +38,7 @@ use tokio::sync::{Notify, watch};
 
 use super::boser_managed::StubBmcManager;
 use super::{no_session, wire_request};
+use crate::BmcManager as _;
 use crate::initial_setup::{InitSetupState, StateService, Uplink, WifiJoins};
 use crate::web::grpc::network::{NetworkService, into_grpc_wifi_status, try_into_encryption_type};
 
@@ -266,4 +269,74 @@ fn a_saved_network_reports_its_signal_as_a_strength_not_a_level() {
             "{level_dbm} dBm is reported as {strength:?}, not as the level"
         );
     }
+}
+
+/// A provisioned device over `network`, with the manager kept so a test can
+/// read back what the call left in the network configuration.
+fn provisioned(
+    network: MockNetworkManager,
+) -> (NetworkService<StubBmcManager>, Arc<StubBmcManager>) {
+    let manager = Arc::new(StubBmcManager::with_network(network));
+    let wifi_joins = WifiJoins::new(
+        manager.clone(),
+        Arc::new(AtomicBool::new(false)),
+        StateService::new(),
+    );
+    (NetworkService::new(manager.clone(), wifi_joins), manager)
+}
+
+async fn rename(service: &NetworkService<StubBmcManager>, hostname: &str) -> ServiceResult<Empty> {
+    wire_request!(
+        request,
+        SetHostnameRequest {
+            hostname: hostname.to_owned(),
+        }
+    );
+    service.set_hostname(no_session(), request).await
+}
+
+#[tokio::test]
+async fn a_rename_reaches_the_network_configuration() {
+    let (service, manager) = provisioned(MockNetworkManager::with_provisioning(false, false));
+
+    rename(&service, "kitchen-deck")
+        .await
+        .expect("a valid name is accepted");
+
+    assert_eq!(
+        manager.network_manager().hostname().await.as_deref(),
+        Some("kitchen-deck"),
+        "the name the device answers to on the network is the one the user typed"
+    );
+}
+
+#[tokio::test]
+async fn a_name_the_network_cannot_carry_is_refused_and_the_old_one_stays() {
+    let (service, manager) = provisioned(MockNetworkManager::with_provisioning(false, false));
+
+    let error = rename(&service, "kitchen deck")
+        .await
+        .expect_err("a name with a space is not a hostname");
+
+    assert_eq!(error.code, ErrorCode::InvalidArgument);
+    assert_eq!(
+        manager.network_manager().hostname().await.as_deref(),
+        Some("mock"),
+        "a refused rename must not leave the device unreachable under either name"
+    );
+}
+
+#[tokio::test]
+async fn a_rename_is_refused_while_the_device_is_still_being_set_up() {
+    let (service, manager) = provisioned(MockNetworkManager::with_provisioning(true, false));
+
+    let error = rename(&service, "kitchen-deck")
+        .await
+        .expect_err("the setup flow owns the network until it finishes");
+
+    assert_eq!(error.code, ErrorCode::FailedPrecondition);
+    assert_eq!(
+        manager.network_manager().hostname().await.as_deref(),
+        Some("mock")
+    );
 }
