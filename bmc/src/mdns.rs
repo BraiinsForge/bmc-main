@@ -93,3 +93,30 @@ fn deck_identity(
         bmc_version: packages,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The web UI shows the full firmware string, and the advertised
+    /// version has to match what the owner reads there.
+    #[test]
+    fn deck_identity_advertises_the_full_firmware_version() {
+        let identity = deck_identity(
+            "Braiins Deck",
+            Some(BosVersion::new(&"2026-10-21-0-9ed62a93-26.09", &"26.09")),
+            Some("2026.11.05-4ec47a20".to_owned()),
+        );
+        let TxtValues::Deck {
+            device,
+            fw_version,
+            bmc_version,
+        } = identity
+        else {
+            panic!("BUG: a Deck must not advertise as BOS: {identity:?}");
+        };
+        assert_eq!(device, "Braiins Deck");
+        assert_eq!(fw_version.as_deref(), Some("2026-10-21-0-9ed62a93-26.09"));
+        assert_eq!(bmc_version.as_deref(), Some("2026.11.05-4ec47a20"));
+    }
+}
