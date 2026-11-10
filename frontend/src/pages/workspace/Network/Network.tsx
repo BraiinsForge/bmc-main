@@ -24,6 +24,7 @@ import { Helmet } from '@dr.pogodin/react-helmet';
 
 import { type IntlShape, useIntl } from 'react-intl';
 import { type Location, useLocation, useNavigate } from 'react-router';
+import { Code, ConnectError } from '@connectrpc/connect';
 
 // Lib
 import { URLS } from '@/constants';
@@ -59,6 +60,13 @@ enum Tab {
     settings = 'settings',
     diagnostics = 'diagnostics',
 }
+
+// The device settles a join within two 30-attempt waits, for the station
+// then for an address (`ATTEMPTS_TO_GET_IP` in bmc-net-drv's wifi utils),
+// one of which took 59 s on a Deck.
+//
+// No answer by now means it left the network the browser reaches it through.
+const WIFI_JOIN_DEADLINE_MS = 150_000;
 
 type NetProto = NonNullable<pb.NetworkConfig['protocol']['case']>;
 type NetStaticConf = Omit<pb.NetworkConfigStatic, 'dnsServers'> & { dnsServers: string };
@@ -158,7 +166,7 @@ class View extends Component<Props, State> {
     };
 
     private loadAbort = pb.abort.get();
-    #load = async (): Promise<void> => {
+    #load = async (options?: { quiet?: boolean }): Promise<void> => {
         try {
             const { signal } = this.loadAbort.replace();
             const reqOpt = { signal };
@@ -183,10 +191,7 @@ class View extends Component<Props, State> {
                     ...newState.wifi,
                     status: wifiStatus,
                     savedNets: wifiSavedNets,
-                    selection:
-                        newState.wifi.selection == null
-                            ? (wifiStatus?.status?.network ?? null)
-                            : newState.wifi.selection,
+                    selection: wifiStatus?.status?.network ?? null,
                 };
 
                 newState.confSaved = {
@@ -201,7 +206,7 @@ class View extends Component<Props, State> {
                 return newState;
             });
         } catch ($) {
-            if (pb.abort.is($)) return;
+            if (pb.abort.is($) || options?.quiet) return;
             this.setState({ globalErrors: pb.collectAllErrors($) });
         }
     };
@@ -237,14 +242,6 @@ class View extends Component<Props, State> {
         }
     };
 
-    #wifiChange = (value: pb.WifiNetwork): void => {
-        this.setState(s => ({
-            wifi: {
-                ...s.wifi,
-                selection: value,
-            },
-        }));
-    };
     private wifiConnectAbort = pb.abort.get();
     #wifiConnect = async (ssid: string, encryptionType: pb.EncryptionType, password: string): Promise<boolean> => {
         const { formatMessage } = this.props.intl;
@@ -253,10 +250,42 @@ class View extends Component<Props, State> {
         try {
             await pb.rpc.net.setWifi(pb.create(pb.SetWifiRequestSchema, { ssid, encryptionType, password }), {
                 signal,
+                timeoutMs: WIFI_JOIN_DEADLINE_MS,
             });
+            // `setWifi` answers once the device holds an address on the new network,
+            // so it shows as joined until the reload brings the device's own report,
+            // without waiting on a reload that may never end.
+            //
+            // A listed entry keeps its signal;
+            // one built here has none, which draws as still connecting.
+            const { nets, savedNets } = this.state.wifi;
+            const listed = [...nets, ...(savedNets?.status.flatMap(x => x.network ?? []) ?? [])];
+            const joined =
+                listed.find(x => x.ssid === ssid) ?? pb.create(pb.WifiNetworkSchema, { ssid, encryptionType });
+            await setState(this, s => ({ wifi: { ...s.wifi, selection: joined } }));
+            // The device may have left the network this page reaches it through,
+            // so a failed reload is no news worth an error
+            void this.#load({ quiet: true });
             return true;
         } catch ($) {
             if (pb.abort.is($)) return false;
+
+            // The outcome is unknown: closing the dialog keeps the page usable,
+            // and the message stays until dismissed,
+            // as the page may never hear from the device again
+            if (ConnectError.from($).code === Code.DeadlineExceeded) {
+                const message = formatMessage(
+                    {
+                        defaultMessage:
+                            'The Deck may have switched to {ssid}. If this page stops responding, connect to {ssid} and open the Deck there.',
+                        description:
+                            'Notice after joining a Wi-Fi network got no answer from the Deck; ssid is the name of the network it was asked to join',
+                    },
+                    { ssid },
+                );
+                toast.show('warning', message, { duration: Number.POSITIVE_INFINITY });
+                return true;
+            }
 
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Wi-Fi connection: Unknown error!' });
@@ -495,7 +524,6 @@ class View extends Component<Props, State> {
                                       value: wifi.selection,
                                       disabled: wifi.isScanning,
                                       error: wifi.error,
-                                      onChange: this.#wifiChange,
                                       onConnectionRequest: this.#wifiConnect,
                                       onConnectionRequestCancel: this.#wifiConnectCancel,
                                   },

@@ -2164,6 +2164,11 @@
     "source": "Unit System",
     "translation": "[Ŭƞīŧ Şẏşŧḗḗḿ]"
   },
+  "vpl+jrbad4": {
+    "source": "The Deck may have switched to {ssid}. If this page stops responding, connect to {ssid} and open the Deck there.",
+    "translation": "[Ŧħḗḗ Ḓḗḗƈķ ḿȧȧẏ ħȧȧṽḗḗ şẇīŧƈħḗḗḓ ŧǿǿ {ssid}. Īƒ ŧħīş ƥȧȧɠḗḗ şŧǿǿƥş řḗḗşƥǿǿƞḓīƞɠ, ƈǿǿƞƞḗḗƈŧ ŧǿǿ {ssid} ȧȧƞḓ ǿǿƥḗḗƞ ŧħḗḗ Ḓḗḗƈķ ŧħḗḗřḗḗ.]",
+    "description": "Notice after joining a Wi-Fi network got no answer from the Deck; ssid is the name of the network it was asked to join"
+  },
   "vtaxH+XeV2": {
     "source": "Failed to play the sound {name}",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƥŀȧȧẏ ŧħḗḗ şǿǿŭŭƞḓ {name}]"

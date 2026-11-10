@@ -56,7 +56,9 @@ function show(kind: ToastProps['kind'], message: ToastProps['message'], extra?: 
     const duration = extra?.duration;
     return sonnerToast.custom(id => <Toast id={id} kind={kind} title={extra?.title} message={message} />, {
         ...extra,
-        duration: duration != null && Number.isFinite(duration) ? duration * 1e3 : 3e3,
+        // Seconds in, milliseconds out;
+        // `Infinity` keeps the toast until dismissed
+        duration: duration == null || Number.isNaN(duration) ? 3e3 : duration * 1e3,
     });
 }
 function success(message: ToastProps['message'], extra?: Extra): ToastID {

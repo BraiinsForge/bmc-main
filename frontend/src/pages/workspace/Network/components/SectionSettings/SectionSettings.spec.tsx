@@ -19,7 +19,7 @@
 // the grant above.
 
 import { afterEach, describe, expect, rstest, test } from '@rstest/core';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react/pure';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react/pure';
 import { IntlProvider } from 'react-intl';
 
 import * as pb from '@/proto';
@@ -31,8 +31,9 @@ const SECURED_NETWORK = pb.create(pb.WifiNetworkSchema, {
     encryptionType: pb.EncryptionType.WPA2,
 });
 
-function renderSettings() {
-    const onConnectionRequest = rstest.fn(async () => true);
+function renderSettings(join: () => Promise<boolean> = async () => true) {
+    const onConnectionRequest = rstest.fn(join);
+    const onConnectionRequestCancel = rstest.fn();
     render(
         <IntlProvider locale="en">
             <SectionSettings
@@ -43,13 +44,22 @@ function renderSettings() {
                 onReset={() => {}}
                 wifi={{
                     strings: { connect: 'Connect' },
-                    activeNetwork: { value: null, onChange: () => {}, onConnectionRequest },
+                    activeNetwork: { value: null, onConnectionRequest, onConnectionRequestCancel },
                     availableNetworks: { isLoading: false, options: [SECURED_NETWORK], onRefresh: () => {} },
                 }}
             />
         </IntlProvider>,
     );
-    return { onConnectionRequest };
+    return { onConnectionRequest, onConnectionRequestCancel };
+}
+
+const dropdown = () => screen.getByRole('combobox', { name: 'Network' });
+
+// The password dialog's title is markup, so the dialog has no accessible name of its own
+function dialogTitled(title: string): HTMLElement {
+    const dialog = screen.getByRole('heading', { name: title }).closest('[role="dialog"]');
+    if (!(dialog instanceof HTMLElement)) throw new Error(`BUG: the heading ${title} sits outside a dialog`);
+    return dialog;
 }
 
 async function chooseNetwork(name: string): Promise<void> {
@@ -64,6 +74,12 @@ async function chooseNetwork(name: string): Promise<void> {
 const manualInput = (id: 'ssid' | 'security' | 'password') => {
     const input = document.getElementById(`wifi-manual-${id}`);
     if (input == null) throw new Error(`BUG: the manual dialog has no ${id} input`);
+    return input;
+};
+
+const passwordInput = () => {
+    const input = document.getElementById('wifi-password-entry');
+    if (input == null) throw new Error('BUG: the password dialog has no password input');
     return input;
 };
 
@@ -141,6 +157,20 @@ describe('<SectionSettings /> joining a network by hand', () => {
 
         expect(onConnectionRequest).toHaveBeenCalledWith('OpenNet', pb.EncryptionType.NONE, '');
     });
+
+    test('a refused join leaves what was typed editable for another try', async () => {
+        renderSettings(async () => false);
+        await chooseNetwork('Other…');
+        await changeInput(manualInput('ssid'), 'HiddenNet');
+        await changeInput(manualInput('security'), pb.EncryptionType.WPA2);
+        await changeInput(manualInput('password'), 'hunter22');
+
+        await clickButton('Join');
+
+        expect(manualInput('ssid')).toHaveProperty('value', 'HiddenNet');
+        expect(manualInput('password')).toHaveProperty('value', 'hunter22');
+        expect(manualInput('ssid')).toHaveProperty('disabled', false);
+    });
 });
 
 describe('<SectionSettings /> joining a listed secured network', () => {
@@ -154,5 +184,82 @@ describe('<SectionSettings /> joining a listed secured network', () => {
 
         expect(errorUnder('wifi-password-entry')).toBe('Missing value!');
         expect(onConnectionRequest).not.toHaveBeenCalled();
+    });
+
+    test('the closing password dialog still names its network', async () => {
+        renderSettings();
+        await chooseNetwork('HomeNet');
+        const dialog = dialogTitled('Password for HomeNet');
+
+        await act(async () => {
+            fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+        });
+
+        expect(within(dialog).getByRole('heading', { name: 'Password for HomeNet' })).not.toBeNull();
+    });
+
+    test('a cancelled password dialog does not keep the password', async () => {
+        renderSettings();
+        await chooseNetwork('HomeNet');
+        const dialog = dialogTitled('Password for HomeNet');
+        await changeInput(passwordInput(), 'hunter22');
+
+        await act(async () => {
+            fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+        });
+
+        expect(passwordInput()).toHaveProperty('value', '');
+    });
+
+    test('Escape leaves a running join alone', async () => {
+        let settle: (joined: boolean) => void = () => {
+            throw new Error('BUG: the join was never requested');
+        };
+        const { onConnectionRequestCancel } = renderSettings(() => new Promise(resolve => (settle = resolve)));
+        await chooseNetwork('HomeNet');
+        await changeInput(passwordInput(), 'hunter22');
+        await clickButton('Connect');
+
+        await act(async () => {
+            fireEvent.keyDown(document, { key: 'Escape' });
+        });
+        await act(async () => settle(false));
+
+        expect(onConnectionRequestCancel).not.toHaveBeenCalled();
+        expect(passwordInput()).toHaveProperty('value', 'hunter22');
+    });
+});
+
+describe('<SectionSettings /> network dropdown', () => {
+    afterEach(cleanup);
+
+    test('shows the network being joined and stays read-only until the join settles', async () => {
+        let settle: (joined: boolean) => void = () => {
+            throw new Error('BUG: the join was never requested');
+        };
+        renderSettings(() => new Promise(resolve => (settle = resolve)));
+        await chooseNetwork('Other…');
+        await changeInput(manualInput('ssid'), 'CafeNet');
+
+        await clickButton('Join');
+
+        expect(dropdown().textContent).toContain('CafeNet');
+        expect(dropdown().getAttribute('aria-disabled')).toBe('true');
+
+        await act(async () => settle(true));
+
+        expect(dropdown().textContent).not.toContain('CafeNet');
+        expect(dropdown().getAttribute('aria-disabled')).toBeNull();
+    });
+
+    test('draws no network icons on the "Other…" entry', async () => {
+        renderSettings();
+
+        await act(async () => {
+            fireEvent.click(dropdown());
+        });
+
+        expect(screen.getByRole('option', { name: 'HomeNet' }).querySelector('svg')).not.toBeNull();
+        expect(screen.getByRole('option', { name: 'Other…' }).querySelector('svg')).toBeNull();
     });
 });

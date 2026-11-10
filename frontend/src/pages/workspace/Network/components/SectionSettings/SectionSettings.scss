@@ -111,9 +111,14 @@
                 right: $cds-icon-offset;
             }
 
-            // Label in the button
             .cds--list-box__label {
                 width: 100%;
+
+                // The row keeps its icons clear of the shifted arrow icon from within,
+                // as its background stands in for the field's, which read-only drops
+                > * {
+                    padding-inline-end: $cds-icon-offset + mini-units(4);
+                }
             }
         }
 

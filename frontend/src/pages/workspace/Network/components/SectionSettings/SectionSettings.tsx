@@ -53,7 +53,8 @@ import css from './SectionSettings.scss';
 export interface WifiProps {
     strings: { connect: string };
     // The connected bool attribute is remapped to nullability
-    activeNetwork: iField<Maybe<pb.WifiNetwork>> & {
+    // Shows the device's network, a pick only ever requests a join
+    activeNetwork: Pick<iField<Maybe<pb.WifiNetwork>>, 'value' | 'error' | 'disabled'> & {
         /** Reports a refused join itself and resolves false: a rejection would leave the dialog locked. */
         onConnectionRequest(ssid: string, security: pb.EncryptionType, password: string): Promise<boolean>;
         onConnectionRequestCancel?(): void;
@@ -121,7 +122,9 @@ interface State {
         passwordError: null | string;
     };
     wifiNetworkDropdownKey: number;
-    wifiIsConnecting: boolean;
+    // Stands in for the selection until the join settles,
+    // its unknown signal drawn as the scanning animation.
+    wifiJoining: null | pb.WifiNetwork;
 }
 const getInitialState = (): State => ({
     openDialog: null,
@@ -140,7 +143,15 @@ const getInitialState = (): State => ({
         passwordError: null,
     },
     wifiNetworkDropdownKey: 0,
-    wifiIsConnecting: false,
+    wifiJoining: null,
+});
+
+// The fields stay for the closing fade, all but the passwords,
+// which would linger in the hidden dialog
+const closedDialogs = (s: State): Pick<State, 'openDialog' | 'wifiManualConnect' | 'wifiPasswordEntry'> => ({
+    openDialog: null,
+    wifiManualConnect: { ...s.wifiManualConnect, data: { ...s.wifiManualConnect.data, password: '' } },
+    wifiPasswordEntry: { ...s.wifiPasswordEntry, password: '' },
 });
 
 const $ = getID('settings', 'network', 'config').get;
@@ -257,18 +268,11 @@ class View extends Component<Props, State> {
         return <WifiNetworkLine net={x} variant="inline" />;
     };
     #wifiNetToElementMenu = (x: pb.WifiNetwork): ReactElement => {
-        return (
-            <WifiNetworkLine
-                net={
-                    x.ssid === WIFI_AP_OTHER_PLACEHOLDER.ssid
-                        ? pb.create(pb.WifiNetworkSchema, {
-                              ssid: this.#txt.other,
-                          })
-                        : x
-                }
-                variant="dropdown"
-            />
-        );
+        if (x.ssid === WIFI_AP_OTHER_PLACEHOLDER.ssid) {
+            const other = pb.create(pb.WifiNetworkSchema, { ssid: this.#txt.other });
+            return <WifiNetworkLine net={other} variant="dropdown" showIcons={false} />;
+        }
+        return <WifiNetworkLine net={x} variant="dropdown" />;
     };
 
     #wifiManualEntryDialogToggle = (desiredOpenState?: unknown | boolean): void => {
@@ -277,11 +281,21 @@ class View extends Component<Props, State> {
         if (typeof desiredOpenState === 'boolean') openDialog = desiredOpenState ? 'wifiManualConnect' : null;
         else openDialog = this.state.openDialog === 'wifiManualConnect' ? null : 'wifiManualConnect';
 
-        if (openDialog === this.state.openDialog) return;
-        this.setState({ openDialog });
+        // Carbon's Escape listener keeps the close handler from when the dialog opened,
+        // so the lock lives here
+        if (openDialog === this.state.openDialog || this.state.wifiJoining) return;
+        if (openDialog == null) this.setState(closedDialogs);
+        else this.setState({ openDialog });
     };
+    #wifiJoin = async (ssid: string, encryptionType: pb.EncryptionType, password: string): Promise<void> => {
+        const wifiJoining = pb.create(pb.WifiNetworkSchema, { ssid, encryptionType });
+        await setState(this, { wifiJoining });
+        const joined = await this.#wifi.activeNetwork.onConnectionRequest(ssid, encryptionType, password);
+        // A refused join keeps its dialog and what was typed, so the user can correct it
+        await setState(this, s => (joined ? { ...closedDialogs(s), wifiJoining: null } : { wifiJoining: null }));
+    };
+
     #wifiManualEntryDialogSubmit = async (): Promise<void> => {
-        const { onConnectionRequest } = this.#wifi.activeNetwork;
         const { openDialog, wifiManualConnect } = this.state;
         const { ssid, security } = wifiManualConnect.data;
         const isOpenNetwork = security === pb.EncryptionType.NONE;
@@ -301,10 +315,7 @@ class View extends Component<Props, State> {
         if (!ssid) return fail('ssid');
         if (!isOpenNetwork && !password) return fail('password');
 
-        // If we didn't bail till now, we can try to connect
-        await setState(this, { wifiIsConnecting: true });
-        await onConnectionRequest(ssid, security, password);
-        await setState(this, getInitialState);
+        await this.#wifiJoin(ssid, security, password);
     };
     #wifiManualEntryDialogChange = <K extends keyof ManualWifiApConfig>(
         field: K,
@@ -327,9 +338,10 @@ class View extends Component<Props, State> {
 
         const {
             openDialog,
-            wifiIsConnecting,
+            wifiJoining,
             wifiManualConnect: { data, errors },
         } = this.state;
+        const wifiIsConnecting = wifiJoining != null;
 
         const title = formatMessage({ defaultMessage: 'Find and join a Wi-Fi network' });
         const txt = this.#txt;
@@ -417,11 +429,11 @@ class View extends Component<Props, State> {
 
     #wifiPasswordDialogToggle = (ap: null | pb.WifiNetwork): void => {
         if (!ap) {
+            // Carbon's Escape listener keeps the close handler from when the dialog opened,
+            // so the join lock lives here
+            if (this.state.wifiJoining) return;
             this.#wifi.activeNetwork.onConnectionRequestCancel?.();
-            this.setState({
-                openDialog: null,
-                wifiPasswordEntry: getInitialState().wifiPasswordEntry,
-            });
+            this.setState(closedDialogs);
             return;
         }
 
@@ -431,7 +443,6 @@ class View extends Component<Props, State> {
         });
     };
     #wifiPassowrdDialogSubmit = async (): Promise<void> => {
-        const { onConnectionRequest } = this.#wifi.activeNetwork;
         const { openDialog, wifiPasswordEntry } = this.state;
         const { password, wifiCell } = wifiPasswordEntry;
 
@@ -448,19 +459,17 @@ class View extends Component<Props, State> {
             return;
         }
 
-        // If we didn't bail till now, we can try to connect
-        await setState(this, { wifiIsConnecting: true });
-        await onConnectionRequest(wifiCell.ssid, wifiCell.encryptionType, password);
-        await setState(this, getInitialState);
+        await this.#wifiJoin(wifiCell.ssid, wifiCell.encryptionType, password);
     };
     #wifiPasswordDialogRender = (): ReactElement => {
         const { intl } = this.props;
         const { strings } = this.#wifi;
         const {
             openDialog,
-            wifiIsConnecting,
+            wifiJoining,
             wifiPasswordEntry: { wifiCell, password, passwordError },
         } = this.state;
+        const wifiIsConnecting = wifiJoining != null;
 
         const txt = this.#txt;
         const title = intl.formatMessage(
@@ -519,7 +528,6 @@ class View extends Component<Props, State> {
     };
 
     #handleWifiNetworkChange = async (ap: null | pb.WifiNetwork): Promise<void> => {
-        const { onConnectionRequest, onChange } = this.#wifi.activeNetwork;
         const { wifiManualConnect, wifiPasswordEntry } = getInitialState();
         await setState(this, { wifiManualConnect, wifiPasswordEntry });
 
@@ -528,21 +536,17 @@ class View extends Component<Props, State> {
             return;
         }
 
+        // A pick is only a request to join: remount the dropdown to drop it,
+        // so it keeps showing the network the device is on until a join succeeds
+        this.setState(s => ({ ...s, wifiNetworkDropdownKey: s.wifiNetworkDropdownKey + 1 }));
+
         // Manual entry dialog
-        else if (ap.ssid === WIFI_AP_OTHER_PLACEHOLDER.ssid) {
-            // Reset the dropdown state to make de-select the "Other…" option
-            this.setState(s => ({ ...s, wifiNetworkDropdownKey: s.wifiNetworkDropdownKey + 1 }));
+        if (ap.ssid === WIFI_AP_OTHER_PLACEHOLDER.ssid) {
             this.#wifiManualEntryDialogToggle(true);
-        }
-
-        // Propagate the change upstream
-        // and try to connect to the network
-        else {
-            onChange?.(ap);
-
+        } else {
             // If the network is open, we can connect right away
             if (ap.encryptionType === pb.EncryptionType.NONE) {
-                void onConnectionRequest(ap.ssid, ap.encryptionType, '');
+                void this.#wifiJoin(ap.ssid, ap.encryptionType, '');
             }
 
             // …otherwise we gotta go throught the password dialog
@@ -551,7 +555,9 @@ class View extends Component<Props, State> {
     };
     #renderWifi = (): ReactNode => {
         const { availableNetworks, activeNetwork } = this.#wifi;
-        const { wifiNetworkDropdownKey } = this.state;
+        const { wifiNetworkDropdownKey, wifiJoining } = this.state;
+        const wifiIsConnecting = wifiJoining != null;
+        const shownNetwork = wifiJoining ?? activeNetwork.value;
 
         const txt = this.#txt;
 
@@ -560,7 +566,7 @@ class View extends Component<Props, State> {
                 <Dropdown<pb.WifiNetwork>
                     // downshiftProps={{ isOpen: true }}
                     id="wifi-network"
-                    key={[wifiNetworkDropdownKey, activeNetwork.value?.ssid ?? ''].join('-')}
+                    key={[wifiNetworkDropdownKey, shownNetwork?.ssid ?? ''].join('-')}
                     type="default"
                     direction="bottom"
                     // Labeling / visuals
@@ -573,12 +579,13 @@ class View extends Component<Props, State> {
                     // with autoAlign algo active
                     autoAlign={false}
                     disabled={availableNetworks.isLoading}
+                    readOnly={wifiIsConnecting}
                     invalid={!!activeNetwork.error}
                     invalidText={activeNetwork.error}
                     helperText={availableNetworks.isLoading ? txt.scanningElement : null}
                     // Value
                     items={[...availableNetworks.options, WIFI_AP_OTHER_PLACEHOLDER]}
-                    selectedItem={activeNetwork.value ?? undefined}
+                    selectedItem={shownNetwork ?? undefined}
                     onChange={x => this.#handleWifiNetworkChange(x.selectedItem)}
                     // Item rendering
                     itemToString={this.#wifiNetToString}
@@ -599,7 +606,7 @@ class View extends Component<Props, State> {
                         renderIcon={IconRefresh}
                         title={this.#txt.refresh}
                         onClick={availableNetworks.onRefresh}
-                        disabled={availableNetworks.isLoading}
+                        disabled={availableNetworks.isLoading || wifiIsConnecting}
                         loading={availableNetworks.isLoading}
                     />
                 </div>

@@ -2164,6 +2164,11 @@
     "source": "Unit System",
     "translation": "单位制"
   },
+  "vpl+jrbad4": {
+    "source": "The Deck may have switched to {ssid}. If this page stops responding, connect to {ssid} and open the Deck there.",
+    "translation": "Deck 可能已切换到 {ssid}。如果此页面不再响应，请连接到 {ssid}，然后在该网络中打开 Deck。",
+    "description": "Notice after joining a Wi-Fi network got no answer from the Deck; ssid is the name of the network it was asked to join"
+  },
   "vtaxH+XeV2": {
     "source": "Failed to play the sound {name}",
     "translation": "播放铃声 {name} 失败"

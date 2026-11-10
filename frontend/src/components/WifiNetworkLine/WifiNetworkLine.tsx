@@ -42,12 +42,13 @@ import css from './WifiNetworkLine.scss';
 interface DataProps {
     net: pb.WifiNetwork;
     variant?: 'inline' | 'dropdown';
+    showIcons?: boolean;
     onClick?(net: pb.WifiNetwork): void;
 }
 export interface WifiNetworkProps extends Omit<HTMLAttributes<HTMLDivElement>, keyof DataProps>, DataProps {}
 
 export function WifiNetworkLine(props: WifiNetworkProps) {
-    const { net, onClick, className, variant = 'inline', ...rest } = props;
+    const { net, onClick, className, variant = 'inline', showIcons = true, ...rest } = props;
     let SecurityIconComponent: CarbonIconType;
     let securityIconColor: string;
 
@@ -86,10 +87,12 @@ export function WifiNetworkLine(props: WifiNetworkProps) {
             className={cn(css.root, css[`variant-${variant}`], onClick ? css.interactive : undefined, className)}
         >
             <div className={css.ssid} children={net.ssid} />
-            <div className={css.icons}>
-                <WifiSignalStrength size={16} state={net.signalStrength} />
-                <SecurityIconComponent size={16} fill={securityIconColor} />
-            </div>
+            {showIcons && (
+                <div className={css.icons}>
+                    <WifiSignalStrength size={16} state={net.signalStrength} />
+                    <SecurityIconComponent size={16} fill={securityIconColor} />
+                </div>
+            )}
         </div>
     );
 }

@@ -56,13 +56,14 @@ export default {
         wifi: {
             strings: { connect: 'Connect' },
             activeNetwork: {
-                ...getArg('wifiActiveNetwork', {
-                    $typeName: 'braiins.bmc.web.WifiNetwork',
-                    signalStrength: pb.SignalStrength.MODERATE,
-                    connected: true,
-                    encryptionType: pb.EncryptionType.WPA2,
-                    ssid: 'MyWifi',
-                }),
+                ...getArg(
+                    'wifiActiveNetwork',
+                    pb.create(pb.WifiNetworkSchema, {
+                        signalStrength: pb.SignalStrength.MODERATE,
+                        encryptionType: pb.EncryptionType.WPA2,
+                        ssid: 'MyWifi',
+                    }),
+                ),
                 async onConnectionRequest(...args: any[]) {
                     action('wifi.activeNetwork.onConnectionRequest')(...args);
                     return false;
