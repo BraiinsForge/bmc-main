@@ -1748,6 +1748,7 @@ impl SharedRenderScratch {
             ExportContents::Preserved => true,
             ExportContents::Cleared => false,
         };
+        refuse_stencilless(buffers.attachment)?;
         refuse_unseedable(contents, buffers.allocated_slots())?;
         let (export, seed) = buffers.ensure_current_seeded(ctx)?;
         let stencil = export
@@ -1837,6 +1838,15 @@ impl SharedRenderScratch {
     }
 }
 
+/// Refuse buffers femtovg cannot fill into before any is allocated.
+fn refuse_stencilless(attachment: Attachment) -> Result<()> {
+    anyhow::ensure!(
+        attachment == Attachment::Stencil,
+        "export buffer with {attachment:?} attachment lacks the stencil femtovg's fills need"
+    );
+    Ok(())
+}
+
 /// Refuse a frame that keeps its buffer while no slot holds a frame to seed it from.
 fn refuse_unseedable(
     contents: ExportContents,
@@ -1875,7 +1885,7 @@ mod tests {
     use super::{
         Attachment, BlitResources, DoubleBufferState, EglContext, ExportContents, ExportFormat,
         SharedRenderScratch, SlotReleaseState, TwoSlotBufferCache, WidgetExportBuffer,
-        refuse_unseedable,
+        refuse_stencilless, refuse_unseedable,
     };
     use drm_fourcc::DrmFourcc;
 
@@ -2148,9 +2158,28 @@ mod tests {
                 format!("{refusal:#}").contains("stencil"),
                 "{attachment:?} was refused for another reason: {refusal:#}"
             );
-            buffers.destroy_all(&ctx);
+            assert_eq!(
+                buffers.allocated_slots(),
+                [false; 2],
+                "{attachment:?} is refused before a buffer is allocated"
+            );
         }
         scratch.destroy(&ctx);
+    }
+
+    #[test]
+    fn only_a_buffer_with_a_stencil_is_bound() {
+        for (attachment, refused) in [
+            (Attachment::Stencil, false),
+            (Attachment::Depth, true),
+            (Attachment::None, true),
+        ] {
+            assert_eq!(
+                refuse_stencilless(attachment).is_err(),
+                refused,
+                "{attachment:?}: femtovg's fills need a stencil"
+            );
+        }
     }
 
     #[test]
