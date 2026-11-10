@@ -40,6 +40,7 @@ use crate::initial_setup::{InitSetupState, InitialSetup, Uplink};
 use crate::led::{LedController, run_led_state_task};
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::{BmcManager, BmcState, UpgradeMarker};
+use crate::mdns;
 use crate::secret_store::SecretStoreHandle;
 use crate::sound::SoundController;
 use crate::system_manager::{ScreenRequest, SystemManager};
@@ -58,6 +59,7 @@ use bmc_upgrade::packages::PackageBackend;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast};
 use tokio::sync::{RwLock, watch};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 /// Bridge the alarm domain and the alarm overlay through the compositor.
@@ -711,10 +713,16 @@ where
     U: DisplayBacklightDriver,
     V: FirmwareIndex,
 {
-    async fn run(self) -> Result<()> {
+    async fn run(self, mdns: Option<mdns::Advertiser>) -> Result<()> {
         tokio::spawn(self.button_manager.run());
 
-        let server_result = self.web_service.run(self.listener).await;
+        let shutdown_started = mdns
+            .as_ref()
+            .map_or_else(CancellationToken::new, mdns::Advertiser::shutdown_token);
+        let server_result = self.web_service.run(self.listener, shutdown_started).await;
+        if let Some(mdns) = mdns {
+            mdns.stop().await;
+        }
 
         // In case the app panics, this is not executed.
         // The children are SIGKILL'd thanks to kill_on_drop(true).
@@ -1161,7 +1169,20 @@ where
         let address = self.listener.local_addr()?;
         info!("Starting server on http://{}", address);
 
-        self.into_server().run().await
+        // Boser advertises a device it manages.
+        let mdns = if self.hardware_capabilities.boser_managed {
+            None
+        } else {
+            Some(
+                mdns::Advertiser::start(
+                    self.manager.as_ref(),
+                    address.port(),
+                    self.hardware_capabilities.product_name,
+                )
+                .await,
+            )
+        };
+        self.into_server().run(mdns).await
     }
 
     fn into_server(self) -> AppServer<T, U, V> {

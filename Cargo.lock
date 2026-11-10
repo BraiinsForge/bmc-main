@@ -721,6 +721,7 @@ dependencies = [
  "bmc-led",
  "bmc-log",
  "bmc-net",
+ "bmc-net-mdns",
  "bmc-net-types",
  "bmc-nix",
  "bmc-platform",

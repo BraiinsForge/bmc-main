@@ -43,6 +43,7 @@ bmc-ipc.workspace = true
 bmc-led = { workspace = true, features = ["driver"] }
 bmc-log.workspace = true
 bmc-net.workspace = true
+bmc-net-mdns.workspace = true
 bmc-net-types.workspace = true
 bmc-nix.workspace = true
 bmc-platform = { workspace = true, features = ["backlight"] }

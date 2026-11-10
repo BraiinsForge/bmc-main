@@ -48,6 +48,7 @@ use bmc_upgrade::firmware::FirmwareIndex;
 use std::{io, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, oneshot};
+use tokio_util::sync::CancellationToken;
 use tower::{Layer, steer::Steer};
 use tower_http::normalize_path::NormalizePathLayer;
 use tracing::warn;
@@ -151,7 +152,13 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         (self.config, grpc_web)
     }
 
-    pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
+    /// `shutdown_started` is cancelled when the shutdown signal arrives,
+    /// ahead of the connection drain.
+    pub(crate) async fn run(
+        self,
+        listener: TcpListener,
+        shutdown_started: CancellationToken,
+    ) -> Result<()> {
         let boser_proxied = self.config.boser.is_some();
         let manager = self.manager.clone();
         let session_manager = self.session_manager.clone();
@@ -215,6 +222,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         let server = axum::serve(listener, service)
             .with_graceful_shutdown(async move {
                 manager.handle_graceful_shutdown().await;
+                shutdown_started.cancel();
                 let _ = signalled_tx.send(());
             })
             .into_future();

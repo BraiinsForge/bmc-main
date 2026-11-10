@@ -352,6 +352,9 @@ mod tests {
         fn network_manager(&self) -> &dyn bmc_net::NetworkManager {
             &self.network
         }
+        fn network_manager_arc(&self) -> Arc<dyn bmc_net::NetworkManager> {
+            unimplemented!("{UNREACHABLE}")
+        }
         async fn upgrade(
             &self,
             _keep_settings: bool,

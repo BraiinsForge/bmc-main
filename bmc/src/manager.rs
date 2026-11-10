@@ -28,6 +28,7 @@ use bmc_shared_time::time::Timezone;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use thiserror::Error;
 use tokio::io::AsyncRead;
@@ -114,6 +115,10 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     /// The platform network facade: ethernet config, optional WiFi (via
     /// [`NetworkManager::wifi`]), and the provisioning state machine.
     fn network_manager(&self) -> &dyn NetworkManager;
+
+    /// The same facade as [`network_manager`](Self::network_manager), for a
+    /// task that outlives the borrow.
+    fn network_manager_arc(&self) -> Arc<dyn NetworkManager>;
 
     /// Hand the image off to the platform upgrade mechanism. `Ok(())` means
     /// the handoff was accepted, not that the upgrade completed. Progress

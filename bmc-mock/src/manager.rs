@@ -123,6 +123,10 @@ impl bmc::BmcManager for Manager {
         self.network_manager.as_ref()
     }
 
+    fn network_manager_arc(&self) -> Arc<dyn NetworkManager> {
+        self.network_manager.clone()
+    }
+
     async fn upgrade(
         &self,
         keep_settings: bool,

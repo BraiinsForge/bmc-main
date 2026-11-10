@@ -248,6 +248,9 @@ impl BmcManager for StubBmcManager {
     fn network_manager(&self) -> &dyn bmc_net::NetworkManager {
         &self.network_manager
     }
+    fn network_manager_arc(&self) -> std::sync::Arc<dyn bmc_net::NetworkManager> {
+        unimplemented!("{UNREACHABLE}")
+    }
 
     async fn upgrade(
         &self,

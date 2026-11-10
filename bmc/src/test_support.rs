@@ -166,6 +166,9 @@ impl BmcManager for StubManager {
     fn network_manager(&self) -> &dyn bmc_net::NetworkManager {
         self.network.as_ref().expect(UNREACHABLE)
     }
+    fn network_manager_arc(&self) -> std::sync::Arc<dyn bmc_net::NetworkManager> {
+        unimplemented!("{UNREACHABLE}")
+    }
 }
 
 /// A widget binary that stays up for longer than any test runs.

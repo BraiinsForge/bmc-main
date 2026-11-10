@@ -43,6 +43,7 @@ pub mod log;
 pub mod manager;
 #[cfg(feature = "manifest-tests")]
 pub mod manifest_test_support;
+mod mdns;
 mod night_mode;
 pub mod scene;
 pub mod secret_store;

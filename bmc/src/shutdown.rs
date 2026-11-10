@@ -47,10 +47,17 @@ pub const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
 /// Increasing this reduces the time available for connection draining.
 pub const COMPOSITOR_COMMAND_GRACE: Duration = Duration::from_secs(1);
 
+/// How long the exit waits for the mDNS goodbye once the server is down.
+/// The goodbye starts with the drain, so this is only spent on a short one.
+pub const MDNS_GOODBYE_WAIT: Duration = Duration::from_secs(3);
+
 const _: () = assert!(
-    UPGRADE_HOLD.as_secs() + DRAIN_DEADLINE.as_secs() + COMPOSITOR_COMMAND_GRACE.as_secs()
+    UPGRADE_HOLD.as_secs()
+        + DRAIN_DEADLINE.as_secs()
+        + MDNS_GOODBYE_WAIT.as_secs()
+        + COMPOSITOR_COMMAND_GRACE.as_secs()
         < TERM_TIMEOUT.as_secs(),
-    "the upgrade hold, connection drain, and compositor command grace \
+    "the upgrade hold, connection drain, mDNS goodbye, and compositor command grace \
      must all finish before procd resorts to SIGKILL"
 );
 
