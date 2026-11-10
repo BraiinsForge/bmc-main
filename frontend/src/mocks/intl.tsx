@@ -21,7 +21,7 @@
 import { createIntl, type IntlShape } from 'react-intl';
 
 import { intlFor } from '@/lib/intl';
-import pseudoCatalog from '../../../assets/intl/pseudo/en-XA/web.json';
+import pseudoCatalog from '@assets/intl/pseudo/en-XA/web.json';
 
 const noop = () => {};
 

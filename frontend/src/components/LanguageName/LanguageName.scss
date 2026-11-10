@@ -29,3 +29,7 @@
     width: mini-units(2);
     height: mini-units(2);
 }
+
+.unavailable {
+    fill: $support-warning;
+}

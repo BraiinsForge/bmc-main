@@ -1083,6 +1083,86 @@ describe('Settings language picker', () => {
         expect(screen.queryByText('Language saved; reload the page to see it')).not.toBeNull();
         expect(screen.queryByText('Language changed')).toBeNull();
     });
+
+    // The device leaves the language out once it no longer offers the one it is set to.
+    function readWithoutLanguage({ readDelay = 0, listFails = false } = {}) {
+        Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n: true } });
+        store.boot();
+        const setLanguage = rstest.fn((): never => {
+            throw new ConnectError('mock: not saved', Code.Unavailable);
+        });
+        registerMocks(pb.services.ConfigurationService, {
+            getGeneralSettingsData: ({ conf }) => {
+                conf({ delay: readDelay });
+                return pb.create(pb.GeneralSettingsDataResponseSchema, {});
+            },
+            setLanguage,
+        });
+        registerMocks(pb.services.LanguageService, {
+            listLanguages: () => {
+                if (listFails) throw new ConnectError('mock: no list', Code.Unavailable);
+                return {
+                    languages: [
+                        pb.create(pb.LanguageInfoSchema, { tag: 'en-GB', nativeName: 'English (UK)' }),
+                        pb.create(pb.LanguageInfoSchema, { tag: 'zh', nativeName: '简体中文' }),
+                    ],
+                };
+            },
+        });
+        return { setLanguage };
+    }
+
+    test('a language the device no longer offers shows as no longer available', async () => {
+        rstest.useFakeTimers();
+        readWithoutLanguage();
+
+        renderPage('#general');
+        await advance(300);
+
+        expect(screen.getByText('Language no longer available')).toBeTruthy();
+    });
+
+    test('a language not read yet does not show as no longer available', async () => {
+        rstest.useFakeTimers();
+        readWithoutLanguage({ readDelay: 1_000 });
+
+        renderPage('#general');
+        await advance(300);
+        fireEvent.click(screen.getByRole('combobox', { name: 'Language' }));
+        await advance(0);
+
+        expect(
+            screen.getAllByRole('option').map(x => x.textContent),
+            'the list has loaded',
+        ).toEqual(['English (UK)', '简体中文']);
+        expect(screen.queryByText('Language no longer available')).toBeNull();
+    });
+
+    test('a language list that failed to load does not call the language unavailable', async () => {
+        rstest.useFakeTimers();
+        readWithoutLanguage({ listFails: true });
+
+        renderPage('#general');
+        await advance(300);
+
+        expect(screen.getByRole('combobox', { name: 'Language' })).toBeTruthy();
+        expect(screen.queryByText('Language no longer available')).toBeNull();
+    });
+
+    test('a pick that fails to save leaves the language no longer available', async () => {
+        rstest.useFakeTimers();
+        const { setLanguage } = readWithoutLanguage();
+
+        renderPage('#general');
+        await advance(300);
+        fireEvent.click(screen.getByRole('combobox', { name: 'Language' }));
+        await advance(0);
+        fireEvent.click(screen.getByText('简体中文'));
+        await advance(300);
+
+        expect(setLanguage).toHaveBeenCalled();
+        expect(screen.getByText('Language no longer available')).toBeTruthy();
+    });
 });
 
 describe('Settings display', () => {

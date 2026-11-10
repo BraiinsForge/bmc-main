@@ -2,7 +2,8 @@
     "compilerOptions": {
         /* Resolving */
         "paths": {
-            "@/*": ["./src/*"]
+            "@/*": ["./src/*"],
+            "@assets/*": ["../assets/*"]
         },
 
         "lib": ["dom", "es2023"],

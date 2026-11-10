@@ -19,7 +19,7 @@
 // the grant above.
 
 import { afterEach, describe, expect, rstest, test } from '@rstest/core';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react/pure';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react/pure';
 import { IntlProvider } from 'react-intl';
 import { Code, ConnectError } from '@connectrpc/connect';
 
@@ -46,8 +46,10 @@ const languages = [
     pb.create(pb.LanguageInfoSchema, { tag: 'zh', nativeName: '简体中文', flag }),
 ];
 
-function boot(i18n: boolean, tag = 'en-GB'): void {
-    Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n, language: i18n ? { tag } : undefined } });
+/** `null` boots as a device whose language is no longer listed, which sends none. */
+function boot(i18n: boolean, tag: null | string = 'en-GB'): void {
+    const language = i18n && tag ? { tag } : undefined;
+    Object.assign(window, { SYSTEM: { ...deckSystemWire(), i18n, language } });
     store.boot();
     Reflect.deleteProperty(window, 'SYSTEM');
 }
@@ -85,22 +87,37 @@ describe('LanguageSwitch', () => {
         expect(listed).not.toHaveBeenCalled();
     });
 
-    test('a language the device no longer lists stays selectable until another is spoken', async () => {
+    test('a language the device no longer lists selects nothing and says so, as the settings picker does', async () => {
+        registerMocks(pb.LanguageService, { listLanguages: () => ({ languages }) });
+        boot(true, null);
+
+        renderSwitch();
+        const closed = await screen.findByRole('combobox');
+        expect(within(closed).getByText('Language no longer available')).toBeTruthy();
+        fireEvent.click(closed);
+
+        const options = screen.getAllByRole('option');
+        expect(options.map(x => x.textContent)).toEqual(['English (UK)', '简体中文']);
+        expect(options.filter(x => x.getAttribute('aria-selected') === 'true')).toHaveLength(0);
+    });
+
+    test('a pick made while the language is no longer available is saved and spoken', async () => {
+        const setLanguage = rstest.fn(() => ({}));
         registerMocks(pb.LanguageService, {
             listLanguages: () => ({ languages }),
             getWebCatalog: () => ({ messages: { save: '保存' } }),
         });
-        registerMocks(pb.services.InitialSetupService, { setLanguage: () => ({}) });
-        boot(true, 'cs');
+        registerMocks(pb.services.InitialSetupService, { setLanguage });
+        boot(true, null);
 
         renderSwitch();
-        fireEvent.click(await screen.findByText('čeština'));
-        expect(screen.getAllByRole('option').map(x => x.textContent)).toEqual(['čeština', 'English (UK)', '简体中文']);
+        fireEvent.click(await screen.findByRole('combobox'));
         fireEvent.click(screen.getByText('简体中文'));
-        await waitFor(() => expect(store.locale.tag).toBe('zh'));
 
-        fireEvent.click(screen.getByText('简体中文'));
-        expect(screen.getAllByRole('option').map(x => x.textContent)).toEqual(['English (UK)', '简体中文']);
+        await waitFor(() => expect(store.locale.tag).toBe('zh'));
+        expect(setLanguage).toHaveBeenCalledWith(
+            expect.objectContaining({ req: expect.objectContaining({ language: 'zh' }) }),
+        );
     });
 
     test("while a pick saves, its switch is not disabled and the next step's switch opens no menu", async () => {

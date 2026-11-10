@@ -35,7 +35,8 @@ import {
     type ButtonSwitchItem,
     ComboBox,
     Dropdown,
-    LanguageName,
+    LanguagePicker,
+    type LanguagePickerProps,
     // CarbonFormField
 } from '@/components';
 import type {
@@ -53,7 +54,7 @@ export interface SectionGeneralProps {
     // secondsInStatusbar: iField<boolean>;
     timezone: null | (iField<pb.Timezone> & { items: ReadonlyArray<pb.Timezone> });
     /** Absent on a device that does not offer its languages. */
-    language: null | (iField<string> & { items: ReadonlyArray<pb.LanguageInfo> });
+    language: null | LanguagePickerProps['field'];
     dateFormat: iField<pb.DateFormat>;
     firstWeekDay: iField<pb.Weekday>;
 
@@ -131,13 +132,6 @@ class View extends Component<Props> {
     };
     #timezoneChange: ComboBoxProps<pb.Timezone>['onChange'] = x => {
         if (x.selectedItem) this.props.timezone?.onChange?.(x.selectedItem);
-    };
-
-    #languageToString = (x: null | pb.LanguageInfo): string => x?.nativeName ?? '';
-    #languageRenderElement = (x: null | pb.LanguageInfo): NonNullable<ReactNode> =>
-        x ? <LanguageName language={x} /> : '';
-    #languageChange: DropdownProps<null | pb.LanguageInfo>['onChange'] = x => {
-        if (x.selectedItem) this.props.language?.onChange?.(x.selectedItem.tag);
     };
 
     #reset = async (): Promise<void> => {
@@ -312,22 +306,7 @@ class View extends Component<Props> {
                             })}
                             disabled={language.disabled}
                         >
-                            <Dropdown<null | pb.LanguageInfo>
-                                id={$('language')}
-                                size="md"
-                                label=""
-                                titleText=""
-                                hideLabel
-                                items={Array.from(language.items)}
-                                selectedItem={language.items.find(x => x.tag === language.value) ?? null}
-                                onChange={this.#languageChange}
-                                itemToString={this.#languageToString}
-                                itemToElement={this.#languageRenderElement}
-                                renderSelectedItem={this.#languageRenderElement}
-                                disabled={language.disabled}
-                                invalid={!!language.error}
-                                invalidText={language.error}
-                            />
+                            <LanguagePicker id={$('language')} field={language} />
                         </Field>
                     ) : null}
 

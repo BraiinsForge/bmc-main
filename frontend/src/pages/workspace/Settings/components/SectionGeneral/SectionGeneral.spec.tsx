@@ -74,12 +74,19 @@ describe('SectionGeneral language picker', () => {
         expect(language.onChange).toHaveBeenCalledWith('zh');
     });
 
-    test('a stored language the device no longer lists selects nothing', () => {
-        renderSection({ ...field('cs'), items: languages });
+    test('the language dropdown is named for screen readers', () => {
+        renderSection({ ...field('en-GB'), items: languages });
 
-        expect(screen.getByText('Language')).toBeTruthy();
+        expect(screen.getByRole('combobox', { name: 'Language' })).toBeTruthy();
+    });
+
+    test('a language the device no longer offers selects nothing and says so', () => {
+        renderSection({ ...field<string | null>(null), items: languages, unavailable: true });
+
+        expect(screen.getByRole('combobox', { name: 'Language' })).toBeTruthy();
         for (const { nativeName } of languages) {
             expect(screen.queryByText(nativeName)).toBeNull();
         }
+        expect(screen.getByText('Language no longer available')).toBeTruthy();
     });
 });

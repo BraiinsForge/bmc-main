@@ -450,6 +450,11 @@
     "source": "We couldn't find the page or file you're looking for.",
     "translation": "找不到您要访问的页面或文件。"
   },
+  "8MuWc71SAN": {
+    "source": "Language",
+    "translation": "语言",
+    "description": "Accessible name of the settings' language dropdown, read out by screen readers"
+  },
   "8gpgar5ojS": {
     "source": "12-Hour",
     "translation": "12 小时制"
@@ -1764,6 +1769,11 @@
     "source": "Close menu",
     "translation": "收起菜单",
     "description": "Screen-reader name of the header button hiding the side navigation"
+  },
+  "jtxiwX6IYP": {
+    "source": "Language no longer available",
+    "translation": "语言已不可用",
+    "description": "Placeholder in a closed language dropdown, beside a warning icon, once the device no longer offers the language it is set to, such as after its language pack was removed. In the setup header only the icon shows, and the text is read out by screen readers and shown as a tooltip"
   },
   "jvo0vs3nF0": {
     "source": "Save",

@@ -18,61 +18,50 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component } from 'react';
+import { Component, useEffect } from 'react';
 import { useIntl, type IntlShape } from 'react-intl';
 import cn from 'clsx';
 
-import * as pb from '@/proto';
+import type * as pb from '@/proto';
 import { getID } from '@/lib/form';
 import { store, useStore } from '@/store';
 
-import { Dropdown, LanguageName } from '@/components';
+import { Dropdown, LanguageName, LanguageUnavailable } from '@/components';
 import type { DropdownProps } from '@carbon/react';
 
 import css from './LanguageSwitch.scss';
 
 export interface LanguageSwitchProps {
-    /** `null` clears what an earlier pick reported. */
+    // `null` clears what an earlier pick reported.
     onErrors(errors: null | string[]): void;
     className?: string;
 }
-interface Props extends LanguageSwitchProps {
+export interface LanguageSwitchViewProps extends LanguageSwitchProps {
     intl: IntlShape;
     offered: boolean;
     languages: ReadonlyArray<pb.LanguageInfo>;
-    /** The device's language, which differs from the page's after a pick the page could not follow. */
+    // The language shown as current: the page's,
+    // or a pick the device took that the page could not follow.
     tag: string;
     isSaving: boolean;
+    // Saves the picked language as the device's.
+    // `false` when the page could not follow it.
+    onPick(tag: string): Promise<boolean>;
 }
 
 const $ = getID('initial-setup').get;
 
-/** A language the device does not list, named in itself as the browser knows it. */
-function unlisted(tag: string): pb.LanguageInfo {
-    let nativeName = tag;
-    try {
-        nativeName = new Intl.DisplayNames([tag], { type: 'language' }).of(tag) ?? tag;
-    } catch {
-        // A malformed tag keeps its own spelling.
-    }
-    return pb.create(pb.LanguageInfoSchema, { tag, nativeName });
-}
-
-class View extends Component<Props> {
-    // A list that fails to load hides the switch and leaves the setup in its current language.
-    componentDidMount() {
-        if (this.props.offered) void store.loadLanguages();
-    }
-
+/** The switch drawn from what it is given, without reading the store. */
+export class LanguageSwitchView extends Component<LanguageSwitchViewProps> {
     // Not aborted on unmount: that cannot undo a save the device already made,
     // and the store still speaks the pick on the next setup page.
     #change: DropdownProps<null | pb.LanguageInfo>['onChange'] = async ({ selectedItem }) => {
-        const { intl, onErrors, tag } = this.props;
-        if (!selectedItem || selectedItem.tag === tag || store.isSavingLanguage) return;
+        const { intl, onErrors, onPick, tag, isSaving } = this.props;
+        if (!selectedItem || selectedItem.tag === tag || isSaving) return;
 
         onErrors(null);
         try {
-            const spoken = await store.setSetupLanguage(selectedItem.tag);
+            const spoken = await onPick(selectedItem.tag);
             if (!spoken) {
                 onErrors([
                     intl.formatMessage({
@@ -105,25 +94,20 @@ class View extends Component<Props> {
     render() {
         const { intl, offered, languages, tag, isSaving, className } = this.props;
         if (!offered || languages.length < 2) return null;
-        // A page booted in a language the device no longer lists keeps it as the selected entry
-        // until another is picked, so the switch never shows empty.
-        const listed = languages.find(x => x.tag === tag);
-        const selected = listed ?? unlisted(tag);
-        const items = listed ? Array.from(languages) : [selected, ...languages];
 
         return (
             <Dropdown<null | pb.LanguageInfo>
                 id={$('language')}
                 className={cn(css.root, className)}
                 size="sm"
-                label=""
+                label={<LanguageUnavailable flagOnly />}
                 titleText={intl.formatMessage({
                     defaultMessage: 'Language',
                     description: 'Accessible name of the language switch in the setup header',
                 })}
                 hideLabel
-                items={items}
-                selectedItem={selected}
+                items={Array.from(languages)}
+                selectedItem={languages.find(x => x.tag === tag) ?? null}
                 onChange={this.#change}
                 itemToString={this.#toString}
                 itemToElement={this.#renderElement}
@@ -141,5 +125,21 @@ export function LanguageSwitch(props: LanguageSwitchProps) {
     const languages = useStore(x => x.languages);
     const tag = useStore(x => x.unspokenLanguage ?? x.locale.tag);
     const isSaving = useStore(x => x.isSavingLanguage);
-    return <View {...props} intl={intl} offered={offered} languages={languages} tag={tag} isSaving={isSaving} />;
+
+    // A list that fails to load hides the switch and leaves the setup in its current language.
+    useEffect(() => {
+        if (offered) void store.loadLanguages();
+    }, [offered]);
+
+    return (
+        <LanguageSwitchView
+            {...props}
+            intl={intl}
+            offered={offered}
+            languages={languages}
+            tag={tag}
+            isSaving={isSaving}
+            onPick={store.setSetupLanguage}
+        />
+    );
 }

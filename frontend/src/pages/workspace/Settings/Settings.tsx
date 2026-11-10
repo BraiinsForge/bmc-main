@@ -140,6 +140,9 @@ interface State {
         metadata: null | pb.Metadata;
         timezones: ReadonlyArray<pb.Timezone>;
         languages: ReadonlyArray<pb.LanguageInfo>;
+        // Tells a language the device no longer offers,
+        // which it leaves out, from one not yet read.
+        generalLoaded: boolean;
         upgradeInfo: null | pb.CheckForUpgradeResponse;
         displayNightmodeIntervalBackendValue: null | pb.TimeInterval;
     };
@@ -192,6 +195,7 @@ const getInitialState = (): State => ({
         metadata: null,
         timezones: [],
         languages: [],
+        generalLoaded: false,
         upgradeInfo: null,
         displayNightmodeIntervalBackendValue: null,
     },
@@ -398,6 +402,7 @@ class View extends Component<Props, State> {
             const d = await store.readGeneralSettings();
             if (signal.aborted) return;
             this.setState(s => ({
+                data: { ...s.data, generalLoaded: true },
                 values: {
                     ...s.values,
                     timeFormat: getFieldStateDefault({
@@ -848,7 +853,10 @@ class View extends Component<Props, State> {
                 }
                 language={
                     store.state.i18n
-                        ? this.#getFieldStruct(language, this.#generalSetLanguage, { items: data.languages })
+                        ? this.#getFieldStruct(language, this.#generalSetLanguage, {
+                              items: data.languages,
+                              unavailable: data.generalLoaded && data.languages.length > 0 && language.value == null,
+                          })
                         : null
                 }
                 dateFormat={this.#getFieldStruct(dateFormat, this.#generalSetDateFormat)}

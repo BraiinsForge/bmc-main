@@ -28,6 +28,11 @@ declare module '*.svg?url' {
     const src: string;
     export default src;
 }
+// The `?raw` query skips svgr and yields the file's text.
+declare module '*.svg?raw' {
+    const content: string;
+    export default content;
+}
 
 // The asset module declarations below come from @rsbuild/core/types.
 // Copyright (c) 2023-present ByteDance, Inc. and its affiliates, licensed under MIT.

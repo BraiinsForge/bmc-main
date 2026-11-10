@@ -450,6 +450,11 @@
     "source": "We couldn't find the page or file you're looking for.",
     "translation": "[Ẇḗḗ ƈǿǿŭŭŀḓƞ'ŧ ƒīƞḓ ŧħḗḗ ƥȧȧɠḗḗ ǿǿř ƒīŀḗḗ ẏǿǿŭŭ'řḗḗ ŀǿǿǿǿķīƞɠ ƒǿǿř.]"
   },
+  "8MuWc71SAN": {
+    "source": "Language",
+    "translation": "[Ŀȧȧƞɠŭŭȧȧɠḗḗ]",
+    "description": "Accessible name of the settings' language dropdown, read out by screen readers"
+  },
   "8gpgar5ojS": {
     "source": "12-Hour",
     "translation": "[12-Ħǿǿŭŭř]"
@@ -1764,6 +1769,11 @@
     "source": "Close menu",
     "translation": "[Ƈŀǿǿşḗḗ ḿḗḗƞŭŭ]",
     "description": "Screen-reader name of the header button hiding the side navigation"
+  },
+  "jtxiwX6IYP": {
+    "source": "Language no longer available",
+    "translation": "[Ŀȧȧƞɠŭŭȧȧɠḗḗ ƞǿǿ ŀǿǿƞɠḗḗř ȧȧṽȧȧīŀȧȧƀŀḗḗ]",
+    "description": "Placeholder in a closed language dropdown, beside a warning icon, once the device no longer offers the language it is set to, such as after its language pack was removed. In the setup header only the icon shows, and the text is read out by screen readers and shown as a tooltip"
   },
   "jvo0vs3nF0": {
     "source": "Save",

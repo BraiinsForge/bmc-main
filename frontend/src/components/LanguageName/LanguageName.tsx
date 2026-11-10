@@ -18,6 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { useIntl } from 'react-intl';
+import cn from 'clsx';
+import { WarningAltFilled } from '@carbon/icons-react';
+
 import type * as pb from '@/proto';
 
 import css from './LanguageName.scss';
@@ -35,6 +39,28 @@ export function LanguageName({ language, flagOnly }: LanguageNameProps) {
         <span className={css.root} lang={language.tag}>
             {flag ? <img className={css.flag} src={`data:${flag.mimeType};base64,${flag.data}`} alt="" /> : null}
             <span className={flagOnly && flag ? 'cds--visually-hidden' : undefined} children={language.nativeName} />
+        </span>
+    );
+}
+
+export interface LanguageUnavailableProps {
+    // Shows only the warning in the flag's place,
+    // leaving the words to screen readers and the tooltip.
+    flagOnly?: boolean;
+}
+
+/** Stands in for the device's language in a picker once the device no longer offers it. */
+export function LanguageUnavailable({ flagOnly }: LanguageUnavailableProps) {
+    const { formatMessage } = useIntl();
+    const text = formatMessage({
+        defaultMessage: 'Language no longer available',
+        description:
+            'Placeholder in a closed language dropdown, beside a warning icon, once the device no longer offers the language it is set to, such as after its language pack was removed. In the setup header only the icon shows, and the text is read out by screen readers and shown as a tooltip',
+    });
+    return (
+        <span className={css.root} title={text}>
+            <WarningAltFilled className={cn(css.flag, css.unavailable)} aria-hidden />
+            <span className={flagOnly ? 'cds--visually-hidden' : undefined} children={text} />
         </span>
     );
 }
