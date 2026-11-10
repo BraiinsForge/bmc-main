@@ -555,4 +555,85 @@ mod tests {
         assert!(!owns_name(FULLNAME, EFFECTIVE, "miner-a.local"));
         assert!(!owns_name(FULLNAME, EFFECTIVE, "miner-a"));
     }
+
+    fn deck() -> TxtValues {
+        TxtValues::Deck {
+            device: "Braiins Deck".to_owned(),
+            fw_version: Some("2026-10-21-0-9ed62a93-26.09".to_owned()),
+            bmc_version: Some("2026.11.05-4ec47a20".to_owned()),
+        }
+    }
+
+    /// The fleet-management widget offers anything under the `_bos` subtype,
+    /// or carrying `bos_version` or `bos=1`, as a miner (BDK-870). A Deck
+    /// that leaked any of them would show up in another Deck's miner list.
+    #[test]
+    fn deck_carries_no_bos_marker() {
+        let deck = deck();
+        assert_eq!(deck.service_type(), DECK_SUBTYPE);
+        let keys: Vec<&str> = deck
+            .records("braiins-deck")
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        assert!(
+            !keys.iter().any(|key| key.starts_with("bos")),
+            "BOS marker in the Deck payload: {keys:?}"
+        );
+    }
+
+    /// A browser must be able to tell what the Deck runs without connecting.
+    #[test]
+    fn deck_states_model_and_both_versions() {
+        assert_eq!(
+            deck().records("braiins-deck"),
+            [
+                ("hostname", "braiins-deck"),
+                ("braiins_deck", "1"),
+                ("device", "Braiins Deck"),
+                ("fw_version", "2026-10-21-0-9ed62a93-26.09"),
+                ("bmc_version", "2026.11.05-4ec47a20"),
+            ]
+        );
+    }
+
+    /// An unknown version is left out rather than advertised empty: a TXT
+    /// key without a value reads as "present but blank" to a browser.
+    #[test]
+    fn deck_omits_unknown_versions() {
+        let deck = TxtValues::Deck {
+            device: "Braiins Deck".to_owned(),
+            fw_version: None,
+            bmc_version: None,
+        };
+        assert_eq!(
+            deck.records("braiins-deck"),
+            [
+                ("hostname", "braiins-deck"),
+                ("braiins_deck", "1"),
+                ("device", "Braiins Deck"),
+            ]
+        );
+    }
+
+    /// BOS-aware browsers filter on the subtype and fall back to `bos=1`
+    /// when the version is unknown; the Deck variant must not have moved
+    /// either.
+    #[test]
+    fn bos_keeps_its_subtype_and_fallback_marker() {
+        let bos = TxtValues::Bos {
+            bos_version: None,
+            bos_api_version: Some("1.6.0".to_owned()),
+            miner: None,
+        };
+        assert_eq!(bos.service_type(), BOS_SUBTYPE);
+        assert_eq!(
+            bos.records("miner-a"),
+            [
+                ("hostname", "miner-a"),
+                ("bos", "1"),
+                ("bos_api_version", "1.6.0"),
+            ]
+        );
+    }
 }
