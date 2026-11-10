@@ -62,6 +62,7 @@ export const services = {
     InitialSetupService,
     LanguageService,
     MetadataService,
+    NetworkService,
     SceneManagementService,
     SystemService,
     UpgradeService,
