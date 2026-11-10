@@ -2738,6 +2738,52 @@ mod slide_tests {
         assert!(!overlay.content_dirty());
     }
 
+    /// The tray lives as long as the compositor, so a name read once at start
+    /// would keep sending the user to an address the device no longer answers.
+    #[test]
+    fn a_rename_while_hidden_shows_on_the_next_reveal() {
+        struct RenamedEnv;
+        impl Env for RenamedEnv {
+            fn snapshot_if_changed(
+                &self,
+                _seen: Option<SnapshotVersion>,
+            ) -> Option<VersionedSnapshot> {
+                None
+            }
+
+            fn hostname(&self) -> Option<String> {
+                Some("kitchen-deck".to_owned())
+            }
+        }
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new(Some("braiins-deck".to_owned()), now);
+        overlay.env = Box::new(RenamedEnv);
+        let _ = overlay.take_content_dirty();
+
+        overlay.on_reveal();
+
+        assert_eq!(
+            overlay.view(now, &english()).hostname.as_deref(),
+            Some("kitchen-deck.local")
+        );
+        assert!(overlay.content_dirty(), "the new name must be painted");
+    }
+
+    /// A failed read must not blank a name that was known a moment ago.
+    #[test]
+    fn an_unreadable_hostname_keeps_the_last_known_name() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new(Some("braiins-deck".to_owned()), now);
+        overlay.env = Box::new(NoNetworkEnv);
+
+        overlay.on_reveal();
+
+        assert_eq!(
+            overlay.view(now, &english()).hostname.as_deref(),
+            Some("braiins-deck.local")
+        );
+    }
+
     #[test]
     fn reveal_repaints_when_reset_discards_transient_ui() {
         let t0 = Instant::now();
