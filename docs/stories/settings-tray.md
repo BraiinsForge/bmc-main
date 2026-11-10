@@ -57,7 +57,8 @@ volume, night mode, device restart, and Wi-Fi reconfiguration — without leavin
 
 - The tray shows the device's current IP address on every device.
 - When no address is available, the tray shows a placeholder rather than a stale or invented one.
-- Where the display has the room, the tray also shows the hostname and a QR code that opens the web UI when scanned.
+- Where the display has the room, the tray also shows the `.local` name the device answers to (see
+  [Network Discovery](network-discovery.md)) and a QR code that opens the web UI when scanned.
 
 ### Reconfigure Wi-Fi from the device
 

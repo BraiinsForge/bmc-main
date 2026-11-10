@@ -28,6 +28,11 @@ user can attach to a support request. Collection is best-effort — one unavaila
 The support archive automatically censors credentials (Braiins Pool API keys, Wi-Fi passwords) before bundling
 diagnostic files, so users can safely share archives with support without exposing secrets.
 
+### [Network Discovery](network-discovery.md)
+
+The Deck announces its web UI over mDNS, so it is reachable at `<hostname>.local` and shows up with its device identity
+and versions when browsing `_http._tcp`. The hostname is editable in the web UI.
+
 ### [Scenes & Widgets](scenes-and-widgets.md)
 
 Scenes are user-configured display pages containing fullscreen or combined widget layouts. Users can enable, disable,
