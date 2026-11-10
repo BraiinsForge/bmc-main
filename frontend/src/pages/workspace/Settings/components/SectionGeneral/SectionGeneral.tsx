@@ -184,6 +184,11 @@ class View extends Component<Props> {
             intl,
         } = this.props;
         const { formatMessage } = intl;
+        // Each also names its control, as the field's title is not the control's label.
+        const timezoneTitle = formatMessage({ defaultMessage: 'Timezone' });
+        const dateFormatTitle = formatMessage({ defaultMessage: 'Date Format' });
+        const firstWeekDayTitle = formatMessage({ defaultMessage: 'First Day of the Week' });
+        const numberFormatTitle = formatMessage({ defaultMessage: 'Number Format' });
 
         return (
             <Form className={css.root}>
@@ -230,14 +235,11 @@ class View extends Component<Props> {
                     </Field> */}
 
                     {timezone != null ? (
-                        <Field
-                            variant="dark"
-                            title={formatMessage({ defaultMessage: 'Timezone' })}
-                            disabled={timezone.disabled}
-                        >
+                        <Field variant="dark" title={timezoneTitle} disabled={timezone.disabled}>
                             <ComboBox<pb.Timezone>
                                 id={$('timezone')}
                                 titleText=""
+                                aria-label={timezoneTitle}
                                 disabled={timezone.disabled}
                                 direction="bottom"
                                 items={Array.from(timezone.items)}
@@ -252,16 +254,12 @@ class View extends Component<Props> {
                         </Field>
                     ) : null}
 
-                    <Field
-                        variant="dark"
-                        title={formatMessage({ defaultMessage: 'Date Format' })}
-                        disabled={dateFormat.disabled}
-                    >
+                    <Field variant="dark" title={dateFormatTitle} disabled={dateFormat.disabled}>
                         <Dropdown<null | pb.DateFormat>
                             id={$('date-format')}
                             size="md"
                             label=""
-                            titleText=""
+                            titleText={dateFormatTitle}
                             hideLabel
                             items={pb.dateFormatOptions}
                             selectedItem={dateFormat.value}
@@ -274,15 +272,12 @@ class View extends Component<Props> {
                         />
                     </Field>
 
-                    <Field
-                        title={formatMessage({ defaultMessage: 'First Day of the Week' })}
-                        disabled={firstWeekDay.disabled}
-                    >
+                    <Field title={firstWeekDayTitle} disabled={firstWeekDay.disabled}>
                         <Dropdown<null | pb.Weekday>
                             id={$('first-week-day')}
                             size="md"
                             label=""
-                            titleText=""
+                            titleText={firstWeekDayTitle}
                             hideLabel
                             items={pb.weekdayOptionsAll}
                             selectedItem={firstWeekDay.value}
@@ -344,15 +339,11 @@ class View extends Component<Props> {
                         />
                     </Field>
 
-                    <Field
-                        variant="dark"
-                        title={formatMessage({ defaultMessage: 'Number Format' })}
-                        disabled={numberFormat.disabled}
-                    >
+                    <Field variant="dark" title={numberFormatTitle} disabled={numberFormat.disabled}>
                         <Dropdown<null | pb.NumberFormat>
                             size="md"
                             label=""
-                            titleText=""
+                            titleText={numberFormatTitle}
                             hideLabel
                             id={$('number-format')}
                             items={pb.numberFormatOptions}

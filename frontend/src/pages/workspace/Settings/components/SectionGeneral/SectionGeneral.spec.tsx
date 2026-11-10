@@ -34,12 +34,15 @@ const languages = [
     pb.create(pb.LanguageInfoSchema, { tag: 'zh', nativeName: '简体中文' }),
 ];
 
-function renderSection(language: SectionGeneralProps['language']): void {
+function renderSection(
+    language: SectionGeneralProps['language'],
+    timezone: SectionGeneralProps['timezone'] = null,
+): void {
     render(
         <IntlProvider locale="en">
             <SectionGeneral
                 timeFormat={field(pb.TimeFormat.TIME_FORMAT_24_HOUR)}
-                timezone={null}
+                timezone={timezone}
                 language={language}
                 dateFormat={field(pb.DateFormat.DD_MM_YYYY_DASH)}
                 firstWeekDay={field(pb.Weekday.MONDAY)}
@@ -56,6 +59,18 @@ function renderSection(language: SectionGeneralProps['language']): void {
 }
 
 afterEach(cleanup);
+
+describe('SectionGeneral control names', () => {
+    test.each(['Timezone', 'Date Format', 'First Day of the Week', 'Number Format'])(
+        'the %s control is named by its field',
+        name => {
+            const prague = pb.create(pb.TimezoneSchema, { id: 'Europe/Prague', label: 'Prague', offset: '+02:00' });
+            renderSection(null, { ...field(prague), items: [prague] });
+
+            expect(screen.getByRole('combobox', { name })).toBeTruthy();
+        },
+    );
+});
 
 describe('SectionGeneral language picker', () => {
     test('a device that does not offer its languages shows no picker', () => {
