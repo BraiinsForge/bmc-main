@@ -74,16 +74,25 @@ const FRAME: Duration =
     Duration::from_millis(bmc_render::animation::DEFAULT_ANIMATION_FRAME_DELAY_MS as u64);
 
 /// Injected connectivity source for testing.
+/// Appended to the hostname: the device answers to that name over mDNS.
+const MDNS_DOMAIN: &str = ".local";
+
 trait Env {
     /// Latest snapshot and its version when the content changed since `seen`
     /// (`None` = nothing seen yet); `None` — with no allocation — otherwise.
     fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot>;
+    /// The system hostname as it is now; `None` when it cannot be read.
+    fn hostname(&self) -> Option<String>;
 }
 
 struct OsEnv;
 impl Env for OsEnv {
     fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
         bmc_system_overlay::snapshot_if_changed(seen)
+    }
+
+    fn hostname(&self) -> Option<String> {
+        bmc_net_observe::hostname()
     }
 }
 
@@ -94,6 +103,10 @@ struct NoNetworkEnv;
 #[cfg(test)]
 impl Env for NoNetworkEnv {
     fn snapshot_if_changed(&self, _seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+        None
+    }
+
+    fn hostname(&self) -> Option<String> {
         None
     }
 }
@@ -515,7 +528,10 @@ impl SettingsTrayOverlay {
             until: self.night_until.clone(),
         });
         view.status = self.status(now, intl);
-        view.hostname.clone_from(&self.hostname);
+        view.hostname = self
+            .hostname
+            .as_deref()
+            .map(|hostname| format!("{hostname}{MDNS_DOMAIN}"));
         view.ip.clone_from(&self.ip);
         view.wifi_signal = self.wifi_signal;
         view.ssid.clone_from(&self.ssid);
@@ -526,6 +542,18 @@ impl SettingsTrayOverlay {
 }
 
 impl SettingsTrayOverlay {
+    /// The web UI can rename the device while the tray is hidden, so the
+    /// name is read again on every reveal. An unreadable name keeps the last one.
+    fn refresh_hostname(&mut self) {
+        let Some(hostname) = self.env.hostname() else {
+            return;
+        };
+        if self.hostname.as_ref() != Some(&hostname) {
+            self.hostname = Some(hostname);
+            self.content_dirty = true;
+        }
+    }
+
     /// Fold a changed connectivity snapshot into the view fields and set
     /// `content_dirty`. The version gate makes the unchanged case free of
     /// allocations, so this is safe to run on every ~30 Hz animation tick; no
@@ -822,6 +850,7 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn on_reveal(&mut self) {
         let now = Instant::now();
+        self.refresh_hostname();
         if self.button != ButtonState::default()
             || self.restart != RestartState::default()
             || self.declined_reason.is_some()
@@ -1189,7 +1218,7 @@ mod view_tests {
         let view = overlay.view(now, &english());
 
         assert_eq!(view.brightness, 70);
-        assert_eq!(view.hostname.as_deref(), Some("braiins-deck"));
+        assert_eq!(view.hostname.as_deref(), Some("braiins-deck.local"));
         assert_eq!(view.ip.as_deref(), Some("192.168.1.42"));
         assert_eq!(view.wifi_signal, Some(-52));
         assert_eq!(view.ssid.as_deref(), Some("Braiins-WiFi"));
@@ -1343,6 +1372,10 @@ mod view_tests {
                 snapshot,
             })
         }
+
+        fn hostname(&self) -> Option<String> {
+            None
+        }
     }
 
     #[test]
@@ -1374,6 +1407,10 @@ mod view_tests {
     fn tick_passes_folded_version_back_to_the_source() {
         struct VersionAssertEnv;
         impl Env for VersionAssertEnv {
+            fn hostname(&self) -> Option<String> {
+                None
+            }
+
             fn snapshot_if_changed(
                 &self,
                 seen: Option<SnapshotVersion>,
@@ -2705,6 +2742,7 @@ mod slide_tests {
     fn reveal_repaints_when_reset_discards_transient_ui() {
         let t0 = Instant::now();
         let mut overlay = SettingsTrayOverlay::new(None, t0);
+        overlay.env = Box::new(NoNetworkEnv);
         let _ = overlay.take_content_dirty();
 
         overlay.on_reveal();
