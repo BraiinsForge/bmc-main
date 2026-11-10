@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hostname,
         conflict_suffix,
         port,
-        txt_values: TxtValues {
+        txt_values: TxtValues::Bos {
             bos_version: Some("2026-07-07-0-c5a2978a-26.07-plus".to_owned()),
             bos_api_version: Some("1.6.0".to_owned()),
             miner: Some("Braiins Mini Miner BMM101".to_owned()),

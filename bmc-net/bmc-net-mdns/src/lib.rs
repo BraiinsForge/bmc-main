@@ -20,8 +20,10 @@
 
 //! mDNS/DNS-SD advertisement of the device web UI and API (BOS-4004).
 //!
-//! The device is advertised as a single `_http._tcp` service instance tagged
-//! with the `_bos` subtype so that BOS-aware browsers can filter for it:
+//! The device is advertised as a single `_http._tcp` service instance. A BOS
+//! device is tagged with the `_bos` subtype so that BOS-aware browsers can
+//! filter for it; a Deck is tagged with `_braiins-deck` the same way (see
+//! [`TxtValues`]):
 //!
 //! ```text
 //! _http._tcp.local.            PTR  <name>._http._tcp.local.
@@ -90,6 +92,14 @@ use tokio::time::timeout;
 
 /// Registering under the subtype also registers the base `_http._tcp` type.
 pub const BOS_SUBTYPE: &str = "_bos._sub._http._tcp.local.";
+
+/// Brand-qualified: plenty of unrelated devices on a home network call
+/// themselves a "deck".
+pub const DECK_SUBTYPE: &str = "_braiins-deck._sub._http._tcp.local.";
+
+/// TXT key that marks a Braiins Deck for a browser that does not filter on
+/// [`DECK_SUBTYPE`].
+pub const DECK_MARKER: &str = "braiins_deck";
 
 /// Bounds on waiting for the daemon to confirm an operation.
 ///
@@ -178,20 +188,79 @@ pub struct Advertisement {
     pub txt_values: TxtValues,
 }
 
-/// TXT payload values, all sourced from the live system.
-///
-/// `bos_version` identifies the device as BOS;
-/// when it is absent the advertiser emits the minimum accepted fallback
-/// `bos=1` instead, so the payload always distinguishes BOS from other
-/// `_http._tcp` devices.
-#[derive(Debug, Clone, Default)]
-pub struct TxtValues {
-    /// Full BOS version string, e.g. `2026-07-07-0-c5a2978a-26.07-plus`.
-    pub bos_version: Option<String>,
-    /// Exact BOS API version implemented by the device, e.g. `1.6.0`.
-    pub bos_api_version: Option<String>,
-    /// Human-readable device model, e.g. `Braiins Mini Miner BMM101`.
-    pub miner: Option<String>,
+/// What the device is, which decides both the service type it registers under
+/// and its TXT payload. All values are sourced from the live system.
+#[derive(Debug, Clone)]
+pub enum TxtValues {
+    /// A BOS device, registered under the `_bos` subtype.
+    ///
+    /// `bos_version` identifies the device as BOS; when it is absent the
+    /// advertiser emits the minimum accepted fallback `bos=1` instead, so the
+    /// payload always distinguishes BOS from other `_http._tcp` devices.
+    Bos {
+        /// Full BOS version string, e.g. `2026-07-07-0-c5a2978a-26.07-plus`.
+        bos_version: Option<String>,
+        /// Exact BOS API version implemented by the device, e.g. `1.6.0`.
+        bos_api_version: Option<String>,
+        /// Human-readable device model, e.g. `Braiins Mini Miner BMM101`.
+        miner: Option<String>,
+    },
+    /// A Deck, registered under the `_braiins-deck` subtype. It carries none
+    /// of the BOS markers: browsers that look for miners key on them.
+    Deck {
+        /// Human-readable device model, e.g. `Braiins Deck`.
+        device: String,
+        /// Firmware version string, e.g. `2026-10-21-0-9ed62a93-26.09`.
+        fw_version: Option<String>,
+        /// BMC application stack version, e.g. `2026.11.05-4ec47a20`.
+        bmc_version: Option<String>,
+    },
+}
+
+impl TxtValues {
+    fn service_type(&self) -> &'static str {
+        match self {
+            Self::Bos { .. } => BOS_SUBTYPE,
+            Self::Deck { .. } => DECK_SUBTYPE,
+        }
+    }
+
+    fn records<'a>(&'a self, hostname: &'a str) -> Vec<(&'static str, &'a str)> {
+        let mut records = vec![("hostname", hostname)];
+        match self {
+            Self::Bos {
+                bos_version,
+                bos_api_version,
+                miner,
+            } => {
+                match bos_version {
+                    Some(version) => records.push(("bos_version", version)),
+                    None => records.push(("bos", "1")),
+                }
+                if let Some(api_version) = bos_api_version {
+                    records.push(("bos_api_version", api_version));
+                }
+                if let Some(miner) = miner {
+                    records.push(("miner", miner));
+                }
+            }
+            Self::Deck {
+                device,
+                fw_version,
+                bmc_version,
+            } => {
+                records.push((DECK_MARKER, "1"));
+                records.push(("device", device));
+                if let Some(version) = fw_version {
+                    records.push(("fw_version", version));
+                }
+                if let Some(version) = bmc_version {
+                    records.push(("bmc_version", version));
+                }
+            }
+        }
+        records
+    }
 }
 
 /// Handle owning one registered service instance.
@@ -445,20 +514,10 @@ fn register(
     advertisement: &Advertisement,
     effective_hostname: &str,
 ) -> Result<String, Error> {
-    let mut txt_values: Vec<(&str, &str)> = vec![("hostname", advertisement.hostname.as_str())];
-    match &advertisement.txt_values.bos_version {
-        Some(version) => txt_values.push(("bos_version", version)),
-        None => txt_values.push(("bos", "1")),
-    }
-    if let Some(api_version) = &advertisement.txt_values.bos_api_version {
-        txt_values.push(("bos_api_version", api_version));
-    }
-    if let Some(miner) = &advertisement.txt_values.miner {
-        txt_values.push(("miner", miner));
-    }
+    let txt_values = advertisement.txt_values.records(&advertisement.hostname);
 
     let info = ServiceInfo::new(
-        BOS_SUBTYPE,
+        advertisement.txt_values.service_type(),
         effective_hostname,
         &format!("{effective_hostname}.local."),
         (),

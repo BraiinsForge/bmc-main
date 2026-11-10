@@ -303,7 +303,11 @@ mod tests {
             network,
             ServiceIdentity {
                 port: 80,
-                txt_values: TxtValues::default(),
+                txt_values: TxtValues::Deck {
+                    device: "Braiins Deck".to_owned(),
+                    fw_version: None,
+                    bmc_version: None,
+                },
             },
             Duration::ZERO,
         )
