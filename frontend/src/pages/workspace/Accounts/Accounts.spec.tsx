@@ -26,6 +26,7 @@ import { MemoryRouter } from 'react-router';
 
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
+import { deferred } from '@/lib/async';
 import type { ServiceMocks } from '@/lib/proto';
 import PageAccounts from './Accounts';
 
@@ -138,12 +139,12 @@ describe('Accounts page', () => {
     it('normalizes the allow-hosts textarea and freezes it while the save is in flight', async () => {
         oneGenericType();
         let sent: string[] | undefined;
+        const saveHeld = deferred<void>();
         registerMocks(pb.services.AccountManagementService, {
             getAllAccounts: () => ({ accounts: [] }),
-            upsertAccount: ({ req, conf }) => {
-                conf({ delay: 80 });
+            upsertAccount: ({ req }) => {
                 sent = req.allowHosts;
-                return { value: 'a-1' };
+                return saveHeld.then(() => ({ value: 'a-1' }));
             },
         });
 
@@ -154,6 +155,8 @@ describe('Accounts page', () => {
         await waitFor(() => expect(textarea.disabled).toBe(true));
         expect(textarea.value).toBe('a.example.com\nb.example.com');
         expect(sent).toEqual(['a.example.com', 'b.example.com']);
+        saveHeld.resolve();
+        await waitFor(() => expect(screen.queryByText('Allowed destinations (optional)')).toBeNull());
     });
 
     it('unfreezes the normalized textarea when the save fails', async () => {
