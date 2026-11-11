@@ -20,6 +20,7 @@
 
 import { useIntl } from 'react-intl';
 import { Toaster as SonnerToaster, toast as sonnerToast } from 'sonner';
+import { v4 as UUIDv4 } from 'uuid';
 import type { ToasterProps, ExternalToast } from 'sonner';
 
 import { className, Toast } from './Component';
@@ -62,7 +63,30 @@ function success(message: ToastProps['message'], extra?: Extra): ToastID {
     return show('success', message, extra);
 }
 function error(message: ToastProps['message'], extra?: Extra): ToastID {
+    if (heldErrors) {
+        const id = extra?.id ?? UUIDv4();
+        heldErrors.push({ message, extra: { ...extra, id } });
+        return id;
+    }
     return show('error', message, extra);
+}
+
+// A session check that never answers must not keep errors from the user.
+const HELD_ERRORS_MAX_MS = 10_000;
+let heldErrors: null | Array<{ message: string; extra: Extra }> = null;
+let heldErrorsLimit: undefined | ReturnType<typeof setTimeout>;
+/** Keep error toasts back until `releaseErrors` says whether they still apply, or `HELD_ERRORS_MAX_MS` pass. */
+function holdErrors(): void {
+    if (heldErrors) return;
+    heldErrors = [];
+    heldErrorsLimit = setTimeout(() => releaseErrors(true), HELD_ERRORS_MAX_MS);
+}
+/** Show the error toasts held back, or drop them. */
+function releaseErrors(apply: boolean): void {
+    clearTimeout(heldErrorsLimit);
+    const held = heldErrors ?? [];
+    heldErrors = null;
+    if (apply) for (const { message, extra } of held) show('error', message, extra);
 }
 
 /** Accepts the id of the toast to dismiss, `null` to dismiss all toasts */
@@ -76,4 +100,6 @@ export const toast = {
     error,
 
     dismiss,
+    holdErrors,
+    releaseErrors,
 };

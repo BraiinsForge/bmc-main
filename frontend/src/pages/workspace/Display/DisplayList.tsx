@@ -20,7 +20,7 @@
 // the grant above.
 
 import { Component, createRef, Fragment, type ReactElement } from 'react';
-import { debounce, escape, isPlainObject } from 'es-toolkit';
+import { debounce, escape, isPlainObject, once } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
 import { type NavigateFunction, useNavigate } from 'react-router';
@@ -392,6 +392,13 @@ class View extends Component<Props, State> {
         const { formatMessage } = this.props.intl;
         this.setState({ packageDialog: 'installing' });
         const releaseUnloadGuard = unloadGuard.enable();
+
+        // A dialog opened after this upload's is not this one's to close.
+        const settle = once((): void => {
+            releaseUnloadGuard();
+            this.setState({ packageDialog: 'closed' });
+        });
+
         try {
             const response = await fetch(URLS.api.installWidgetPackage, {
                 method: 'POST',
@@ -401,9 +408,15 @@ class View extends Component<Props, State> {
                 signal: AbortSignal.timeout(INSTALL_WIDGET_PACKAGE_TIMEOUT_MS),
             });
             const body: unknown = await response.json().catch(() => null);
+
             if (response.status === 401) {
-                store.goToLogin();
-                return;
+                // The upload is over, so nothing waits on the session check with the dialog up.
+                settle();
+
+                // A lost session leaves the page;
+                // a renewed one shows the failure below.
+                await store.recheckSession();
+                if (!store.state.sessionInfo.isAuthenticated) return;
             }
             if (!response.ok) {
                 // Toast messages are rendered as HTML; the reason can quote package-controlled text.
@@ -413,6 +426,7 @@ class View extends Component<Props, State> {
                 });
                 return;
             }
+
             const installed = installedWidgetPackage(body);
             toast.success(
                 installed
@@ -433,8 +447,7 @@ class View extends Component<Props, State> {
                 { duration: INSTALL_WIDGET_PACKAGE_ERROR_SECONDS },
             );
         } finally {
-            releaseUnloadGuard();
-            this.setState({ packageDialog: 'closed' });
+            settle();
         }
     };
     #packageInstalledMessage(installed: InstalledWidgetPackage): string {

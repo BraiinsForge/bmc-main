@@ -918,8 +918,10 @@ class View extends Component<Props, State> {
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const msg: string = formatMessage({ defaultMessage: 'Failed to load display settings!' });
-            toast.error(msg);
+            // Parsed only to re-check a refused session;
+            // the error's own text is untranslated.
+            pb.parseError($);
+            toast.error(formatMessage({ defaultMessage: 'Failed to load display settings!' }));
         }
     };
 

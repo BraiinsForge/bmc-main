@@ -464,6 +464,9 @@ export class View extends Component<Props, State> {
             toast.success(formatMessage({ defaultMessage: 'Alarm has been successfully toggled.' }));
         } catch ($) {
             if (pb.abort.is($)) return;
+            // Parsed only to re-check a refused session;
+            // the error's own text is untranslated.
+            pb.parseError($);
             toast.error(formatMessage({ defaultMessage: 'Failed to toggle alarm!' }));
         } finally {
             // Always reload data to make sure

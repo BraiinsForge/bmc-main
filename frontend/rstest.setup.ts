@@ -35,6 +35,8 @@ import { toast } from '@/lib/toast';
 afterEach(() => {
     cleanup();
     toast.dismiss(null);
+    // A hold a test leaves on would swallow every error toast the file raises after it.
+    toast.releaseErrors(false);
 });
 
 // jsdom has no ResizeObserver (no layout engine). `useSize` only needs the

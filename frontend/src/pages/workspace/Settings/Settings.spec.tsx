@@ -30,7 +30,7 @@ import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import { store } from '@/store';
 import { deckCapabilities, deckSystemWire } from '@/pages/workspace/Display/capabilities.fixture';
-import { Toaster } from '@/lib/toast';
+import { Toaster, toast } from '@/lib/toast';
 import AppContext, { getAppContextDefault } from '@/context';
 import type { ServiceMocks } from '@/lib/proto';
 import { intlFor } from '@/lib/intl';
@@ -174,6 +174,7 @@ afterEach(() => {
     mocks.clear();
     confirmAnswer = true;
     confirmSpy.mockClear();
+    rstest.restoreAllMocks();
     rstest.useRealTimers();
     store.setHardwareCapabilities(null);
     window.history.replaceState(null, '', window.location.pathname);
@@ -1187,4 +1188,43 @@ describe('Settings display', () => {
         expect(timeout, 'the screen auto-off choice is rendered').not.toBeNull();
         expect(timeout?.textContent).not.toContain(english);
     });
+
+    test('a read that loses the device reports it in the catalog wording', async () => {
+        rstest.useFakeTimers();
+        store.setHardwareCapabilities(deckCapabilities());
+        registerMocks(pb.services.ConfigurationService, {
+            getDisplaySettings: () => {
+                throw new ConnectError('Failed to fetch', Code.Unavailable);
+            },
+        });
+        renderPage('#display');
+        await advance(300);
+
+        expect(screen.getByText('Failed to load display settings!')).toBeTruthy();
+        expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+    });
+
+    test.each([
+        ['lost', 'drops', 0, false],
+        ['still valid', 'shows', 1, true],
+    ])(
+        'a read the device refuses, its session %s, %s the failure toast',
+        async (_session, _outcome, toasts, stillValid) => {
+            rstest.useFakeTimers();
+            store.setHardwareCapabilities(deckCapabilities());
+            registerMocks(pb.services.ConfigurationService, {
+                getDisplaySettings: () => {
+                    throw new ConnectError('no session', Code.Unauthenticated);
+                },
+            });
+            const recheckSession = rstest
+                .spyOn(store, 'recheckSession')
+                .mockImplementation(async () => toast.releaseErrors(stillValid));
+            renderPage('#display');
+            await advance(300);
+
+            expect(recheckSession).toHaveBeenCalledTimes(1);
+            expect(screen.queryAllByText('Failed to load display settings!')).toHaveLength(toasts);
+        },
+    );
 });

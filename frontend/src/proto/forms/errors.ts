@@ -21,6 +21,7 @@
 import { ConnectError, Code } from '@connectrpc/connect';
 
 import { hasFormErrors } from '@/lib/form';
+import { toast } from '@/lib/toast';
 
 import { RPC_CODES_MAP } from './types';
 import type { BareException, RpcStatus, FieldBasedErrors, FormErrors, FieldErrors } from './types';
@@ -28,7 +29,30 @@ import type { BareException, RpcStatus, FieldBasedErrors, FormErrors, FieldError
 import { parseFieldViolations } from './parseFieldViolation';
 import { BadRequestSchema, RequestInfoSchema } from '../gen/google/rpc/error_details_pb';
 
+/**
+ * `error` as the RPC status it carries, re-checking
+ * the session when the device refused it for one.
+ */
 export function parseError(error: BareException, defaultMessagePreffix?: string): RpcStatus {
+    const res = describeError(error, defaultMessagePreffix);
+    const isAuthError: boolean = [Code.PermissionDenied, Code.Unauthenticated].includes(res.rpc_reason_code);
+    if (isAuthError) {
+        // Held from here, before the caller raises its toast,
+        // and dropped if the session turns out to be gone.
+        toast.holdErrors();
+        void import('@/store')
+            .then(({ store }) => store.recheckSession())
+            .catch(($: unknown) => {
+                // With no check to answer for them, the held toasts show.
+                toast.releaseErrors(true);
+                throw $;
+            });
+    }
+    return res;
+}
+
+/** `error` as the RPC status it carries, leaving the session alone. */
+export function describeError(error: BareException, defaultMessagePreffix?: string): RpcStatus {
     const connectError = ConnectError.from(error);
 
     const res: RpcStatus = {
@@ -41,9 +65,6 @@ export function parseError(error: BareException, defaultMessagePreffix?: string)
         requestInfo: connectError.findDetails(RequestInfoSchema),
     };
     if (defaultMessagePreffix) res.message = `${defaultMessagePreffix}: ${res.message}`;
-
-    const isAuthError: boolean = [Code.PermissionDenied, Code.Unauthenticated].includes(connectError.code);
-    if (isAuthError) void import('@/store').then(({ store }) => store.goToLogin());
 
     return res;
 }

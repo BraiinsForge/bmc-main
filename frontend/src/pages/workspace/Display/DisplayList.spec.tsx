@@ -32,6 +32,7 @@ import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
 import { deferred } from '@/lib/async';
+import { unloadGuard } from '@/lib/dom';
 import { Toaster, toast } from '@/lib/toast';
 import { badRequest, paramDef } from './fn/test-helpers';
 import { URLS } from '@/constants';
@@ -1571,6 +1572,7 @@ describe('widget package upload', () => {
 
     afterEach(() => {
         globalThis.fetch = REAL_FETCH;
+        rstest.restoreAllMocks();
     });
 
     test('the Install Widget button states the third-party risk before anything is chosen', async () => {
@@ -1791,8 +1793,20 @@ describe('widget package upload', () => {
         expect(getAvailableWidgets.mock.calls.length).toBe(loadsBefore);
     });
 
-    test('an expired session goes to login instead of a toast', async () => {
-        const goToLogin = rstest.spyOn(store, 'goToLogin').mockImplementation(() => {});
+    /** The device answering the session check the upload's 401 provokes. */
+    function answerSessionCheck(isAuthenticated: boolean): ReturnType<typeof rstest.fn> {
+        const check = rstest.fn(() => ({ value: isAuthenticated }));
+        registerMocks(pb.services.AuthenticationService, { isAuthenticated: check });
+        registerMocks(pb.services.SystemService, {
+            getTimezoneList: () => ({ timezones: [] }),
+            hasPassword: () => ({ value: true }),
+        });
+        rstest.spyOn(store, 'loadFormats').mockResolvedValue();
+        return check;
+    }
+
+    test('an expired session is checked again and, found lost, raises no toast', async () => {
+        const check = answerSessionCheck(false);
         stubUpload(401, { error: 'no session' });
         renderPage();
         await flush();
@@ -1800,8 +1814,77 @@ describe('widget package upload', () => {
         await choose(new File(['nar'], 'hello.nar'));
         await flush();
 
-        expect(goToLogin).toHaveBeenCalledTimes(1);
+        expect(check).toHaveBeenCalledTimes(1);
         expect(document.body.textContent).not.toContain('no session');
+    });
+
+    test('a 401 closes the dialog before the session check answers', async () => {
+        registerMocks(pb.services.AuthenticationService, {
+            isAuthenticated: ({ conf }) => {
+                conf({ delay: 30 });
+                return { value: false };
+            },
+        });
+        stubUpload(401, { error: 'no session' });
+        renderPage();
+        await flush();
+
+        await choose(new File(['nar'], 'hello.nar'));
+        await flush();
+        expect(document.getElementById(MODAL_ID), 'closed while the check is pending').toBeNull();
+        expect(unloadGuard.isEnabled, 'nothing to guard while the check is pending').toBe(false);
+
+        // The check answers, so no recheck outlives the test.
+        await flush(30);
+    });
+
+    test('a second upload begun while the check runs keeps its dialog', async () => {
+        registerMocks(pb.services.AuthenticationService, {
+            isAuthenticated: ({ conf }) => {
+                conf({ delay: 300 });
+                return { value: false };
+            },
+        });
+        // The first upload is refused at once; the second hangs until the test lets it finish.
+        const secondUpload = deferred<Response>();
+        let uploads = 0;
+        globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+            if (input !== URLS.api.installWidgetPackage) return REAL_FETCH(input, init);
+            uploads += 1;
+            return uploads === 1
+                ? Promise.resolve(new Response(JSON.stringify({ error: 'no session' }), { status: 401 }))
+                : secondUpload;
+        }) as typeof globalThis.fetch;
+        renderPage();
+        await flush();
+
+        await choose(new File(['nar'], 'hello.nar'));
+        await flush();
+        expect(document.getElementById(MODAL_ID), 'the first upload closed its dialog').toBeNull();
+        await choose(new File(['nar'], 'again.nar'));
+        const sessionBefore = store.state.sessionInfo;
+        await flush(300);
+
+        expect(uploads).toBe(2);
+        expect(store.state.sessionInfo, 'the check has answered').not.toBe(sessionBefore);
+        expect(document.getElementById(MODAL_ID), 'the second upload is still installing').not.toBeNull();
+        expect(elementById(MODAL_ID).textContent).toContain('Installing…');
+
+        await secondUpload.resolve(new Response(JSON.stringify({}), { status: 200 }));
+        await flush();
+        expect(document.getElementById(MODAL_ID)).toBeNull();
+    });
+
+    test('a session another tab renewed shows the failed install', async () => {
+        answerSessionCheck(true);
+        stubUpload(401, {});
+        renderPage();
+        await flush();
+
+        await choose(new File(['nar'], 'hello.nar'));
+        await flush();
+
+        expect(document.body.textContent).toContain('Failed to install the widget package!');
     });
 
     test('a backend reason quoting markup is shown as text', async () => {

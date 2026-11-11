@@ -23,7 +23,10 @@ import { afterEach, describe, expect, rstest, test } from '@rstest/core';
 import { ConnectError, Code } from '@connectrpc/connect';
 import { cleanup, renderHook } from '@testing-library/react/pure';
 
+import { toast as sonnerToast } from 'sonner';
+
 import { store, useStore } from '@/store';
+import { toast } from '@/lib/toast';
 import * as pb from '@/proto';
 import { languageInterceptor, mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
@@ -90,6 +93,187 @@ describe('store.goToLogin', () => {
         store.goToLogin();
 
         await rstest.waitFor(() => expect(router.navigate).toHaveBeenCalledWith('/login'));
+    });
+});
+
+describe('store.recheckSession', () => {
+    let sessionChecks = 0;
+
+    type AuthMocks = Partial<ServiceMocks<typeof pb.services.AuthenticationService>>;
+    type SystemMocks = Partial<ServiceMocks<typeof pb.services.SystemService>>;
+    type SessionAnswer = ServiceMocks<typeof pb.services.AuthenticationService>['isAuthenticated'];
+
+    /** The device answering the session check with `answer`, each check counted. */
+    function answerSessionCheck(answer: SessionAnswer): void {
+        const auth: AuthMocks = {
+            isAuthenticated: input => {
+                sessionChecks += 1;
+                return answer(input);
+            },
+        };
+        const system: SystemMocks = { hasPassword: () => ({ value: true }) };
+        mocks.service(
+            pb.services.AuthenticationService,
+            auth as ServiceMocks<typeof pb.services.AuthenticationService>,
+        );
+        mocks.service(pb.services.SystemService, system as ServiceMocks<typeof pb.services.SystemService>);
+    }
+
+    /** A page the device let in, whose session then ended. */
+    async function sessionThatEnded(): Promise<void> {
+        store.setHardwareCapabilities(deckCapabilities());
+        rstest.spyOn(store, 'loadFormats').mockResolvedValue();
+        answerSessionCheck(() => ({ value: true }));
+        await store.fetchSessionInfo();
+        answerSessionCheck(() => ({ value: false }));
+        sessionChecks = 0;
+    }
+
+    afterEach(() => {
+        mocks.clear();
+        rstest.restoreAllMocks();
+        rstest.useRealTimers();
+        sessionChecks = 0;
+    });
+
+    test('a recheck the device never answers leaves the session as it was, its toasts shown', async () => {
+        await sessionThatEnded();
+        rstest.useFakeTimers();
+        answerSessionCheck(({ conf }) => {
+            conf({ delay: 60_000 });
+            return { value: false };
+        });
+        const shown = rstest.spyOn(sonnerToast, 'custom');
+
+        pb.parseError(new ConnectError('session gone', Code.Unauthenticated));
+        toast.error('Failed to load the alarms');
+        await rstest.advanceTimersByTimeAsync(10_000);
+
+        expect(store.state.sessionInfo.isAuthenticated).toBe(true);
+        expect(shown).toHaveBeenCalledOnce();
+    });
+
+    test('a check overtaking the recheck that the device never answers still ends the hold', async () => {
+        await sessionThatEnded();
+        rstest.useFakeTimers();
+        answerSessionCheck(({ conf }) => {
+            conf({ delay: 60_000 });
+            return { value: false };
+        });
+        const shown = rstest.spyOn(sonnerToast, 'custom');
+
+        pb.parseError(new ConnectError('session gone', Code.Unauthenticated));
+        toast.error('Failed to load the alarms');
+        await rstest.advanceTimersByTimeAsync(0);
+        expect(sessionChecks, 'the recheck is in flight').toBe(1);
+        void store.fetchSessionInfo();
+        await rstest.advanceTimersByTimeAsync(10_000);
+
+        expect(sessionChecks).toBe(2);
+        expect(store.state.sessionInfo.isAuthenticated).toBe(true);
+        expect(shown).toHaveBeenCalledOnce();
+    });
+
+    test('a request refused for its session marks it lost and leaves the redirect to the page', async () => {
+        await sessionThatEnded();
+        const { default: router } = await import('@/routes');
+        rstest.mocked(router.navigate).mockClear();
+
+        pb.parseError(new ConnectError('session gone', Code.Unauthenticated));
+
+        await rstest.waitFor(() => expect(store.state.sessionInfo.isAuthenticated).toBe(false));
+        expect(router.navigate).not.toHaveBeenCalled();
+    });
+
+    test('requests refused together check the session once', async () => {
+        await sessionThatEnded();
+
+        for (let i = 0; i < 3; i += 1) pb.parseError(new ConnectError('session gone', Code.Unauthenticated));
+
+        await rstest.waitFor(() => expect(store.state.sessionInfo.isAuthenticated).toBe(false));
+        expect(sessionChecks).toBe(1);
+    });
+
+    test('an error toast raised while a lost session is checked is never shown', async () => {
+        await sessionThatEnded();
+        const shown = rstest.spyOn(sonnerToast, 'custom');
+
+        pb.parseError(new ConnectError('session gone', Code.Unauthenticated));
+        toast.error('Failed to load the alarms');
+        await rstest.waitFor(() => expect(store.state.sessionInfo.isAuthenticated).toBe(false));
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        expect(shown).not.toHaveBeenCalled();
+    });
+
+    test('an error toast raised while a valid session is checked is shown once it answers', async () => {
+        await sessionThatEnded();
+        answerSessionCheck(() => ({ value: true }));
+        const shown = rstest.spyOn(sonnerToast, 'custom');
+
+        pb.parseError(new ConnectError('not allowed', Code.PermissionDenied));
+        toast.error('Failed to load the alarms');
+        expect(shown, 'held while the session is in doubt').not.toHaveBeenCalled();
+
+        await rstest.waitFor(() => expect(shown).toHaveBeenCalledOnce());
+    });
+
+    test.each([
+        ['a recheck overtaken by a check that finds the session has the toasts shown', true, 1],
+        ['a recheck overtaken by a check that finds none has the toasts dropped', false, 0],
+    ])('%s', async (_case, found, shownTimes) => {
+        await sessionThatEnded();
+        let recheckAsked = () => {};
+        const recheckAsking = new Promise<void>(resolve => {
+            recheckAsked = resolve;
+        });
+        answerSessionCheck(({ conf }) => {
+            conf({ delay: 20 });
+            recheckAsked();
+            return { value: !found };
+        });
+        const shown = rstest.spyOn(sonnerToast, 'custom');
+
+        pb.parseError(new ConnectError('not allowed', Code.PermissionDenied));
+        toast.error('Failed to load the alarms');
+        // The recheck, answering the opposite,
+        // still pending when another check asks anew.
+        await recheckAsking;
+        answerSessionCheck(() => ({ value: found }));
+        await store.fetchSessionInfo();
+
+        expect(shown).toHaveBeenCalledTimes(shownTimes);
+    });
+
+    test("a boser-managed device leaves for boser's login without a check", async () => {
+        await sessionThatEnded();
+        store.setHardwareCapabilities(deckCapabilities({ boserManaged: true }));
+        const assign = rstest.fn();
+        stubLocation({ assign });
+        const shown = rstest.spyOn(sonnerToast, 'custom');
+
+        pb.parseError(new ConnectError('session gone', Code.Unauthenticated));
+        toast.error('Failed to load the alarms');
+
+        await rstest.waitFor(() => expect(assign).toHaveBeenCalledWith('/bos/login'));
+        expect(sessionChecks).toBe(0);
+        expect(shown).not.toHaveBeenCalled();
+    });
+
+    test('a session check refused itself does not ask again', async () => {
+        await sessionThatEnded();
+        // Refused once only, so a check that asks again
+        // shows as a second check rather than running away.
+        answerSessionCheck(() => {
+            if (sessionChecks > 1) return { value: false };
+            throw new ConnectError('session gone', Code.Unauthenticated);
+        });
+        rstest.spyOn(console, 'log').mockImplementation(() => {});
+
+        await store.recheckSession();
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        expect(sessionChecks).toBe(1);
     });
 });
 

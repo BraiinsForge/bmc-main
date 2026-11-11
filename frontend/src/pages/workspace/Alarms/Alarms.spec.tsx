@@ -30,7 +30,7 @@ import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import { store } from '@/store';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
-import { Toaster } from '@/lib/toast';
+import { Toaster, toast } from '@/lib/toast';
 import { intlFor } from '@/lib/intl';
 import type { ServiceMocks } from '@/lib/proto';
 
@@ -157,6 +157,47 @@ describe('Alarms', () => {
 
         expect(screen.queryByText(/unreachable/)).toBeNull();
     });
+
+    test('a toggle that loses the device reports it in the catalog wording', async () => {
+        answerAlarms([alarm('wake')]);
+        answerGeneralSettings(() => settings(pb.TimeFormat.TIME_FORMAT_24_HOUR));
+        rstest
+            .spyOn(pb.rpc.alarm, 'setAlarmEnabled')
+            .mockRejectedValue(new ConnectError('Failed to fetch', Code.Unavailable));
+        render(pageTree());
+        await advance(0);
+
+        fireEvent.click(within(screen.getByRole('table')).getByRole('switch'));
+        await advance(0);
+
+        expect(screen.getByText('Failed to toggle alarm!')).toBeTruthy();
+        expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+    });
+
+    test.each([
+        ['lost', 'drops', 0, false],
+        ['still valid', 'shows', 1, true],
+    ])(
+        'a toggle the device refuses, its session %s, %s the failure toast',
+        async (_session, _outcome, toasts, stillValid) => {
+            answerAlarms([alarm('wake')]);
+            answerGeneralSettings(() => settings(pb.TimeFormat.TIME_FORMAT_24_HOUR));
+            rstest
+                .spyOn(pb.rpc.alarm, 'setAlarmEnabled')
+                .mockRejectedValue(new ConnectError('no session', Code.Unauthenticated));
+            const recheckSession = rstest
+                .spyOn(store, 'recheckSession')
+                .mockImplementation(async () => toast.releaseErrors(stillValid));
+            render(pageTree());
+            await advance(0);
+
+            fireEvent.click(within(screen.getByRole('table')).getByRole('switch'));
+            await advance(0);
+
+            expect(recheckSession).toHaveBeenCalledTimes(1);
+            expect(screen.queryAllByText('Failed to toggle alarm!')).toHaveLength(toasts);
+        },
+    );
 
     test("each alarm's switch is named by its time and still shows its state", async () => {
         answerAlarms([alarm('wake')]);

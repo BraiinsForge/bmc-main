@@ -27,6 +27,7 @@ import { boserChrome, loginOwned } from '@/lib/capabilities';
 import { readBrand, type Brand } from '@/lib/brand';
 import { intlFor, type Locale, SOURCE_LOCALE } from '@/lib/intl';
 import { readSystem, type Capabilities } from '@/lib/system';
+import { toast } from '@/lib/toast';
 
 // The device saves a setup pick as one config write, and the page then loads its catalog.
 // Either still unanswered after this is a stalled link,
@@ -223,6 +224,26 @@ class Store {
         void import('@/routes').then(({ default: router }) => router.navigate(URLS.auth.login));
     };
 
+    #sessionRecheck: null | Promise<void> = null;
+    /**
+     * Read the session again after the device refused a request for it.
+     * Requests refused together share one check,
+     * as each new check would abort the last.
+     */
+    recheckSession = (): Promise<void> => {
+        // Boser refuses on a session of its own,
+        // which no check of ours reads.
+        if (loginOwned(this.state.hardwareCapabilities)) {
+            toast.releaseErrors(false);
+            this.goToLogin();
+            return Promise.resolve();
+        }
+        this.#sessionRecheck ??= this.fetchSessionInfo().finally(() => {
+            this.#sessionRecheck = null;
+        });
+        return this.#sessionRecheck;
+    };
+
     #fetchSessionInfoAbort = pb.abort.get();
     fetchSessionInfo = async (): Promise<void> => {
         const { signal } = this.#fetchSessionInfoAbort.replace();
@@ -232,8 +253,11 @@ class Store {
             const x = await pb.rpc.auth.isAuthenticated({}, { signal });
             res.isAuthenticated = x.value;
         } catch ($) {
+            // A newer check publishes in its place.
+            if (pb.abort.is($)) return;
+
             res.isAuthenticated = false;
-            const error = pb.parseError($);
+            const error = pb.describeError($);
             console.groupCollapsed(`%cAuth check failed (${error.rpc_reason_name})`, 'color: pink');
             console.log(error);
             console.groupEnd();
@@ -246,7 +270,7 @@ class Store {
             } catch ($) {
                 if (pb.abort.is($)) return;
 
-                const error = pb.parseError($);
+                const error = pb.describeError($);
                 console.groupCollapsed(
                     `%cFailed to check if user has password (${error.rpc_reason_name})`,
                     'color: pink',
@@ -262,6 +286,9 @@ class Store {
         }
 
         this.#setState('sessionInfo', res);
+        // Any check that answers, the recheck or one that overtook it,
+        // is the one the held toasts waited for.
+        toast.releaseErrors(res.isAuthenticated === true);
     };
 
     #speakAbort = pb.abort.get();
