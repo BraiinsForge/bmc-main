@@ -1,0 +1,464 @@
+# The building blocks, each on its own at the widths a tile gives it, in every state.
+
+size = "1320x1120"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "button"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[[shot]]
+name = "button-large-label"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Face = "Large label"
+
+[[shot]]
+name = "button-sign"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Face = "Sign"
+
+[[shot]]
+name = "button-icon"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Face = "Icon"
+
+[[shot]]
+name = "button-long-label"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Face = "Long label"
+
+[[shot]]
+name = "button-selected"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Look = "Picked"
+
+[[shot]]
+name = "button-accent"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Look = "Accent"
+
+[[shot]]
+name = "button-disabled"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Enabled = false
+
+[[shot]]
+name = "button-tall"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Tall = true
+Face = "Large label"
+Look = "Accent"
+
+[[shot]]
+name = "stepper"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[[shot]]
+name = "stepper-arrows"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Arrows = true
+Track = "Value"
+Value = "Long"
+
+[[shot]]
+name = "stepper-number"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Value = "Number"
+Track = "Value"
+
+[[shot]]
+name = "stepper-empty"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Share = "Empty"
+
+[[shot]]
+name = "stepper-nearly-empty"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Share = "Nearly empty"
+
+[[shot]]
+name = "stepper-full"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Share = "Full"
+
+[[shot]]
+name = "stepper-pending"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Pending = true
+
+[[shot]]
+name = "stepper-up-only"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Down = false
+
+[[shot]]
+name = "stepper-neither"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Down = false
+Up = false
+
+[[shot]]
+name = "stepper-long"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Value = "Long"
+
+[[shot]]
+name = "switch"
+scene = "bmc_gallery::home_assistant_tile::Switch"
+frames = 4
+
+[[shot]]
+name = "switch-off"
+scene = "bmc_gallery::home_assistant_tile::Switch"
+frames = 4
+
+[shot.knobs]
+On = false
+
+[[shot]]
+name = "switch-icons"
+scene = "bmc_gallery::home_assistant_tile::Switch"
+frames = 4
+
+[shot.knobs]
+Icons = true
+
+[[shot]]
+name = "switch-disabled"
+scene = "bmc_gallery::home_assistant_tile::Switch"
+frames = 4
+
+[shot.knobs]
+Enabled = false
+
+[[shot]]
+name = "switch-tall"
+scene = "bmc_gallery::home_assistant_tile::Switch"
+frames = 4
+
+[shot.knobs]
+Tall = true
+
+[[shot]]
+name = "chips"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[[shot]]
+name = "chips-five"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[shot.knobs]
+Count = "5"
+
+[[shot]]
+name = "chips-seven-last"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[shot.knobs]
+Count = "7"
+Selected = "Last"
+
+[[shot]]
+name = "chips-none"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[shot.knobs]
+Selected = "None"
+
+[[shot]]
+name = "chips-neutral"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[shot.knobs]
+Accented = false
+
+[[shot]]
+name = "chips-dimmed"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[shot.knobs]
+"Second dimmed" = true
+
+[[shot]]
+name = "chips-icons"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[shot.knobs]
+Icons = true
+Count = "5"
+
+[[shot]]
+name = "chips-commands"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[shot.knobs]
+Icons = true
+Commands = true
+
+[[shot]]
+name = "page-button"
+scene = "bmc_gallery::home_assistant_tile::Page Button"
+frames = 4
+
+[[shot]]
+name = "page-button-last"
+scene = "bmc_gallery::home_assistant_tile::Page Button"
+frames = 4
+
+[shot.knobs]
+Page = "Last"
+Pages = "4"
+
+[[shot]]
+name = "badge"
+scene = "bmc_gallery::home_assistant_tile::Badge"
+frames = 4
+
+[[shot]]
+name = "badge-pressed"
+scene = "bmc_gallery::home_assistant_tile::Badge"
+frames = 4
+
+[shot.knobs]
+Pressed = true
+
+[[shot]]
+name = "badge-hold-half"
+scene = "bmc_gallery::home_assistant_tile::Badge"
+frames = 4
+
+[shot.knobs]
+Pressed = true
+"Hold progress" = "Half"
+
+[[shot]]
+name = "badge-hold-done"
+scene = "bmc_gallery::home_assistant_tile::Badge"
+frames = 4
+
+[shot.knobs]
+Pressed = true
+"Hold progress" = "Done"
+
+[[shot]]
+name = "keypad"
+scene = "bmc_gallery::home_assistant_tile::Keypad"
+frames = 4
+
+[[shot]]
+name = "keypad-typed"
+scene = "bmc_gallery::home_assistant_tile::Keypad"
+frames = 4
+
+[shot.knobs]
+Digits = "4"
+
+[[shot]]
+name = "keypad-long-code"
+scene = "bmc_gallery::home_assistant_tile::Keypad"
+frames = 4
+
+[shot.knobs]
+Digits = "8"
+
+[[shot]]
+name = "button-unpicked-icon"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Face = "Icon"
+Look = "Unpicked"
+
+[[shot]]
+name = "button-accent-icon"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Face = "Icon"
+Look = "Accent"
+
+[[shot]]
+name = "button-pressed"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Pressed = true
+
+[[shot]]
+name = "button-accent-pressed"
+scene = "bmc_gallery::home_assistant_tile::Button"
+frames = 4
+
+[shot.knobs]
+Look = "Accent"
+Pressed = true
+
+[[shot]]
+name = "stepper-held-up"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Held = "Up"
+
+[[shot]]
+name = "chips-held"
+scene = "bmc_gallery::home_assistant_tile::Chips"
+frames = 4
+
+[shot.knobs]
+Held = "Third"
+
+[[shot]]
+name = "page-button-pressed"
+scene = "bmc_gallery::home_assistant_tile::Page Button"
+frames = 4
+
+[shot.knobs]
+Pressed = true
+
+[[shot]]
+name = "keypad-held-ok"
+scene = "bmc_gallery::home_assistant_tile::Keypad"
+frames = 4
+
+[shot.knobs]
+Digits = "4"
+Held = "OK"
+
+[[shot]]
+name = "stepper-hue"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Track = "Hue"
+
+[[shot]]
+name = "stepper-hue-start"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Track = "Hue"
+Share = "Empty"
+
+[[shot]]
+name = "stepper-hue-end"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Track = "Hue"
+Share = "Full"
+
+[[shot]]
+name = "stepper-temperature"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Track = "Colour temperature"
+
+[[shot]]
+name = "stepper-temperature-end"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Track = "Colour temperature"
+Share = "Full"
+
+[[shot]]
+name = "stepper-hue-pending"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Track = "Hue"
+Pending = true
+
+[[shot]]
+name = "stepper-hue-disabled"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Track = "Hue"
+Down = false
+Up = false
+
+[[shot]]
+name = "stepper-temperature-arrows"
+scene = "bmc_gallery::home_assistant_tile::Stepper"
+frames = 4
+
+[shot.knobs]
+Track = "Colour temperature"
+Arrows = true

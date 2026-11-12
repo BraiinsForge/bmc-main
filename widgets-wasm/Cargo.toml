@@ -20,6 +20,7 @@ members = [
     "fleet-management",
     "formula-1",
     "halving-countdown",
+    "home-assistant-tile",
     "image",
     "iss-position",
     "lib/home-assistant",

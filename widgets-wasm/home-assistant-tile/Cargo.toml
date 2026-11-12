@@ -1,0 +1,19 @@
+[package]
+name = "home-assistant-tile"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[package.metadata.nix]
+include = ["assets/**"]
+
+# `lib` (native rlib) beside the wasm `cdylib`, so the gallery and the tests
+# can render the tile off-device.
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+
+[lints]
+workspace = true
