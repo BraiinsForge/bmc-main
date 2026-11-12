@@ -31,5 +31,5 @@ pub(super) use fetch::{Redirects, do_fetch};
 pub(super) use http::http_listener_thread;
 pub(super) use socket::{
     TlsVerificationMode, WS_HANDSHAKE_TIMEOUT, WsLimits, host_tls_connect_impl,
-    tcp_background_thread, ws_background_thread,
+    tcp_background_thread, ws_background_thread, ws_request,
 };

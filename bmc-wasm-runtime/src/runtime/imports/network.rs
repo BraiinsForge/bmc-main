@@ -43,7 +43,7 @@ use crate::host_api::{
 use super::super::background::{
     Redirects, TlsVerificationMode, WS_HANDSHAKE_TIMEOUT, WsLimits, do_fetch,
     host_tls_connect_impl, http_listener_thread, mdns_browse_thread, ssdp_search_thread,
-    tcp_background_thread, udp_broadcast_thread, ws_background_thread,
+    tcp_background_thread, udp_broadcast_thread, ws_background_thread, ws_request,
 };
 use super::super::memory::{
     parse_headers, read_bytes, read_optional_bytes, read_string, write_to_wasm,
@@ -507,6 +507,14 @@ fn register_ws_connect_import(linker: &mut Linker<HostState>) -> Result<()> {
                 spent_slots,
                 ..
             } = spent;
+            // Refused here, the widget learns why instead of seeing a drop it would retry.
+            let request = match ws_request(&dialled_url, &dialled_headers) {
+                Ok(request) => request,
+                Err(reason) => {
+                    tracing::warn!(url = %url, ?reason, "refusing WebSocket connect");
+                    return host_closed_websocket(state, reason);
+                }
+            };
             let ws_id = WebsocketId::alloc(&mut state.next_ws_id);
             let (msg_tx, msg_rx) = std::sync::mpsc::channel::<WsOutbound>();
             state.websockets.insert(
@@ -525,15 +533,7 @@ fn register_ws_connect_import(linker: &mut Linker<HostState>) -> Result<()> {
                 handshake_timeout: WS_HANDSHAKE_TIMEOUT,
             };
             std::thread::spawn(move || {
-                ws_background_thread(
-                    ws_id_wire,
-                    &dialled_url,
-                    &url,
-                    &dialled_headers,
-                    limits,
-                    event_tx,
-                    msg_rx,
-                );
+                ws_background_thread(ws_id_wire, request, &url, limits, event_tx, msg_rx);
             });
 
             ws_id_wire

@@ -55,8 +55,9 @@ cannot encode a placeholder itself, so bmc does it: send `Authorization: Basic {
 For `home-assistant`, `url` is the instance's `http://` address, stored as its bare origin such as
 `http://homeassistant.local:8123`, so `{{ credential.<slot>.url }}/api/states` reaches the REST API. `websocket_url` is
 the WebSocket API derived from it: `ws://homeassistant.local:8123/api/websocket`. An `https://` address is refused when
-the account is saved, since the host cannot dial `wss://` yet. The token may go only to the host and port of `url`, and
-the account takes no destination list of its own.
+the account is saved, since the host cannot dial `wss://` yet; a socket to a `wss://` URL is closed before dialling, as
+`WsEvent::HostClosed(WsHostClose::UnsupportedScheme)`. The token may go only to the host and port of `url`, and the
+account takes no destination list of its own.
 
 `label` is what the operator sees in the picker and is required. `description` is optional helper text. `required`
 defaults to `false`; a required slot left unbound warns the operator in the editor but never blocks saving, so your

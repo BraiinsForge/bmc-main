@@ -157,6 +157,8 @@ fn on_ha_event(ws: &Ws, event: &WsEvent) {
                 WsHostClose::Credential => "its credential",
                 WsHostClose::AccountChanged => "an account change",
                 WsHostClose::MessageTooLarge => "a message over its size limit",
+                WsHostClose::UnsupportedScheme => "an address it cannot dial",
+                WsHostClose::InvalidRequest => "an address or header it cannot read",
             };
             connection_lost(fmt!("WebSocket closed by the host for {}", reason));
         }

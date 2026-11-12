@@ -131,40 +131,24 @@ pub(in crate::runtime) struct WsLimits {
     pub handshake_timeout: Duration,
 }
 
-/// Background thread for a single WebSocket connection.
+/// The handshake request for `url` and `headers`.
 ///
-/// `url` is dialled and may carry substituted secrets, so it is never logged;
-/// `log_url` is the widget's own placeholder form.
-#[expect(clippy::too_many_lines)]
-#[expect(clippy::needless_pass_by_value)] // ownership needed: moved into spawned thread
-pub(in crate::runtime) fn ws_background_thread(
-    ws_id: u32,
+/// # Errors
+///
+/// [`WsHostClose::InvalidRequest`] for a URL or a header that does not parse, or a URL without a host;
+/// [`WsHostClose::UnsupportedScheme`] for any scheme but `ws`, as no TLS is built in.
+pub(in crate::runtime) fn ws_request(
     url: &str,
-    log_url: &str,
     headers: &[(String, String)],
-    limits: WsLimits,
-    event_tx: std::sync::mpsc::Sender<WsEvent>,
-    msg_rx: std::sync::mpsc::Receiver<WsOutbound>,
-) {
-    use tungstenite::Message;
-    use tungstenite::http::Request;
-    use tungstenite::protocol::frame::coding::CloseCode;
-    use tungstenite::protocol::{CloseFrame, WebSocketConfig};
-
-    let WsLimits {
-        max_message_bytes,
-        handshake_timeout,
-    } = limits;
-
-    let uri: tungstenite::http::Uri = match url.parse() {
-        Ok(u) => u,
-        Err(e) => {
-            tracing::error!(ws_id, url = %log_url, "WS bad URL: {e}");
-            let _ = event_tx.send(WsEvent::Close(1002));
-            return;
-        }
-    };
-    let mut request = Request::builder()
+) -> Result<tungstenite::http::Request<()>, WsHostClose> {
+    let uri: tungstenite::http::Uri = url.parse().map_err(|_| WsHostClose::InvalidRequest)?;
+    if uri.host().is_none() {
+        return Err(WsHostClose::InvalidRequest);
+    }
+    if uri.scheme_str() != Some("ws") {
+        return Err(WsHostClose::UnsupportedScheme);
+    }
+    let mut request = tungstenite::http::Request::builder()
         .uri(&uri)
         .header("Host", host_header(&uri))
         .header("Connection", "Upgrade")
@@ -177,15 +161,33 @@ pub(in crate::runtime) fn ws_background_thread(
     for (k, v) in headers {
         request = request.header(k.as_str(), v.as_str());
     }
-    let request = match request.body(()) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(ws_id, url = %log_url, "WS bad request: {e}");
-            let _ = event_tx.send(WsEvent::Close(1002));
-            return;
-        }
-    };
+    request.body(()).map_err(|_| WsHostClose::InvalidRequest)
+}
 
+/// Background thread for a single WebSocket connection.
+///
+/// `request` is dialled and may carry substituted secrets, so it is never logged;
+/// `log_url` is the widget's own placeholder form.
+#[expect(clippy::too_many_lines)]
+#[expect(clippy::needless_pass_by_value)] // ownership needed: moved into spawned thread
+pub(in crate::runtime) fn ws_background_thread(
+    ws_id: u32,
+    request: tungstenite::http::Request<()>,
+    log_url: &str,
+    limits: WsLimits,
+    event_tx: std::sync::mpsc::Sender<WsEvent>,
+    msg_rx: std::sync::mpsc::Receiver<WsOutbound>,
+) {
+    use tungstenite::Message;
+    use tungstenite::protocol::frame::coding::CloseCode;
+    use tungstenite::protocol::{CloseFrame, WebSocketConfig};
+
+    let WsLimits {
+        max_message_bytes,
+        handshake_timeout,
+    } = limits;
+
+    let uri = request.uri().clone();
     let tcp = match dial(&uri, handshake_timeout) {
         Ok(tcp) => tcp,
         Err(reason) => {
@@ -603,7 +605,7 @@ mod tests {
 
     use super::{
         TlsVerificationMode, WS_HANDSHAKE_TIMEOUT, WsEvent, WsHostClose, WsLimits,
-        build_tls_client_config, dial, ws_background_thread,
+        build_tls_client_config, dial, ws_background_thread, ws_request,
     };
 
     const LIMITS: WsLimits = WsLimits {
@@ -647,7 +649,7 @@ mod tests {
         let (event_tx, event_rx) = mpsc::channel();
         let (_msg_tx, msg_rx) = mpsc::channel();
         let url = format!("ws://{addr}/");
-        ws_background_thread(1, &url, &url, &[], LIMITS, event_tx, msg_rx);
+        ws_background_thread(1, request(&url), &url, LIMITS, event_tx, msg_rx);
 
         let events: Vec<WsEvent> = event_rx.try_iter().collect();
         assert!(
@@ -697,7 +699,7 @@ mod tests {
         let (msg_tx, msg_rx) = mpsc::channel();
         drop(msg_tx);
         let url = format!("ws://user:s3cr3t@{addr}/");
-        ws_background_thread(1, &url, &url, &[], LIMITS, event_tx, msg_rx);
+        ws_background_thread(1, request(&url), &url, LIMITS, event_tx, msg_rx);
 
         assert_eq!(
             server.join().expect("BUG: the test server panicked"),
@@ -717,7 +719,7 @@ mod tests {
         let (_msg_tx, msg_rx) = mpsc::channel();
         let url = format!("ws://{addr}/");
         let thread = std::thread::spawn(move || {
-            ws_background_thread(1, &url, &url, &[], limits, event_tx, msg_rx);
+            ws_background_thread(1, request(&url), &url, limits, event_tx, msg_rx);
         });
         let (_silent, _) = listener.accept().expect("BUG: accept test client");
 
@@ -729,6 +731,37 @@ mod tests {
             "a handshake nobody answers must fail within its timeout",
         );
         thread.join().expect("BUG: the socket thread panicked");
+    }
+
+    fn request(url: &str) -> tungstenite::http::Request<()> {
+        ws_request(url, &[]).expect("BUG: a test URL makes a request")
+    }
+
+    #[test]
+    fn a_request_the_host_cannot_send_is_refused_before_any_thread() {
+        let header = |name: &str, value: &str| vec![(name.to_owned(), value.to_owned())];
+        for (url, headers, reason) in [
+            ("ws://exa mple/", vec![], WsHostClose::InvalidRequest),
+            ("ws:/no-host", vec![], WsHostClose::InvalidRequest),
+            (
+                "ws://example/",
+                header("Bad Name", "x"),
+                WsHostClose::InvalidRequest,
+            ),
+            (
+                "ws://example/",
+                header("X-Value", "a\nb"),
+                WsHostClose::InvalidRequest,
+            ),
+            ("wss://example/", vec![], WsHostClose::UnsupportedScheme),
+        ] {
+            assert_eq!(
+                ws_request(url, &headers).err(),
+                Some(reason),
+                "{url} {headers:?}"
+            );
+        }
+        assert!(ws_request("ws://example:8123/api", &header("X-Value", "ok")).is_ok());
     }
 
     #[test]

@@ -935,7 +935,11 @@ fn a_wss_socket_is_never_dialled() {
     let config = config_with(credential::BuiltinType::GenericToken.id(), "s3cr3t", &[]);
     let mut runtime = ws_runtime(&url, AUTH_MESSAGE, config, &gl);
 
-    close_code_after_deliveries(&mut runtime);
+    assert_eq!(
+        host_close_after_a_delivery(&mut runtime),
+        Some(WsHostClose::UnsupportedScheme),
+        "the widget must learn the address is the problem, not see a drop it would retry",
+    );
     assert_nothing_arrives(&frames, "a wss:// socket was dialled in cleartext");
 }
 

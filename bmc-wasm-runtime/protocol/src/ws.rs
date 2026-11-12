@@ -77,6 +77,10 @@ pub enum WsHostClose {
     AccountChanged,
     /// The peer sent a message larger than the host accepts.
     MessageTooLarge,
+    /// The URL's scheme is one the host cannot dial, such as `wss`.
+    UnsupportedScheme,
+    /// The URL or a header does not parse, so there is no request to send.
+    InvalidRequest,
 }
 
 /// The close code a widget older than [`WS_HOST_CLOSE_PROTOCOL`](crate::version::WS_HOST_CLOSE_PROTOCOL)
@@ -92,6 +96,8 @@ impl WsHostClose {
             Self::Credential => 1,
             Self::AccountChanged => 2,
             Self::MessageTooLarge => 3,
+            Self::UnsupportedScheme => 4,
+            Self::InvalidRequest => 5,
         }
     }
 
@@ -102,6 +108,8 @@ impl WsHostClose {
             1 => Some(Self::Credential),
             2 => Some(Self::AccountChanged),
             3 => Some(Self::MessageTooLarge),
+            4 => Some(Self::UnsupportedScheme),
+            5 => Some(Self::InvalidRequest),
             _ => None,
         }
     }
@@ -130,6 +138,8 @@ mod tests {
             WsHostClose::Credential,
             WsHostClose::AccountChanged,
             WsHostClose::MessageTooLarge,
+            WsHostClose::UnsupportedScheme,
+            WsHostClose::InvalidRequest,
         ] {
             assert_eq!(WsHostClose::from_wire(reason.to_wire()), Some(reason));
         }
@@ -138,6 +148,6 @@ mod tests {
     #[test]
     fn an_unnamed_value_is_no_reason() {
         assert_eq!(WsHostClose::from_wire(0), None);
-        assert_eq!(WsHostClose::from_wire(4), None);
+        assert_eq!(WsHostClose::from_wire(6), None);
     }
 }
