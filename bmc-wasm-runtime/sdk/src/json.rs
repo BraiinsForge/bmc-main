@@ -42,7 +42,8 @@ trait JsonDocProvider {
     type Doc: core::fmt::Debug;
 
     fn parse(data: &[u8]) -> Option<Self::Doc>;
-    fn str(doc: &Self::Doc, path: &str) -> Option<String>;
+    /// The string at `path`, `None` too when it is over `max` bytes long.
+    fn str(doc: &Self::Doc, path: &str, max: usize) -> Option<String>;
     fn i64(doc: &Self::Doc, path: &str) -> Option<i64>;
     fn f64(doc: &Self::Doc, path: &str) -> Option<f64>;
     fn bool(doc: &Self::Doc, path: &str) -> Option<bool>;
@@ -82,7 +83,16 @@ impl JsonDoc {
     /// Returns `None` if the path doesn't exist or the value isn't a string.
     #[must_use]
     pub fn str(&self, path: &str) -> Option<String> {
-        Platform::str(self.0.as_ref()?, path)
+        Platform::str(self.0.as_ref()?, path, usize::MAX)
+    }
+
+    /// [`Self::str`] for a string of at most `max` bytes, `None` for a longer one.
+    ///
+    /// The length is asked first, so a longer string is never copied into the widget,
+    /// nor checked as UTF-8 at the widget's expense.
+    #[must_use]
+    pub fn str_max(&self, path: &str, max: usize) -> Option<String> {
+        Platform::str(self.0.as_ref()?, path, max)
     }
 
     /// Get an i64 value at the given JSON Pointer path.
@@ -170,7 +180,7 @@ mod wasm {
             JsonId::from_wire(unsafe { host_json_parse(data.as_ptr(), crate::ffi_u32(data.len())) })
         }
 
-        fn str(doc: &JsonId, path: &str) -> Option<String> {
+        fn str(doc: &JsonId, path: &str, max: usize) -> Option<String> {
             let id = doc.to_wire();
             // Asked with no room, the host only reports the length,
             // negative when the path holds no string,
@@ -185,7 +195,7 @@ mod wasm {
                     0,
                 )
             };
-            let len = usize::try_from(len).ok()?;
+            let len = usize::try_from(len).ok().filter(|&len| len <= max)?;
             if len == 0 {
                 return Some(String::new());
             }
@@ -263,8 +273,10 @@ mod native {
             json::parse(data)
         }
 
-        fn str(doc: &Value, path: &str) -> Option<String> {
-            json::str_at(doc, path).map(str::to_owned)
+        fn str(doc: &Value, path: &str, max: usize) -> Option<String> {
+            json::str_at(doc, path)
+                .filter(|text| text.len() <= max)
+                .map(str::to_owned)
         }
 
         fn i64(doc: &Value, path: &str) -> Option<i64> {
@@ -314,5 +326,25 @@ mod tests {
             Some(i64::MIN),
             "off the device `i64::MIN` is a value, not the host's sentinel"
         );
+    }
+}
+
+#[cfg(test)]
+mod capped_tests {
+    use super::JsonDoc;
+    use crate::wasm_test;
+
+    #[wasm_test]
+    fn a_string_past_its_cap_reads_as_none() {
+        let doc = JsonDoc::parse("{\"word\": \"h\u{e9}llo\", \"n\": 1}".as_bytes());
+
+        assert_eq!(doc.str_max("/word", 6).as_deref(), Some("h\u{e9}llo"));
+        assert_eq!(
+            doc.str_max("/word", 5),
+            None,
+            "the cap counts bytes, and é is two"
+        );
+        assert_eq!(doc.str_max("/n", 6), None);
+        assert_eq!(doc.str_max("/missing", 6), None);
     }
 }
