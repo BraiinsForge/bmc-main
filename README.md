@@ -295,7 +295,16 @@ cargo run --bin bmc-mock -- --address=0.0.0.0:6070 --www-path=./result
 
 ## Build and run mock with widgets
 
-Build all widgets:
+`just fe::serve` does all of this for you. The mock renders no widget, so it only needs the catalog: each widget's
+manifest and icon, with a stub for each of its programs. That builds in seconds, on Linux and macOS alike:
+
+```
+nix build .#widget-manifests -o result-widgets
+```
+
+The stub stands in for a widget's params migrator too, so a scene whose params predate its manifest keeps them, with a
+warning in the log. Build `.#widgets` instead when you want the compiled widgets themselves, or that migration. That
+compiles every widget and takes far longer; on macOS it needs a Linux builder:
 
 ```
 nix build .#widgets -o result-widgets

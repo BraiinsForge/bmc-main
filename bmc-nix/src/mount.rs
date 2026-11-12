@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -85,6 +86,7 @@ pub fn bind_mount_nix(source: &Path, target: &Path) -> Result<MountOutcome, Moun
     Ok(MountOutcome::Mounted)
 }
 
+#[cfg(target_os = "linux")]
 fn do_bind_mount(source: &Path, target: &Path) -> Result<(), MountError> {
     let source_c = CString::new(source.as_os_str().as_encoded_bytes())
         .expect("BUG: mount source contains NUL byte");
@@ -109,6 +111,13 @@ fn do_bind_mount(source: &Path, target: &Path) -> Result<(), MountError> {
             source: io::Error::last_os_error(),
         })
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn do_bind_mount(_source: &Path, _target: &Path) -> Result<(), MountError> {
+    Err(MountError::MountSyscall {
+        source: io::Error::from(io::ErrorKind::Unsupported),
+    })
 }
 
 /// Return whether `target` appears as the mount point of any entry in

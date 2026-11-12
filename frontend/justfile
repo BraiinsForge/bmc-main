@@ -50,10 +50,10 @@ build: check-pnpm
 dev: check-pnpm
     pnpm exec rsbuild dev
 
-# Build the native widget bundle bmc-mock serves as installable widgets.
+# Build the widget catalog bmc-mock serves as installable widgets, nothing compiled.
 [private]
 build-widgets:
-    cd {{ dir }}/.. && nix build .#widgets --out-link result-widgets
+    cd {{ dir }}/.. && nix build .#widget-manifests --out-link result-widgets
 
 # Run the mock against the built dist (`build` first), with the firmware's language packs and en-XA's.
 serve EXTRA_ARGS="": build-widgets

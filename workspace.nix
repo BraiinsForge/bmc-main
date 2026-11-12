@@ -774,6 +774,11 @@ in
       ];
     };
 
+    # The catalog of `widgets` with nothing compiled, for a bmc-mock that renders none.
+    widget-manifests = pkgs.callPackage ./nix/widget-manifests.nix {
+      inherit widgets wasmWidgetCatalog;
+    };
+
     frontend = frontend.build;
     frontendNodeModules = frontend.nodeModules;
   };

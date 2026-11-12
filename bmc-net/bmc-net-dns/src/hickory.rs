@@ -70,14 +70,18 @@ impl HickoryResolverBuilder {
     }
 
     fn build_system_resolver() -> Option<TokioResolver> {
-        match read_system_conf().and_then(|(config, _)| {
-            Resolver::builder_with_config(
-                Self::distrust_negative_responses(config),
-                TokioRuntimeProvider::default(),
-            )
-            .with_options(Self::get_resolver_options())
-            .build()
-        }) {
+        // `read_system_conf`'s error type differs between unix and Apple.
+        match read_system_conf()
+            .map_err(|e| e.to_string())
+            .and_then(|(config, _)| {
+                Resolver::builder_with_config(
+                    Self::distrust_negative_responses(config),
+                    TokioRuntimeProvider::default(),
+                )
+                .with_options(Self::get_resolver_options())
+                .build()
+                .map_err(|e| e.to_string())
+            }) {
             Ok(resolver) => Some(resolver),
             Err(e) => {
                 error!("Cannot initialize system DNS resolver: {e}");

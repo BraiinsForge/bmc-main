@@ -21,6 +21,8 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs", "net", "process", "rt", "sync", "time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 wl-nl80211.workspace = true
 
 [dev-dependencies]

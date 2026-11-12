@@ -35,6 +35,7 @@ use tokio::time::{Duration, Instant};
 // stays public for callers that construct it directly.
 mod esp32;
 pub use esp32::AP_INTERFACE_NAME;
+#[cfg(target_os = "linux")]
 pub mod nl80211;
 // Shared building blocks used by every driver.
 mod supplicant;
@@ -63,9 +64,12 @@ pub async fn wifi_driver(chip: WifiChip) -> Result<Option<Arc<dyn WifiDriver>>> 
         WifiChip::Esp32 => {
             Some(Arc::new(esp32::Esp32WifiManager::new().await) as Arc<dyn WifiDriver>)
         }
+        #[cfg(target_os = "linux")]
         WifiChip::Nl80211 { syspath } => {
             Some(Arc::new(nl80211::OpenwrtWifiManager::new(&syspath)?) as Arc<dyn WifiDriver>)
         }
+        #[cfg(not(target_os = "linux"))]
+        WifiChip::Nl80211 { .. } => anyhow::bail!("nl80211 is Linux-only"),
     })
 }
 
