@@ -323,6 +323,11 @@ mod wasm_glue {
 
     /// Ask Immich for the next batch of random photos, unless already asking.
     fn refill() {
+        refill_after(None);
+    }
+
+    /// Ask Immich for more random ids, now or after `delay_ms`.
+    fn refill_after(delay_ms: Option<u32>) {
         let Some(server) = server() else {
             return;
         };
@@ -331,11 +336,24 @@ mod wasm_glue {
         }
         let url = api_url(&server, "/api/search/random");
         let body = random_body();
-        let sent = FetchRequest::post(&url)
-            .headers(&json_headers())
-            .body(body.as_bytes())
-            .send(on_refilled);
+        let headers = json_headers();
+        let request = FetchRequest::post(&url)
+            .headers(&headers)
+            .body(body.as_bytes());
+        let sent = match delay_ms {
+            Some(ms) => request.send_after(ms, on_refilled),
+            None => request.send(on_refilled),
+        };
         REFILLING.with(|r| r.set(sent.is_some()));
+    }
+
+    /// Ask again while the poll starves for photo ids. A starved poll is
+    /// idle: `build_request` sent nothing, so no reply is coming for
+    /// `retry_after` to act on, and only a refill can wake it.
+    fn refill_again_if_starved(delay_ms: u32) {
+        if STARVED.with(Cell::get) && !DORMANT.with(Cell::get) {
+            refill_after(Some(delay_ms));
+        }
     }
 
     fn on_refilled(response: &FetchResponse) {
@@ -355,13 +373,14 @@ mod wasm_glue {
                     with_poll(PollHandle::invalidate);
                 }
             }
-            Some(_) => PROBLEM.with(|p| p.set(Some(NO_PHOTOS))),
+            Some(_) => {
+                PROBLEM.with(|p| p.set(Some(NO_PHOTOS)));
+                refill_again_if_starved(refresh_interval_ms());
+            }
             None => {
                 log_warn!("immich-photo: photo list refused or failed");
                 PROBLEM.with(|p| p.set(Some(CHECK_SETUP)));
-                if STARVED.with(|s| s.replace(false)) {
-                    with_poll(|h| h.retry_after(REFILL_RETRY_MS));
-                }
+                refill_again_if_starved(REFILL_RETRY_MS);
             }
         }
         request_frame();
