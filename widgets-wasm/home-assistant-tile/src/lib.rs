@@ -20,6 +20,7 @@
 
 //! Home Assistant Tile widget: one entity as a card, with the controls its size has room for.
 
+pub mod interaction;
 #[cfg(target_arch = "wasm32")]
 mod manifest_params;
 pub mod view;

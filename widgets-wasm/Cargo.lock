@@ -678,6 +678,7 @@ name = "home-assistant-tile"
 version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
+ "home-assistant",
 ]
 
 [[package]]
