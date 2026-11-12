@@ -708,6 +708,7 @@ dependencies = [
  "gallery",
  "gallery-build",
  "halving-countdown",
+ "home-assistant",
  "home-assistant-tile",
  "miner-info",
  "prices",

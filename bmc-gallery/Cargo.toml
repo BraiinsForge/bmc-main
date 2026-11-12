@@ -117,6 +117,8 @@ clock = { path = "../widgets-wasm/clock" }
 fleet-management = { path = "../widgets-wasm/fleet-management" }
 formula-1 = { path = "../widgets-wasm/formula-1" }
 halving-countdown = { path = "../widgets-wasm/halving-countdown" }
+# Its `testing` constructors, for the Home Assistant Tile scenes.
+home-assistant = { path = "../widgets-wasm/lib/home-assistant", features = ["testing"] }
 home-assistant-tile = { path = "../widgets-wasm/home-assistant-tile" }
 miner-info = { path = "../widgets-wasm/lib/miner-info" }
 prices = { path = "../widgets-wasm/lib/prices" }
@@ -162,6 +164,7 @@ ignored = [
     "fleet-management",
     "formula-1",
     "halving-countdown",
+    "home-assistant",
     "home-assistant-tile",
     "miner-info",
     "prices",

@@ -71,6 +71,13 @@ impl Touches {
     pub(crate) fn is_held(&self, key: &str) -> bool {
         self.held.contains_key(key)
     }
+
+    /// Whether fingers are on the same keys in both, so a frame drawn from one looks as one drawn from the other.
+    #[must_use]
+    pub fn holds_as(&self, other: &Self) -> bool {
+        self.held.len() == other.held.len()
+            && self.held.keys().all(|key| other.held.contains_key(key))
+    }
 }
 
 pub(crate) fn part_key(key: &str, part: &str) -> String {
@@ -114,5 +121,26 @@ mod tests {
         let touches = Touches::hold("c1", middle(10.0, 10.0));
         assert!(touches.is_held("c1"));
         assert!(touches.released("c1").is_none());
+    }
+
+    #[wasm_test]
+    fn only_fingers_on_the_same_keys_hold_alike() {
+        let hit = middle(10.0, 10.0);
+        let none = Touches::default();
+        assert!(none.holds_as(&Touches::default()));
+        assert!(Touches::hold("c1", hit).holds_as(&Touches::hold("c1", hit)));
+        assert!(!none.holds_as(&Touches::hold("c1", hit)), "a finger landed");
+        assert!(
+            !Touches::hold("c1", hit).holds_as(&none),
+            "a finger lifted or cancelled"
+        );
+        assert!(
+            !Touches::hold("c1", hit).holds_as(&Touches::hold("c2", hit)),
+            "a finger slid on"
+        );
+        assert!(
+            none.holds_as(&Touches::tap("c1", hit)),
+            "a lift alone changes no look"
+        );
     }
 }

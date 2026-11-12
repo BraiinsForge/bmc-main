@@ -51,6 +51,8 @@ pub enum Accent {
     Green,
     Purple,
     Red,
+    /// The frontend's `--warning-color`, not a state's: what needs the user's attention.
+    Warning,
 }
 
 impl Accent {
@@ -66,6 +68,7 @@ impl Accent {
             Self::Green => Color::from_hex(0x4C_AF_50),
             Self::Purple => Color::from_hex(0x92_6B_C7),
             Self::Red => Color::from_hex(0xF4_43_36),
+            Self::Warning => Color::from_hex(0xFF_A6_00),
         }
     }
 }

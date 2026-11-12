@@ -1,0 +1,85 @@
+# Each size a tile takes on a BMC100, to see what the layout does with the room,
+# and the states whose layout differs between a card one row high and two.
+
+size = "1400x600"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "press-1x1"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "1x1"
+
+[[shot]]
+name = "press-2x1"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "2x1"
+
+[[shot]]
+name = "press-2x2"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+
+[[shot]]
+name = "press-full"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "Full"
+
+[[shot]]
+name = "press-1x1-hold-only"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "1x1"
+Settings = "Hold 2 s"
+
+[[shot]]
+name = "press-1x1-long-name"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "1x1"
+Name = "Long"
+
+[[shot]]
+name = "press-2x2-hold-only"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+Settings = "Hold 2 s"
+
+[[shot]]
+name = "press-2x2-hold-half-way"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+Settings = "Hold 2 s"
+"Held half way" = true
+
+[[shot]]
+name = "press-1x1-refused"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Size = "1x1"
+Line = "Refused"

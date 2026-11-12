@@ -1,0 +1,184 @@
+# What the tile shows without an entity to draw: its skeleton while the entity loads, or why there is none.
+
+size = "1400x600"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "screens-loading"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "Loading"
+
+[[shot]]
+name = "screens-no-entity"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "NoEntity"
+
+[[shot]]
+name = "screens-invalid-entity-id"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "InvalidEntityId"
+
+[[shot]]
+name = "screens-unsupported-domain"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "UnsupportedDomain"
+
+[[shot]]
+name = "screens-no-account"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "NoAccount"
+
+[[shot]]
+name = "screens-token-refused"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "TokenRefused"
+
+[[shot]]
+name = "screens-needs-http"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "NeedsHttp"
+
+[[shot]]
+name = "screens-too-old"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "TooOld"
+
+[[shot]]
+name = "screens-cant-connect"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "CantConnect"
+
+[[shot]]
+name = "screens-communication"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "Communication"
+
+[[shot]]
+name = "screens-entity-not-found"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "EntityNotFound"
+
+[[shot]]
+name = "screens-entity-id-as-name"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "Loading"
+Name = "button.gate"
+
+[[shot]]
+name = "screens-loading-1x1"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "Loading"
+Size = "1x1"
+
+[[shot]]
+name = "screens-token-refused-1x1"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "TokenRefused"
+Size = "1x1"
+
+[[shot]]
+name = "screens-loading-2x2"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "Loading"
+Size = "2x2"
+
+[[shot]]
+name = "screens-cant-connect-2x2"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "CantConnect"
+Size = "2x2"
+
+[[shot]]
+name = "screens-unsupported-domain-1x1"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "UnsupportedDomain"
+Size = "1x1"
+
+[[shot]]
+name = "screens-too-old-1x1"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "TooOld"
+Size = "1x1"
+
+[[shot]]
+name = "screens-cant-connect-1x1"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "CantConnect"
+Size = "1x1"
+
+[[shot]]
+name = "screens-loading-full"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "Loading"
+Size = "Full"
+
+[[shot]]
+name = "screens-entity-not-found-full"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "EntityNotFound"
+Size = "Full"

@@ -1,0 +1,119 @@
+# A button's, a scene's or a script's tile: its one action, under each tap and hold setting.
+
+size = "720x352"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "press"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[[shot]]
+name = "press-scene"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Kind = "Scene"
+
+[[shot]]
+name = "press-script-running"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Kind = "Script"
+Readiness = "Running"
+
+[[shot]]
+name = "press-script-stopping"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Kind = "Script"
+Readiness = "Running"
+"Press on its way" = true
+
+[[shot]]
+name = "press-unavailable"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Readiness = "Unavailable"
+
+[[shot]]
+name = "press-hold-only"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Settings = "Hold 2 s"
+
+[[shot]]
+name = "press-hold-half-way"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Settings = "Hold 2 s"
+"Held half way" = true
+
+[[shot]]
+name = "press-neither"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Settings = "Neither"
+
+[[shot]]
+name = "press-on-its-way"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+"Press on its way" = true
+
+[[shot]]
+name = "press-never-pressed"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+"Last pressed" = "Never"
+
+[[shot]]
+name = "press-long-name"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Name = "Long"
+
+[[shot]]
+name = "press-notice"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Line = "Notice"
+
+[[shot]]
+name = "press-reconnecting"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+Line = "Reconnecting"
+
+[[shot]]
+name = "press-card-pressed"
+scene = "bmc_gallery::home_assistant_tile_momentary::Momentary"
+frames = 4
+
+[shot.knobs]
+"Card pressed" = true

@@ -21,6 +21,7 @@
 //! How the tile is drawn, in terms of its building blocks rather than of Home Assistant.
 
 pub mod blocks;
+pub mod card;
 pub mod icons;
 pub mod style;
 pub mod touches;
