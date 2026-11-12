@@ -1,6 +1,6 @@
 ---
 name: code-style
-description: Use when writing or modifying code in this repository — picking quantitative defaults (fps, fuel budgets, timeouts) without inventing them, choosing idioms and libraries over ad-hoc code, Rust `use`-block consistency, and small cross-language form rules (number separators, redundant block-condition parens, `node:` prefixes). For comment hygiene — whether to comment and how — use the `comment-discipline` skill instead. Triggers when picking a default/knob value, adding a `use` block, reaching for an ad-hoc implementation, or writing a numeric literal.
+description: Use when writing or modifying code in this repository — picking quantitative defaults (fps, fuel budgets, timeouts) without inventing them, choosing idioms and libraries over ad-hoc code, Rust `use`-block consistency, and small cross-language form rules (number separators, redundant block-condition parens, `node:` prefixes). For comment hygiene — whether to comment and how — use the `comment-discipline` skill instead. Triggers when picking a default/knob value, adding a `use` block, adding a `bool` field or parameter, reaching for an ad-hoc implementation, or writing a numeric literal.
 ---
 
 # Code style in this repository
@@ -60,6 +60,11 @@ Choices that shape the code beyond its form, collected from review feedback:
   methods, so conversions compose and read the same way across types. Prefer traits generally when one fits.
 - **`Option`, not sentinels.** Model absence with `Option<T>`; never encode "none" as `0`, `-1`, or an empty string. The
   type should make the absent case impossible to read past by accident.
+- **An enum, not a `bool`, for state.** For every `bool` field, parameter or return value you add, ask whether a
+  two-variant enum would fit better. It does when the value is stored and passed back in (a negated or swapped argument
+  still compiles), when it sits beside another field it qualifies (`presence` plus `stale: bool` admits pairs that
+  cannot happen; fold it into the enum it belongs to), or when a call site reads as `f(true)`. Keep `bool` for a
+  predicate answered and used at once, such as `is_empty()`.
 
 ## Cross-language form rules
 
