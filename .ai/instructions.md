@@ -141,23 +141,24 @@ Workspace-level lints are defined in `Cargo.toml`:
   carve-out is hand-authored input read only by the tree that defines it (netsim blueprint `Params`): nothing persists
   it across versions, and a mistyped knob must fail loud rather than be silently ignored.
 
-**Module System**: This project uses Rust 2018 module style. Instead of `folder/mod.rs`, use a file named after the
-folder at the same level:
+**Module System**: Prefer `folder/mod.rs`. A module split across files is a self-contained directory, as in
+`bmc-render`: `name/mod.rs` is the production entry point, and the tests sit in `name/tests.rs`, or in topic files under
+`name/tests/` declared by `name/tests/mod.rs` once a suite is large:
 
 ```
 src/
-├── compositor.rs      # Module file for compositor/ (NOT compositor/mod.rs)
 ├── compositor/
+│   ├── mod.rs         # Module file for compositor/
 │   ├── state.rs
 │   ├── render.rs
-│   └── protocol.rs
+│   ├── protocol.rs
+│   └── tests.rs
 └── main.rs
 ```
 
-The exception is `bmc-render` and the crates nested under it (such as `bmc-render/keyboard`), whose long modules are
-split into self-contained directories: `name/mod.rs` is the production entry point, with tests in `name/tests.rs`, or in
-topic files under `name/tests/` declared by `name/tests/mod.rs` once a suite is large. Keep that layout there rather
-than converting it back.
+Older modules still use a `compositor.rs` file beside the `compositor/` folder. A new module with its own folder, or one
+newly split, uses `mod.rs`; a single-file module stays `name.rs`. Moving only the inline tests to `name/tests.rs` leaves
+an older `name.rs` as it is. Converting an existing module is a move-only change in a commit of its own.
 
 Always run the Nix formatter (treefmt) after changing any file — don't assume a file type is exempt. The one exclusion
 is `frontend/`'s code, which formats itself with Biome. Its Markdown and Nix go through treefmt like the rest:
