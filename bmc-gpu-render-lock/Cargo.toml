@@ -6,8 +6,16 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
+ii-stopwatch = { workspace = true, optional = true }
 rustix.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+ii-stopwatch.workspace = true
+
+[features]
+# Logs how long each process waits for and holds the lock.
+profiling = ["dep:ii-stopwatch"]
 
 [lints]
 workspace = true

@@ -82,7 +82,7 @@ wayland-client.workspace = true
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 
 [features]
-profiling = ["ii-stopwatch/enabled"]
+profiling = ["ii-stopwatch/enabled", "bmc-gpu-render-lock/profiling"]
 
 [lints]
 workspace = true

@@ -23,8 +23,16 @@ use std::{
     fs::{File, OpenOptions},
     path::PathBuf,
 };
+#[cfg(feature = "profiling")]
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use anyhow::{Context, Result};
+
+#[cfg(any(test, feature = "profiling"))]
+mod stats;
 
 const DEFAULT_GPU_RENDER_LOCK_PATH: &str = "/run/bmc-gpu-render.lock";
 const GPU_RENDER_LOCK_PATH_ENV: &str = "BMC_GPU_RENDER_LOCK_PATH";
@@ -220,6 +228,8 @@ pub fn lock_path_from_env_value(value: Option<&OsStr>) -> Option<PathBuf> {
 #[derive(Debug)]
 pub struct GpuRenderLock {
     file: Option<File>,
+    #[cfg(feature = "profiling")]
+    stats: Arc<Mutex<stats::LockStats>>,
 }
 
 impl GpuRenderLock {
@@ -227,7 +237,11 @@ impl GpuRenderLock {
         let Some(path) =
             lock_path_from_env_value(std::env::var_os(GPU_RENDER_LOCK_PATH_ENV).as_deref())
         else {
-            return Ok(Self { file: None });
+            return Ok(Self {
+                file: None,
+                #[cfg(feature = "profiling")]
+                stats: Arc::new(Mutex::new(stats::LockStats::new(Instant::now()))),
+            });
         };
 
         let file = OpenOptions::new()
@@ -241,24 +255,44 @@ impl GpuRenderLock {
             lock_path = %path.display(),
             "using cross-process GPU render lock"
         );
-        Ok(Self { file: Some(file) })
+        Ok(Self {
+            file: Some(file),
+            #[cfg(feature = "profiling")]
+            stats: Arc::new(Mutex::new(stats::LockStats::new(Instant::now()))),
+        })
     }
 
     pub fn lock(&self, scope: &'static str) -> Result<GpuRenderLockGuard> {
         let Some(file) = self.file.as_ref() else {
-            return Ok(GpuRenderLockGuard { file: None, scope });
+            return Ok(GpuRenderLockGuard {
+                file: None,
+                scope,
+                #[cfg(feature = "profiling")]
+                held: None,
+            });
         };
 
         let file = file
             .try_clone()
             .with_context(|| format!("clone GPU render lock fd for {scope}"))?;
         tracing::debug!(scope, "waiting for GPU render lock");
+        #[cfg(feature = "profiling")]
+        let waiting_since = Instant::now();
         rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
             .with_context(|| format!("lock GPU render scope {scope}"))?;
+        #[cfg(feature = "profiling")]
+        let acquired_at = Instant::now();
+        #[cfg(feature = "profiling")]
+        self.stats
+            .lock()
+            .expect("BUG: the lock statistics are only updated by panic-free code")
+            .waited(scope, acquired_at - waiting_since);
         tracing::debug!(scope, "acquired GPU render lock");
         Ok(GpuRenderLockGuard {
             file: Some(file),
             scope,
+            #[cfg(feature = "profiling")]
+            held: Some((acquired_at, Arc::clone(&self.stats))),
         })
     }
 }
@@ -268,6 +302,8 @@ impl GpuRenderLock {
 pub struct GpuRenderLockGuard {
     file: Option<File>,
     scope: &'static str,
+    #[cfg(feature = "profiling")]
+    held: Option<(Instant, Arc<Mutex<stats::LockStats>>)>,
 }
 
 impl Drop for GpuRenderLockGuard {
@@ -282,6 +318,17 @@ impl Drop for GpuRenderLockGuard {
             );
         }
         tracing::debug!(scope = self.scope, "released GPU render lock");
+        #[cfg(feature = "profiling")]
+        if let Some((acquired_at, stats)) = self.held.take() {
+            let now = Instant::now();
+            let report = stats
+                .lock()
+                .expect("BUG: the lock statistics are only updated by panic-free code")
+                .held(now - acquired_at, now);
+            if let Some(report) = report {
+                tracing::info!("gpu render lock: {report}");
+            }
+        }
     }
 }
 

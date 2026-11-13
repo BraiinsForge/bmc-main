@@ -822,6 +822,7 @@ name = "bmc-gpu-render-lock"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ii-stopwatch",
  "rustix 0.38.44",
  "tracing",
 ]
