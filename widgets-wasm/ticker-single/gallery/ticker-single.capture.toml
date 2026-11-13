@@ -1,6 +1,6 @@
 # The presentations the recorded session never reached: it runs one rising
-# sparkline on an open market, so the candlestick view and the closed-market
-# dimming have no frame at any geometry.
+# sparkline on an open market, so the candlestick and price-only views and the
+# closed-market dimming have no frame at any geometry.
 #
 # The scene stages every viewport at once and offers no size knob, so a shot
 # here is a comparison sheet across all five rather than one frame per size.
@@ -49,3 +49,13 @@ frames = 8
 View = "Sparkline"
 "Market open" = true
 Trend = "Falling"
+
+[[shot]]
+name = "price-only-open"
+scene = "bmc_gallery::ticker::Ticker Single"
+frames = 8
+
+[shot.knobs]
+View = "Price only"
+"Market open" = true
+Trend = "Rising"

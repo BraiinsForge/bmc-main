@@ -55,17 +55,19 @@ bmc_wasm_sdk::impl_manifest_str_enum!(Period);
 pub enum View {
     Sparkline,
     Candlestick,
+    Price,
 }
 impl View {
     /// Every variant, in manifest-declaration order. Useful when a widget
     /// wants to render a "pick one" UI or audit the enum exhaustively.
-    pub const ALL: &'static [Self] = &[Self::Sparkline, Self::Candlestick];
+    pub const ALL: &'static [Self] = &[Self::Sparkline, Self::Candlestick, Self::Price];
     /// Manifest wire value for this variant.
     #[must_use]
     pub fn as_manifest_value(self) -> &'static str {
         match self {
             Self::Sparkline => "sparkline",
             Self::Candlestick => "candlestick",
+            Self::Price => "price",
         }
     }
     /// Human-readable label declared in the manifest's `enum_values`.
@@ -74,6 +76,7 @@ impl View {
         match self {
             Self::Sparkline => "Sparkline",
             Self::Candlestick => "Candlestick",
+            Self::Price => "Price only",
         }
     }
     #[must_use]
@@ -81,6 +84,7 @@ impl View {
         match s {
             "sparkline" => Some(Self::Sparkline),
             "candlestick" => Some(Self::Candlestick),
+            "price" => Some(Self::Price),
             _ => None,
         }
     }
