@@ -1,6 +1,6 @@
 ---
 name: bmc-review-addressing
-description: Work through inbound code-review feedback and CI failures on an MR/PR branch, one item at a time with the user in the loop — the counterpart to authoring a review (that's `code-review`). Use when the user says to address, go through, or handle the review threads, reviewer comments, or CI on their branch (e.g. "load the review and CI and go one by one", "let's address the review", "work through the MR comments", "we've got a review pass", "go through the reviewer's threads one by one", "fix the review feedback", "let's start on the review"). Covers load threads+CI, parse the addressable set, a terse digest, a gitignored tracker + tasklist, then per item — explain the feedback, verify it against the code, recommend, and ask where to take it; on settling, implement, run comment-discipline, self-review, place the change (new commit vs a --fixup with target-finding and a trial fold), and offer to draft+post the thread reply only on confirm. Never commit/rebase/push/post/resolve without an explicit go for that specific action.
+description: Work through inbound code-review feedback and CI failures on an MR/PR branch, one item at a time with the user in the loop — the counterpart to authoring a review (that's `code-review`). Use when the user says to address, go through, or handle the review threads, reviewer comments, or CI on their branch, or the findings of a `bmc-self-review` report (e.g. "load the review and CI and go one by one", "let's address the review", "work through the MR comments", "we've got a review pass", "go through the reviewer's threads one by one", "fix the review feedback", "let's start on the review"). Covers load threads+CI, parse the addressable set, a terse digest, a gitignored tracker + tasklist, then per item — explain the feedback, verify it against the code, recommend, and ask where to take it; on settling, implement, reread the diff, run comment-discipline, place the change (new commit vs a --fixup with target-finding and a trial fold), and offer to draft+post the thread reply only on confirm. Never commit/rebase/push/post/resolve without an explicit go for that specific action.
 ---
 
 # Addressing review feedback
@@ -24,6 +24,9 @@ Pull the review threads and the branch's CI status together:
   `gitlab_get_pipeline_job_output`.
 - GitHub: the `gh` CLI equivalents.
 
+A findings report from the `bmc-self-review` skill takes the place of the threads. Load the CI as well when the branch
+has an MR. Step 09 (the reply) does not apply.
+
 ## 2. Parse the addressable set
 
 - Drop the system noise (assigned, "added N commits", label/milestone changes). Keep human review notes and real CI
@@ -45,8 +48,9 @@ territory — resist restating each thread in full.
 - Write a gitignored tracker at `.claude/<TICKET>-review.local.md` (per-user, never committed). Its overview table has
   one row per item: a stable ID, the reviewer's point and your take. Keep every line of the table within 120 characters;
   trim the wording to fit rather than wrapping a cell.
-- The table has no status column. Delete an item's row once it is fully addressed — fixed and responded to — so the
-  table only ever lists what is still open. When the last row goes, delete the whole document.
+- The table has no status column. Delete an item's row once it is fully addressed — fixed and responded to, or for a
+  self-review finding, fixed and placed or settled without a change — so the table only ever lists what is still open.
+  When the last row goes, delete the whole document.
 - Create a tasklist mirroring it, one task per ID. That list is what "go one by one" walks.
 
 ## 5. One item at a time
@@ -68,17 +72,18 @@ Once you've settled on a solution **with the user**:
 05. **Implement** the agreed change — nothing more than was agreed. Prove non-trivial behaviour: a regression spec that
     fails before the change and passes after (see `repo-build-workflow`), or drive it in the mock and look at it
     (scenario file plus `video-frame-extraction`).
-06. **Comment pass** — run the `comment-discipline` skill over the diff.
-07. **Self-review** — reread your change as a diff; confirm it does only what was agreed and that the project's validate
-    target is green.
+06. **Reread the diff** — confirm your change does only what was agreed.
+07. **Comment pass** — run the `comment-discipline` skill over the diff, then confirm the project's validate target is
+    green.
 08. **Place it** — ask: new commit or `--fixup`?
     - New commit: write the message per the repo's commit rules.
     - Fixup: find the right target — the commit that introduced or last-touched those lines (`git log -- <file>`,
       `git blame`). Cite it by **subject line**, never SHA (the branch is being rewritten; SHAs go stale on every
-      autosquash). Offer to create `git commit --fixup=<target>`; on confirm, create it and immediately trial-fold to
-      prove it lands clean: `GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git rebase -i --autosquash <target>~1`. If it
-      conflicts, `git rebase --abort`, say so, and pivot back to a standalone commit (or ask). Never force a conflicting
-      fold.
+      autosquash). Offer to create `git commit --fixup=<target>`; on confirm, create it and immediately trial-fold a
+      detached copy to prove it lands clean, leaving the branch unfolded: `git switch --detach`, then
+      `GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git rebase -i --autosquash <target>~1`, then `git switch -`. If it
+      conflicts, `git rebase --abort` and `git switch -`, say so, and pivot back to a standalone commit (or ask). Never
+      force a conflicting fold.
     - Every git-state change happens only on the user's explicit go for that action: offer, wait, act.
     - Commit only tracked source; gitignored generated files (mock scenario JSON, `*.scss.d.ts`) stay out. A renamed
       CSS-module class fails `tsc` until its gitignored `*.scss.d.ts` is regenerated: the source is right, the generated
@@ -88,8 +93,9 @@ Once you've settled on a solution **with the user**:
     — the reviewer reads the thread in place. Show the draft in chat; post only when the user confirms (inline replies
     via the `gitlab-mr-inline-comments` skill). Never resolve the thread — resolution is the reviewer's signal, not the
     author's.
-10. **Next** — once the reply is posted, delete the item's row from the tracker (and the tracker itself if that was the
-    last row), then move to the following item.
+10. **Next** — once the reply is posted (for a self-review finding, once the change is placed, or once the user settles
+    it without a change: deferred, ticketed or declined), delete the item's row from the tracker (and the tracker itself
+    if that was the last row), then move to the following item.
 
 ## Rebasing onto the target branch
 

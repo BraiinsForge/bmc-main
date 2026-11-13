@@ -20,25 +20,16 @@ Walk the Definition of Done from `.ai/instructions.md` and confirm each item is 
 - a branch that changes a protocol XML (`deck-widget.xml`, `deck-*-v1/protocol/*.xml`) passes the checklist in the
   `bmc-wayland-protocol-changes` skill
 
-## 2. Validate the tree
-
-Run the repo's validation path — never raw `cargo`/`nix` substitutes. See the `repo-build-workflow` skill for the
-narrower targets worth using mid-iteration. Finish on the full `just validate` and confirm the `validate: OK` marker.
-
-`just validate` does not cover the frontend: on a branch that changes `frontend/`, also run `just fe::validate`
-separately and confirm it passes.
-
-## 3. Clean up scratch state
+## 2. Clean up scratch state
 
 The planning devlog under `docs/devlogs/BDK-<ticket>-<slug>/` is scratch, not deliverable. Remove it once the stages are
 done — it must not land in the review. Permanent documentation (architecture notes, user stories) is a separate concern
 and lives elsewhere; see the story addendum below.
 
-## 4. Commit hygiene
+## 3. Commit hygiene
 
 Each commit compiles and passes tests on its own (verify-at-every-commit). Commit messages follow the repo format —
-imperative subject, ticket reference, body explaining *why*. Squash fixups into the commit they belong to so the history
-reviewers read is the history that merges.
+imperative subject, ticket reference, body explaining *why*.
 
 Tests go in the commit that adds the code they cover, or in a run of test-only commits directly after it, as the
 Definition of Done in `.ai/instructions.md` says. Check it with:
@@ -54,19 +45,49 @@ blocks before offering the branch. The one exception is a TODO: the Definition o
 that tracks it, as `TODO(BDK-<ticket>): …`, so that reference stays. Find the ones this branch added with:
 
 ```bash
-git diff "$(git merge-base HEAD origin/master)"..HEAD | grep -E '^\+.*(BDK|BOS)-[0-9]' | grep -v -E 'TODO\((BDK|BOS)-[0-9]+\)'
+target=master   # the MR's target branch: a release branch for a backport
+git diff "$(git merge-base HEAD "origin/$target")"..HEAD | grep -E '^\+.*(BDK|BOS)-[0-9]' | grep -v -E 'TODO\((BDK|BOS)-[0-9]+\)'
 ```
 
 Older references elsewhere in the tree are not this branch's to clean up.
 
-## 5. The story addendum — only for Story-type tickets
+## 4. The story addendum — only for Story-type tickets
 
 Check the ticket type (the Jira `issuetype` is `Story`, not `Task` / `Bug`). If it is a Story, the user-facing feature
 documentation under `docs/stories/` is part of finishing the ticket. **Switch to the `finalizing-story-ticket` skill**
 for that step before considering the ticket done. Task and Bug tickets skip it unless they change documented user-facing
-behavior.
+behavior. Write it here, before the self-review and validation, so they cover it.
 
-## 6. Push and open the MR are explicit actions
+## 5. Offer a self-review
+
+Ask the author whether to review the branch with the `bmc-self-review` skill before it goes out. If they say yes, run it
+and apply its findings with `bmc-review-addressing`; offer the branch only once the report says `Ready for review.`, or
+the author declined each Critical or Major it still lists and the MR description names them. It runs here, after the
+cleanup and the hygiene fixes and before validation, so it judges the tree that will be offered and validation judges
+its fixes.
+
+## 6. Validate the tree
+
+Run the repo's validation path — never raw `cargo`/`nix` substitutes. See the `repo-build-workflow` skill for the
+narrower targets worth using mid-iteration. Finish on the full `just validate` and confirm the `validate: OK` marker.
+
+`just validate` does not cover the frontend: on a branch that changes `frontend/`, also run `just fe::validate`
+separately and confirm it passes.
+
+Then fold the fixups into the commits they belong to, so the history reviewers read is the history that merges:
+
+```bash
+target=master   # the MR's target branch: a release branch for a backport
+base=$(git merge-base HEAD "origin/$target")
+before=$(git rev-parse HEAD)
+GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash "$base"
+git diff "$before" HEAD                                  # empty: the tree is the one reviewed and validated
+git log --oneline "$base"..HEAD | grep -E ' (fixup|amend|squash)! '   # no output: every fixup found its commit
+```
+
+A fold that changes the tree or leaves a fixup behind, or any later edit, goes back to step 5.
+
+## 7. Push and open the MR are explicit actions
 
 Pushing the branch and opening / updating the MR are deliberate, outward-facing steps. Do them when the work is actually
 ready and you intend to publish it — not as a routine "make sure the remote is current" reflex. One authorization covers

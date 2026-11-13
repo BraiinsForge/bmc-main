@@ -333,7 +333,7 @@ The server registers no gRPC reflection; point grpcurl at the protos instead
 - **Before committing**, run these in order — each step rewrites what the next one judges, so the order is not
   negotiable:
 
-  1. Adversarially self-review the diff
+  1. Adversarially reread the staged diff (not the `bmc-self-review` skill, which reviews the committed branch)
   2. Invoke the `comment-discipline` skill and run its comment pass over the result
   3. Run `just validate` (formats, runs clippy and tests) bare
   4. Ensure the commit message explains "why"
@@ -383,6 +383,7 @@ When multiple valid approaches exist, choose based on:
 ### Test Guidelines
 
 - Test behavior, not implementation
+- A test must fail on a plausible bug; one that only repeats what the code renders freezes it instead
 - One assertion per test when possible
 - Clear test names describing scenario
 - Use existing test utilities/helpers
