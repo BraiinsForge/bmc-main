@@ -23,6 +23,8 @@
 mod buffer_pool;
 mod drm_output;
 mod egl_context;
+#[cfg(any(test, feature = "profiling"))]
+mod flip_stats;
 mod frame_diff;
 #[cfg(test)]
 pub(crate) mod headless_egl;

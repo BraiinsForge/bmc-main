@@ -30,6 +30,9 @@ use smithay::{
 };
 use std::{fs::OpenOptions, os::unix::io::OwnedFd, path::Path, time::Duration};
 
+#[cfg(feature = "profiling")]
+use super::flip_stats::FlipStats;
+
 pub struct DrmOutput {
     drm: DrmDevice,
     surface: DrmSurface,
@@ -51,6 +54,8 @@ pub struct DrmOutput {
     /// time, not an approximation). `None` until the first vblank.
     last_vblank_ms: Option<u32>,
     damage_clips_supported: bool,
+    #[cfg(feature = "profiling")]
+    flip_stats: FlipStats,
     /// When the pending flip was committed, on the clock of the kernel's event timestamps.
     #[cfg(feature = "profiling")]
     committed_at: Option<Duration>,
@@ -152,6 +157,8 @@ impl DrmOutput {
             last_vblank_ms: None,
             damage_clips_supported,
             #[cfg(feature = "profiling")]
+            flip_stats: FlipStats::new(vblank_period(&mode)),
+            #[cfg(feature = "profiling")]
             committed_at: None,
             #[cfg(feature = "profiling")]
             transfer: ii_stopwatch::Jitter::new(),
@@ -235,6 +242,22 @@ impl DrmOutput {
     /// without which the driver ignores the clips [`Self::page_flip`] takes and sends whole frames.
     pub fn takes_damage_clips(&self) -> bool {
         self.damage_clips_supported
+    }
+
+    /// Marks the start of a frame that will end in [`Self::page_flip`],
+    /// and whether the compositor animates it itself (a transition or a drag).
+    #[cfg(feature = "profiling")]
+    pub fn render_started(&mut self, motion: bool) {
+        self.flip_stats.render_started(motion);
+    }
+
+    /// The kernel finished a flip this output committed.
+    pub fn on_page_flip(&mut self, timestamp: Duration) {
+        #[cfg(feature = "profiling")]
+        if let Some(report) = self.flip_stats.flipped(timestamp) {
+            tracing::info!("flips: {report}");
+        }
+        self.on_vblank(timestamp);
     }
 
     #[expect(
@@ -365,6 +388,21 @@ fn plane_has_property(drm: &DrmDevice, plane: plane::Handle, name: &str) -> Resu
         .get_properties(plane)?
         .as_hashmap(drm)?
         .contains_key(name))
+}
+
+/// The nominal scanout period from the mode timings; `vrefresh` is rounded to whole hertz.
+/// The real clock may differ: the Deck's LTDC runs at 54.000 MHz against the mode's 54.483,
+/// a 0.9 % gap that rounding gaps to whole vblanks absorbs.
+#[cfg(feature = "profiling")]
+fn vblank_period(mode: &Mode) -> Duration {
+    let (_, _, htotal) = mode.hsync();
+    let (_, _, vtotal) = mode.vsync();
+    let pixels_per_frame = u64::from(htotal) * u64::from(vtotal);
+    let pixel_clock_khz = u64::from(mode.clock());
+    if pixels_per_frame == 0 || pixel_clock_khz == 0 {
+        return Duration::from_secs(1) / mode.vrefresh().max(1);
+    }
+    Duration::from_nanos((pixels_per_frame * 1_000_000).div_euclid(pixel_clock_khz))
 }
 
 #[must_use]

@@ -717,6 +717,9 @@ impl SceneRenderer {
             "BUG: render_scene entered with flip pending; caller must gate on is_flip_pending"
         );
 
+        #[cfg(feature = "profiling")]
+        self.output
+            .render_started(transition_frame.is_some() || widgets.drag_offset().is_some());
         let _gpu_render_lock = self.gpu_render_lock.lock("compositor_render_scene")?;
         // This lock serializes completed GPU jobs across the compositor and
         // WASM host contexts. Hold it until all GL work submitted from this

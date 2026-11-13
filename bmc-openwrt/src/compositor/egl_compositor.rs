@@ -602,7 +602,7 @@ impl EglCompositor {
                                             r.output_mut().on_vblank(v.time);
                                         }
                                         DrmEvent::PageFlip(p) => {
-                                            r.output_mut().on_vblank(p.duration);
+                                            r.output_mut().on_page_flip(p.duration);
                                         }
                                         DrmEvent::Unknown(_) => {}
                                     }
