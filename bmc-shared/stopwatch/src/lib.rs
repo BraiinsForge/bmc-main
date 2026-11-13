@@ -238,3 +238,120 @@ impl Default for Jitter {
         Self::new()
     }
 }
+
+/// Durations collected over one reporting window, summarised by percentile.
+///
+/// Unlike [`Jitter`], it keeps every sample, so size the window to the event rate.
+#[derive(Debug, Default)]
+pub struct Samples {
+    samples: Vec<Duration>,
+}
+
+/// Nearest-rank percentiles of a [`Samples`] window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SamplesSummary {
+    pub n: usize,
+    pub p50: Duration,
+    pub p95: Duration,
+    pub max: Duration,
+}
+
+impl Samples {
+    pub fn add(&mut self, sample: Duration) {
+        self.samples.push(sample);
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+
+    /// Summarises the window and empties it, keeping the allocation for the next one.
+    pub fn take_summary(&mut self) -> Option<SamplesSummary> {
+        self.samples.sort_unstable();
+        let summary = (!self.samples.is_empty()).then(|| SamplesSummary {
+            n: self.samples.len(),
+            p50: self.nearest_rank(500),
+            p95: self.nearest_rank(950),
+            max: *self.samples.last().expect("BUG: checked non-empty above"),
+        });
+        self.samples.clear();
+        summary
+    }
+
+    fn nearest_rank(&self, per_mille: usize) -> Duration {
+        let rank = (self.samples.len() * per_mille).div_ceil(1000).max(1);
+        self.samples[rank - 1]
+    }
+}
+
+impl std::fmt::Display for SamplesSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{:.1?}/{:.1?}/{:.1?}",
+            self.n, self.p50, self.p95, self.max
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Samples, SamplesSummary};
+    use std::time::Duration;
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn empty_window_has_no_summary() {
+        assert_eq!(Samples::default().take_summary(), None);
+    }
+
+    #[test]
+    fn summary_uses_nearest_rank_percentiles() {
+        let mut samples = Samples::default();
+        for n in (1..=20).rev() {
+            samples.add(ms(n));
+        }
+
+        assert_eq!(
+            samples.take_summary(),
+            Some(SamplesSummary {
+                n: 20,
+                p50: ms(10),
+                p95: ms(19),
+                max: ms(20),
+            })
+        );
+    }
+
+    #[test]
+    fn single_sample_is_every_percentile() {
+        let mut samples = Samples::default();
+        samples.add(ms(7));
+
+        assert_eq!(
+            samples.take_summary(),
+            Some(SamplesSummary {
+                n: 1,
+                p50: ms(7),
+                p95: ms(7),
+                max: ms(7),
+            })
+        );
+    }
+
+    #[test]
+    fn taking_the_summary_starts_a_new_window() {
+        let mut samples = Samples::default();
+        samples.add(ms(3));
+        let _ = samples.take_summary();
+
+        assert!(
+            samples.is_empty(),
+            "the next window must not carry old samples"
+        );
+    }
+}
