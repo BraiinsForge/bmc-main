@@ -24,7 +24,7 @@
 use bmc_wasm_sdk::LocalDateTime;
 use bmc_wasm_sdk::system::{DateFormat, TimeFormat};
 use prices::candle::CandleBar;
-use prices::format::push_uint;
+use prices::format::{MIN_PRICE_DECIMALS, push_uint};
 use prices::period::Period;
 
 /// Minimum horizontal slot per candle (body + gap) for readability.
@@ -200,6 +200,24 @@ pub fn nice_ticks(min: f64, max: f64, target: usize) -> Vec<f64> {
         value = next;
     }
     out
+}
+
+/// The fewest fraction digits that keep evenly spaced `ticks` apart, so a
+/// coarse chosen precision never prints neighbouring ticks alike. Capped at
+/// [`MIN_PRICE_DECIMALS`].
+#[must_use]
+pub fn tick_decimals(ticks: &[f64]) -> u32 {
+    let [first, second, ..] = ticks else {
+        return 0;
+    };
+    let step = second - first;
+    (0..MIN_PRICE_DECIMALS)
+        .find(|&digits| {
+            let scaled =
+                step * 10f64.powi(i32::try_from(digits).expect("BUG: a handful of digits"));
+            (scaled - scaled.round()).abs() < scaled.abs() * 1e-6
+        })
+        .unwrap_or(MIN_PRICE_DECIMALS)
 }
 
 /// Bar heights for the volume strip, normalized to the maximum volume.
@@ -400,6 +418,23 @@ mod tests {
     use bmc_wasm_sdk::wasm_test;
     use prices::candle::CandleBar;
     use prices::period::Period;
+
+    #[wasm_test]
+    fn tick_decimals_follow_the_tick_step() {
+        assert_eq!(tick_decimals(&[21.20, 21.22, 21.24]), 2);
+        assert_eq!(tick_decimals(&[21.2, 21.3]), 1);
+        assert_eq!(tick_decimals(&[100.0, 120.0, 140.0]), 0);
+        assert_eq!(
+            tick_decimals(&[0.000_000_1, 0.000_000_2]),
+            MIN_PRICE_DECIMALS
+        );
+    }
+
+    #[wasm_test]
+    fn a_lone_tick_needs_no_decimals() {
+        assert_eq!(tick_decimals(&[21.23]), 0);
+        assert_eq!(tick_decimals(&[]), 0);
+    }
 
     #[wasm_test]
     fn month_abbr_maps_valid_months() {

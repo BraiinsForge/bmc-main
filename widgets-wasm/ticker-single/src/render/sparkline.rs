@@ -31,8 +31,15 @@ const CHART_INSET: f32 = 2.0;
 const CHART_HEIGHT_FRACTION: f32 = 0.6;
 
 /// The loaded view: header on top, sparkline + price on a canvas below.
+/// `decimals` fixes the price's fraction digits; `None` keeps the shared rule.
 #[must_use]
-pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: WidgetSize) -> Node {
+pub fn series_view(
+    series: &Series,
+    symbol: &str,
+    period_label: &str,
+    decimals: Option<u32>,
+    ws: WidgetSize,
+) -> Node {
     let band = band_for(ws.variant).scaled(ws.fit());
     #[expect(
         clippy::cast_precision_loss,
@@ -83,7 +90,7 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
         price_center_y - price_box_h / 2.0,
         (w - band.edge_padding * 2.0).max(1.0),
         price_box_h,
-        super::price_text(symbol, series.current),
+        super::price_text(symbol, series.current, decimals),
         style!(
             size: band.price_font,
             weight: FontWeight::BOLD,
@@ -228,8 +235,14 @@ mod tests {
         let mut closed = series();
         closed.market_open = false;
 
-        let open_icon = shapes(&icon_draws(series_view(&series(), "BTC-USD", "1D", ws)));
-        let closed_icon = shapes(&icon_draws(series_view(&closed, "BTC-USD", "1D", ws)));
+        let open_icon = shapes(&icon_draws(series_view(
+            &series(),
+            "BTC-USD",
+            "1D",
+            None,
+            ws,
+        )));
+        let closed_icon = shapes(&icon_draws(series_view(&closed, "BTC-USD", "1D", None, ws)));
 
         assert_eq!(
             closed_icon[..open_icon.len()],
@@ -251,8 +264,8 @@ mod tests {
         let open = series();
         let mut closed = series();
         closed.market_open = false;
-        let open_node = series_view(&open, "BTC-USD", "1D", ws);
-        let closed_node = series_view(&closed, "BTC-USD", "1D", ws);
+        let open_node = series_view(&open, "BTC-USD", "1D", None, ws);
+        let closed_node = series_view(&closed, "BTC-USD", "1D", None, ws);
 
         assert_eq!(
             chart_stroke_color(&canvas_draws(open_node.clone())),
@@ -276,7 +289,7 @@ mod tests {
     )]
     fn the_price_shrinks_to_the_tile_rather_than_being_sliced() {
         let ws = WidgetSize::from_dimensions(1_280, 480);
-        let draws = canvas_draws(series_view(&series(), "BTC-USD", "1D", ws));
+        let draws = canvas_draws(series_view(&series(), "BTC-USD", "1D", None, ws));
         let band = band_for(ws.variant).scaled(ws.fit());
         let boxes: Vec<_> = draws
             .iter()

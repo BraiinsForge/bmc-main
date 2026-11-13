@@ -102,7 +102,9 @@ impl Series {
     }
 }
 
-pub use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision};
+pub use prices::format::{
+    MIN_PRICE, MIN_PRICE_DECIMALS, PricePrecision, change_text, display_precision,
+};
 
 /// The currency icon: a glyph and a representative solid disc color. `None` for
 /// `^`-prefixed indices, which have no icon.
