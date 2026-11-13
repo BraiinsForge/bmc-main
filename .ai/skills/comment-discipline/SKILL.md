@@ -53,13 +53,17 @@ If a competent reader gets it from the code alone, cut it. When unsure, cut.
   downstream consumers.
 - **Reason about the call graph.** "called by X", "Y uses this", "for the Z path" — who reaches the code, or what the
   caller does around it, is not the comment's job. Explain the code's own behaviour and choices.
+- **Cite a ticket outside a TODO.** `TODO(BDK-123): …` is the one place a Jira key goes in code; everywhere else the
+  ticket lives in the commit subject and the MR, and the comment says the why in its own words.
+- **Claim verification.** "Verified on a Deck", "tested against X" goes stale with the next run; the record belongs in
+  the MR description. A comment may still state a known limit of the code itself.
 
 ## Workarounds cite a specific, checkable cause
 
 Never paper over a mistake with vague rationale (`// sometimes the renderer drops a frame`,
 `// the tooling can confuse this`). If a workaround is genuinely needed, the comment cites one of:
 
-- a bug URL — upstream issue or internal ticket;
+- a bug URL — an upstream issue;
 - a version pin — `librsvg < 2.59 drops the alpha channel`;
 - a reproducer — steps plus the observed failure mode.
 
