@@ -70,6 +70,15 @@ pub struct SubscriptionId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CallId(usize);
 
+impl CallId {
+    /// The call numbered `raw`, for a test that answers calls no client sent.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn from_raw(raw: usize) -> Self {
+        Self(raw)
+    }
+}
+
 /// The `id` of a message sent to Home Assistant, which numbers them per connection from 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct RequestId(u64);

@@ -8,14 +8,19 @@ The rustdoc is the reference (`cargo doc -p home-assistant --open`); this page i
 
 ## Layout
 
-| Module       | What it is                                                                                                      |
-| ------------ | --------------------------------------------------------------------------------------------------------------- |
-| `proto`      | The protocol core, with no socket, clock or SDK: it reads messages through `JsonLookup`, which tests implement. |
-| `adapter`    | Runs the core on the widget SDK's WebSocket, a timer and the host JSON parser. `wasm32` only.                   |
-| `credential` | The host's `{{ credential.… }}` placeholders, the only part that knows them. Private.                           |
-| `format`     | Numbers as the Home Assistant frontend shows them: decimals, display precision, unit placement.                 |
+| Module       | What it is                                                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `proto`      | The protocol core, with no socket, clock or SDK: it reads messages through `JsonLookup`, which tests implement.  |
+| `adapter`    | Runs the core on the widget SDK's WebSocket, a timer and the host JSON parser. `wasm32` only.                    |
+| `credential` | The host's `{{ credential.… }}` placeholders, the only part that knows them. Private.                            |
+| `format`     | Numbers as the Home Assistant frontend shows them: decimals, display precision, unit placement.                  |
+| `domain`     | What each Home Assistant domain means: the attributes to subscribe to, how to read them, and the `ServiceCall`s. |
 
-A widget uses the crate root, which re-exports everything it handles. It never touches `proto::Session` directly.
+A widget uses the crate root, which re-exports every type the client hands it, and `domain` for what each domain means.
+It never touches `proto::Session` directly.
+
+A widget's tests and gallery scenes enable the `testing` feature, which adds `Entity::reporting`, `Entity::tracked` and
+`CallId::from_raw`. A domain's reader tests build their entity with `Entity::tracked` and the domain's `ATTRIBUTES`.
 
 ## Credentials
 
@@ -126,6 +131,7 @@ Draw a value as soon as there is one, stale or not, and fall back to the status 
 | ------------------------------------------------------ | ------------------------------------------------------ |
 | `subscribe(entities, attributes)`                      | `Subscription`; then `EntityChanged` events            |
 | `call_service(domain, service, entity_id, data)`       | `CallFinished` with `Reply::Done`                      |
+| `call(entity_id, service_call)`                        | as `call_service`, for a `ServiceCall`                 |
 | `command(type, data, json_pointers)`                   | `CallFinished` with `Reply::Values` at those pointers  |
 | `display_precision(entity_id)`                         | `CallFinished` with `Reply::Precision`                 |
 | `history(entity_ids, start_secs, end_secs)`            | `CallFinished` with `Reply::History`                   |

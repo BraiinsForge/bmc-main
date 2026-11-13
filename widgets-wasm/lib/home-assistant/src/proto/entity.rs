@@ -129,6 +129,33 @@ impl Entity {
         }
     }
 
+    /// A present entity in `state` with `attributes`, for tests of code that reads one.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn reporting(state: &str, attributes: Vec<(&str, AttributeValue)>) -> Self {
+        Self {
+            presence: Presence::Present,
+            state: Some(state.to_owned()),
+            last_changed: None,
+            attributes: attributes
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect(),
+        }
+    }
+
+    /// [`Self::reporting`] with only the attributes a subscription to `tracked` keeps,
+    /// so a reader's test fails when its attribute is missing from the domain's list.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn tracked(state: &str, attributes: Vec<(&str, AttributeValue)>, tracked: &[&str]) -> Self {
+        let mut entity = Self::reporting(state, attributes);
+        entity
+            .attributes
+            .retain(|name, _| tracked.contains(&name.as_str()));
+        entity
+    }
+
     /// The attribute `name`, `None` unless the subscription tracks it and the entity has it.
     #[must_use]
     pub fn attribute(&self, name: &str) -> Option<&AttributeValue> {

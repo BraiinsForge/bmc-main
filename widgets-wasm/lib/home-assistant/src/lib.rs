@@ -29,13 +29,14 @@
 //! ```ignore
 //! let client = home_assistant::connect("ha", on_ha_event)?;
 //! let sensor = client.subscribe(&["sensor.outdoor"], &["friendly_name", "unit_of_measurement"])?;
-//! let call = client.call_service("button", "press", "button.gate", &ServiceData::new())?;
+//! let call = client.call("button.gate", &domain::button::press())?;
 //! let precision = client.display_precision("sensor.outdoor")?;
 //! let config = client.command("get_config", &ServiceData::new(), &["/time_zone"])?;
 //! let day = client.history(&["sensor.outdoor"], now_secs - 24 * 3600, None)?;
 //! ```
 //!
-//! Every type a widget handles is re-exported here; [`proto`] holds the engine behind them.
+//! Every type the client hands a widget is re-exported here, [`domain`] reads entities and builds the calls
+//! that change them, and [`proto`] holds the engine behind them.
 //! A widget that redraws on each [`Event::EntityChanged`] can answer it with `request_frame_after`,
 //! which merges every request before a frame into one.
 
@@ -43,6 +44,7 @@
 mod adapter;
 #[cfg(any(target_arch = "wasm32", test))]
 mod credential;
+pub mod domain;
 pub mod format;
 pub mod proto;
 
@@ -54,6 +56,6 @@ pub use proto::{
     MAX_ATTRIBUTES_PER_SUBSCRIPTION, MAX_ENTITIES_PER_SUBSCRIPTION, MAX_ENTITY_ID_BYTES,
     MAX_HISTORY_POINTS, MAX_NAME_BYTES, MAX_PENDING_CALLS, MAX_POINTER_BYTES, MAX_REPLY_VALUES,
     MAX_SERVICE_DATA_LIST_ITEMS, MAX_SERVICE_DATA_TEXT_BYTES, MAX_SUBSCRIPTIONS, MIN_VERSION,
-    Period, Presence, Reply, RequestError, Series, ServiceData, StatisticPoint, Status,
-    SubscriptionId, UNKNOWN_ERROR, Values, Version, is_entity_id,
+    Period, Presence, Reply, RequestError, Series, ServiceCall, ServiceData, StatisticPoint,
+    Status, SubscriptionId, UNKNOWN_ERROR, Values, Version, is_entity_id,
 };

@@ -56,5 +56,5 @@ pub use entity::{
 pub use history::{HistoryPoint, MAX_HISTORY_POINTS, Period, Series, StatisticPoint};
 pub use json::JsonLookup;
 pub use reply::{CallFailure, Event, HaError, Reply, UNKNOWN_ERROR, Values};
-pub use service_data::ServiceData;
+pub use service_data::{ServiceCall, ServiceData};
 pub use version::{MIN_VERSION, Version};

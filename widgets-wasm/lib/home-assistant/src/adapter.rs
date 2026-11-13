@@ -40,7 +40,7 @@ use crate::credential;
 use crate::proto;
 use crate::proto::{
     CallId, Closed, Command, Effects, Entity, Event, JsonLookup, Output, Period, RequestError,
-    ServiceData, Status, SubscriptionId, Version, Wake,
+    ServiceCall, ServiceData, Status, SubscriptionId, Version, Wake,
 };
 
 /// Receives a client's events, with the client they came from.
@@ -147,6 +147,11 @@ impl Client {
         data: &ServiceData,
     ) -> Result<CallId, RequestError> {
         self.request(|core| core.call_service(domain, service, entity_id, data))
+    }
+
+    /// Make `call` on `entity_id`; the result arrives as [`Event::CallFinished`].
+    pub fn call(&self, entity_id: &str, call: &ServiceCall) -> Result<CallId, RequestError> {
+        self.call_service(call.domain, call.service, entity_id, &call.data)
     }
 
     /// Send the one-off command `command`; the values found at `wanted`

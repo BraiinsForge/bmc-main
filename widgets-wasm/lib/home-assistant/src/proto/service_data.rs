@@ -26,6 +26,25 @@ use super::client::{
 };
 use super::json::{Decimal, ObjectWriter};
 
+/// A service to call on an entity, such as `scene.turn_on`, as the [`crate::domain`] builders make it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServiceCall {
+    pub domain: &'static str,
+    pub service: &'static str,
+    pub data: ServiceData,
+}
+
+impl ServiceCall {
+    #[must_use]
+    pub fn new(domain: &'static str, service: &'static str) -> Self {
+        Self {
+            domain,
+            service,
+            data: ServiceData::new(),
+        }
+    }
+}
+
 /// Extra fields of a service call beside its target, or of a command beside its id and type.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ServiceData(
