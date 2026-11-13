@@ -95,6 +95,7 @@ pub struct List {
     pub states: Vec<RowState>,
     pub names: Vec<Option<String>>,
     pub stale: Vec<Option<SystemTime>>,
+    pub decimals: Vec<Option<u32>>,
 }
 
 impl List {
@@ -103,6 +104,7 @@ impl List {
         self.names.push(name.map(str::to_owned));
         self.states.push(state);
         self.stale.push(None);
+        self.decimals.push(None);
     }
 
     fn push_row(&mut self, (symbol, name, series): Recorded, market_open: bool) {
@@ -116,6 +118,7 @@ fn empty() -> List {
         states: Vec::new(),
         names: Vec::new(),
         stale: Vec::new(),
+        decimals: Vec::new(),
     }
 }
 
@@ -139,6 +142,21 @@ pub fn healthy() -> List {
     let mut list = empty();
     for row in RECORDED {
         list.push_row(row, true);
+    }
+    list
+}
+
+/// The healthy list with some rows choosing their price decimals:
+/// fewer than the automatic rule, more, none, and the rule itself.
+#[must_use]
+pub fn chosen_precision() -> List {
+    let mut list = healthy();
+    for (slot, decimals) in list
+        .decimals
+        .iter_mut()
+        .zip([Some(0), Some(4), None, Some(2)])
+    {
+        *slot = decimals;
     }
     list
 }

@@ -79,6 +79,29 @@ pub fn price_precision(symbol: &str, value: f64) -> PricePrecision {
     PricePrecision::Fraction(bucket_digits(rounded))
 }
 
+/// Most fraction digits an operator may ask for; the widget manifests'
+/// `precision` params share this `max`.
+pub const MAX_DECIMALS: u32 = 6;
+
+/// The operator's `precision` param as fraction digits: `None` when unset or
+/// negative (the manifests' `min` refuses that), clamped to [`MAX_DECIMALS`].
+#[must_use]
+pub fn chosen_decimals(param: Option<i32>) -> Option<u32> {
+    param
+        .and_then(|digits| u32::try_from(digits).ok())
+        .map(|digits| digits.min(MAX_DECIMALS))
+}
+
+/// Exactly `decimals` fraction digits when the operator chose them, else
+/// [`price_precision`]'s automatic rule.
+#[must_use]
+pub fn display_precision(symbol: &str, value: f64, decimals: Option<u32>) -> PricePrecision {
+    match decimals {
+        Some(digits) => PricePrecision::Fraction(digits),
+        None => price_precision(symbol, value),
+    }
+}
+
 /// Fraction digits for a positive in-range magnitude.
 fn bucket_digits(v: f64) -> u32 {
     if v >= 1_000.0 {
@@ -251,6 +274,39 @@ mod tests {
         assert_eq!(price_precision("USD-JPY", 1000.0), Fraction(0));
         assert_eq!(price_precision("EUR-USD", 999.99), Fraction(5));
         assert_eq!(price_precision("USD-JPY", 999.99), Fraction(3));
+    }
+
+    #[wasm_test]
+    fn chosen_decimals_override_the_automatic_rule() {
+        assert_eq!(display_precision("EUR-CZK", 24.312_5, Some(2)), Fraction(2));
+        assert_eq!(
+            display_precision("BTC-USD", 106_234.56, Some(3)),
+            Fraction(3)
+        );
+        assert_eq!(display_precision("X", 0.000_000_49, Some(2)), Fraction(2));
+    }
+
+    #[wasm_test]
+    fn unset_decimals_keep_the_automatic_rule() {
+        for (symbol, value) in [
+            ("EUR-CZK", 24.312_5),
+            ("BTC-USD", 106_234.56),
+            ("X", 0.000_000_49),
+        ] {
+            assert_eq!(
+                display_precision(symbol, value, None),
+                price_precision(symbol, value)
+            );
+        }
+    }
+
+    #[wasm_test]
+    fn the_precision_param_maps_to_bounded_decimals() {
+        assert_eq!(chosen_decimals(None), None);
+        assert_eq!(chosen_decimals(Some(-1)), None);
+        assert_eq!(chosen_decimals(Some(0)), Some(0));
+        assert_eq!(chosen_decimals(Some(2)), Some(2));
+        assert_eq!(chosen_decimals(Some(99)), Some(MAX_DECIMALS));
     }
 
     #[wasm_test]

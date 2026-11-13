@@ -55,6 +55,7 @@ bmc_wasm_sdk::impl_manifest_str_enum!(Period);
 pub struct SymbolsItem {
     pub base: String,
     pub quote: Option<String>,
+    pub precision: Option<i32>,
 }
 impl snapshot::typed::ValueRead for SymbolsItem {
     fn from_value(value: snapshot::Value<'_>) -> Result<Self, snapshot::typed::ReadError> {
@@ -64,6 +65,7 @@ impl snapshot::typed::ValueRead for SymbolsItem {
         Ok(Self {
             base: snapshot::typed::required_field(&row, "base")?,
             quote: snapshot::typed::optional_field(&row, "quote")?,
+            precision: snapshot::typed::optional_field(&row, "precision")?,
         })
     }
 }
