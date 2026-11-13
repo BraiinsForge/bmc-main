@@ -105,6 +105,7 @@ pub(in crate::runtime) fn build_tls_client_config(
         TlsVerificationMode::Full => {
             let mut roots = rustls::RootCertStore::empty();
             roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            roots.add_parsable_certificates(super::tls_roots::extra_ca_certs().iter().cloned());
             builder.with_root_certificates(roots).with_no_client_auth()
         }
         TlsVerificationMode::Insecure => builder
