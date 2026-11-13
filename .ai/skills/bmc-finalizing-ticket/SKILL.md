@@ -40,6 +40,14 @@ Each commit compiles and passes tests on its own (verify-at-every-commit). Commi
 imperative subject, ticket reference, body explaining *why*. Squash fixups into the commit they belong to so the history
 reviewers read is the history that merges.
 
+Tests go in the commit that adds the code they cover, or in a run of test-only commits directly after it, as the
+Definition of Done in `.ai/instructions.md` says. Check it with:
+
+```bash
+target=master   # the MR's target branch: a release branch for a backport
+git log --stat "$(git merge-base HEAD "origin/$target")"..HEAD
+```
+
 The commit message is the only place a ticket reference belongs. This is an open-source repo, and `git log` already ties
 every line back to its ticket, so strip `BDK-`/`BOS-` mentions from code comments, `docs/`, and protocol XML copyright
 blocks before offering the branch. The one exception is a TODO: the Definition of Done requires it to name the ticket
