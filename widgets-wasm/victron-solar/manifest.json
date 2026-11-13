@@ -1,0 +1,69 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "99e3fa96-a60b-4cf1-a5e9-4da61b216067",
+  "version": "0.1.0",
+  "name": "Solar (Victron)",
+  "subname": "Venus OS",
+  "description": "Live PV power and solar yield (today, month, year) read directly from a Victron system running Venus OS, over MQTT or Modbus TCP on the local network.",
+  "binary": "bin/victron-solar",
+  "icon": "assets/icon.svg",
+  "category": "utility",
+  "settings": [
+    "localization"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    },
+    {
+      "type": "round",
+      "min_width": 480,
+      "max_width": 480,
+      "min_height": 480,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "gx_host": {
+      "name": "Address",
+      "description": "IP address or hostname of the device running Venus OS, e.g. 192.168.1.50 or venus.local",
+      "type": "string",
+      "default_value": "venus.local"
+    },
+    "connection": {
+      "name": "Connection",
+      "description": "How to read the data; the same service must be enabled on the device",
+      "type": "string",
+      "optional": true,
+      "default_value": "mqtt-tls",
+      "enum_values": [
+        {
+          "value": "mqtt-tls",
+          "label": "MQTT over TLS"
+        },
+        {
+          "value": "mqtt",
+          "label": "MQTT, unencrypted"
+        },
+        {
+          "value": "modbus",
+          "label": "Modbus TCP"
+        }
+      ],
+      "enum_control": "radio"
+    },
+    "port": {
+      "name": "Port",
+      "description": "0 = the connection's standard port (8883, 1883 or 502)",
+      "type": "integer",
+      "optional": true,
+      "min": 0,
+      "max": 65535,
+      "default_value": 0
+    }
+  }
+}
