@@ -47,6 +47,7 @@ bmc_wasm_sdk::impl_manifest_str_enum!(Sizing);
 pub struct Params {
     pub label: Option<String>,
     pub refresh_seconds: i32,
+    pub second_label: Option<String>,
     pub server: Option<String>,
     pub sizing: Sizing,
 }
@@ -57,6 +58,7 @@ impl Params {
         Self {
             label: <String as ParamRead>::read_optional(snap, "label"),
             refresh_seconds: <i32 as ParamRead>::read_required(snap, "refresh_seconds"),
+            second_label: <String as ParamRead>::read_optional(snap, "second_label"),
             server: <String as ParamRead>::read_optional(snap, "server"),
             sizing: <Sizing as ParamRead>::read_required(snap, "sizing"),
         }
@@ -109,6 +111,9 @@ impl Params {
         }
         if self.refresh_seconds != other.refresh_seconds {
             out.push("refresh_seconds");
+        }
+        if self.second_label != other.second_label {
+            out.push("second_label");
         }
         if self.server != other.server {
             out.push("server");

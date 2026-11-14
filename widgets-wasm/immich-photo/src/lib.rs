@@ -19,9 +19,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Immich photo widget — random photos straight from an Immich server, with a
-//! **Label it** menu button that tags the photo on screen in Immich and turns
-//! into **Remove label** once the photo has that tag.
+//! Immich photo widget — random photos straight from an Immich server, with up
+//! to two label buttons in the menu (e.g. **Label ToDelete**, **Label
+//! ToRotate**) that tag the photo on screen in Immich; each turns into
+//! **Remove …** once the photo has that tag.
 //!
 //! The picture pipeline is the image widget's. The Immich API key lives in a
 //! credential slot: requests carry its placeholder and the device fills it in.
@@ -176,7 +177,8 @@ mod wasm_glue {
     const CONFIGURE_SERVER: &str = "Set the Immich address";
     const CHECK_SETUP: &str = "Check the Immich address and API key";
     const NO_PHOTOS: &str = "No photos in Immich";
-    const KEY_LABEL: &str = "menu_label";
+    /// Menu keys of the label buttons, in the order of the label params.
+    const KEY_LABELS: [&str; 2] = ["menu_label", "menu_label_2"];
 
     const ICON_RENEW: Svg = include_svg!("assets/renew.svg");
     const MENU_WIDTH: f32 = 200.0;
@@ -294,8 +296,21 @@ mod wasm_glue {
         configured(manifest_params::Params::current().server.as_deref()).map(str::to_owned)
     }
 
-    fn label() -> Option<String> {
-        configured(manifest_params::Params::current().label.as_deref()).map(str::to_owned)
+    /// The configured labels with their menu keys; a repeated label once.
+    fn labels() -> Vec<(&'static str, String)> {
+        let params = manifest_params::Params::current();
+        let mut out: Vec<(&'static str, String)> = Vec::new();
+        for (key, value) in KEY_LABELS
+            .into_iter()
+            .zip([params.label.as_deref(), params.second_label.as_deref()])
+        {
+            if let Some(label) = configured(value)
+                && out.iter().all(|(_, l)| l != label)
+            {
+                out.push((key, label.to_owned()));
+            }
+        }
+        out
     }
 
     fn key_header() -> String {
@@ -467,11 +482,10 @@ mod wasm_glue {
         request_frame();
     }
 
-    /// Whether the photo on screen carries the configured label.
-    fn labelled() -> bool {
-        label().is_some_and(|label| {
-            ASSET.with_borrow(Option::is_some) && TAGS.with_borrow(|tags| tags.contains(&label))
-        })
+    /// Whether the photo on screen carries `label`.
+    fn labelled(label: &str) -> bool {
+        ASSET.with_borrow(Option::is_some)
+            && TAGS.with_borrow(|tags| tags.iter().any(|t| t == label))
     }
 
     fn show_notice(message: String) {
@@ -480,18 +494,18 @@ mod wasm_glue {
         request_frame();
     }
 
-    fn failed_notice(remove: bool) -> &'static str {
+    fn failed_notice(label: &str, remove: bool) -> String {
         if remove {
-            "Remove label failed"
+            fmt!("Remove {} failed", label)
         } else {
-            "Label it failed"
+            fmt!("Label {} failed", label)
         }
     }
 
     /// Start a label change: upsert the tag and add the photo, or look the
     /// tag up and take the photo out.
-    fn send_label() {
-        let (Some(label), Some(server)) = (label(), server()) else {
+    fn send_label(label: String) {
+        let Some(server) = server() else {
             return;
         };
         if PENDING.with_borrow(Option::is_some) {
@@ -501,7 +515,7 @@ mod wasm_glue {
             show_notice("Reload the photo first".to_owned());
             return;
         };
-        let remove = labelled();
+        let remove = labelled(&label);
         let url = api_url(&server, "/api/tags");
         let sent = if remove {
             FetchRequest::get(&url)
@@ -515,7 +529,7 @@ mod wasm_glue {
                 .send(on_tag_upserted)
         };
         if sent.is_none() {
-            show_notice(failed_notice(remove).to_owned());
+            show_notice(failed_notice(&label, remove));
             return;
         }
         show_notice(if remove {
@@ -603,7 +617,7 @@ mod wasm_glue {
         };
         if !ok {
             log_warn!("immich-photo: label change on {} failed", asset);
-            show_notice(failed_notice(remove).to_owned());
+            show_notice(failed_notice(&label, remove));
             return;
         }
         // The photo may have moved on meanwhile; only its own tags change.
@@ -695,14 +709,14 @@ mod wasm_glue {
         )
     }
 
-    /// The reveal menu: Reload, the label button (only when a label is set up)
-    /// and Close. The label button reads Remove label once the photo has it.
-    fn menu_panel(label_button: Option<&'static str>) -> Node {
+    /// The reveal menu: Reload, a button per configured label and Close. A
+    /// label button reads Remove … once the photo has that label.
+    fn menu_panel(label_buttons: &[(&'static str, String)]) -> Node {
         let mut buttons = vec![
             button!(render::KEY_RELOAD, "Reload", style: Primary, icon: ensure_registered(&ICON_RENEW)).stretch(),
         ];
-        if let Some(caption) = label_button {
-            buttons.push(button!(KEY_LABEL, caption, style: Secondary).stretch());
+        for (key, caption) in label_buttons {
+            buttons.push(button!(*key, caption.as_str(), style: Secondary).stretch());
         }
         buttons.push(button!(render::KEY_CLOSE, "Close", style: Secondary).stretch());
         center(
@@ -742,12 +756,12 @@ mod wasm_glue {
     fn with_interaction(
         mut root: Node,
         menu_open: bool,
-        label_button: Option<&'static str>,
+        label_buttons: &[(&'static str, String)],
     ) -> Node {
         if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
             children.push(tap_catcher());
             if menu_open {
-                children.push(menu_panel(label_button));
+                children.push(menu_panel(label_buttons));
             }
         }
         root
@@ -819,18 +833,27 @@ mod wasm_glue {
         }
 
         let open = menu_open();
-        let label_button = label().is_some().then(|| {
-            if labelled() {
-                "Remove label"
-            } else {
-                "Label it"
-            }
-        });
+        let labels = labels();
+        let label_buttons: Vec<(&'static str, String)> = labels
+            .iter()
+            .map(|(key, label)| {
+                let caption = if labelled(label) {
+                    fmt!("Remove {}", label)
+                } else {
+                    fmt!("Label {}", label)
+                };
+                (*key, caption)
+            })
+            .collect();
         let result = render_ui(
             size.width,
             size.height,
-            with_interaction(base, open, label_button),
+            with_interaction(base, open, &label_buttons),
         );
+        let tapped_label = labels
+            .into_iter()
+            .find(|(key, _)| result.clicks.contains_key(*key))
+            .map(|(_, label)| label);
 
         // Route taps: a button when the menu is open, otherwise open/dismiss it.
         let changed = if open {
@@ -838,9 +861,9 @@ mod wasm_glue {
                 dispatch(Event::Reload);
                 MENU_MS.with(|m| m.set(0));
                 true
-            } else if result.clicks.contains_key(KEY_LABEL) {
+            } else if let Some(label) = tapped_label {
                 MENU_MS.with(|m| m.set(0));
-                send_label();
+                send_label(label);
                 true
             } else if result.clicks.contains_key(render::KEY_CLOSE)
                 || result.clicks.contains_key(render::KEY_TAP)
