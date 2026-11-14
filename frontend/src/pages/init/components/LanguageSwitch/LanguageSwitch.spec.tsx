@@ -26,6 +26,7 @@ import { Code, ConnectError } from '@connectrpc/connect';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
+import { proto } from '@/mocks/proto';
 import { store } from '@/store';
 import { deckSystemWire } from '@/pages/workspace/Display/capabilities.fixture';
 
@@ -198,7 +199,7 @@ describe('LanguageSwitch', () => {
     });
 
     test.each([
-        ['a lost connection', new ConnectError('Failed to fetch', Code.Unknown)],
+        ['a lost connection', proto.lostConnection()],
         ['a refusal', new ConnectError('refused by the device', Code.FailedPrecondition)],
     ])('%s is worded by the page and its cause logged', async (_case, failure) => {
         // A catalog that loads, so only the failed save keeps the page in its language.

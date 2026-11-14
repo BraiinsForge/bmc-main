@@ -23,6 +23,7 @@ import { describe, test, expect } from '@rstest/core';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { create } from '@bufbuild/protobuf';
 
+import { proto } from '@/mocks/proto';
 import { BadRequestSchema } from '@/proto/gen/google/rpc/error_details_pb';
 import { toFormErrors } from './errors';
 
@@ -86,5 +87,11 @@ describe('toFormErrors', () => {
         );
         expect(fields).toEqual({});
         expect(global).toEqual(['Bad request', 'Missing value!']);
+    });
+
+    test('a lost connection gives the fallback', () => {
+        const { global, fields } = expectErrors(toFormErrors(proto.lostConnection(), FALLBACK));
+        expect(fields).toEqual({});
+        expect(global).toEqual([FALLBACK]);
     });
 });

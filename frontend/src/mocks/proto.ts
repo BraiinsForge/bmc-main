@@ -18,6 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { Code, ConnectError } from '@connectrpc/connect';
+
 import * as pb from '@/proto';
 import { timestamp } from './time';
 import { randomItem } from './collection';
@@ -30,5 +32,15 @@ export const proto = {
     },
     timestamp(offset: LengthRange = 0): pb.Timestamp {
         return pb.create(pb.TimestampSchema, { seconds: BigInt(timestamp(offset)) });
+    },
+    // What connect rejects with when the browser's `fetch` never reaches the device
+    lostConnection(): ConnectError {
+        return new ConnectError(
+            'Failed to fetch',
+            Code.Unknown,
+            undefined,
+            undefined,
+            new TypeError('Failed to fetch'),
+        );
     },
 };

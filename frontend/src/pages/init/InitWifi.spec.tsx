@@ -26,6 +26,7 @@ import { Code, ConnectError } from '@connectrpc/connect';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
+import { proto } from '@/mocks/proto';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
 import InitWifi from './InitWifi';
 
@@ -54,7 +55,7 @@ afterEach(() => {
 
 describe('InitWifi', () => {
     test('a device that cannot be reached is reported in the page’s words', async () => {
-        scanFailsWith(new ConnectError('Failed to fetch', Code.Unknown));
+        scanFailsWith(proto.lostConnection());
         openTheWifiStep();
 
         expect(await screen.findByText('Failed to load Wi-Fi networks!')).toBeTruthy();

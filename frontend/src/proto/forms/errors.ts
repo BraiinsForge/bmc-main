@@ -70,9 +70,17 @@ export function describeError(error: BareException, defaultMessagePreffix?: stri
     return res;
 }
 
-/** The error's text for the user. */
+/**
+ * The error's text for the user, none for a lost connection.
+ * Logs an `Unknown` that no failed fetch explains.
+ */
 export function errorMessage(error: BareException): string | undefined {
-    return describeError(error).message || undefined;
+    const { message, rpc_reason_code } = describeError(error);
+    const lost = isConnectionLost(error);
+    // No status from the device and no failed fetch:
+    // a bug in the page or a garbled reply, worth a trace
+    if (rpc_reason_code === Code.Unknown && !lost) console.error(error);
+    return (!lost && message) || undefined;
 }
 
 export interface ParseFormErrorsOptions<Input extends Rec> {
@@ -115,10 +123,12 @@ export function renderFieldErrorsAsList(fieldErrors: Maybe<FieldErrors>): null |
     return fieldErrors ? formatList(fieldErrors) : null;
 }
 
-/** A failure to reach the device at all, as opposed to a status it sent. */
+/**
+ * The browser's failed `fetch`, which connect wraps as `Unknown` around the fetch's `TypeError`.
+ * A bug in the page's own code arrives bare, and the device words its `Unavailable` itself.
+ */
 export function isConnectionLost(error: unknown): boolean {
-    const { code } = ConnectError.from(error);
-    return code === Code.Unavailable || code === Code.Unknown;
+    return error instanceof ConnectError && error.code === Code.Unknown && error.cause instanceof TypeError;
 }
 
 /** Every reason `error` gives, or the `fallback` when it gives none. */
