@@ -18,16 +18,19 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { afterEach, describe, expect, test } from '@rstest/core';
-import { cleanup, render, screen } from '@testing-library/react/pure';
-import { RawIntlProvider } from 'react-intl';
+import { afterEach, describe, expect, rstest, test } from '@rstest/core';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react/pure';
+import { IntlProvider, RawIntlProvider } from 'react-intl';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
 
 import { pseudoIntl } from '@/mocks/intl';
+import { proto } from '@/mocks/proto';
+import { store } from '@/store';
 import LoginPage from './Login';
 
 afterEach(() => {
     cleanup();
+    rstest.restoreAllMocks();
 });
 
 describe('LoginPage', () => {
@@ -41,5 +44,21 @@ describe('LoginPage', () => {
         );
 
         expect(screen.getByLabelText('[Ƥȧȧşşẇǿǿřḓ]')).toBeTruthy();
+    });
+
+    test('a login that loses the device reports it in the page’s words', async () => {
+        rstest.spyOn(store, 'login').mockRejectedValue(proto.lostConnection());
+        render(
+            <HelmetProvider>
+                <IntlProvider locale="en">
+                    <LoginPage />
+                </IntlProvider>
+            </HelmetProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Login' }));
+
+        expect(await screen.findByText('Failed to log in!')).toBeTruthy();
+        expect(screen.queryByText(/Failed to fetch/)).toBeNull();
     });
 });

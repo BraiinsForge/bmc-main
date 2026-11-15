@@ -30,7 +30,7 @@ import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import { store } from '@/store';
 import type { ServiceMocks } from '@/lib/proto';
-import { timezones } from '@/mocks';
+import { proto, timezones } from '@/mocks';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
 import type { Capabilities } from '@/lib/system';
 
@@ -184,5 +184,62 @@ describe('InitSetup', () => {
 
         await screen.findByDisplayValue(POOL_URL);
         expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+});
+
+describe('InitSetup save that the network restart may drop', () => {
+    // The first read loads the form, every later one
+    // is the probe asking whether the setup applied
+    function saveMinerFailing(setupError: ConnectError, probe: () => pb.SettingsDataResponse): () => number {
+        let reads = 0;
+        installMocks(miner, () => {
+            throw setupError;
+        });
+        registerMocks(pb.services.InitialSetupService, {
+            getSettingsData: () => {
+                reads += 1;
+                return reads === 1 ? settingsData : probe();
+            },
+        });
+        return () => reads;
+    }
+
+    test('a lost connection the probe finds applied leaves the setup', async () => {
+        saveMinerFailing(proto.lostConnection(), () => {
+            throw new ConnectError('The device is already set up.', Code.FailedPrecondition);
+        });
+        const replace = stubReplace();
+        renderPage();
+
+        await screen.findByDisplayValue(POOL_URL);
+        fireEvent.click(screen.getByRole('button', { name: 'Save and Continue' }));
+
+        await waitFor(() => expect(replace).toHaveBeenCalledWith('/'));
+    });
+
+    test('a lost connection the probe finds still pending says the save failed', async () => {
+        saveMinerFailing(proto.lostConnection(), () => settingsData);
+        const replace = stubReplace();
+        renderPage();
+
+        await screen.findByDisplayValue(POOL_URL);
+        fireEvent.click(screen.getByRole('button', { name: 'Save and Continue' }));
+
+        await screen.findByText('Failed to save the device setup!');
+        expect(replace).not.toHaveBeenCalled();
+    });
+
+    test("the device's own Unavailable is shown without probing", async () => {
+        const reads = saveMinerFailing(
+            new ConnectError('The network is being reconfigured.', Code.Unavailable),
+            () => settingsData,
+        );
+        renderPage();
+
+        await screen.findByDisplayValue(POOL_URL);
+        fireEvent.click(screen.getByRole('button', { name: 'Save and Continue' }));
+
+        await screen.findByText('The network is being reconfigured.');
+        expect(reads(), 'only the form load read the settings').toBe(1);
     });
 });

@@ -31,6 +31,7 @@ import { store } from '@/store';
 import { deckCapabilities } from './capabilities.fixture';
 import { mocks, setRequestLanguage } from '@/proto/transport';
 import { SOURCE_LOCALE } from '@/lib/intl';
+import { proto } from '@/mocks/proto';
 import type { ServiceMocks } from '@/lib/proto';
 import { deferred } from '@/lib/async';
 import { unloadGuard } from '@/lib/dom';
@@ -1438,6 +1439,27 @@ describe('dialog session lifecycle', () => {
 
                 expect(screen.queryByText('Must be at most 5')).not.toBeNull();
                 expect(showError).toHaveBeenCalledWith('Unsupported size');
+            } finally {
+                showError.mockRestore();
+            }
+        });
+
+        test('a preview that loses the device says so in the page’s words', async () => {
+            const showError = rstest.spyOn(toast, 'error');
+            mockServer(({ req }) => {
+                if (req.params?.fields.count?.kind.value === 8) {
+                    throw proto.lostConnection();
+                }
+                return {};
+            });
+            try {
+                await openEditor();
+                fireEvent.change(elementById(COUNT_INPUT_ID), { target: { value: '8' } });
+                await flush(300);
+                await flush();
+
+                expect(showError).toHaveBeenCalledWith('Failed to update widget!');
+                expect(screen.queryByText(/Failed to fetch/)).toBeNull();
             } finally {
                 showError.mockRestore();
             }

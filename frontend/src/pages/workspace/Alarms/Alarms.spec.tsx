@@ -29,6 +29,7 @@ import AlarmsPage from './Alarms';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import { store } from '@/store';
+import { proto } from '@/mocks/proto';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
 import { Toaster, toast } from '@/lib/toast';
 import { intlFor } from '@/lib/intl';
@@ -161,9 +162,7 @@ describe('Alarms', () => {
     test('a toggle that loses the device reports it in the catalog wording', async () => {
         answerAlarms([alarm('wake')]);
         answerGeneralSettings(() => settings(pb.TimeFormat.TIME_FORMAT_24_HOUR));
-        rstest
-            .spyOn(pb.rpc.alarm, 'setAlarmEnabled')
-            .mockRejectedValue(new ConnectError('Failed to fetch', Code.Unavailable));
+        rstest.spyOn(pb.rpc.alarm, 'setAlarmEnabled').mockRejectedValue(proto.lostConnection());
         render(pageTree());
         await advance(0);
 
@@ -171,6 +170,21 @@ describe('Alarms', () => {
         await advance(0);
 
         expect(screen.getByText('Failed to toggle alarm!')).toBeTruthy();
+        expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+    });
+
+    test('a save that loses the device reports it in the alarm dialog', async () => {
+        answerAlarms([alarm('wake')]);
+        answerGeneralSettings(() => settings(pb.TimeFormat.TIME_FORMAT_24_HOUR));
+        rstest.spyOn(pb.rpc.alarm, 'setAlarm').mockRejectedValue(proto.lostConnection());
+        render(pageTree());
+        await advance(0);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm Changes' }));
+        await advance(0);
+
+        expect(within(screen.getByRole('dialog')).getByText('Failed to save the alarm!')).toBeTruthy();
         expect(screen.queryByText(/Failed to fetch/)).toBeNull();
     });
 

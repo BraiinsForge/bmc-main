@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { afterEach, describe, test, expect, rstest } from '@rstest/core';
+import { afterEach, beforeEach, describe, test, expect, rstest } from '@rstest/core';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react/pure';
 import { MemoryRouter } from 'react-router';
 import { type IntlShape, RawIntlProvider } from 'react-intl';
@@ -35,6 +35,7 @@ import AppContext, { getAppContextDefault } from '@/context';
 import type { ServiceMocks } from '@/lib/proto';
 import { intlFor } from '@/lib/intl';
 import { pseudoIntl } from '@/mocks/intl';
+import { proto } from '@/mocks/proto';
 
 // Committing an upgrade goes through the confirm-modal context; answer it per test.
 // A spy so tests can assert how many times the confirmation was actually asked.
@@ -499,6 +500,40 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
 
         expect(startUpgrade).toHaveBeenCalledTimes(1);
         expect(confirmSpy).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Settings upgrade check failures', () => {
+    beforeEach(() => {
+        rstest.useFakeTimers();
+    });
+
+    function checkFailsWith(error: ConnectError): void {
+        installMocks(() => (async function* () {})());
+        registerMocks(pb.services.UpgradeService, {
+            checkForUpgrade: () => {
+                throw error;
+            },
+        });
+    }
+
+    test('a check that loses the device reports it in the page’s words', async () => {
+        checkFailsWith(proto.lostConnection());
+        const showError = rstest.spyOn(toast, 'error').mockReturnValue('toast');
+        renderPage();
+        await advance(300);
+
+        expect(screen.getByText('Failed to check for upgrade!'), 'the upgrade panel').toBeTruthy();
+        expect(showError).not.toHaveBeenCalledWith('Failed to check for upgrade!');
+        expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+    });
+
+    test('a check the device answers as unavailable keeps its words', async () => {
+        checkFailsWith(new ConnectError('The upgrade server cannot be reached.', Code.Unavailable));
+        renderPage();
+        await advance(300);
+
+        expect(screen.getByText('The upgrade server cannot be reached.')).toBeTruthy();
     });
 });
 
@@ -1194,7 +1229,7 @@ describe('Settings display', () => {
         store.setHardwareCapabilities(deckCapabilities());
         registerMocks(pb.services.ConfigurationService, {
             getDisplaySettings: () => {
-                throw new ConnectError('Failed to fetch', Code.Unavailable);
+                throw new ConnectError('Failed to fetch', Code.Unknown);
             },
         });
         renderPage('#display');

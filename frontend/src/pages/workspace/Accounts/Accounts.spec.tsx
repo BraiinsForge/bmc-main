@@ -23,11 +23,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
 import { IntlProvider } from 'react-intl';
 import { MemoryRouter } from 'react-router';
+import { Code, ConnectError } from '@connectrpc/connect';
 
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import { deferred } from '@/lib/async';
 import type { ServiceMocks } from '@/lib/proto';
+import { proto } from '@/mocks/proto';
 import PageAccounts from './Accounts';
 
 // `mocks.service` wants every method typed; at runtime it only registers what we pass.
@@ -174,5 +176,30 @@ describe('Accounts page', () => {
 
         await waitFor(() => expect(textarea.disabled).toBe(false));
         expect(textarea.value).toBe('a.example.com\nb.example.com');
+    });
+
+    const saveFailsWith = async (error: ConnectError): Promise<void> => {
+        oneGenericType();
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: () => ({ accounts: [] }),
+            upsertAccount: () => {
+                throw error;
+            },
+        });
+        await allowHostsTextarea();
+        submitDialog();
+    };
+
+    it('reports a save that loses the device in the page’s words', async () => {
+        await saveFailsWith(proto.lostConnection());
+
+        expect(await screen.findByText('Failed to save the account!')).toBeTruthy();
+        expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+    });
+
+    it('keeps the words of a save the device answers as unavailable', async () => {
+        await saveFailsWith(new ConnectError('The account store is busy.', Code.Unavailable));
+
+        expect(await screen.findByText('The account store is busy.')).toBeTruthy();
     });
 });

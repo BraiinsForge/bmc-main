@@ -28,6 +28,7 @@ import { MemoryRouter } from 'react-router';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
+import { proto } from '@/mocks/proto';
 import { toast } from '@/lib/toast';
 import { store } from '@/store';
 import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture';
@@ -227,5 +228,20 @@ describe('<Network /> a join the device refuses', () => {
         });
 
         expect(dropdown().textContent).toContain('OfficeNet');
+    });
+});
+
+describe('<Network /> a load that loses the device', () => {
+    afterEach(teardown);
+
+    test('reports it in the page’s words', async () => {
+        await renderPage({
+            getNetworkConfig: () => {
+                throw proto.lostConnection();
+            },
+        });
+
+        await waitFor(() => expect(screen.getByText('Failed to load the network configuration!')).toBeTruthy());
+        expect(screen.queryByText(/Failed to fetch/)).toBeNull();
     });
 });

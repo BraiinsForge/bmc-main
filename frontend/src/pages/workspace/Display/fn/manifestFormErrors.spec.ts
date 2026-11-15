@@ -18,10 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { describe, expect, test } from '@rstest/core';
+import { afterEach, describe, expect, rstest, test } from '@rstest/core';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { create } from '@bufbuild/protobuf';
 
+import { proto } from '@/mocks/proto';
 import { BadRequestSchema } from '@/proto/gen/google/rpc/error_details_pb';
 import { mapManifestUpdateError } from './manifestFormErrors';
 
@@ -33,6 +34,10 @@ function badRequest(violations: Array<[field: string, description: string]>): Co
         { desc: BadRequestSchema, value: detail },
     ]);
 }
+
+afterEach(() => {
+    rstest.restoreAllMocks();
+});
 
 describe('mapManifestUpdateError', () => {
     test('a param violation lands on the param', () => {
@@ -114,5 +119,23 @@ describe('mapManifestUpdateError', () => {
         const errors = mapManifestUpdateError(badRequest([['size', 'Unsupported size']]));
         expect(errors.status).toBe('Bad request');
         expect(errors.global).toEqual(['Unsupported size']);
+    });
+
+    test("a lost connection leaves the browser's text out", () => {
+        const errors = mapManifestUpdateError(proto.lostConnection());
+        expect(errors.status).toBeUndefined();
+    });
+
+    test('an unavailable device keeps its words', () => {
+        const errors = mapManifestUpdateError(new ConnectError('The device is busy.', Code.Unavailable));
+        expect(errors.status).toBe('The device is busy.');
+    });
+
+    test("a bug in the page's own code keeps its text and is logged", () => {
+        const log = rstest.spyOn(console, 'error').mockImplementation(() => {});
+        const bug = new TypeError('row is undefined');
+
+        expect(mapManifestUpdateError(bug).status).toBe('row is undefined');
+        expect(log).toHaveBeenCalledWith(bug);
     });
 });
