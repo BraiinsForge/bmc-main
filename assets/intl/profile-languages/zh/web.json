@@ -549,6 +549,11 @@
     "source": "Failed to save SecondsInStatusbar",
     "translation": "保存状态栏秒数显示设置失败"
   },
+  "B1FrXaF8TO": {
+    "source": "Edit Alarm",
+    "translation": "编辑闹钟",
+    "description": "Alarm dialog title while changing an existing alarm"
+  },
   "BG9UOWuEog": {
     "source": "Forever",
     "translation": "永久"
@@ -919,10 +924,6 @@
     "source": "This widget has no parameters to configure",
     "translation": "此小组件没有可配置的参数"
   },
-  "KN7zKn8z4F": {
-    "source": "Error",
-    "translation": "错误"
-  },
   "KS6WuePUU0": {
     "source": "LED notifications in night mode enabled",
     "translation": "已启用夜间模式 LED 通知"
@@ -961,6 +962,11 @@
     "source": "Device Password",
     "translation": "设备密码"
   },
+  "LrDX/iojle": {
+    "source": "Add New Alarm",
+    "translation": "添加新闹钟",
+    "description": "Alarm dialog title while creating an alarm"
+  },
   "Lt4OBpG8iT": {
     "source": "Download size:",
     "translation": "下载大小："
@@ -985,10 +991,6 @@
   "N03g5tFdW6": {
     "source": "Install Widget",
     "translation": "安装小组件"
-  },
-  "N0eaIbNmoY": {
-    "source": "Confirm Changes",
-    "translation": "确认更改"
   },
   "N2IrpMDHDB": {
     "source": "Confirm",
@@ -1381,10 +1383,6 @@
   "ZGZEMNAA8T": {
     "source": "{name} {version} can now be added to a scene.",
     "translation": "现在可以将 {name} {version} 添加到场景中。"
-  },
-  "ZJyow0buty": {
-    "source": "Edit Alarm",
-    "translation": "编辑闹钟"
   },
   "ZK1d6fQ6/I": {
     "source": "SSID",
@@ -1898,6 +1896,11 @@
     "source": "Accounts not loaded",
     "translation": "账户未加载"
   },
+  "nb7Nct5RTu": {
+    "source": "Add New Alarm",
+    "translation": "添加新闹钟",
+    "description": "Alarm dialog button that creates the alarm"
+  },
   "ncad+6OuMM": {
     "source": "Slide",
     "translation": "滑动"
@@ -2157,9 +2160,19 @@
     "translation": "{name}（{subname}）",
     "description": "A widget's name followed by its variant, naming its buttons in the scene editor, such as Miner Info Geek"
   },
+  "tTm3SyMJyP": {
+    "source": "Confirm Changes",
+    "translation": "确认更改",
+    "description": "Alarm dialog button that saves the changes to an existing alarm"
+  },
   "tW6rkQ3J7V": {
     "source": "{item} dropped at position {position} of {count}.",
     "translation": "{item} 已放在第 {position} 位（共 {count} 项）。"
+  },
+  "tXOm5unmvT": {
+    "source": "Delete Alarm",
+    "translation": "删除闹钟",
+    "description": "Alarm dialog button that deletes the alarm being changed"
   },
   "tXea4KOYWN": {
     "source": "Password (optional)",

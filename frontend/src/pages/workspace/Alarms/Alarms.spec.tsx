@@ -24,6 +24,7 @@ import { MemoryRouter } from 'react-router';
 import { RawIntlProvider } from 'react-intl';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
 import { ConnectError, Code } from '@connectrpc/connect';
+import { create } from '@bufbuild/protobuf';
 
 import AlarmsPage from './Alarms';
 import * as pb from '@/proto';
@@ -34,6 +35,7 @@ import { deckCapabilities } from '@/pages/workspace/Display/capabilities.fixture
 import { Toaster, toast } from '@/lib/toast';
 import { intlFor } from '@/lib/intl';
 import type { ServiceMocks } from '@/lib/proto';
+import { BadRequestSchema } from '@/proto/gen/google/rpc/error_details_pb';
 
 const advance = async (ms: number): Promise<void> => {
     await act(async () => {
@@ -187,6 +189,47 @@ describe('Alarms', () => {
         expect(within(screen.getByRole('dialog')).getByText('Failed to save the alarm!')).toBeTruthy();
         expect(screen.queryByText(/Failed to fetch/)).toBeNull();
     });
+
+    async function saveRefused(field: string, description: string): Promise<HTMLElement> {
+        answerAlarms([alarm('wake')]);
+        answerGeneralSettings(() => settings(pb.TimeFormat.TIME_FORMAT_24_HOUR));
+        const detail = create(BadRequestSchema, { fieldViolations: [{ field, description }] });
+        rstest
+            .spyOn(pb.rpc.alarm, 'setAlarm')
+            .mockRejectedValue(
+                new ConnectError('Some of the fields are invalid.', Code.InvalidArgument, undefined, [
+                    { desc: BadRequestSchema, value: detail },
+                ]),
+            );
+        render(pageTree());
+        await advance(0);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm Changes' }));
+        await advance(0);
+        return screen.getByRole('dialog');
+    }
+
+    test('a sound the device refuses shows under the sound', async () => {
+        const dialog = await saveRefused('sound_id', 'Invalid sound!');
+        expect(
+            within(dialog).getByRole('combobox', { name: 'Alarm Sound', description: 'Invalid sound!' }),
+        ).toBeTruthy();
+        expect(within(dialog).queryByRole('alertdialog', { name: 'Invalid sound!' })).toBeNull();
+    });
+
+    test('a refusal of a field the form does not draw shows above it', async () => {
+        const dialog = await saveRefused('snooze_options', 'Missing value!');
+        expect(within(dialog).getByRole('alertdialog', { name: 'Missing value!' })).toBeTruthy();
+    });
+
+    test.each(pb.SetAlarmRequestSchema.fields.map(field => field.name))(
+        'a refusal of %s shows once in the dialog',
+        async field => {
+            const dialog = await saveRefused(field, 'Not accepted!');
+            expect(within(dialog).getByText('Not accepted!')).toBeTruthy();
+        },
+    );
 
     test.each([
         ['lost', 'drops', 0, false],

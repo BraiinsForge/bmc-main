@@ -30,7 +30,16 @@ import { formNotices, hasFieldErrors, isMisbound, itemErrorsOf } from '../../fn'
 
 import { ParamField } from '@/components/ParamField';
 import { BoundDropdown, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
-import { AccountIcon, Date, ModalCustom, Button, InlineNotification, Link, Markdown } from '@/components';
+import {
+    AccountIcon,
+    Date,
+    ModalCustom,
+    Button,
+    InlineNotification,
+    InlineNotificationsGroup,
+    Link,
+    Markdown,
+} from '@/components';
 import { Calendar as IconCalendar } from '@carbon/react/icons';
 import { WidgetName } from '../WidgetName';
 import css from '../shared.scss';
@@ -216,7 +225,6 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
         credentialBindings = {},
         onCredentialBindingChange,
     } = props;
-    const { formatMessage } = useIntl();
 
     if (!manifest) return null;
 
@@ -240,7 +248,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
                           accounts={accounts}
                           credentialTypes={credentialTypes}
                           boundAccountId={ownValue(credentialBindings, slot.key) ?? ''}
-                          error={ownValue(errors?.credentials, slot.key)?.[0]}
+                          error={pb.renderFieldErrorsAsList(ownValue(errors?.credentials, slot.key)) ?? undefined}
                           onChange={onCredentialBindingChange}
                           firstOfType={manifest.credentials.findIndex(s => s.typeId === slot.typeId) === i}
                       />
@@ -253,7 +261,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
                     id={$(`param-${def.key}`)}
                     definition={def}
                     value={params[def.key] ?? null}
-                    error={fieldErrors[def.key]?.[0]}
+                    error={pb.renderFieldErrorsAsList(fieldErrors[def.key]) ?? undefined}
                     itemErrors={itemErrorsOf(errors, def.key)}
                     onChange={onParamChange}
                     timezones={timezones}
@@ -262,16 +270,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
 
             <CheckYourScreenForPreview />
 
-            {notices.length > 0 ? (
-                <InlineNotification
-                    kind="error"
-                    theme="inverse"
-                    stretch
-                    hideCloseButton
-                    title={formatMessage({ defaultMessage: 'Error' })}
-                    children={pb.renderFieldErrorsAsList(notices)}
-                />
-            ) : null}
+            <InlineNotificationsGroup items={notices} kind="error" theme="inverse" stretch />
         </Form>
     );
 }

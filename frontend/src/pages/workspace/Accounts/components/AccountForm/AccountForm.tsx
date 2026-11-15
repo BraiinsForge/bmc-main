@@ -26,7 +26,7 @@ import { selfSelect } from '@/lib/react';
 import type * as pb from '@/proto';
 import { getID } from '../const';
 
-import { AccountIcon, type FieldValue, InlineNotification } from '@/components';
+import { AccountIcon, type FieldValue, InlineNotificationsGroup } from '@/components';
 import { CredentialTypeForm } from '../CredentialTypeForm';
 import { RadioButton, RadioButtonGroup, TextArea, TextInput } from '@carbon/react';
 import css from './AccountForm.scss';
@@ -48,8 +48,8 @@ export interface AccountFormProps {
     // Only rendered for a type without its own egress pin.
     allowHosts: iField<string>;
 
-    // Top-level error (a non-field failure).
-    error?: null | string;
+    // Top-level errors (non-field failures).
+    errors?: Maybe<string[]>;
 }
 
 const $ = getID('account-form').get;
@@ -64,7 +64,7 @@ export const isEgressPinned = (type: pb.CredentialType | undefined): boolean => 
 // Fully controlled, presentational account form: the credential-type picker, the account name, the
 // secret-disclosure notice, and the type's masked fields. The parent owns all state and submission.
 export function AccountForm(props: AccountFormProps) {
-    const { mode, credentialTypes, type, name, fieldValues, fieldErrors, onFieldChange, allowHosts, error } = props;
+    const { mode, credentialTypes, type, name, fieldValues, fieldErrors, onFieldChange, allowHosts, errors } = props;
     const { formatMessage } = useIntl();
 
     const isEdit = mode === 'edit';
@@ -72,9 +72,7 @@ export function AccountForm(props: AccountFormProps) {
 
     return (
         <Form className={css.form}>
-            {error ? (
-                <InlineNotification stretch theme="inverse" kind="error" hideCloseButton children={error} />
-            ) : null}
+            <InlineNotificationsGroup items={errors} kind="error" theme="inverse" stretch />
 
             <RadioButtonGroup
                 // Remount on value change: the group otherwise keeps

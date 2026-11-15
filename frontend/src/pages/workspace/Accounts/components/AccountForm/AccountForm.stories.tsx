@@ -74,13 +74,13 @@ export default {
 function Demo({
     mode,
     typeId,
-    error,
+    errors,
     fieldErrors,
     allowHostsError,
 }: {
     mode: 'create' | 'edit';
     typeId: string;
-    error?: string;
+    errors?: string[];
     fieldErrors?: Record<string, string[]>;
     allowHostsError?: string;
 }) {
@@ -100,7 +100,7 @@ function Demo({
                 onFieldChange={(key, value) => setValues(prev => ({ ...prev, [key]: value }))}
                 fieldErrors={fieldErrors}
                 allowHosts={{ value: allowHosts, onChange: setAllowHosts, error: allowHostsError }}
-                error={error}
+                errors={errors}
             />
         </div>
     );
@@ -111,6 +111,13 @@ export const CreateUsernamePassword = () => <Demo mode="create" typeId="generic-
 export const Edit = () => <Demo mode="edit" typeId="braiins-pool" />;
 export const WithError = () => (
     <Demo mode="create" typeId="generic-token" fieldErrors={{ token: ['Invalid API key.'] }} />
+);
+export const WithGeneralErrors = () => (
+    <Demo
+        mode="create"
+        typeId="generic-token"
+        errors={['Some of the fields are invalid.', 'The account store is busy.']}
+    />
 );
 // The two halves of the destination control: a pinned type states where its secret
 // goes, an unpinned one lets the operator say — and can reject what they wrote.

@@ -549,6 +549,11 @@
     "source": "Failed to save SecondsInStatusbar",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŞḗḗƈǿǿƞḓşĪƞŞŧȧȧŧŭŭşƀȧȧř]"
   },
+  "B1FrXaF8TO": {
+    "source": "Edit Alarm",
+    "translation": "[Ḗḓīŧ Ȧŀȧȧřḿ]",
+    "description": "Alarm dialog title while changing an existing alarm"
+  },
   "BG9UOWuEog": {
     "source": "Forever",
     "translation": "[Ƒǿǿřḗḗṽḗḗř]"
@@ -919,10 +924,6 @@
     "source": "This widget has no parameters to configure",
     "translation": "[Ŧħīş ẇīḓɠḗḗŧ ħȧȧş ƞǿǿ ƥȧȧřȧȧḿḗḗŧḗḗřş ŧǿǿ ƈǿǿƞƒīɠŭŭřḗḗ]"
   },
-  "KN7zKn8z4F": {
-    "source": "Error",
-    "translation": "[Ḗřřǿǿř]"
-  },
   "KS6WuePUU0": {
     "source": "LED notifications in night mode enabled",
     "translation": "[ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş īƞ ƞīɠħŧ ḿǿǿḓḗḗ ḗḗƞȧȧƀŀḗḗḓ]"
@@ -961,6 +962,11 @@
     "source": "Device Password",
     "translation": "[Ḓḗḗṽīƈḗḗ Ƥȧȧşşẇǿǿřḓ]"
   },
+  "LrDX/iojle": {
+    "source": "Add New Alarm",
+    "translation": "[Ȧḓḓ Ƞḗḗẇ Ȧŀȧȧřḿ]",
+    "description": "Alarm dialog title while creating an alarm"
+  },
   "Lt4OBpG8iT": {
     "source": "Download size:",
     "translation": "[Ḓǿǿẇƞŀǿǿȧȧḓ şīẑḗḗ:]"
@@ -985,10 +991,6 @@
   "N03g5tFdW6": {
     "source": "Install Widget",
     "translation": "[Īƞşŧȧȧŀŀ Ẇīḓɠḗḗŧ]"
-  },
-  "N0eaIbNmoY": {
-    "source": "Confirm Changes",
-    "translation": "[Ƈǿǿƞƒīřḿ Ƈħȧȧƞɠḗḗş]"
   },
   "N2IrpMDHDB": {
     "source": "Confirm",
@@ -1381,10 +1383,6 @@
   "ZGZEMNAA8T": {
     "source": "{name} {version} can now be added to a scene.",
     "translation": "[{name} {version} ƈȧȧƞ ƞǿǿẇ ƀḗḗ ȧȧḓḓḗḗḓ ŧǿǿ ȧȧ şƈḗḗƞḗḗ.]"
-  },
-  "ZJyow0buty": {
-    "source": "Edit Alarm",
-    "translation": "[Ḗḓīŧ Ȧŀȧȧřḿ]"
   },
   "ZK1d6fQ6/I": {
     "source": "SSID",
@@ -1898,6 +1896,11 @@
     "source": "Accounts not loaded",
     "translation": "[Ȧƈƈǿǿŭŭƞŧş ƞǿǿŧ ŀǿǿȧȧḓḗḗḓ]"
   },
+  "nb7Nct5RTu": {
+    "source": "Add New Alarm",
+    "translation": "[Ȧḓḓ Ƞḗḗẇ Ȧŀȧȧřḿ]",
+    "description": "Alarm dialog button that creates the alarm"
+  },
   "ncad+6OuMM": {
     "source": "Slide",
     "translation": "[Şŀīḓḗḗ]"
@@ -2157,9 +2160,19 @@
     "translation": "[{name} {subname}]",
     "description": "A widget's name followed by its variant, naming its buttons in the scene editor, such as Miner Info Geek"
   },
+  "tTm3SyMJyP": {
+    "source": "Confirm Changes",
+    "translation": "[Ƈǿǿƞƒīřḿ Ƈħȧȧƞɠḗḗş]",
+    "description": "Alarm dialog button that saves the changes to an existing alarm"
+  },
   "tW6rkQ3J7V": {
     "source": "{item} dropped at position {position} of {count}.",
     "translation": "[{item} ḓřǿǿƥƥḗḗḓ ȧȧŧ ƥǿǿşīŧīǿǿƞ {position} ǿǿƒ {count}.]"
+  },
+  "tXOm5unmvT": {
+    "source": "Delete Alarm",
+    "translation": "[Ḓḗḗŀḗḗŧḗḗ Ȧŀȧȧřḿ]",
+    "description": "Alarm dialog button that deletes the alarm being changed"
   },
   "tXea4KOYWN": {
     "source": "Password (optional)",

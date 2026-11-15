@@ -427,7 +427,7 @@ class View extends Component<Props, State> {
                     fieldErrors={errors?.fields?.fieldValues}
                     onFieldChange={this.#onField}
                     allowHosts={allowHosts}
-                    error={pb.renderFieldErrorsAsList(errors?.global)}
+                    errors={errors?.global}
                 />
             </Modal>
         );

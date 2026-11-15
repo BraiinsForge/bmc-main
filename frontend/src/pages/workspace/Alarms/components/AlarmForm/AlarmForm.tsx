@@ -49,6 +49,9 @@ export interface AlarmFormProps {
     snoozeLimit: iField<pb.SnoozeLimit>;
     snoozeDuration: iField<pb.SnoozeDuration>;
 }
+// The fields that draw their own error
+export const ALARM_FORM_FIELDS = ['time', 'name', 'sound'] as const satisfies readonly (keyof AlarmFormProps)[];
+
 export interface Props extends AlarmFormProps {
     intl: IntlShape;
     firstDay: pb.Weekday;
@@ -243,6 +246,8 @@ class View extends Component<Props, State> {
                             onChange={this.#alarmSoundChange}
                             itemToString={this.#alarmSoundToString}
                             itemToElement={soundOptionElement}
+                            invalid={!!sound.error}
+                            invalidText={sound.error}
                         />
                         <Button
                             id={$('play-selected-sound')}

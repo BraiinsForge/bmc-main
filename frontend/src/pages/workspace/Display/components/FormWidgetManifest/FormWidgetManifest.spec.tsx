@@ -67,6 +67,25 @@ describe('FormWidgetManifest', () => {
         expect(getByText('Must be a whole number')).toBeTruthy();
     });
 
+    test('a field refused for two reasons shows both', () => {
+        render(
+            <FormWidgetManifest
+                isOpen
+                onSave={() => {}}
+                onCancel={() => {}}
+                manifest={manifest}
+                params={{ count: '42' }}
+                errors={{ global: [], fields: { count: ['Must be at most 10', 'Not one of the listed values'] } }}
+                onParamChange={() => {}}
+                timezones={[]}
+                accounts={[]}
+            />,
+        );
+
+        expect(document.body.textContent).toContain('Must be at most 10');
+        expect(document.body.textContent).toContain('Not one of the listed values');
+    });
+
     test('beside a field error, shows what no field can and leaves the status to the fields', () => {
         const { queryByText } = render(
             <FormWidgetManifest
@@ -359,6 +378,20 @@ describe('FormWidgetManifest credential slots', () => {
         });
 
         expect(queryByText('Account not found')).toBeTruthy();
+    });
+
+    test('a slot refused for two reasons shows both on its picker', () => {
+        renderSlots({
+            bindings: { pool: 'a1' },
+            errors: {
+                global: [],
+                fields: {},
+                credentials: { pool: ['Account not found', 'The account is of another type'] },
+            },
+        });
+
+        expect(document.body.textContent).toContain('Account not found');
+        expect(document.body.textContent).toContain('The account is of another type');
     });
 
     test('warns when a required slot is unbound', () => {

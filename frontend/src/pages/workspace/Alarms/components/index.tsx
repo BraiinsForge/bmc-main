@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+export * from './AlarmDialog';
 export * from './AlarmForm';
 export * from './AlarmsTable';
 export * from './SoundOption';

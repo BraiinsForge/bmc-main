@@ -39,9 +39,9 @@ import * as pb from '@/proto';
 import AppContext, { type AppContextType } from '@/context';
 
 // Components
-import { Add as IconAdd, TrashCan as IconDelete } from '@carbon/react/icons';
-import { AlarmsTable, AlarmForm } from './components';
-import { Button, Modal, InlineNotification } from '@/components';
+import { Add as IconAdd } from '@carbon/react/icons';
+import { ALARM_FORM_FIELDS, AlarmsTable, AlarmDialog } from './components';
+import { Button } from '@/components';
 
 // Styles
 import css from './Alarms.scss';
@@ -57,6 +57,13 @@ type FormValues = Pick<pb.AddAlarmRequest, 'time' | 'name' | 'soundId' | 'repeat
     snoozeDuration: null | pb.SnoozeDuration;
 };
 type FormState = pb.FormState<FormValues>;
+
+// The request field whose refusal each form field draws
+const alarmFormRequestFields: Record<(typeof ALARM_FORM_FIELDS)[number], keyof pb.AddAlarmRequest> = {
+    time: 'time',
+    name: 'name',
+    sound: 'soundId',
+};
 
 interface State {
     isLoading: boolean;
@@ -141,10 +148,6 @@ export class View extends Component<Props, State> {
                 defaultMessage: 'Let’s make sure your alarm wakes you just right – not too loud, not too chill.',
             }),
             addNewAlarm: formatMessage({ defaultMessage: 'Add New Alarm' }),
-            editAlarm: formatMessage({ defaultMessage: 'Edit Alarm' }),
-            confirmChanges: formatMessage({ defaultMessage: 'Confirm Changes' }),
-            cancel: formatMessage({ defaultMessage: 'Cancel' }),
-            deleteAlarm: formatMessage({ defaultMessage: 'Delete Alarm' }),
         };
     }
 
@@ -284,7 +287,8 @@ export class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
             const formErrors = pb.parseFormErrors<pb.AddAlarmRequest>($, {
-                knownFields: ['name', 'time', 'enabled', 'repeat', 'soundId', 'snoozeOptions'],
+                // Only the fields the form draws, so any other violation shows above it
+                knownFields: ALARM_FORM_FIELDS.map(field => alarmFormRequestFields[field]),
                 fallback: formatMessage({
                     defaultMessage: 'Failed to save the alarm!',
                     description:
@@ -356,68 +360,29 @@ export class View extends Component<Props, State> {
     };
 
     #addRender = (): ReactElement => {
-        const { formatMessage } = this.props.intl;
         const { openDialog, sounds } = this.state;
         const { timeFormat } = this.props;
         const data = openDialog?.key === 'alarm' ? openDialog.data : null;
 
-        const txt = this.#txt;
-
-        const alarmID = openDialog?.editingID;
-        const isEdit = alarmID != null;
-        const labelTitle = isEdit ? txt.editAlarm : txt.addNewAlarm;
-        const labelSubmit = isEdit ? txt.confirmChanges : txt.addNewAlarm;
-
         return (
-            <Modal
-                id={$('add-dialog')}
+            <AlarmDialog
                 open={!!data}
-                size="sm"
-                // Labeling & behavior
-                selectorPrimaryFocus="input"
-                modalHeading={labelTitle}
-                // Submit
-                primaryButtonText={labelSubmit}
-                onRequestSubmit={this.#alarmDialogSubmit}
-                // Cancel
-                onRequestClose={this.#alarmDialogClose}
-                secondaryButtonText={txt.cancel}
-                onSecondarySubmit={this.#alarmDialogClose}
-            >
-                {data?.errors?.global ? (
-                    <InlineNotification
-                        kind="error"
-                        stretch
-                        hideCloseButton
-                        children={pb.renderFieldErrorsAsList(data.errors.global)}
-                        style={{ marginBottom: '1rem' }}
-                    />
-                ) : null}
-
-                <AlarmForm
-                    time={this.#alarmDialogGetFieldStruct('time')}
-                    timeFormat={timeFormat}
-                    name={this.#alarmDialogGetFieldStruct('name')}
-                    repeat={this.#alarmDialogGetFieldStruct('repeat')}
-                    sound={{ ...this.#alarmDialogGetFieldStruct('soundId'), options: sounds }}
-                    // Snooze
-                    snoozeEnabled={this.#alarmDialogGetFieldStruct('snoozeEnabled')}
-                    snoozeLimit={this.#alarmDialogGetFieldStruct('snoozeLimit')}
-                    snoozeDuration={this.#alarmDialogGetFieldStruct('snoozeDuration')}
-                />
-
-                {alarmID != null ? (
-                    <div className={css.deleteButtonRow}>
-                        <Button
-                            id={$('delete-alarm', alarmID)}
-                            kind="danger"
-                            icon={IconDelete}
-                            children={formatMessage({ defaultMessage: 'Delete Alarm' })}
-                            onClick={() => this.#onDelete(alarmID)}
-                        />
-                    </div>
-                ) : null}
-            </Modal>
+                alarmID={openDialog?.editingID ?? null}
+                errors={data?.errors?.global}
+                form={{
+                    time: this.#alarmDialogGetFieldStruct('time'),
+                    timeFormat,
+                    name: this.#alarmDialogGetFieldStruct('name'),
+                    repeat: this.#alarmDialogGetFieldStruct('repeat'),
+                    sound: { ...this.#alarmDialogGetFieldStruct('soundId'), options: sounds },
+                    snoozeEnabled: this.#alarmDialogGetFieldStruct('snoozeEnabled'),
+                    snoozeLimit: this.#alarmDialogGetFieldStruct('snoozeLimit'),
+                    snoozeDuration: this.#alarmDialogGetFieldStruct('snoozeDuration'),
+                }}
+                onSubmit={this.#alarmDialogSubmit}
+                onClose={this.#alarmDialogClose}
+                onDelete={this.#onDelete}
+            />
         );
     };
 
