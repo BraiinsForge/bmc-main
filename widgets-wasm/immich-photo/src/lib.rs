@@ -22,7 +22,8 @@
 //! Immich photo widget — random photos straight from an Immich server, with up
 //! to two label buttons in the menu (e.g. **Label ToDelete**, **Label
 //! ToRotate**) that tag the photo on screen in Immich; each turns into
-//! **Remove …** once the photo has that tag.
+//! **Remove …** once the photo has that tag. The photo's album (for an
+//! imported library, the folder it came from) shows at the bottom.
 //!
 //! The picture pipeline is the image widget's. The Immich API key lives in a
 //! credential slot: requests carry its placeholder and the device fills it in.
@@ -99,6 +100,37 @@ fn json_escape(s: &str) -> String {
     out
 }
 
+/// The name of the folder that holds `path`, the last directory in it.
+#[must_use]
+pub fn folder_of(path: &str) -> Option<&str> {
+    let (dir, _file) = path.rsplit_once('/')?;
+    dir.rsplit('/').next().filter(|name| !name.is_empty())
+}
+
+/// `s` cut to at most `max_chars` characters, ending in … when cut.
+#[must_use]
+pub fn ellipsize(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_owned();
+    }
+    let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    out.truncate(out.trim_end().len());
+    out.push('…');
+    out
+}
+
+/// The caption under a photo: its albums joined, or else the folder it is
+/// stored in, cut to `max_chars`.
+#[must_use]
+pub fn folder_caption(albums: &[String], folder: Option<&str>, max_chars: usize) -> Option<String> {
+    let full = if albums.is_empty() {
+        folder?.to_owned()
+    } else {
+        albums.join(" · ")
+    };
+    Some(ellipsize(&full, max_chars))
+}
+
 /// A param counts as set only with something besides whitespace in it.
 #[must_use]
 pub fn configured(value: Option<&str>) -> Option<&str> {
@@ -145,6 +177,34 @@ mod tests {
     }
 
     #[test]
+    fn folder_of_takes_the_last_directory() {
+        assert_eq!(
+            folder_of("/data/library/admin/2014/2014-08-14/P1030546.JPG"),
+            Some("2014-08-14")
+        );
+        assert_eq!(folder_of("/Vimperk 2014/a.jpg"), Some("Vimperk 2014"));
+        assert_eq!(folder_of("/a.jpg"), None);
+        assert_eq!(folder_of("a.jpg"), None);
+    }
+
+    #[test]
+    fn caption_prefers_albums_and_cuts_long_names() {
+        let albums = vec!["Vimperk 2014".to_owned(), "Děti".to_owned()];
+        assert_eq!(
+            folder_caption(&albums, Some("2014-08-14"), 40).as_deref(),
+            Some("Vimperk 2014 · Děti")
+        );
+        assert_eq!(
+            folder_caption(&[], Some("2014-08-14"), 40).as_deref(),
+            Some("2014-08-14")
+        );
+        assert_eq!(folder_caption(&[], None, 40), None);
+        assert_eq!(ellipsize("Silvestr 2013 na Lipně", 12), "Silvestr 20…");
+        assert_eq!(ellipsize("Svatba Jana a Jarky", 8), "Svatba…");
+        assert_eq!(ellipsize("Děti", 4), "Děti");
+    }
+
+    #[test]
     fn configured_ignores_blank_values() {
         assert_eq!(configured(None), None);
         assert_eq!(configured(Some("  ")), None);
@@ -155,7 +215,10 @@ mod tests {
 #[cfg(target_arch = "wasm32")]
 mod wasm_glue {
     use super::manifest_params::{self, Sizing, credentials};
-    use super::{api_url, bulk_done, configured, ids_body, random_body, tag_body, thumbnail_size};
+    use super::{
+        api_url, bulk_done, configured, folder_caption, folder_of, ids_body, random_body, tag_body,
+        thumbnail_size,
+    };
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
 
@@ -185,6 +248,10 @@ mod wasm_glue {
     const MENU_GAP: f32 = 8.0;
     const MENU_PADDING: f32 = 12.0;
     const NOTICE_TEXT_SIZE: u32 = 14;
+    /// Corner gap of the folder caption.
+    const CAPTION_INSET: f32 = 8.0;
+    /// About how wide a caption character is, to cut long album names.
+    const CAPTION_CHAR_PX: u32 = 7;
 
     /// A label change in progress: one or two Immich requests.
     #[derive(Clone)]
@@ -219,6 +286,11 @@ mod wasm_glue {
         static ASSET: RefCell<Option<String>> = const { RefCell::new(None) };
         /// Immich tags of that asset, as fetched and as changed since.
         static TAGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        /// Folder the photo on screen is stored in, and the albums it is in.
+        static FOLDER: RefCell<Option<String>> = const { RefCell::new(None) };
+        static ALBUMS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        /// Asset the album lookup in flight asked for.
+        static ALBUMS_FOR: RefCell<Option<String>> = const { RefCell::new(None) };
         /// Why no photo comes, shown while there's nothing else to show.
         static PROBLEM: Cell<Option<&'static str>> = const { Cell::new(None) };
         /// The label change on its way; further taps wait for it.
@@ -311,6 +383,10 @@ mod wasm_glue {
             }
         }
         out
+    }
+
+    fn show_folder() -> bool {
+        manifest_params::Params::current().show_folder
     }
 
     fn key_header() -> String {
@@ -434,6 +510,8 @@ mod wasm_glue {
         if response.ok() {
             ASSET.set(requested.clone());
             TAGS.set(Vec::new());
+            FOLDER.set(None);
+            ALBUMS.set(Vec::new());
             if let Some(asset) = requested {
                 fetch_tags(&asset);
             }
@@ -479,7 +557,68 @@ mod wasm_glue {
             .filter_map(|i| doc.str(&fmt!("/tags/{}/value", i)))
             .collect();
         TAGS.set(tags);
+        FOLDER.set(
+            doc.str("/originalPath")
+                .as_deref()
+                .and_then(folder_of)
+                .map(str::to_owned),
+        );
+        if show_folder()
+            && let Some(asset) = doc.str("/id")
+        {
+            fetch_albums(&asset);
+        }
         request_frame();
+    }
+
+    /// Learn the albums of the photo; a key without `album.read` is refused
+    /// and the caption keeps the stored folder.
+    fn fetch_albums(asset: &str) {
+        let Some(server) = server() else {
+            return;
+        };
+        let url = api_url(&server, &fmt!("/api/albums?assetId={}", asset));
+        ALBUMS_FOR.set(Some(asset.to_owned()));
+        let _ = FetchRequest::get(&url)
+            .headers(&key_header())
+            .send(on_albums);
+    }
+
+    fn on_albums(response: &FetchResponse) {
+        // Only the photo still on screen.
+        let asked = ALBUMS_FOR.take();
+        if !response.ok() || asked.is_none() || ASSET.with_borrow(Clone::clone) != asked {
+            return;
+        }
+        let doc = JsonDoc::parse(response.body());
+        let albums = (0..doc.len("").unwrap_or(0))
+            .filter_map(|i| doc.str(&fmt!("/{}/albumName", i)))
+            .collect();
+        ALBUMS.set(albums);
+        request_frame();
+    }
+
+    /// The folder caption of the photo on screen, sized to `width`.
+    fn caption(width: u32) -> Option<String> {
+        if !show_folder() || ASSET.with_borrow(Option::is_none) {
+            return None;
+        }
+        let max_chars = usize::try_from(width * 3 / 5 / CAPTION_CHAR_PX).unwrap_or(usize::MAX);
+        ALBUMS.with_borrow(|albums| {
+            FOLDER.with_borrow(|folder| folder_caption(albums, folder.as_deref(), max_chars))
+        })
+    }
+
+    /// Float `caption` in the bottom right corner, clear of the status pills
+    /// on the left.
+    fn with_caption(mut root: Node, caption: &str) -> Node {
+        if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
+            children.push(row(
+                props!(inset_bottom: CAPTION_INSET, inset_right: CAPTION_INSET),
+                [notice_pill(caption)],
+            ));
+        }
+        root
     }
 
     /// Whether the photo on screen carries `label`.
@@ -752,6 +891,21 @@ mod wasm_glue {
         )
     }
 
+    /// Add the folder caption (on a photo) and the label notice to `base`.
+    fn with_captions(mut base: Node, width: u32, shape: ViewportShape) -> Node {
+        let shown = VIEW.with(|v| matches!(&*v.borrow(), View::Shown { .. }));
+        if shown
+            && server().is_some()
+            && let Some(caption) = caption(width)
+        {
+            base = with_caption(base, &caption);
+        }
+        if let Some(message) = NOTICE.with_borrow(Clone::clone) {
+            base = with_overlay(base, notice_pill(&message), shape);
+        }
+        base
+    }
+
     /// Overlay the tap catcher (always) and the menu (when open) onto the root.
     fn with_interaction(
         mut root: Node,
@@ -828,9 +982,7 @@ mod wasm_glue {
                 View::Failed(kind) => render::message_view(render::error_message(*kind), size),
             })
         };
-        if let Some(message) = NOTICE.with_borrow(Clone::clone) {
-            base = with_overlay(base, notice_pill(&message), shape);
-        }
+        base = with_captions(base, size.width, shape);
 
         let open = menu_open();
         let labels = labels();
