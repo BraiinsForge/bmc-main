@@ -532,9 +532,8 @@ def _collect(
                 out.decoded = f"{dec.group(1)}x{dec.group(2)}"
                 out.decode_us = int(dec.group(4))
                 out.vmrss_delta_kb = int(dec.group(5))
-        elif err := _ERROR.search(line):
-            if (out := by_len.get(int(err.group(3)))) is not None:
-                out.error = f"{err.group(1)}: {err.group(2)}".strip()
+        elif (err := _ERROR.search(line)) and (out := by_len.get(int(err.group(3)))) is not None:
+            out.error = f"{err.group(1)}: {err.group(2)}".strip()
     return [by_url[c.url(base_url)] for c in cases]
 
 
