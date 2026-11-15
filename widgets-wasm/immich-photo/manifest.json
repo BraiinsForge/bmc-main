@@ -60,6 +60,7 @@
       "name": "Show folder",
       "description": "Show at the bottom of the photo the album it is in (e.g. the folder it was imported from), or else the folder it is stored in",
       "type": "boolean",
+      "optional": true,
       "default_value": true
     }
   },

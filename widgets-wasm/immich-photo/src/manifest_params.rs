@@ -49,7 +49,7 @@ pub struct Params {
     pub refresh_seconds: i32,
     pub second_label: Option<String>,
     pub server: Option<String>,
-    pub show_folder: bool,
+    pub show_folder: Option<bool>,
     pub sizing: Sizing,
 }
 impl Params {
@@ -61,7 +61,7 @@ impl Params {
             refresh_seconds: <i32 as ParamRead>::read_required(snap, "refresh_seconds"),
             second_label: <String as ParamRead>::read_optional(snap, "second_label"),
             server: <String as ParamRead>::read_optional(snap, "server"),
-            show_folder: <bool as ParamRead>::read_required(snap, "show_folder"),
+            show_folder: <bool as ParamRead>::read_optional(snap, "show_folder"),
             sizing: <Sizing as ParamRead>::read_required(snap, "sizing"),
         }
     }

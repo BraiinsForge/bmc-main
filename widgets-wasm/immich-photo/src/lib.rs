@@ -385,8 +385,12 @@ mod wasm_glue {
         out
     }
 
+    // Optional, so a widget saved before the setting existed reads it as
+    // unset instead of panicking on a required param it lacks.
     fn show_folder() -> bool {
-        manifest_params::Params::current().show_folder
+        manifest_params::Params::current()
+            .show_folder
+            .unwrap_or(true)
     }
 
     fn key_header() -> String {
