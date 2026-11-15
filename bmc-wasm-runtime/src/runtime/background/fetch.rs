@@ -149,6 +149,20 @@ pub(in crate::runtime) fn do_fetch(
                 None => req.send_empty(),
             }
         }
+        // DELETE may carry a body too (Immich takes the ids to remove in one).
+        "DELETE" if body.is_some() => {
+            let mut req = agent
+                .delete(url)
+                .force_send_body()
+                .config()
+                .timeout_global(Some(timeout))
+                .max_redirects(max_redirects)
+                .build();
+            for (k, v) in headers {
+                req = req.header(k, v);
+            }
+            req.send(body.unwrap_or_default())
+        }
         _ => {
             let mut req = match method {
                 "DELETE" => agent.delete(url),
@@ -396,6 +410,52 @@ mod tests {
             "the origin's own header must reach the reply"
         );
         assert_eq!(reply.body, b"{}");
+    }
+
+    /// Some APIs name what to delete in the body (Immich's tag assets),
+    /// so a DELETE body must reach the origin.
+    #[test]
+    fn a_delete_sends_its_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        let (seen_tx, seen_rx) = mpsc::channel();
+        let _serve = std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut request = Vec::new();
+                while !request.ends_with(b"{\"ids\":[]}") {
+                    let mut chunk = [0_u8; 1024];
+                    match sock.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => request.extend_from_slice(&chunk[..read]),
+                    }
+                }
+                let _ = sock.write_all(b"HTTP/1.1 204 No Content\r\n\r\n");
+                let _ = seen_tx.send(request);
+            }
+        });
+
+        let agent = FetchAgent::default();
+        let url = format!("http://{addr}/");
+        let reply = do_fetch(
+            &agent,
+            "DELETE",
+            &url,
+            &[("Content-Type".to_owned(), "application/json".to_owned())],
+            Some(b"{\"ids\":[]}"),
+            Duration::from_secs(5),
+            Redirects::Follow,
+        );
+
+        assert_eq!(
+            FetchOutcome::from_wire(reply.status),
+            Some(FetchOutcome::Http(204))
+        );
+        let request = seen_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("BUG: server saw the request");
+        let request = String::from_utf8_lossy(&request);
+        assert!(request.starts_with("DELETE / "), "{request}");
+        assert!(request.ends_with("{\"ids\":[]}"), "{request}");
     }
 
     /// A refusal is an answer: its headers say why and for how long,
