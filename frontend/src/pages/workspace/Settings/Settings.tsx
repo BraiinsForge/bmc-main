@@ -134,6 +134,8 @@ function getFieldStateDefault<T>(init?: {
 interface State {
     activeTab: Tab;
     globalErrors: Maybe<string[]>;
+    // A failed read, until a read covering the same data answers
+    loadErrors: Partial<Record<'systemInfo' | 'metadata', string[]>>;
 
     // Data that does not fit neatly into the form fields.
     data: {
@@ -187,9 +189,21 @@ const defaultNightmodeInterval = pb.create(pb.TimeIntervalSchema, {
     from: '22:00',
     to: '07:00',
 });
+
+// The system info read covers the metadata too, so its answer
+// replaces both errors, unless a metadata re-read started after it
+function systemInfoAnswered(
+    loadErrors: State['loadErrors'],
+    metadataReread: boolean,
+    systemInfo?: string[],
+): State['loadErrors'] {
+    return metadataReread ? { ...loadErrors, systemInfo } : { systemInfo };
+}
+
 const getInitialState = (): State => ({
     activeTab: Tab.general,
     globalErrors: null,
+    loadErrors: {},
 
     data: {
         metadata: null,
@@ -312,6 +326,9 @@ class View extends Component<Props, State> {
 
     private fetchSystemInfoAbort = pb.abort.get();
     #fetchSystemInfo = async (): Promise<void> => {
+        // An older metadata re-read must not land after this read's answer
+        this.refreshMetadataAbort.replace();
+        const rereads = this.#metadataRereads;
         try {
             const { signal } = this.fetchSystemInfoAbort.replace();
             const [{ timezone }, { timezones }, metadata] = await Promise.all([
@@ -319,8 +336,10 @@ class View extends Component<Props, State> {
                 pb.rpc.sys.getTimezoneList({}, { signal }),
                 pb.rpc.meta.getMetadata({}, { signal }),
             ]);
+            const reread = this.#metadataRereads !== rereads;
             this.setState(s => ({
-                data: { ...s.data, timezones, metadata },
+                loadErrors: systemInfoAnswered(s.loadErrors, reread),
+                data: { ...s.data, timezones, metadata: reread ? s.data.metadata : metadata },
                 values: {
                     ...s.values,
                     timezone: getFieldStateDefault({
@@ -331,7 +350,7 @@ class View extends Component<Props, State> {
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const globalErrors = pb.collectAllErrors(
+            const errors = pb.collectAllErrors(
                 $,
                 this.props.intl.formatMessage({
                     defaultMessage: 'Failed to load the system information!',
@@ -339,20 +358,26 @@ class View extends Component<Props, State> {
                         'Settings page error when the timezone and the installed versions cannot be read, such as with the device unreachable',
                 }),
             );
-            this.setState({ globalErrors });
+            const reread = this.#metadataRereads !== rereads;
+            this.setState(s => ({ loadErrors: systemInfoAnswered(s.loadErrors, reread, errors) }));
         }
     };
 
     private refreshMetadataAbort = pb.abort.get();
+    #metadataRereads = 0;
     // Metadata only: re-reading the system info would also reset an unsaved timezone edit.
     #refreshMetadata = async (): Promise<void> => {
+        this.#metadataRereads += 1;
         try {
             const { signal } = this.refreshMetadataAbort.replace();
             const metadata = await pb.rpc.meta.getMetadata({}, { signal });
-            this.setState(s => ({ data: { ...s.data, metadata } }));
+            this.setState(s => ({
+                loadErrors: { ...s.loadErrors, metadata: undefined },
+                data: { ...s.data, metadata },
+            }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            const globalErrors = pb.collectAllErrors(
+            const metadataErrors = pb.collectAllErrors(
                 $,
                 this.props.intl.formatMessage({
                     defaultMessage: 'Failed to load the installed versions!',
@@ -360,7 +385,7 @@ class View extends Component<Props, State> {
                         'Settings page error when the system and packages versions cannot be re-read after a packages update, such as with the device unreachable',
                 }),
             );
-            this.setState({ globalErrors });
+            this.setState(s => ({ loadErrors: { ...s.loadErrors, metadata: metadataErrors } }));
         }
     };
 
@@ -1819,8 +1844,9 @@ class View extends Component<Props, State> {
     };
 
     render() {
-        const { activeTab, globalErrors } = this.state;
+        const { activeTab, globalErrors, loadErrors } = this.state;
         const { title } = this.#txt;
+        const errors = [...(globalErrors ?? []), ...Object.values(loadErrors).flatMap(list => list ?? [])];
 
         let content: ReactNode;
         switch (activeTab) {
@@ -1856,7 +1882,7 @@ class View extends Component<Props, State> {
                 <Tabs tabs={this.#tabs} activeTab={activeTab} onChange={this.#tabChange} className={css.tabs} />
                 <InlineNotificationsGroup
                     kind="error"
-                    items={globalErrors}
+                    items={errors}
                     stretch
                     theme="inverse"
                     style={{ marginBottom: '1rem' }}

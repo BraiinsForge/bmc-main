@@ -62,6 +62,7 @@ let metadataFailsAfterFirstRead = false;
 // Reads after the first return `secondStamp` when set, after `secondReadDelay` ms.
 let secondStamp: string | null = null;
 let secondReadDelay = 0;
+let firstReadDelay = 0;
 
 // jsdom won't let us spy on location.reload directly; swap the whole location.
 const REAL_LOCATION = window.location;
@@ -133,6 +134,8 @@ function installMocks(startUpgrade: StartUpgradeMock): void {
                     throw new ConnectError('mock: metadata unavailable', Code.Unavailable);
                 }
                 conf({ delay: secondReadDelay });
+            } else {
+                conf({ delay: firstReadDelay });
             }
             const packagesVersion = (metadataReads > 1 && secondStamp) || '2026.09.18-39e9db98-26.10';
             return pb.create(pb.MetadataSchema, { version: '26.02', packagesVersion });
@@ -187,6 +190,7 @@ afterEach(() => {
     metadataFailsAfterFirstRead = false;
     secondStamp = null;
     secondReadDelay = 0;
+    firstReadDelay = 0;
     Object.defineProperty(window, 'location', { configurable: true, value: REAL_LOCATION });
 });
 
@@ -305,6 +309,27 @@ describe('Settings upgrade stream terminal classification (BDK-559)', () => {
         expect(screen.queryByText('2026.10.19-0abc1234-26.11')).toBeNull();
 
         await advance(5000);
+        expect(screen.getByText('2026.10.19-0abc1234-26.11')).toBeTruthy();
+    });
+
+    test('a system info read that answers after a metadata re-read keeps the re-read stamp', async () => {
+        rstest.useFakeTimers();
+        firstReadDelay = 20_000;
+        secondStamp = '2026.10.19-0abc1234-26.11';
+        installMocks(() =>
+            (async function* () {
+                yield pkgPhase(pb.PackageUpgradePhase.ACTIVATING);
+                yield finished;
+            })(),
+        );
+
+        renderPage();
+        await advance(300);
+        fireEvent.click(startButton());
+        await advance(13_000);
+        expect(screen.getByText('2026.10.19-0abc1234-26.11')).toBeTruthy();
+
+        await advance(10_000);
         expect(screen.getByText('2026.10.19-0abc1234-26.11')).toBeTruthy();
     });
 
@@ -1229,7 +1254,7 @@ describe('Settings display', () => {
         store.setHardwareCapabilities(deckCapabilities());
         registerMocks(pb.services.ConfigurationService, {
             getDisplaySettings: () => {
-                throw new ConnectError('Failed to fetch', Code.Unknown);
+                throw proto.lostConnection();
             },
         });
         renderPage('#display');
@@ -1262,4 +1287,122 @@ describe('Settings display', () => {
             expect(screen.queryAllByText('Failed to load display settings!')).toHaveLength(toasts);
         },
     );
+});
+
+describe('Settings system information', () => {
+    const prague = pb.create(pb.TimezoneSchema, { id: 'Europe/Prague', label: 'Prague', offset: '+02:00' });
+    const london = pb.create(pb.TimezoneSchema, { id: 'Europe/London', label: 'London', offset: '+01:00' });
+
+    // Fails the timezone read numbered `failingRead`, and hands back a count of the reads.
+    function answerTimezones(failingRead?: number): () => number {
+        let reads = 0;
+        registerMocks(pb.services.SystemService, {
+            getTimezone: () => {
+                reads += 1;
+                if (reads === failingRead) throw proto.lostConnection();
+                return { timezone: prague };
+            },
+            getTimezoneList: () => ({ timezones: [prague, london] }),
+            setTimezone: () => pb.create(pb.EmptySchema),
+        });
+        return () => reads;
+    }
+
+    async function pick(label: RegExp): Promise<void> {
+        fireEvent.click(screen.getByRole('combobox', { name: 'Timezone' }));
+        await advance(0);
+        fireEvent.click(screen.getByRole('option', { name: label }));
+        await advance(300);
+    }
+
+    test('a re-read that succeeds clears the failure of the one before', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+        const reads = answerTimezones(2);
+        renderPage('#general');
+        await advance(300);
+
+        await pick(/London/);
+        expect(screen.getByText('Failed to load the system information!'), 'the first re-read failed').toBeTruthy();
+
+        await pick(/Prague/);
+        expect(reads()).toBe(3);
+        expect(screen.queryByText('Failed to load the system information!')).toBeNull();
+    });
+
+    // Settles a packages update, whose metadata re-read follows.
+    async function updatePackages(mockMore?: () => void): Promise<void> {
+        installMocks(() =>
+            (async function* () {
+                yield pkgPhase(pb.PackageUpgradePhase.ACTIVATING);
+                yield finished;
+            })(),
+        );
+        mockMore?.();
+        renderPage('#updates');
+        await advance(300);
+        fireEvent.click(startButton());
+        await advance(13_000);
+        expect(screen.getByText('Packages updated')).toBeTruthy();
+    }
+
+    async function openGeneral(): Promise<void> {
+        fireEvent.click(screen.getByRole('button', { name: 'General' }));
+        await advance(300);
+    }
+
+    test('a full re-read that succeeds clears a failed re-read of the installed versions', async () => {
+        rstest.useFakeTimers();
+        metadataFailsAfterFirstRead = true;
+        await updatePackages(() => answerTimezones());
+        expect(screen.getByText('mock: metadata unavailable'), 'the versions re-read failed').toBeTruthy();
+
+        metadataFailsAfterFirstRead = false;
+        await openGeneral();
+        await pick(/London/);
+
+        expect(screen.queryByText('mock: metadata unavailable')).toBeNull();
+    });
+
+    test('a full re-read that fails replaces a failed re-read of the installed versions', async () => {
+        rstest.useFakeTimers();
+        metadataFailsAfterFirstRead = true;
+        await updatePackages(() => answerTimezones(2));
+        expect(screen.getByText('mock: metadata unavailable'), 'the versions re-read failed').toBeTruthy();
+
+        metadataFailsAfterFirstRead = false;
+        await openGeneral();
+        await pick(/London/);
+
+        expect(screen.getByText('Failed to load the system information!')).toBeTruthy();
+        expect(screen.queryByText('mock: metadata unavailable')).toBeNull();
+    });
+
+    test('a full re-read retires a re-read of the installed versions still on its way', async () => {
+        rstest.useFakeTimers();
+        let reads = 0;
+        await updatePackages(() => {
+            answerTimezones();
+            // The re-read after the update is the second, and answers older versions only after the full read.
+            registerMocks(pb.services.MetadataService, {
+                getMetadata: ({ conf }) => {
+                    reads += 1;
+                    if (reads === 2) conf({ delay: 60_000 });
+                    const packagesVersion = reads === 2 ? '2026.09.18-old' : '2026.10.19-new';
+                    return pb.create(pb.MetadataSchema, { version: '26.02', packagesVersion });
+                },
+            });
+        });
+
+        expect(reads, 'the re-read is on its way').toBe(2);
+        await openGeneral();
+        await pick(/London/);
+        await advance(70_000);
+        fireEvent.click(screen.getByRole('button', { name: 'Upgrades' }));
+        await advance(300);
+
+        expect(reads, 'the full read asked for the metadata again').toBe(3);
+        expect(screen.getByText('2026.10.19-new')).toBeTruthy();
+        expect(screen.queryByText('2026.09.18-old')).toBeNull();
+    });
 });
