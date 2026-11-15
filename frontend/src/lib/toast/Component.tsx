@@ -23,7 +23,9 @@ import { useIntl } from 'react-intl';
 import { toast, type ToastProps } from './sdk';
 
 // Components
-import { Html, notificationLabels } from '@/components';
+// Not the `@/components` barrel: it reaches `@/store`, which needs `@/proto`, which imports this toast
+import { Html } from '@/components/format/Html';
+import { notificationLabels } from '@/components/InlineNotification/words';
 import { ToastNotification } from '@carbon/react';
 
 // Styles
