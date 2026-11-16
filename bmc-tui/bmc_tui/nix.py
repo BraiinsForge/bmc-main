@@ -211,8 +211,9 @@ class Nix(Protocol):
         parameters."""
         ...
 
-    def copy(self, store_paths: list[StorePath], dest: str, /) -> None:
-        """Copy closures to `dest`. Under --dry-run, log and skip."""
+    def copy(self, store_paths: list[StorePath], dest: str, ssh_options: list[str], /) -> None:
+        """Copy closures to `dest`, its ssh taking `ssh_options`.
+        Under --dry-run, log and skip."""
         ...
 
     def generate_cache_key(self, name: str, secret: Path, /) -> str:
@@ -341,13 +342,19 @@ class _RealNix:
             raise RuntimeError(msg)
         return [StorePath(p) for p in paths]
 
-    def copy(self, store_paths: list[StorePath], dest: str) -> None:
+    def copy(self, store_paths: list[StorePath], dest: str, ssh_options: list[str]) -> None:
         if dry_run.get():
             console.kv("would copy", f"{len(store_paths)} closure(s) -> {dest}")
             return
-        # quiet ssh's post-quantum-KEX warning
+        # Upstream Nix joins a shared connection these name,
+        # while Determinate Nix 3.21.2+ overrides that with its own `-S none`.
+        #
+        # Ahead of the user's own, as ssh takes an option's first value.
+        # A `-S` among theirs still wins, and Nix then logs in on its own.
+        # LogLevel quiets ssh's post-quantum-KEX warning.
         env = dict(os.environ)
-        env["NIX_SSHOPTS"] = f"{env.get('NIX_SSHOPTS', '')} -o LogLevel=ERROR".strip()
+        opts = [*ssh_options, env.get("NIX_SSHOPTS", ""), "-o", "LogLevel=ERROR"]
+        env["NIX_SSHOPTS"] = " ".join(o for o in opts if o)
         argv = ["nix", "copy", "--log-format", "internal-json", "--to", dest, *store_paths]
         progress = CopyProgress()
         shown_at = -_REDRAW_S

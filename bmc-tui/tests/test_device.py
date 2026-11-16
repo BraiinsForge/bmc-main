@@ -20,16 +20,23 @@
 
 """Unit tests for the SSH device transport."""
 
+import errno
+import shutil
+import signal
 import socket
 import subprocess
 import sys
-from collections.abc import Callable, Iterable
+import time
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import suppress
 from pathlib import Path
 from typing import final
 
 import pytest
 
-from bmc_tui.device import Device, RemotePath
+from bmc_tui import console, device, ssh
+from bmc_tui.device import Device, RemotePath, _RealExec
+from bmc_tui.ssh import SharedConnections
 from bmc_tui.stage import Abort, dry_run
 from tests import device_replies
 
@@ -69,6 +76,331 @@ class _FakeExec:
         for line in self._lines:
             on_line(line)
         return self._code
+
+
+# ── one connection per run ────────────────────────────────────────────────────
+
+
+def _control_path(argv: list[str]) -> str:
+    paths = [opt for opt in argv if opt.startswith("ControlPath=")]
+    assert paths, f"no shared connection in {argv}"
+    return paths[0]
+
+
+@final
+class _Master:
+    """Answers `-O` commands as a master does, listening on the forwards it holds.
+    Fails `failing` with `error`, and with `keeps_forwards` refuses a cancel yet exits with 0.
+    With `ssh_log`, notes in `before_forward` which ssh calls a forward came after."""
+
+    def __init__(
+        self,
+        *,
+        failing: str | None = None,
+        error: Exception | None = None,
+        keeps_forwards: bool = False,
+        ssh_log: Path | None = None,
+    ) -> None:
+        self.runs: list[list[str]] = []
+        self.before_forward: list[str] = []
+        self._failing = failing
+        self._error = error
+        self._keeps_forwards = keeps_forwards
+        self._ssh_log = ssh_log
+        self._forwards: dict[str, socket.socket] = {}
+
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        self.runs.append(argv)
+        command = argv[argv.index("-O") + 1]
+        if command == "forward" and self._ssh_log is not None and self._ssh_log.exists():
+            self.before_forward = self._ssh_log.read_text().splitlines()
+        if command == self._failing and self._error is not None:
+            raise self._error
+        if command == "forward":
+            spec = argv[argv.index("-L") + 1]
+            host, port = spec.split(":")[:2]
+            self._forwards[spec] = socket.create_server((host, int(port)))
+        if command == "cancel" and not self._keeps_forwards:
+            self._forwards.pop(argv[argv.index("-L") + 1]).close()
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    def sent(self, command: str) -> list[list[str]]:
+        return [argv for argv in self.runs if argv[argv.index("-O") + 1] == command]
+
+    def stop(self) -> None:
+        for listener in self._forwards.values():
+            listener.close()
+
+
+@pytest.fixture
+def control() -> Iterator[_Master]:
+    """Where the shared connections send their `-O` commands."""
+    master = _Master()
+    yield master
+    master.stop()
+
+
+@pytest.fixture
+def shared(control: _Master) -> Iterator[SharedConnections]:
+    connections = SharedConnections(control)
+    yield connections
+    connections.close()
+
+
+def _master_socket(connections: SharedConnections, login: str) -> Path:
+    """Put a socket where the login's master would keep one."""
+    path = Path(_control_path(connections.options(login)).removeprefix("ControlPath="))
+    path.touch()
+    return path
+
+
+@pytest.fixture
+def stuck() -> Iterator[SharedConnections]:
+    """Connections whose master to `root@deck` takes a forward but answers no `-O check`."""
+    master = _Master(failing="check", error=subprocess.TimeoutExpired(["ssh"], 10))
+    connections = SharedConnections(master)
+    path = Path(_control_path(connections.options("root@deck")).removeprefix("ControlPath="))
+    with socket.socket(socket.AF_UNIX) as control_socket:
+        control_socket.bind(str(path))
+        control_socket.listen()
+        yield connections
+    master.stop()
+    shutil.rmtree(path.parent)
+
+
+def test_every_ssh_to_a_device_shares_one_connection(
+    tmp_path: Path, shared: SharedConnections
+) -> None:
+    fw = tmp_path / "fw.tar"
+    _ = fw.write_bytes(b"x")
+    backend = _FakeExec()
+    dev = Device("h", backend=backend, connections=shared)
+
+    _ = dev.read("true")
+    dev.push(fw, RemotePath("/tmp/fw.tar"))
+
+    argvs = [backend.runs[0], backend.streams[0][0]]
+    for argv in argvs:
+        assert "ControlMaster=auto" in argv
+        persist = next(opt for opt in argv if opt.startswith("ControlPersist="))
+        assert persist.removeprefix("ControlPersist=")[:1].isdigit(), (
+            "an idle connection closes after a time, rather than never or at once"
+        )
+        assert argv.index("ControlMaster=auto") < argv.index("root@h"), "options precede the login"
+    assert len({_control_path(argv) for argv in argvs}) == 1, "one socket for the device"
+
+
+def test_devices_for_one_login_share_its_connection_and_other_logins_get_their_own(
+    shared: SharedConnections,
+) -> None:
+    backend = _FakeExec()
+    for host in ("h", "h", "other"):
+        _ = Device(host, backend=backend, connections=shared).read("true")
+
+    first, second, other = (_control_path(argv) for argv in backend.runs)
+
+    assert first == second, "a procedure builds several devices for one login"
+    assert other != first
+
+
+def _exiting(code: int) -> _FakeExec:
+    """A device whose ssh exits with `code`: 255 as when the session dies with a reboot."""
+    if code == 0:
+        return _FakeExec()
+    return _FakeExec(error=subprocess.CalledProcessError(code, ["ssh"], stderr="x"), code=code)
+
+
+def _flash(dev: Device) -> object:
+    return dev.run("sysupgrade x", expect_disconnect=True)
+
+
+def _flash_streamed(dev: Device) -> object:
+    return dev.run_streamed("sysupgrade x", on_line=print, expect_disconnect=True)
+
+
+def _flash_captured(dev: Device) -> object:
+    return dev.run_captured("sysupgrade x")
+
+
+def _probe(dev: Device) -> object:
+    return dev.run("true")
+
+
+def _sample(dev: Device) -> object:
+    return dev.run_streamed("ps", on_line=print)
+
+
+@pytest.mark.parametrize(
+    ("command", "code"),
+    [
+        (_flash, 0),
+        (_flash, 255),
+        (_flash_streamed, 0),
+        (_flash_streamed, 255),
+        (_flash_streamed, -signal.SIGTERM),
+        (_flash_captured, 0),
+        (_flash_captured, 255),
+    ],
+    ids=[
+        "run exits",
+        "run's session dies",
+        "run_streamed exits",
+        "run_streamed's session dies",
+        "run_streamed's ssh is killed",
+        "run_captured exits",
+        "run_captured's session dies",
+    ],
+)
+def test_a_command_that_takes_the_device_down_ends_every_connection_to_it(
+    shared: SharedConnections,
+    control: _Master,
+    command: Callable[[Device], object],
+    code: int,
+) -> None:
+    _ = _master_socket(shared, "root@h")
+    _ = _master_socket(shared, "root@10.0.0.7")
+
+    _ = command(Device("10.0.0.7", backend=_exiting(code), connections=shared))
+
+    assert sorted(argv[-1] for argv in control.sent("exit")) == ["root@10.0.0.7", "root@h"], (
+        "a connection left up would wait out its keepalives, the device's other login's included"
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "code"),
+    [(_probe, 0), (_sample, 0), (_flash, 1), (_flash_streamed, 1), (_flash_captured, 1)],
+    ids=[
+        "run without a disconnect",
+        "run_streamed without a disconnect",
+        "run that fails",
+        "run_streamed that fails",
+        "run_captured that fails",
+    ],
+)
+def test_a_command_that_leaves_the_device_up_keeps_its_connections(
+    shared: SharedConnections,
+    control: _Master,
+    command: Callable[[Device], object],
+    code: int,
+) -> None:
+    _ = _master_socket(shared, "root@h")
+
+    with suppress(subprocess.CalledProcessError):
+        _ = command(Device("h", backend=_exiting(code), connections=shared))
+
+    assert control.sent("exit") == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [_flash, _flash_streamed, _flash_captured],
+    ids=["run", "run_streamed", "run_captured"],
+)
+def test_a_dry_run_of_a_command_that_takes_the_device_down_keeps_its_connections(
+    shared: SharedConnections, control: _Master, command: Callable[[Device], object]
+) -> None:
+    _ = _master_socket(shared, "root@h")
+    token = dry_run.set(True)
+    try:
+        _ = command(Device("h", backend=_FakeExec(), connections=shared))
+    finally:
+        dry_run.reset(token)
+
+    assert control.sent("exit") == [], "the probes a dry run still makes would log in again"
+
+
+def test_a_connection_that_does_not_end_after_a_reboot_only_warns(
+    monkeypatch: pytest.MonkeyPatch, stuck: SharedConnections
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(console, "warn", warnings.append)
+
+    _ = Device("deck", backend=_exiting(255), connections=stuck).run(
+        "sysupgrade x", expect_disconnect=True
+    )
+
+    assert len(warnings) == 1
+    assert "still open, so the next ssh to it may wait" in warnings[0]
+    assert "root@deck" in warnings[0], "the operator needs to know which one"
+
+
+def test_a_reboot_goes_through_when_its_warning_meets_a_terminal_that_hung_up(
+    monkeypatch: pytest.MonkeyPatch, stuck: SharedConnections
+) -> None:
+    def hung_up(_msg: str) -> None:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(console, "warn", hung_up)
+
+    outcome = Device("deck", backend=_exiting(255), connections=stuck).run_captured("sysupgrade x")
+
+    assert outcome is not None
+    assert outcome.status == "session-death"
+
+
+def test_a_device_outside_a_run_has_no_connection_to_join() -> None:
+    assert Device("h", backend=_FakeExec()).join_options() == [], (
+        "the device's own options would override the user's NIX_SSHOPTS"
+    )
+
+
+def test_a_device_shares_the_run_s_connections(shared: SharedConnections) -> None:
+    backend = _FakeExec()
+    token = ssh.connections.set(shared)
+    try:
+        dev = Device("h", backend=backend)
+    finally:
+        ssh.connections.reset(token)
+
+    _ = dev.read("true")
+
+    assert _control_path(backend.runs[0]) == _control_path(shared.options("root@h"))
+
+
+def test_a_device_given_no_connections_makes_its_own_even_in_a_run(
+    shared: SharedConnections,
+) -> None:
+    backend = _FakeExec()
+    token = ssh.connections.set(shared)
+    try:
+        dev = Device("h", backend=backend, connections=None)
+    finally:
+        ssh.connections.reset(token)
+
+    _ = dev.read("true")
+
+    assert not any(opt.startswith("Control") for opt in backend.runs[0])
+
+
+def test_a_device_outside_a_run_makes_its_own_connection() -> None:
+    backend = _FakeExec()
+
+    _ = Device("h", backend=backend).read("true")
+
+    assert not any(opt.startswith("Control") for opt in backend.runs[0])
+
+
+def test_an_upload_cut_short_does_not_wait_for_the_child() -> None:
+    def chunks() -> Iterator[bytes]:
+        yield b"x"
+        raise RuntimeError("stopped")
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError):
+        _RealExec().stream(["sh", "-c", "exec sleep 60"], chunks())
+
+    assert time.monotonic() - started < 10, "the child is killed, not waited for"
+
+
+def test_an_upload_cut_short_after_its_child_died_raises_what_cut_it_short() -> None:
+    def chunks() -> Iterator[bytes]:
+        yield b"x"
+        time.sleep(0.2)
+        raise RuntimeError("stopped")
+
+    with pytest.raises(RuntimeError, match="stopped"):
+        _RealExec().stream(["sh", "-c", "exit 0"], chunks())
 
 
 # ── read / run / push ─────────────────────────────────────────────────────────
@@ -342,16 +674,25 @@ def test_run_captured_skips_under_dry_run() -> None:
     assert backend.runs == []
 
 
+# Logs each call to `calls`, runs a command by exiting with 0, and holds a `-L` forward itself
 _FORWARDING_SSH = """
 import socket, sys
 from pathlib import Path
-Path(sys.argv[0]).with_name("argv").write_text("\\n".join(sys.argv[1:]))
-local = sys.argv[sys.argv.index("-L") + 1]
-host, port = local.split(":")[:2]
+here = Path(sys.argv[0]).parent
+with (here / "calls").open("a") as calls:
+    calls.write(" ".join(sys.argv[1:]) + "\\n")
+if "-L" not in sys.argv:
+    sys.exit(0)
+(here / "argv").write_text("\\n".join(sys.argv[1:]))
+host, port = sys.argv[sys.argv.index("-L") + 1].split(":")[:2]
 listener = socket.create_server((host, int(port)))
 while True:
     listener.accept()[0].close()
 """
+
+
+def _ssh_calls(tmp_path: Path) -> list[str]:
+    return (tmp_path / "calls").read_text().splitlines()
 
 
 def _fake_ssh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> Path:
@@ -371,7 +712,175 @@ def _accepts(address: str) -> bool:
     return True
 
 
-def test_forward_yields_a_local_port_ssh_forwards_to_the_device(
+def test_a_forward_in_a_run_is_held_by_its_connection_until_the_block_ends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+    control = _Master(ssh_log=tmp_path / "calls")
+    shared = SharedConnections(control)
+    _ = _master_socket(shared, "root@deck")
+    free_port = device._free_port
+    before_port: list[str] = []
+
+    def picked_port() -> int:
+        before_port.extend(_ssh_calls(tmp_path) if (tmp_path / "calls").exists() else [])
+        return free_port()
+
+    monkeypatch.setattr(device, "_free_port", picked_port)
+
+    try:
+        with Device("deck", connections=shared).forward(80) as address:
+            assert _accepts(address)
+    finally:
+        shared.close()
+        control.stop()
+
+    spec = f"{address}:127.0.0.1:80"
+    assert [argv[-3:] for argv in control.sent("forward")] == [["-L", spec, "root@deck"]], (
+        "the device side is its loopback web port"
+    )
+    assert [argv[-3:] for argv in control.sent("cancel")] == [["-L", spec, "root@deck"]]
+    assert not _accepts(address), "the forward must not outlive the block"
+    assert len(control.before_forward) == 1, "one ssh, the one opening the connection"
+    assert control.before_forward[0].endswith("root@deck true"), (
+        "the connection opens first, so a password prompt has all the time it needs"
+    )
+    assert _control_path(control.before_forward[0].split()) == _control_path(
+        control.sent("forward")[0]
+    ), "the forward goes to the connection that ssh opened"
+    assert before_port == control.before_forward, (
+        "the port is picked once the connection is open, so a slow password cannot cost it"
+    )
+
+
+def test_a_forward_its_connection_refuses_aborts_without_logging_in_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+    refusing = _Master(
+        failing="forward",
+        error=subprocess.CalledProcessError(255, ["ssh"], stderr="Port forwarding failed"),
+    )
+    connections = SharedConnections(refusing)
+    try:
+        with (
+            pytest.raises(Abort, match="Port forwarding failed"),
+            Device("deck", connections=connections).forward(80),
+        ):
+            pytest.fail("a refused forward must not yield")
+    finally:
+        connections.close()
+
+    assert len(_ssh_calls(tmp_path)) == 1, "only the ssh opening the connection, no second login"
+
+
+def test_a_forward_cut_short_still_cancels_its_forward(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared: SharedConnections, control: _Master
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+    _ = _master_socket(shared, "root@deck")
+
+    with (
+        pytest.raises(RuntimeError, match="cut short"),
+        Device("deck", connections=shared).forward(80) as address,
+    ):
+        raise RuntimeError("cut short")
+
+    assert [argv[-3:] for argv in control.sent("cancel")] == [
+        ["-L", f"{address}:127.0.0.1:80", "root@deck"]
+    ]
+    assert not _accepts(address)
+
+
+def test_a_forward_cut_short_warns_when_its_connection_ignores_the_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+    warnings: list[str] = []
+    monkeypatch.setattr(console, "warn", warnings.append)
+    ignoring = _Master(keeps_forwards=True)
+    connections = SharedConnections(ignoring)
+    _ = _master_socket(connections, "root@deck")
+    try:
+        with (
+            pytest.raises(RuntimeError, match="cut short"),
+            Device("deck", connections=connections).forward(80),
+        ):
+            raise RuntimeError("cut short")
+    finally:
+        ignoring.stop()
+        connections.close()
+
+    assert len(warnings) == 1
+    assert "left 127.0.0.1:" in warnings[0]
+
+
+def test_a_cancel_its_connection_ignores_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+    ignoring = _Master(keeps_forwards=True)
+    connections = SharedConnections(ignoring)
+    _ = _master_socket(connections, "root@deck")
+    try:
+        with (
+            pytest.raises(Abort, match=r"left 127\.0\.0\.1:[0-9]+ listening"),
+            Device("deck", connections=connections).forward(80),
+        ):
+            pass
+    finally:
+        ignoring.stop()
+        connections.close()
+
+
+def test_a_forward_cut_short_keeps_its_error_and_warns_when_cancelling_fails_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stuck: SharedConnections
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+    warnings: list[str] = []
+    monkeypatch.setattr(console, "warn", warnings.append)
+
+    with (
+        pytest.raises(RuntimeError, match="cut short"),
+        Device("deck", connections=stuck).forward(80),
+    ):
+        raise RuntimeError("cut short")
+
+    assert len(warnings) == 1
+    assert "cancelling the forward failed too" in warnings[0]
+    assert "no answer within 10s" in warnings[0]
+
+
+def test_a_forward_cut_short_keeps_its_error_when_the_terminal_hung_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stuck: SharedConnections
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+
+    def hung_up(_msg: str) -> None:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(console, "warn", hung_up)
+
+    with (
+        pytest.raises(RuntimeError, match="cut short"),
+        Device("deck", connections=stuck).forward(80),
+    ):
+        raise RuntimeError("cut short")
+
+
+def test_a_forward_that_cannot_be_cancelled_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stuck: SharedConnections
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
+
+    with (
+        pytest.raises(Abort, match="no answer within 10s"),
+        Device("deck", connections=stuck).forward(80),
+    ):
+        pass
+
+
+def test_a_forward_outside_a_run_is_held_by_an_ssh_of_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
@@ -382,11 +891,39 @@ def test_forward_yields_a_local_port_ssh_forwards_to_the_device(
 
     assert f"{address}:127.0.0.1:80" in argv, "the device side is its loopback web port"
     assert "ExitOnForwardFailure=yes" in argv, "a refused forward must fail, not hang"
+    assert "ControlPath=none" in argv, "a master from the user's ssh config must not take it"
     assert argv[-1] == "root@deck"
     assert not _accepts(address), "the tunnel must not outlive the block"
 
 
-def test_a_refused_forward_aborts_with_ssh_s_reason(
+def test_an_own_ssh_that_ends_without_forwarding_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, "import sys\nsys.exit(0)\n")
+
+    with pytest.raises(Abort, match="ssh exit 0"), Device("deck").forward(80):
+        pytest.fail("a forward nothing holds must not yield")
+
+
+def test_a_forward_in_a_run_whose_connection_cannot_open_aborts_with_ssh_s_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared: SharedConnections, control: _Master
+) -> None:
+    _ = _fake_ssh(
+        tmp_path,
+        monkeypatch,
+        "import sys\nprint('Permission denied', file=sys.stderr)\nsys.exit(255)\n",
+    )
+
+    with (
+        pytest.raises(Abort, match="Permission denied"),
+        Device("deck", connections=shared).forward(80),
+    ):
+        pytest.fail("a forward without a connection must not yield")
+
+    assert control.sent("forward") == []
+
+
+def test_a_refused_forward_outside_a_run_aborts_with_ssh_s_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _ = _fake_ssh(
@@ -397,3 +934,13 @@ def test_a_refused_forward_aborts_with_ssh_s_reason(
 
     with pytest.raises(Abort, match="administratively prohibited"), Device("deck").forward(80):
         pytest.fail("a refused forward must not yield")
+
+
+def test_a_forward_nobody_listens_on_aborts_at_the_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ = _fake_ssh(tmp_path, monkeypatch, "import time\ntime.sleep(30)\n")
+    monkeypatch.setattr(device, "_FORWARD_TIMEOUT_S", 0.5)
+
+    with pytest.raises(Abort, match="no listener"), Device("deck").forward(80):
+        pytest.fail("a forward nothing listens on must not yield")

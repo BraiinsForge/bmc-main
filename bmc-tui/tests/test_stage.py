@@ -21,18 +21,25 @@
 """Unit tests for the staged-procedure engine."""
 
 import os
+import pty
+import select
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
+from typing import final
 
 import pytest
 from rich.console import Console
 from rich.text import Text
 
-from bmc_tui import console, exits
+from bmc_tui import console, exits, ssh
 from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, entrypoint, require, stage
 
 # ── guard verbs ──────────────────────────────────────────────────────────────
@@ -270,6 +277,98 @@ def test_entrypoint_aborts_with_exit_1() -> None:
     assert exc.value.code == 1
 
 
+@pytest.mark.parametrize("ending", ["normally", "with an abort", "by SIGTERM"])
+def test_a_run_closes_its_ssh_connections_however_it_ends(
+    monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    sent: list[list[str]] = []
+
+    @final
+    class _Recording:
+        def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+            sent.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(ssh, "_TimedRunner", _Recording)
+    sockets: list[Path] = []
+
+    @entrypoint
+    def main(_args: _Args) -> None:
+        shared = ssh.connections.get()
+        assert shared is not None, "a run shares its connections"
+        option = next(o for o in shared.options("root@deck") if o.startswith("ControlPath="))
+        path = Path(option.removeprefix("ControlPath="))
+        path.touch()
+        sockets.append(path.parent)
+        if ending == "with an abort":
+            raise Abort("stopped")
+        if ending == "by SIGTERM":
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    if ending == "normally":
+        main(["--device", "x"])
+    else:
+        with pytest.raises(SystemExit):
+            main(["--device", "x"])
+
+    assert [argv[-1] for argv in sent if "exit" in argv] == ["root@deck"]
+    assert not sockets[0].exists()
+
+
+_PRINTS_UNTIL_HUNG_UP = """
+import sys, time
+from pathlib import Path
+from bmc_tui import console
+from bmc_tui.stage import best_effort, entrypoint
+
+def main() -> None:
+    try:
+        print("ready", flush=True)
+        while True:
+            console.warn("working")
+            time.sleep(0.05)
+    finally:
+        best_effort(lambda: console.warn("restoring"))
+        Path(sys.argv[1]).write_text("restored")
+
+entrypoint(main, name="hung-up")([])
+"""
+
+
+def _exit_code_within(pid: int, timeout_s: float) -> int:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return os.waitstatus_to_exitcode(status)
+        time.sleep(0.05)
+    os.kill(pid, signal.SIGKILL)
+    _ = os.waitpid(pid, 0)
+    pytest.fail(f"the run did not end within {timeout_s:.0f}s of its terminal closing")
+
+
+def test_a_run_whose_terminal_closes_still_finishes_restoring(tmp_path: Path) -> None:
+    script = tmp_path / "run.py"
+    _ = script.write_text(_PRINTS_UNTIL_HUNG_UP)
+    marker = tmp_path / "restored"
+
+    pid, terminal = pty.fork()
+    if pid == 0:
+        os.execv(sys.executable, [sys.executable, str(script), str(marker)])
+    try:
+        said = b""
+        deadline = time.monotonic() + 10
+        while b"ready" not in said:
+            assert time.monotonic() < deadline, f"the run never got going: {said!r}"
+            if select.select([terminal], [], [], 0.5)[0]:
+                said += os.read(terminal, 4096)
+    finally:
+        os.close(terminal)
+
+    assert _exit_code_within(pid, 10) == 128 + signal.SIGHUP
+    assert marker.read_text() == "restored", "what printed after the hangup cut nothing short"
+
+
 def test_a_terminating_signal_ends_the_run_through_the_normal_exit() -> None:
     before = signal.getsignal(signal.SIGTERM)
     ran: list[str] = []
@@ -286,6 +385,45 @@ def test_a_terminating_signal_ends_the_run_through_the_normal_exit() -> None:
     assert exc.value.code == 128 + signal.SIGTERM
     assert ran == ["undo"], "the run's cleanups run, unlike under the default death by signal"
     assert signal.getsignal(signal.SIGTERM) is before, "the previous handler comes back"
+
+
+@final
+class _MasterWontExit:
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        if "exit" in argv:
+            raise subprocess.CalledProcessError(255, argv, stderr="read from master failed")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+
+def test_a_stuck_connection_s_commands_come_out_whole_on_a_narrow_terminal(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Sized here, as the environment's COLUMNS or a dumb TERM would override it
+    monkeypatch.setattr(console, "console", Console(stderr=True, width=40, height=25))
+    shared = ssh.SharedConnections(_MasterWontExit())
+    option = next(o for o in shared.options("root@a") if o.startswith("ControlPath="))
+    path = Path(option.removeprefix("ControlPath="))
+
+    @entrypoint
+    def main(_args: _Args) -> None:
+        exits.on_exit("closing", shared.close)
+
+    try:
+        with socket.socket(socket.AF_UNIX) as master:
+            master.bind(str(path))
+            master.listen()
+            with pytest.raises(SystemExit):
+                main(["--device", "x"])
+    finally:
+        shutil.rmtree(path.parent)
+
+    lines = Text.from_ansi(capsys.readouterr().err).plain.splitlines()
+    warned = [i for i, line in enumerate(lines) if line.startswith("⚠ closing failed:")]
+    assert warned, "reported as a warning, not by the fallback for a terminal that closed"
+    assert lines[warned[0] + 1 : warned[0] + 3] == [
+        f"pkill -KILL -f '[/]{str(path.parent)[1:]}/'",
+        f"rm -r '{path.parent}'",
+    ], "a command wrapped apart runs as two"
 
 
 def test_entrypoint_bad_args_exits_nonzero() -> None:

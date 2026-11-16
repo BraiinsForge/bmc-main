@@ -26,9 +26,10 @@ device state even under `--dry-run`. `run`/`push` are mutations — under
 (`reachable`, `board`, `version`) so call-sites never type raw ssh for them.
 
 All subprocess work goes through an injected `Exec` backend (`run` captures,
-`stream` feeds stdin) so tests need no real ssh. `forward` is the exception:
-it spawns its own ssh, as the tunnel must keep listening while the caller
-dials it.
+`stream` feeds stdin) so tests need no real ssh.
+The run's shared connections (see `ssh`) take their own runner for their control commands.
+Outside a run, `forward` spawns the ssh holding the tunnel itself,
+as the tunnel must keep listening while the caller dials it.
 """
 
 import shlex
@@ -37,18 +38,18 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable, Generator, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Literal, NewType, Protocol, TypedDict, cast
 
 import msgspec
+from rich.markup import escape
 
-from bmc_tui import console
-from bmc_tui.process import stream_lines
+from bmc_tui import console, ssh
+from bmc_tui.process import killed_if_cut_short, stream_lines
 from bmc_tui.stage import Abort, dry_run, require
 
-# Key-based, accept-new host key, no password — unlike the VM's sshpass path.
 _SSH_OPTS = [
     "-o",
     "StrictHostKeyChecking=accept-new",
@@ -65,6 +66,7 @@ _SSH_OPTS = [
     "-o",
     "LogLevel=ERROR",
 ]
+
 
 _CHUNK = 1 << 16  # 64 KiB upload chunk
 
@@ -85,18 +87,32 @@ _FORWARD_TIMEOUT_S = 15.0
 
 def _await_listening(proc: "subprocess.Popen[str]", port: int, what: str) -> None:
     deadline = time.monotonic() + _FORWARD_TIMEOUT_S
-    while proc.poll() is None:
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=1).close()
-        except OSError:
-            if time.monotonic() >= deadline:
-                raise Abort(f"{what}: no listener within {_FORWARD_TIMEOUT_S:.0f}s") from None
-            time.sleep(0.1)
-        else:
+    while True:
+        # Once ssh has ended, what listens on the port is not its forward
+        if proc.poll() is not None:
+            stderr_pipe: IO[str] | None = proc.stderr
+            stderr = stderr_pipe.read().strip() if stderr_pipe is not None else ""
+            raise Abort(f"{what} failed (ssh exit {proc.returncode}): {stderr}")
+        if _listening(port):
             return
-    stderr_pipe: IO[str] | None = proc.stderr
-    stderr = stderr_pipe.read().strip() if stderr_pipe is not None else ""
-    raise Abort(f"{what} failed (ssh exit {proc.returncode}): {stderr}")
+        if time.monotonic() >= deadline:
+            raise Abort(f"{what}: no listener within {_FORWARD_TIMEOUT_S:.0f}s")
+        time.sleep(0.1)
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        _host, port = cast("tuple[str, int]", probe.getsockname())
+    return port
+
+
+def _listening(port: int) -> bool:
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=1).close()
+    except OSError:
+        return False
+    return True
 
 
 def _is_session_death(returncode: int) -> bool:
@@ -150,7 +166,10 @@ class _RealExec:
     def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
         # Capture stderr so ssh's connection warnings don't bleed into the live
         # progress bar; surface it only if the upload actually fails.
-        with subprocess.Popen(argv, stdin=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+        with (
+            subprocess.Popen(argv, stdin=subprocess.PIPE, stderr=subprocess.PIPE) as proc,
+            killed_if_cut_short(proc),
+        ):
             stdin = proc.stdin
             if stdin is None:
                 msg = "BUG: Popen(stdin=PIPE) produced no stdin"
@@ -176,12 +195,26 @@ class BoardInfo(TypedDict):
 
 
 class Device:
-    """A target device addressed over key-based SSH."""
+    """A target device addressed over SSH, with a key or a password (see `ssh`).
 
-    def __init__(self, host: str, *, user: str = "root", backend: Exec | None = None) -> None:
+    It shares the run's connections unless given its own `connections`, or none when given `None`.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        *,
+        user: str = "root",
+        backend: Exec | None = None,
+        connections: ssh.SharedConnections | ssh.FromTheRun | None = ssh.FROM_THE_RUN,
+    ) -> None:
         self._host: str = host
         self._user: str = user
         self._exec: Exec = backend or _RealExec()
+        # Taken now, as a worker thread the device is handed to does not see the run's
+        self._connections: ssh.SharedConnections | None = (
+            ssh.connections.get() if isinstance(connections, ssh.FromTheRun) else connections
+        )
         self._info: BoardInfo | None = None
 
     @property
@@ -205,8 +238,22 @@ class Device:
         target = self._host if self._user == "root" else f"{self._user}@{self._host}"
         console.kv("device", target)
 
+    def join_options(self) -> list[str]:
+        """
+        Options for a program running ssh itself to join the device's shared connection.
+        Empty outside a run.
+        """
+        if self._connections is None:
+            return []
+        return self._connections.join_options(self.login)
+
+    def _ssh_opts(self) -> list[str]:
+        if self._connections is None:
+            return [*_SSH_OPTS]
+        return [*self._connections.options(self.login), *_SSH_OPTS]
+
     def _ssh_argv(self, command: str) -> list[str]:
-        return ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", command]
+        return ["ssh", *self._ssh_opts(), self.login, command]
 
     @contextmanager
     def forward(self, remote_port: int) -> Generator[str]:
@@ -214,28 +261,77 @@ class Device:
 
         Reaches the device wherever SSH does, ssh-config aliases and jump hosts included.
         """
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            _host, local_port = cast("tuple[str, int]", probe.getsockname())
-        argv = [
-            "ssh",
-            *_SSH_OPTS,
-            "-o",
-            "ExitOnForwardFailure=yes",
-            "-N",
-            "-L",
-            f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}",
-            self.login,
-        ]
+        what = f"forwarding {self.login}:{remote_port}"
+        if self._connections is None:
+            with self._own_tunnel(remote_port, what) as address:
+                yield address
+            return
+        # Opens the connection, so a password asked for here has all the time it needs
+        try:
+            _ = self._exec.run(self._ssh_argv("true"))
+        except subprocess.CalledProcessError as e:
+            said = _captured_text(cast("str | bytes | None", e.stderr)).strip()
+            raise Abort(f"{what} failed (ssh exit {e.returncode}): {said}") from None
+        # Picked only now, so the time a password takes cannot let another process take it
+        local_port = _free_port()
+        spec = f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
+        try:
+            self._connections.add_forward(self.login, spec)
+        except ssh.ControlError as e:
+            raise Abort(f"{what}: {e}") from None
+        try:
+            yield f"127.0.0.1:{local_port}"
+        except BaseException:
+            try:
+                self._cancel_forward(self._connections, spec, local_port)
+            except Exception as e:
+                # A terminal that hung up must not replace what cut the block short
+                with suppress(OSError):
+                    console.warn(escape(f"{what}: cancelling the forward failed too: {e}"))
+            raise
+        else:
+            try:
+                self._cancel_forward(self._connections, spec, local_port)
+            except ssh.ControlError as e:
+                raise Abort(f"{what}: {e}") from None
+
+    def _end_connections(self) -> None:
+        # Every login of the run, as a run addresses one device, by name and by its pinned address.
+        # A connection left up would wait out its keepalives and hold up the next ssh for as long.
+        if self._connections is None:
+            return
+        try:
+            self._connections.end_all()
+        except ssh.ControlError as e:
+            # A terminal that hung up must not fail a flash that went through
+            with suppress(OSError):
+                console.warn(
+                    escape(f"{e}; still open, so the next ssh to it may wait for it to time out")
+                )
+
+    def _cancel_forward(self, connections: ssh.SharedConnections, spec: str, port: int) -> None:
+        connections.cancel_forward(self.login, spec)
+        # `ssh -O cancel` exits with 0 even when the connection refused it
+        if _listening(port):
+            msg = f"`ssh -O cancel` left 127.0.0.1:{port} listening"
+            raise ssh.ControlError(msg)
+
+    @contextmanager
+    def _own_tunnel(self, remote_port: int, what: str) -> Generator[str]:
+        local_port = _free_port()
+        spec = f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
+        # No control socket, so a master from the user's ssh config cannot take the forward over
+        argv = ["ssh", *self._ssh_opts(), "-o", "ControlPath=none"]
+        argv += ["-o", "ExitOnForwardFailure=yes", "-N", "-L", spec]
         with subprocess.Popen(
-            argv,
+            [*argv, self.login],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
         ) as proc:
             try:
-                _await_listening(proc, local_port, f"forwarding {self.login}:{remote_port}")
+                _await_listening(proc, local_port, what)
                 yield f"127.0.0.1:{local_port}"
             finally:
                 proc.terminate()
@@ -256,16 +352,20 @@ class Device:
         take the device down (e.g. ``sysupgrade``) — and returns None
         since no output came back. A remote command failing outright
         (small exit code, session alive) still raises.
+        With it, a command that does not fail takes the device down, and the run's connections end.
         """
         if dry_run.get():
             console.kv("would run", command)
             return None
         try:
-            return self._exec.run(self._ssh_argv(command)).stdout.strip()
+            stdout = self._exec.run(self._ssh_argv(command)).stdout.strip()
         except subprocess.CalledProcessError as e:
             if not (expect_disconnect and _is_session_death(e.returncode)):
                 raise
-            return None
+            stdout = None
+        if expect_disconnect:
+            self._end_connections()
+        return stdout
 
     def run_streamed(
         self,
@@ -283,14 +383,18 @@ class Device:
             return
         argv = self._ssh_argv(command)
         code = self._exec.stream_output(argv, on_line)
-        if code == 0 or (expect_disconnect and code >= _SESSION_DEATH_FLOOR):
+        went_down = expect_disconnect and (code == 0 or _is_session_death(code))
+        if went_down:
+            self._end_connections()
+        if code == 0 or went_down:
             return
         raise subprocess.CalledProcessError(code, argv)
 
     def run_captured(self, command: str) -> RunOutcome | None:
-        """Execute `command`, preserving outcome + output instead of raising.
+        """Execute a flash `command`, preserving outcome + output instead of raising.
         Session death (ssh exit >= 128, or signal death) is a distinct
         outcome, not an error — the flash stages decide what it means.
+        Unless it failed, the device goes down, and the run's connections end.
         Returns None under --dry-run."""
         if dry_run.get():
             console.kv("would run", command)
@@ -299,12 +403,15 @@ class Device:
             proc = self._exec.run(self._ssh_argv(command))
         except subprocess.CalledProcessError as e:
             died = _is_session_death(e.returncode)
+            if died:
+                self._end_connections()
             return RunOutcome(
                 status="session-death" if died else "failed",
                 returncode=e.returncode,
                 output=_captured_text(cast("str | bytes | None", e.stdout))
                 + _captured_text(cast("str | bytes | None", e.stderr)),
             )
+        self._end_connections()
         return RunOutcome(
             status="clean", returncode=proc.returncode, output=proc.stdout + proc.stderr
         )
@@ -315,7 +422,7 @@ class Device:
         if dry_run.get():
             console.kv("would upload", f"{local.name} -> {remote}")
             return
-        argv = ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", f"cat > {shlex.quote(remote)}"]
+        argv = ["ssh", *self._ssh_opts(), self.login, f"cat > {shlex.quote(remote)}"]
         self._exec.stream(argv, _chunks(local))
 
     def extract_tar(self, local: Path) -> None:
@@ -324,7 +431,7 @@ class Device:
         if dry_run.get():
             console.kv("would extract", f"{local.name} -> /")
             return
-        argv = ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", "tar xzf - -C /"]
+        argv = ["ssh", *self._ssh_opts(), self.login, "tar xzf - -C /"]
         self._exec.stream(argv, _chunks(local))
 
     @property

@@ -249,7 +249,7 @@ def test_copy_skips_under_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", _recording(calls))
     token = dry_run.set(True)
     try:
-        nix.real().copy([StorePath("/nix/store/x")], "ssh://h")
+        nix.real().copy([StorePath("/nix/store/x")], "ssh://root@h", [])
     finally:
         dry_run.reset(token)
     assert not calls
@@ -278,9 +278,35 @@ class _CopyRun:
         return self._code
 
 
-def _copy(monkeypatch: pytest.MonkeyPatch, run: _CopyRun) -> None:
+def _copy(
+    monkeypatch: pytest.MonkeyPatch, run: _CopyRun, ssh_options: tuple[str, ...] = ()
+) -> None:
     monkeypatch.setattr(nix, "stream_lines", run)
-    nix.real().copy([StorePath("/nix/store/x")], "ssh://h")
+    nix.real().copy([StorePath("/nix/store/x")], "ssh://root@h", list(ssh_options))
+
+
+def test_copy_hands_nix_the_device_s_ssh_options_ahead_of_the_user_s_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NIX_SSHOPTS", "-o ControlPath=/tmp/theirs")
+    run = _CopyRun([])
+
+    _copy(monkeypatch, run, ("-o", "ControlPath=/tmp/deck-ssh-x/0"))
+
+    assert run.env["NIX_SSHOPTS"] == (
+        "-o ControlPath=/tmp/deck-ssh-x/0 -o ControlPath=/tmp/theirs -o LogLevel=ERROR"
+    ), "ssh takes the first ControlPath, and nix copy must join the device's connection"
+
+
+def test_copy_without_ssh_options_of_its_own_only_quiets_ssh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NIX_SSHOPTS", raising=False)
+    run = _CopyRun([])
+
+    _copy(monkeypatch, run)
+
+    assert run.env["NIX_SSHOPTS"] == "-o LogLevel=ERROR"
 
 
 def test_copy_asks_nix_for_its_progress_events(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -292,7 +318,7 @@ def test_copy_asks_nix_for_its_progress_events(monkeypatch: pytest.MonkeyPatch) 
         "--log-format",
         "internal-json",
         "--to",
-        "ssh://h",
+        "ssh://root@h",
         "/nix/store/x",
     ]
 

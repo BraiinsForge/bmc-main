@@ -21,8 +21,13 @@ run/skip/fail verdict.
   a terminal-bell / OS-notifier attention API.
 - **`stage`** — the engine: `@stage`, the guard verbs `require` / `ensure` / `done_if`, the `Abort` advisory failure
   (rendered as a clean error, never a traceback), the `dry_run` contextvar, and `@entrypoint` (tyro CLI + Abort→exit).
+- **`exits`** — cleanups that run however a run ends: normally, on an error, on Ctrl+C, or on SIGTERM or SIGHUP.
 - **`device`** — the ssh transport behind an injected `Exec` seam. `read` always runs, so probes reflect real device
-  state even under `--dry-run`; `run` / `push` are mutations that log-and-skip under `--dry-run`.
+  state even under `--dry-run`; `run` / `run_streamed` / `run_captured` / `push` / `extract_tar` are mutations that
+  log-and-skip under `--dry-run`. Inside a run, `forward` asks the shared connection for its tunnel.
+- **`ssh`** — the run's shared connections, one per login, so a device with a password asks for it once per connection:
+  each reboot logs in again, and so does `nix copy` under Determinate Nix 3.21.2 and later, or with a `-S` in
+  `NIX_SSHOPTS`.
 - **`nix`** — local nix operations behind an injected `Nix` seam: discover / resolve / build / copy.
 - **`image`** — a local firmware sysupgrade tarball and the metadata read from it.
 - **`catalog`** — the reusable stages the procedures compose.

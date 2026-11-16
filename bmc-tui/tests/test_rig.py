@@ -169,7 +169,7 @@ class _FakeCacheNix:
     def build_file(self, _file: str, _attrs: list[Attr], _args: dict[str, str]) -> list[StorePath]:
         raise NotImplementedError
 
-    def copy(self, _store_paths: list[StorePath], _dest: str) -> None:
+    def copy(self, _store_paths: list[StorePath], _dest: str, _ssh_options: list[str]) -> None:
         return None
 
 

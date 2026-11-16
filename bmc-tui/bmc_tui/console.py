@@ -200,9 +200,10 @@ def _diagnostics() -> Console:
     return out if sys.stdout.isatty() and sys.stderr.isatty() else console
 
 
-def warn(msg: str) -> None:
-    """Print a warning."""
-    _diagnostics().print(f"[yellow]⚠[/yellow] {msg}", highlight=False)
+def warn(msg: str, *, soft_wrap: bool = False) -> None:
+    """Print a warning.
+    `soft_wrap` leaves wrapping to the terminal, so Rich splits no line of `msg` apart."""
+    _diagnostics().print(f"[yellow]⚠[/yellow] {msg}", highlight=False, soft_wrap=soft_wrap)
 
 
 def error(msg: str) -> None:

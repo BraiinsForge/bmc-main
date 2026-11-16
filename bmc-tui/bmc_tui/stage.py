@@ -41,7 +41,7 @@ import tyro
 from rich.markup import escape
 from rich.traceback import install as install_rich_traceback
 
-from bmc_tui import console, exits
+from bmc_tui import console, exits, ssh
 
 # Set by scripts, consumed by the transport seam: turns mutating commands into
 # log-and-skip while read-only probes still run for real.
@@ -145,7 +145,7 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
 
 
 def _report_cleanup(label: str, error: Exception) -> None:
-    console.warn(f"{label} failed: {error}")
+    console.warn(f"{label} failed: {escape(str(error))}", soft_wrap=True)
 
 
 def entrypoint(main: Callable[..., None], *, name: str | None = None) -> Callable[..., None]:
@@ -175,7 +175,7 @@ def entrypoint(main: Callable[..., None], *, name: str | None = None) -> Callabl
     def wrapped(argv: list[str] | None = None) -> None:
         console.mark_run_start()
         started = time.monotonic()
-        with exits.trapped(report=_report_cleanup) as outcome:
+        with exits.trapped(report=_report_cleanup) as outcome, ssh.for_the_run():
             _run(argv)
         if outcome.failed:
             failed = f"{', '.join(outcome.failed)} failed"

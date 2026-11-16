@@ -48,6 +48,7 @@ from bmc_tui.nix import Attr, Built, Pkg, StorePath
 from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
 from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.sysupgrade import Sysupgrade
+from bmc_tui.ssh import SharedConnections
 from bmc_tui.stage import Abort, dry_run
 from tests import device_replies, stubs
 
@@ -167,7 +168,7 @@ class _FakeNix:
         cache.mkdir(parents=True, exist_ok=True)
         _ = (cache / "fake.narinfo").write_text("StorePath: /nix/store/fake\n")
 
-    def copy(self, _store_paths: list[StorePath], _dest: str) -> None:
+    def copy(self, _store_paths: list[StorePath], _dest: str, _ssh_options: list[str]) -> None:
         return None
 
 
@@ -487,12 +488,15 @@ class _Nix:
         out_dir: str = "",
         packages: tuple[str, ...] = (),
         dirty: bool = False,
+        log: list[str] | None = None,
     ) -> None:
+        # Shared with a fake device, to see a copy's place among its ssh commands
+        self.log: list[str] = log if log is not None else []
         self.widgets: list[str] = list(widgets)
         self.packages: list[str] = list(packages) or ["core", *self.widgets]
         self.dirty: bool = dirty
         self.built: list[Pkg] = []
-        self.copied: list[tuple[list[StorePath], str]] = []
+        self.copied: list[tuple[list[StorePath], str, list[str]]] = []
         self.out_dir: str = out_dir
         self.listed_prefixes: list[str] = []
 
@@ -537,8 +541,9 @@ class _Nix:
             for pkg in pkgs
         ]
 
-    def copy(self, store_paths: list[StorePath], dest: str) -> None:
-        self.copied.append((store_paths, dest))
+    def copy(self, store_paths: list[StorePath], dest: str, ssh_options: list[str]) -> None:
+        self.log.append("nix copy")
+        self.copied.append((store_paths, dest, ssh_options))
 
 
 def test_resolve_discovers_core_plus_widgets() -> None:
@@ -703,7 +708,49 @@ def test_copy_closures_sends_built_paths() -> None:
         attrs=[], built=[Built("core", "1.0", Attr(".#x.pkg^out"), StorePath("/nix/store/core"))]
     )
     catalog.copy_closures(nix, dev, plan)
-    assert nix.copied == [(["/nix/store/core"], dev.copy_dest)]
+    [(paths, dest, _)] = nix.copied
+    assert (paths, dest) == (["/nix/store/core"], dev.copy_dest)
+
+
+def _bootstrap_cli(nix: _Nix, dev: Device) -> None:
+    catalog.ensure_nix_cli(nix, dev)
+
+
+def _copy_built(nix: _Nix, dev: Device) -> None:
+    built = [Built("core", "1.0", Attr(".#x.pkg^out"), StorePath("/nix/store/core"))]
+    _ = catalog.copy_closures(nix, dev, catalog.Deployment(attrs=[], built=built))
+
+
+@pytest.mark.parametrize(
+    "copying", [_bootstrap_cli, _copy_built], ids=["bmc-nix-cli bootstrap", "closures"]
+)
+def test_a_copy_goes_through_the_connection_the_device_opened(
+    copying: Callable[[_Nix, Device], None],
+) -> None:
+    log: list[str] = []
+    argvs: list[list[str]] = []
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        log.append(argv[-1])
+        argvs.append(argv)
+        compatible = "register-server --help" in argv[-1] and "nix copy" in log
+        return _cp(argv, "ok" if compatible else "")
+
+    nix = _Nix(log=log)
+    shared = SharedConnections()
+    try:
+        copying(nix, Device("h", backend=_Exec(respond), connections=shared))
+    finally:
+        shared.close()
+
+    copy_at = log.index("nix copy")
+    assert copy_at > 0, "with no master up, nix copy would log in again"
+    assert log[copy_at - 1] == "true", "with no master up, nix copy would log in again"
+    probe_socket = next(o for o in argvs[copy_at - 1] if o.startswith("ControlPath="))
+    [(_, _, ssh_options)] = nix.copied
+    assert ssh_options == ["-o", "ControlMaster=no", "-o", probe_socket], (
+        "nix copy only joins the connection the probe opened, and starts no master of its own"
+    )
 
 
 def test_register_packages_builds_cli_command() -> None:

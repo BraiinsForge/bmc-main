@@ -344,6 +344,13 @@ class Deployment:
     auto_upgrade_disabled: bool = False
 
 
+def _copy_to(nix: Nix, dev: Device, store_paths: list[StorePath]) -> None:
+    # Opens the connection with the device's ssh options,
+    # so `nix copy` joins it rather than logging in again
+    _ = dev.read("true")
+    nix.copy(store_paths, dev.copy_dest, dev.join_options())
+
+
 @stage("Compatible bmc-nix-cli present")
 def ensure_nix_cli(nix: Nix, dev: Device) -> None:
     def compatible() -> bool:
@@ -355,7 +362,7 @@ def ensure_nix_cli(nix: Nix, dev: Device) -> None:
 
     def bootstrap() -> None:
         [built] = nix.build([nix.resolve(Attr(".#deck-packages.bmc-nix-cli"))])
-        nix.copy([built.store_path], dev.copy_dest)
+        _copy_to(nix, dev, [built.store_path])
         _ = dev.run(_register_cmd([built], cli=f"{built.store_path}/bin/bmc-nix-cli"))
 
     ensure(compatible, bootstrap, "compatible bmc-nix-cli bootstrap did not take")
@@ -452,7 +459,7 @@ def build_packages(nix: Nix, plan: Deployment) -> str:
 
 @stage("Copy closures")
 def copy_closures(nix: Nix, dev: Device, plan: Deployment) -> str:
-    nix.copy([b.store_path for b in plan.built], dev.copy_dest)
+    _copy_to(nix, dev, [b.store_path for b in plan.built])
     return f"{console.lit(len(plan.built))} closure(s) → {console.lit(dev.host)}"
 
 
