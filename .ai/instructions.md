@@ -135,7 +135,8 @@ Workspace-level lints are defined in `Cargo.toml`:
 - Local equivalent: `cargo clippy --workspace --tests -- -D warnings`
 - Uses `rustfmt` for formatting (config in `rustfmt.toml`)
 - Rust toolchain version specified in `rust-toolchain.toml`
-- Prefer `usize` for counts and indices — avoid `u32`/`u16`/etc. unless required by an external API or wire format
+- Prefer `usize` for counts, lengths, indices and sizes, and `isize` for signed differences — avoid `u32`/`i32`/etc.
+  unless required by an external API or wire format
 - Never use `#[serde(deny_unknown_fields)]` on persisted state — it breaks backward compatibility: files written by a
   newer version (with new fields) stop parsing in older code. Deserialized structs must tolerate unknown keys. The one
   carve-out is hand-authored input read only by the tree that defines it (netsim blueprint `Params`): nothing persists
