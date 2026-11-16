@@ -218,7 +218,40 @@ fn resolve_installs_reports_unknown_target() {
     let err = resolve_installs(&merged, &["widget-nope".to_owned()])
         .expect_err("BUG: unknown install target must fail");
     assert!(
-        matches!(err, PackageProbeError::InstallTargetUnavailable(_)),
+        matches!(err, PackageProbeError::InstallTargetUnavailable { ref package } if package == "widget-nope"),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn resolve_installs_reports_tied_servers_as_ambiguous() {
+    let server = |id: &str, store_path: &str| {
+        let index = serde_json::json!({
+            "version": 1,
+            "provenance": null,
+            "indexes": [],
+            "caches": [],
+            "packages": [{
+                "name": "widget-clock",
+                "version": "1.0.0",
+                "store_path": store_path,
+                "category": "widget",
+            }],
+        });
+        bmc_nix::types::FetchedIndex {
+            server_id: id.to_owned(),
+            server_priority: 10,
+            index: serde_json::from_value(index).expect("BUG: parse index"),
+        }
+    };
+    let merged = bmc_nix::index::merge_indexes(vec![
+        server("a", "/nix/store/a"),
+        server("b", "/nix/store/b"),
+    ]);
+    let err = resolve_installs(&merged, &["widget-clock".to_owned()])
+        .expect_err("BUG: tied servers with different builds must fail");
+    assert!(
+        matches!(err, PackageProbeError::InstallTargetAmbiguous { ref package } if package == "widget-clock"),
         "got {err:?}"
     );
 }
@@ -291,7 +324,7 @@ async fn missing_target_feed_fails_the_probe() {
         .probe(Some("missing"), EstimateMode::Skip, &[])
         .await;
     assert!(
-        matches!(failure, PackageProbe::Failed(PackageProbeError::IndexUnusable(ref message)) if message.contains("no package feed entry for BOS version 'missing'")),
+        matches!(failure, PackageProbe::Failed(PackageProbeError::NoFeedEntry { ref firmware }) if firmware == "missing"),
         "a missing target must fail instead of selecting another firmware: {failure:?}"
     );
 }
@@ -323,7 +356,7 @@ async fn installable_packages_come_from_target_firmware() {
 async fn missing_target_feed_fails_package_discovery() {
     let (_dir, upgrader) = target_feed_upgrader().await;
     assert!(
-        matches!(upgrader.list_installable_packages(Some("missing")).await, Err(PackageProbeError::IndexUnusable(message)) if message.contains("no package feed entry for BOS version 'missing'"))
+        matches!(upgrader.list_installable_packages(Some("missing")).await, Err(PackageProbeError::NoFeedEntry { firmware }) if firmware == "missing")
     );
 }
 #[tokio::test]
@@ -772,7 +805,7 @@ async fn apply_preserves_resolve_failure_source() {
     };
     assert!(matches!(
         source,
-        PackageProbeError::InstallTargetUnavailable(_)
+        PackageProbeError::InstallTargetUnavailable { .. }
     ));
     let preserved = error
         .source()
@@ -866,7 +899,7 @@ async fn probe_reports_install_target_unavailable() {
     assert!(
         matches!(
             probe,
-            PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable(_))
+            PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable { .. })
         ),
         "got {probe:?}"
     );

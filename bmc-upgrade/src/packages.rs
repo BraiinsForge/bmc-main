@@ -81,10 +81,19 @@ pub enum PackageProbeError {
     ServersConfigUnavailable(String),
     IndexFetchFailed(String),
     IndexUnusable(String),
+    NoFeedEntry {
+        firmware: String,
+    },
     ManifestReadFailed(String),
     PlanFailed(PackagePlanFailure),
     Unrealizable(String),
-    InstallTargetUnavailable(String),
+    InstallTargetUnavailable {
+        package: String,
+    },
+    /// Servers tied on version and priority offer different builds of the package.
+    InstallTargetAmbiguous {
+        package: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +119,9 @@ impl std::fmt::Display for PackageProbeError {
             }
             Self::IndexFetchFailed(msg) => write!(f, "package index fetch failed: {msg}"),
             Self::IndexUnusable(msg) => write!(f, "package index is unusable: {msg}"),
+            Self::NoFeedEntry { firmware } => {
+                write!(f, "no package feed entry for BOS version '{firmware}'")
+            }
             Self::ManifestReadFailed(msg) => write!(f, "package manifest could not be read: {msg}"),
             Self::PlanFailed(failure) => write!(f, "{failure}"),
             Self::Unrealizable(paths) => {
@@ -118,8 +130,14 @@ impl std::fmt::Display for PackageProbeError {
                     "package upgrade cannot be realized; no substituter provides: {paths}"
                 )
             }
-            Self::InstallTargetUnavailable(detail) => {
-                write!(f, "requested package to install is unavailable: {detail}")
+            Self::InstallTargetUnavailable { package } => {
+                write!(f, "requested package '{package}' is unavailable")
+            }
+            Self::InstallTargetAmbiguous { package } => {
+                write!(
+                    f,
+                    "requested package '{package}' is ambiguous across package servers"
+                )
             }
         }
     }
@@ -402,6 +420,18 @@ impl<N> PackageUpgrader<N> {
             Err(err @ bmc_nix::index::FetchIndexesError::Fetch { .. }) => {
                 warn!(error = %err, "Package index fetch failed");
                 return Err(PackageProbeError::IndexFetchFailed(err.to_string()));
+            }
+            Err(
+                ref err @ bmc_nix::index::FetchIndexesError::FeedResolution {
+                    ref firmware,
+                    source: bmc_nix::feed::FeedError::MissingEntry { .. },
+                    ..
+                },
+            ) => {
+                warn!(error = %err, "Package feed has no entry for the firmware");
+                return Err(PackageProbeError::NoFeedEntry {
+                    firmware: firmware.clone(),
+                });
             }
             Err(err) => {
                 warn!(error = %err, "Package index unusable");
@@ -714,7 +744,20 @@ pub fn resolve_installs(
                 None,
                 bmc_nix::types::InstalledBy::User,
             )
-            .map_err(|err| PackageProbeError::InstallTargetUnavailable(err.to_string()))
+            .map_err(|err| {
+                warn!(error = %err, "Requested package cannot be resolved");
+                let package = name.clone();
+                match err {
+                    bmc_nix::index::ResolvePackageError::Ambiguous { .. } => {
+                        PackageProbeError::InstallTargetAmbiguous { package }
+                    }
+                    bmc_nix::index::ResolvePackageError::PackageNotFound(_)
+                    | bmc_nix::index::ResolvePackageError::VersionNotFound { .. }
+                    | bmc_nix::index::ResolvePackageError::InvalidVersionConstraint { .. } => {
+                        PackageProbeError::InstallTargetUnavailable { package }
+                    }
+                }
+            })
         })
         .collect()
 }

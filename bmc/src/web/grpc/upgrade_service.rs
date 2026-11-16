@@ -570,18 +570,15 @@ mod tests {
     #[test]
     fn install_target_unavailable_maps_to_failed_precondition() {
         let error: ConnectError = SystemUpgradeError::PackageCheckFailed(
-            bmc_upgrade::packages::PackageProbeError::InstallTargetUnavailable(
-                "package 'widget-nope' not found in any index".to_owned(),
-            ),
+            bmc_upgrade::packages::PackageProbeError::InstallTargetUnavailable {
+                package: "widget-nope".to_owned(),
+            },
         )
         .into();
         assert_eq!(error.code, ErrorCode::FailedPrecondition);
         assert_eq!(
             error.message.as_deref(),
-            Some(
-                "Cannot check for upgrade: requested package to install is unavailable: \
-                 package 'widget-nope' not found in any index."
-            )
+            Some("Cannot check for upgrade: requested package 'widget-nope' is unavailable.")
         );
     }
 

@@ -1151,7 +1151,7 @@ async fn unknown_install_target_is_rejected_over_grpc() {
         .expect_err("an unknown install target must surface as a gRPC error");
     assert_eq!(status.code, ErrorCode::FailedPrecondition);
     assert!(
-        message(&status).contains("requested package to install is unavailable"),
+        message(&status).contains("requested package 'widget-nope' is unavailable"),
         "unexpected message: {}",
         message(&status)
     );

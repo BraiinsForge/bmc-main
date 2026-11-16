@@ -550,9 +550,9 @@ impl PackageBackend for MockPackageBackend {
             .iter()
             .find(|name| !installable.contains(name.as_str()))
         {
-            return PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable(format!(
-                "package '{unknown}' not found in any index"
-            )));
+            return PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable {
+                package: unknown.clone(),
+            });
         }
         let installs = install.iter().map(|name| SystemPackageChange {
             name: name.clone(),
@@ -1051,7 +1051,8 @@ mod tests {
             backend
                 .probe(None, EstimateMode::Skip, &["widget-nope".to_owned()])
                 .await,
-            PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable(_))
+            PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable { package })
+                if package == "widget-nope"
         ));
     }
 
