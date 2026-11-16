@@ -20,14 +20,17 @@
 
 """Unit tests for the local nix seam."""
 
+import json
 import subprocess
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
+from typing import cast, final
 
 import pytest
 
-from bmc_tui import nix
+from bmc_tui import console, nix
 from bmc_tui.nix import Attr, Built, Pkg, StorePath
 from bmc_tui.stage import dry_run
 from tests import stubs
@@ -252,11 +255,184 @@ def test_copy_skips_under_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not calls
 
 
-def test_copy_runs_when_not_dry(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[list[str]] = []
-    monkeypatch.setattr(subprocess, "run", _recording(seen))
+@final
+class _CopyRun:
+    """Stands in for `stream_lines`: records the call and feeds canned output lines."""
+
+    def __init__(self, lines: list[str], code: int = 0) -> None:
+        self.argv: list[str] = []
+        self.env: Mapping[str, str] = {}
+        self._lines = lines
+        self._code = code
+
+    def __call__(
+        self,
+        argv: list[str],
+        on_line: Callable[[str], None],
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> int:
+        self.argv, self.env = argv, env or {}
+        for line in self._lines:
+            on_line(line)
+        return self._code
+
+
+def _copy(monkeypatch: pytest.MonkeyPatch, run: _CopyRun) -> None:
+    monkeypatch.setattr(nix, "stream_lines", run)
     nix.real().copy([StorePath("/nix/store/x")], "ssh://h")
-    assert seen == [["nix", "copy", "--to", "ssh://h", "/nix/store/x"]]
+
+
+def test_copy_asks_nix_for_its_progress_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    run = _CopyRun([])
+    _copy(monkeypatch, run)
+    assert run.argv == [
+        "nix",
+        "copy",
+        "--log-format",
+        "internal-json",
+        "--to",
+        "ssh://h",
+        "/nix/store/x",
+    ]
+
+
+def test_the_bar_waits_for_the_first_path_so_a_password_prompt_stays_readable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shown: list[str] = []
+
+    @contextmanager
+    def transfer() -> Generator[Callable[[str, int, int | None], None]]:
+        yield lambda what, _done, _total: shown.append(what)
+
+    monkeypatch.setattr(console, "transfer", transfer)
+    run = _CopyRun(
+        [
+            _event(action="msg", level=1, msg="warning: no nixbld"),
+            _event(action="start", id=7, type=109, fields=["/nix/store/aaa-x", "ssh://h"]),
+            _start_copy(1, f"/nix/store/{_HASH}-bmc-core"),
+        ]
+    )
+
+    _copy(monkeypatch, run)
+
+    assert set(shown) == {"bmc-core"}
+
+
+def test_a_flood_of_events_redraws_the_bar_sparingly(monkeypatch: pytest.MonkeyPatch) -> None:
+    shown: list[int] = []
+
+    @contextmanager
+    def transfer() -> Generator[Callable[[str, int, int | None], None]]:
+        yield lambda _what, done, _total: shown.append(done)
+
+    monkeypatch.setattr(console, "transfer", transfer)
+    monkeypatch.setattr(time, "monotonic", lambda: 0.0)
+    progress = [
+        _event(action="result", id=1, type=105, fields=[n, 1000, 0, 0]) for n in range(1, 1001)
+    ]
+    run = _CopyRun([_start_copy(1, "/nix/store/aaa-glibc-2.44"), *progress])
+
+    _copy(monkeypatch, run)
+
+    assert shown == [0, 1000], "one redraw while no time passes, then the final state"
+
+
+def test_a_failed_copy_shows_what_nix_said_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    noted: list[str] = []
+    monkeypatch.setattr(console, "note", noted.append)
+    run = _CopyRun([_event(action="msg", level=0, msg="error: cannot connect to 'h'")], code=1)
+
+    with pytest.raises(subprocess.CalledProcessError) as failed:
+        _copy(monkeypatch, run)
+
+    assert noted == ["error: cannot connect to 'h'"]
+    stderr = cast("str | None", failed.value.stderr)
+    assert stderr is None, "it is on screen already, the failure must not repeat it"
+
+
+# ── copy progress ─────────────────────────────────────────────────────────────
+
+
+def _event(**event: object) -> str:
+    return "@nix " + json.dumps(event)
+
+
+# As long as a real store path's hash, in Nix's base-32 alphabet
+_HASH = "3jf2rxan20awdggs6z3x95gwjfpi0zz8"
+
+
+def _start_copy(ident: int, path: str) -> str:
+    # The shape `nix copy` sent, recorded for a copy into a local file store
+    return _event(action="start", id=ident, type=100, fields=[path, "daemon", "ssh://h"])
+
+
+def test_copy_progress_sums_the_bytes_of_every_path() -> None:
+    progress = nix.CopyProgress()
+    for line in [
+        _start_copy(1, "/nix/store/aaa-glibc-2.44"),
+        _event(action="result", id=9, type=106, fields=[100, 300]),
+        _event(action="result", id=1, type=105, fields=[50, 100, 0, 0]),
+        _event(action="result", id=1, type=105, fields=[90, 100, 0, 0]),
+        _start_copy(2, f"/nix/store/{_HASH}-bmc-core"),
+        _event(action="result", id=2, type=105, fields=[20, 200, 0, 0]),
+    ]:
+        assert progress.feed(line) is None
+
+    assert (progress.done, progress.total) == (110, 300), "each event says how far its path is"
+    assert progress.current == "bmc-core"
+
+
+def test_a_path_is_named_without_its_store_hash() -> None:
+    progress = nix.CopyProgress()
+
+    _ = progress.feed(_start_copy(1, f"/nix/store/{_HASH}-glibc-2.44"))
+
+    assert progress.current == "glibc-2.44"
+
+
+def test_a_name_outside_the_store_layout_is_shown_whole() -> None:
+    progress = nix.CopyProgress()
+
+    _ = progress.feed(_start_copy(1, "/nix/store/bbb-bmc-core"))
+
+    assert progress.current == "bbb-bmc-core", "a short prefix is no hash to cut"
+
+
+def test_a_finished_path_counts_in_full() -> None:
+    progress = nix.CopyProgress()
+    for line in [
+        _start_copy(1, "/nix/store/aaa-glibc-2.44"),
+        _event(action="result", id=1, type=105, fields=[99, 100, 0, 0]),
+        _event(action="stop", id=1),
+    ]:
+        _ = progress.feed(line)
+
+    assert progress.done == 100
+
+
+def test_an_event_of_an_unexpected_shape_is_skipped() -> None:
+    progress = nix.CopyProgress()
+    for line in [
+        _start_copy(1, "/nix/store/aaa-glibc-2.44"),
+        _event(action="result", id=9, type=106, fields=[100]),
+        _event(action="result", id=1, type=105, fields=["50", 100]),
+        _event(action="result", id=1, type=105, fields=[50, 100, 0, 0]),
+    ]:
+        assert progress.feed(line) is None
+
+    assert (progress.done, progress.total) == (50, None)
+
+
+def test_copy_progress_hands_back_only_text_meant_for_the_user() -> None:
+    progress = nix.CopyProgress()
+
+    assert progress.feed(_event(action="msg", level=1, msg="warning: no nixbld")) == (
+        "warning: no nixbld"
+    )
+    assert progress.feed(_event(action="msg", level=3, msg="copying 2 paths")) is None
+    assert progress.feed("plain stderr") == "plain stderr"
 
 
 def test_generate_cache_key_writes_secret_and_returns_public(

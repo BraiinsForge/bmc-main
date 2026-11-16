@@ -29,13 +29,18 @@ All work goes through an injected `Nix` backend so tests need no real nix.
 """
 
 import os
+import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NewType, Protocol, final
+from typing import NewType, Protocol, TypedDict, final
+
+import msgspec
 
 from bmc_tui import console, json_value
 from bmc_tui.json_value import Json
+from bmc_tui.process import stream_lines
 from bmc_tui.stage import dry_run
 
 # Discovered straight from the nix-owned `category` metadata, so new widgets are
@@ -62,6 +67,84 @@ StorePath = NewType("StorePath", str)
 
 # A flake attribute or installable, e.g. `.#deck-packages.core` or `…^out`.
 Attr = NewType("Attr", str)
+
+# A store path's base name: 32 characters of Nix's base-32 alphabet (no e, o, t or u),
+# then the name its derivation gave it
+_STORE_NAME = re.compile(r"[0-9a-df-np-sv-z]{32}-(.+)")
+
+# Nix's `--log-format internal-json` events, and the codes they carry (Nix's `logging.hh`).
+_NIX_EVENT = "@nix "
+_ACT_COPY_PATH = 100
+_RES_PROGRESS = 105
+_RES_SET_EXPECTED = 106
+_LVL_WARN = 1  # this level and below, errors, are meant for the user
+
+# A copy sends an event per NAR write;
+# the bar is redrawn at most this often
+_REDRAW_S = 0.1
+
+
+class _NixEvent(TypedDict, total=False):
+    action: str
+    id: int
+    type: int
+    fields: list[int | str] | None
+    level: int
+    msg: str
+
+
+def _shown_name(path: str) -> str:
+    """The store path's name without its hash, or its whole base name if it is no store path."""
+    base = Path(path).name
+    match = _STORE_NAME.fullmatch(base)
+    return match.group(1) if match else base
+
+
+@final
+class CopyProgress:
+    """What a `nix copy --log-format internal-json` has copied so far, in bytes of its total."""
+
+    def __init__(self) -> None:
+        self.total: int | None = None
+        self.done: int = 0
+        self.current: str = ""
+        # Bytes done and size of each path still being copied
+        self._paths: dict[int, tuple[int, int]] = {}
+
+    def feed(self, line: str) -> str | None:
+        """Take a line of the copy's output; return the text in it meant for the user, if any:
+        Nix's warnings and errors, or a line that is no event at all."""
+        if not line.startswith(_NIX_EVENT):
+            return line
+        try:
+            event = msgspec.json.decode(line.removeprefix(_NIX_EVENT), type=_NixEvent)
+        except msgspec.DecodeError:
+            return line
+        action, kind, ident = event.get("action"), event.get("type"), event.get("id")
+        fields = event.get("fields") or []
+        if action == "msg":
+            return event.get("msg", "") if event.get("level", _LVL_WARN + 1) <= _LVL_WARN else None
+        if ident is None:
+            return None
+        match fields:
+            case [str(path), *_] if action == "start" and kind == _ACT_COPY_PATH:
+                self._paths[ident] = (0, 0)
+                self.current = _shown_name(path)
+            case [int(activity), int(total), *_] if (
+                action == "result" and kind == _RES_SET_EXPECTED and activity == _ACT_COPY_PATH
+            ):
+                self.total = total
+            case [int(done), int(size), *_] if (
+                action == "result" and kind == _RES_PROGRESS and ident in self._paths
+            ):
+                self.done += done - self._paths[ident][0]
+                self._paths[ident] = (done, size)
+            case _ if action == "stop" and ident in self._paths:
+                done, size = self._paths.pop(ident)
+                self.done += size - done
+            case _:
+                pass
+        return None
 
 
 @dataclass(frozen=True)
@@ -265,7 +348,28 @@ class _RealNix:
         # quiet ssh's post-quantum-KEX warning
         env = dict(os.environ)
         env["NIX_SSHOPTS"] = f"{env.get('NIX_SSHOPTS', '')} -o LogLevel=ERROR".strip()
-        _ = subprocess.run(["nix", "copy", "--to", dest, *store_paths], check=True, env=env)
+        argv = ["nix", "copy", "--log-format", "internal-json", "--to", dest, *store_paths]
+        progress = CopyProgress()
+        shown_at = -_REDRAW_S
+        with console.transfer() as show:
+
+            def on_line(line: str) -> None:
+                nonlocal shown_at
+                if (text := progress.feed(line)) is not None:
+                    console.note(text)
+                now = time.monotonic()
+                # A path is copied only once ssh is through,
+                # so its password prompt stays readable
+                if progress.current and now - shown_at >= _REDRAW_S:
+                    show(progress.current, progress.done, progress.total)
+                    shown_at = now
+
+            code = stream_lines(argv, on_line, env=env)
+            if progress.current:
+                show(progress.current, progress.done, progress.total)
+        if code:
+            # What Nix said about it is already printed above
+            raise subprocess.CalledProcessError(code, argv)
 
     def generate_cache_key(self, name: str, secret: Path) -> str:
         proc = subprocess.run(

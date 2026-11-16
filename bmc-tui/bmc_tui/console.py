@@ -258,6 +258,12 @@ def cmd_output(text: str) -> None:
         _diagnostics().print(f" [dim]{escape(line)}[/dim]", highlight=False)
 
 
+def note(text: str) -> None:
+    """Print a line of a subprocess's text on the main output, above any live bar there.
+    Its ANSI colours become styling rather than raw escape codes, and brackets stay text."""
+    line(Text.from_ansi(text, style="dim"), highlight=False)
+
+
 def spinner(msg: str) -> Status:
     """Context manager that shows a dots spinner with a message.
 
@@ -280,6 +286,18 @@ def countdown(label: str, seconds: int) -> None:
             time.sleep(1)
 
 
+def _byte_bar(*, speed: bool) -> Progress:
+    """Byte-count bar named by the task's description, with the speed if asked for."""
+    return Progress(
+        TextColumn("[dim]{task.description}[/dim]"),
+        BarColumn(),
+        DownloadColumn(),
+        *([TransferSpeedColumn()] if speed else []),
+        TimeRemainingColumn(),
+        console=out,
+    )
+
+
 @contextmanager
 def progress(label: str, total: int | None) -> Generator[Callable[[int], None]]:
     """Byte-count progress bar; yields an ``advance(n)`` callback.
@@ -292,16 +310,31 @@ def progress(label: str, total: int | None) -> Generator[Callable[[int], None]]:
                 send(chunk)
                 advance(len(chunk))
     """
-    bar = Progress(
-        TextColumn("[dim]{task.description}[/dim]"),
-        BarColumn(),
-        DownloadColumn(),
-        TimeRemainingColumn(),
-        console=out,
-    )
+    bar = _byte_bar(speed=False)
     with bar:
         task = bar.add_task(label, total=total)
         yield lambda n: bar.advance(task, n)
+
+
+@contextmanager
+def transfer() -> Generator[Callable[[str, int, int | None], None]]:
+    """Byte-count bar with speed and time left; yields ``show(what, done, total)``,
+    which names what is moving now and sets the bytes done of a total that may be unknown.
+
+    The bar appears at the first `show`: until then a prompt on the terminal,
+    such as ssh asking for a password, must not be drawn over."""
+    bar = _byte_bar(speed=True)
+    task = bar.add_task("", total=None)
+
+    def show(what: str, done: int, total: int | None) -> None:
+        # Before `start`, which draws a frame at once
+        bar.update(task, description=what, completed=done, total=total)
+        bar.start()
+
+    try:
+        yield show
+    finally:
+        bar.stop()
 
 
 # ── bounded live region ("local scrollback") ─────────────────────────────────

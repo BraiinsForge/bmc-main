@@ -164,6 +164,21 @@ def test_a_redirected_stderr_stays_there_under_force_color(
     assert stdout.getvalue() == ""
 
 
+def test_a_transfer_waits_for_its_first_show_and_names_it_from_the_first_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    screen = io.StringIO()
+    monkeypatch.setattr(console, "out", Console(file=screen, force_terminal=True, width=100))
+
+    with console.transfer() as show:
+        assert screen.getvalue() == "", "a password prompt above it must not be drawn over"
+        show("bmc-core", 10, 100)
+        drawn = screen.getvalue()
+
+    assert "bmc-core" in drawn
+    assert "0/? bytes" not in drawn, "no frame before the first show set what it shows"
+
+
 def test_the_realization_note_does_not_outlive_its_phase() -> None:
     """Realizing sets a note that nothing else clears, so without an explicit
     end the next phase renders beside a line still claiming it is realizing."""
