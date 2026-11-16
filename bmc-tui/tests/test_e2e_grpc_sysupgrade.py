@@ -35,7 +35,7 @@ from typing import NoReturn, cast, final, override
 
 import pytest
 
-from bmc_tui import catalog, fw_index
+from bmc_tui import catalog, exits, fw_index
 from bmc_tui.bos_version import parse_bos_version
 from bmc_tui.device import Device
 from bmc_tui.image import Image
@@ -1116,6 +1116,20 @@ def test_possibly_accepted_expiry_repeats_recovery_and_retains_state(
         _run(harness)
     assert polls > 1 and harness.snapshot.exists() and not harness.server.stopped
     assert any(str(harness.snapshot) in report for report in reports)
+
+
+def test_a_terminating_signal_during_boot_resolution_retains_state_and_stays_a_signal(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness.state.outcome = catalog.StreamOutcome.POSSIBLY_ACCEPTED
+
+    def poll(*_args: object, **_kwargs: object) -> bool:
+        raise exits.Stopped(signal.SIGTERM)
+
+    monkeypatch.setattr(catalog, "poll_boot_id_change", poll)
+    with pytest.raises(exits.Stopped):
+        _run(harness)
+    assert harness.snapshot.exists() and not harness.server.stopped
 
 
 def test_boot_resolution_deadline_expiry_retains_state(

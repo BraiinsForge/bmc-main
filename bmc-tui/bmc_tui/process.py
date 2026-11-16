@@ -19,7 +19,8 @@
 # the grant above.
 
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager, suppress
 from typing import IO
 
 
@@ -29,9 +30,17 @@ def stream_lines(
     """Run `argv`, handing `on_line` each output line as it arrives.
     Stderr is merged in, so progress and errors keep their relative order.
     A nonzero exit is returned, not raised."""
-    with subprocess.Popen(
-        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=env
-    ) as proc:
+    with (
+        subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            env=env,
+        ) as proc,
+        killed_if_cut_short(proc),
+    ):
         stdout: IO[str] | None = proc.stdout
         if stdout is None:
             msg = "BUG: Popen(stdout=PIPE) produced no stdout"
@@ -39,3 +48,21 @@ def stream_lines(
         for line in stdout:
             on_line(line.rstrip("\n"))
     return proc.returncode
+
+
+@contextmanager
+def killed_if_cut_short[T: (str, bytes)](
+    proc: "subprocess.Popen[T]",
+) -> Generator["subprocess.Popen[T]"]:
+    """Kill `proc` if the block raises, before its `with Popen` waits for it.
+    That wait is cut short only for an exact `KeyboardInterrupt` (CPython's `Popen.__exit__`),
+    so after anything else, `exits.Stopped` included, it lasts as long as the child does."""
+    try:
+        yield proc
+    except BaseException:
+        proc.kill()
+        if proc.stdin is not None:
+            # Closing flushes what is buffered into the dead child, which must not hide the error
+            with suppress(BrokenPipeError):
+                proc.stdin.close()
+        raise

@@ -60,6 +60,7 @@ from bmc_tui.image import Image
 from bmc_tui.json_value import Json
 from bmc_tui.nix import ABSENT_ATTR, Attr, Built, Nix, Pkg, StorePath
 from bmc_tui.package_version import planner_keeps_installed
+from bmc_tui.process import killed_if_cut_short
 from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, require, stage
 from bmc_tui.ubus_session import ssh_session
 
@@ -3455,7 +3456,10 @@ def _stream_events(argv: list[str]) -> list[dict[str, Json]]:
 
     events: list[dict[str, Json]] = []
     decoder = json.JSONDecoder()
-    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc:
+    with (
+        subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc,
+        killed_if_cut_short(proc),
+    ):
         stdout: IO[str] | None = proc.stdout
         if stdout is None:
             msg = "BUG: Popen(stdout=PIPE) produced no stdout"
@@ -4120,34 +4124,34 @@ def run_firmware_stream(dev: Device, cycle: FirmwareCycle) -> StreamResult:
 
     cycle.started_upgrade = True
     try:
-        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        started = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except OSError:
         cycle.started_upgrade = False
         raise
 
-    stdout: IO[str] | None = proc.stdout
-    if stdout is None:
-        msg = "BUG: Popen(stdout=PIPE) produced no stdout"
-        raise RuntimeError(msg)
-    stderr_pipe: IO[str] | None = proc.stderr
-    stderr_chunks: list[str] = []
-    stderr_thread: threading.Thread | None = None
-    if stderr_pipe is not None:
-        stderr_thread = threading.Thread(
-            target=lambda: stderr_chunks.append(stderr_pipe.read()),
-            daemon=True,
-        )
-        stderr_thread.start()
-
     decoder = json.JSONDecoder()
     events: list[dict[str, Json]] = []
     remainder = ""
-    for line in stdout:
-        remainder = _drain_events(decoder, remainder + line, events)
-    exit_code = proc.wait()
-    if stderr_thread is not None:
-        stderr_thread.join()
-    stderr = "".join(stderr_chunks)
+    with started as proc, killed_if_cut_short(proc):
+        stdout: IO[str] | None = proc.stdout
+        if stdout is None:
+            msg = "BUG: Popen(stdout=PIPE) produced no stdout"
+            raise RuntimeError(msg)
+        stderr_pipe: IO[str] | None = proc.stderr
+        stderr_chunks: list[str] = []
+        stderr_thread: threading.Thread | None = None
+        if stderr_pipe is not None:
+            stderr_thread = threading.Thread(
+                target=lambda: stderr_chunks.append(stderr_pipe.read()),
+                daemon=True,
+            )
+            stderr_thread.start()
+        for line in stdout:
+            remainder = _drain_events(decoder, remainder + line, events)
+        exit_code = proc.wait()
+        if stderr_thread is not None:
+            stderr_thread.join()
+        stderr = "".join(stderr_chunks)
 
     status_code = None
     status_message = None

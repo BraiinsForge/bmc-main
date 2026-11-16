@@ -25,11 +25,13 @@ import hashlib
 import io
 import json
 import shlex
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
-from collections.abc import Callable, Iterable
+import time
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal, Required, TypedDict, Unpack, cast, final, override
@@ -37,7 +39,7 @@ from typing import Literal, Required, TypedDict, Unpack, cast, final, override
 import msgspec
 import pytest
 
-from bmc_tui import catalog, console, json_value, rig
+from bmc_tui import catalog, console, exits, json_value, rig
 from bmc_tui.bos_version import VersionName, parse_bos_version
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
@@ -1885,6 +1887,20 @@ def test_stream_events_decodes_back_to_back_messages() -> None:
         {"packagePhase": "PACKAGE_UPGRADE_PHASE_REALIZING"},
         {"finished": {}},
     ]
+
+
+def test_stream_events_cut_short_kills_the_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = "import time; print('{}', flush=True); time.sleep(60)"
+
+    def cut_short(*_args: object) -> str:
+        raise exits.Stopped(signal.SIGTERM)
+
+    monkeypatch.setattr(catalog, "_drain_events", cut_short)
+    started = time.monotonic()
+    with pytest.raises(exits.Stopped):
+        _ = catalog._stream_events([sys.executable, "-c", script])
+
+    assert time.monotonic() - started < 10, "the stream is killed, not waited for"
 
 
 def test_stream_events_aborts_on_stream_failure() -> None:
@@ -4151,13 +4167,38 @@ def test_check_for_firmware_upgrade_requires_completed_index_fetch(
 
 @final
 class _StreamProcess:
-    def __init__(self, stdout: str, stderr: str = "", returncode: int = 0) -> None:
-        self.stdout = io.StringIO(stdout)
+    """A grpcurl stream whose reading `cut_short_by` interrupts once its stdout is read."""
+
+    def __init__(
+        self,
+        stdout: str,
+        stderr: str = "",
+        returncode: int = 0,
+        cut_short_by: BaseException | None = None,
+    ) -> None:
+        self.stdin = None
+        self.stdout = self._lines(stdout, cut_short_by)
         self.stderr = io.StringIO(stderr)
         self.returncode = returncode
+        self.killed = False
+
+    @staticmethod
+    def _lines(text: str, cut_short_by: BaseException | None) -> Iterator[str]:
+        yield from io.StringIO(text)
+        if cut_short_by is not None:
+            raise cut_short_by
 
     def wait(self) -> int:
         return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def __enter__(self) -> "_StreamProcess":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
 
 
 def test_run_firmware_stream_sets_flag_before_spawn_and_preserves_partial_json(
@@ -4180,6 +4221,25 @@ def test_run_firmware_stream_sets_flag_before_spawn_and_preserves_partial_json(
     result = catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
     assert result.events == [{"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"}]
     assert '{"download":' in result.stderr
+
+
+def test_run_firmware_stream_cut_short_kills_grpcurl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, cycle = _checked_firmware_cycle(tmp_path)
+    cycle.upgrade_id = "offer-1"
+    stream = _StreamProcess(
+        '{"firmwarePhase":"FIRMWARE_UPGRADE_PHASE_DOWNLOADING"}\n',
+        cut_short_by=exits.Stopped(signal.SIGTERM),
+    )
+
+    def popen(*_args: object, **_kwargs: object) -> _StreamProcess:
+        return stream
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    with pytest.raises(exits.Stopped):
+        _ = catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
+    assert stream.killed, "grpcurl must not keep upgrading the device after the run stops"
 
 
 def test_run_firmware_stream_resets_flag_when_spawn_fails(

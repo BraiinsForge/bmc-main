@@ -20,6 +20,8 @@
 
 """Unit tests for the staged-procedure engine."""
 
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -27,8 +29,10 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from rich.console import Console
+from rich.text import Text
 
-from bmc_tui import console
+from bmc_tui import console, exits
 from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, entrypoint, require, stage
 
 # ── guard verbs ──────────────────────────────────────────────────────────────
@@ -178,6 +182,69 @@ def test_the_finished_alert_names_the_module_by_default(monkeypatch: pytest.Monk
     assert alerts.summaries == ["test_stage finished"]
 
 
+def test_the_finished_alert_comes_after_the_cleanups(monkeypatch: pytest.MonkeyPatch) -> None:
+    alerts = _Alerts(monkeypatch)
+    alerted_by_cleanup: list[list[str]] = []
+
+    @entrypoint
+    def main() -> None:
+        exits.on_exit("undo", lambda: alerted_by_cleanup.append(list(alerts.summaries)))
+
+    main()
+
+    assert alerted_by_cleanup == [[]]
+    assert alerts.summaries == ["test_stage finished"]
+
+
+def test_a_run_whose_cleanup_fails_fails(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alerts = _Alerts(monkeypatch)
+    monkeypatch.setattr(console, "console", Console(stderr=True, width=120))
+
+    def fail() -> None:
+        raise RuntimeError("still open")
+
+    @entrypoint
+    def main() -> None:
+        exits.on_exit("closing", fail)
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 1, "in CI or an unattended run, exit 0 reads as a pass"
+    assert alerts.summaries == ["run failed"]
+    assert alerts.bodies == ["closing failed"]
+    assert "✗ run failed: closing failed" in Text.from_ansi(capsys.readouterr().err).plain, (
+        "the alert stays silent off a terminal and on a quick run"
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure", "code", "bodies"),
+    [(Abort("kaboom"), 1, ["kaboom"]), (KeyboardInterrupt(), 130, [])],
+    ids=["aborted", "interrupted"],
+)
+def test_a_run_that_fails_keeps_its_exit_code_when_a_cleanup_fails_too(
+    monkeypatch: pytest.MonkeyPatch, failure: BaseException, code: int, bodies: list[str]
+) -> None:
+    alerts = _Alerts(monkeypatch)
+
+    def fail() -> None:
+        raise RuntimeError("still open")
+
+    @entrypoint
+    def main() -> None:
+        exits.on_exit("closing", fail)
+        raise failure
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == code
+    assert alerts.bodies == bodies, "no alert of its own for the cleanup"
+
+
 def test_a_given_name_replaces_the_module_of_a_script_run_with_dash_m(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -201,6 +268,24 @@ def test_entrypoint_aborts_with_exit_1() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["--device", "x"])
     assert exc.value.code == 1
+
+
+def test_a_terminating_signal_ends_the_run_through_the_normal_exit() -> None:
+    before = signal.getsignal(signal.SIGTERM)
+    ran: list[str] = []
+
+    @entrypoint
+    def main(_args: _Args) -> None:
+        exits.on_exit("undo", lambda: ran.append("undo"))
+        os.kill(os.getpid(), signal.SIGTERM)
+        pytest.fail("the signal must end the run")
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--device", "x"])
+
+    assert exc.value.code == 128 + signal.SIGTERM
+    assert ran == ["undo"], "the run's cleanups run, unlike under the default death by signal"
+    assert signal.getsignal(signal.SIGTERM) is before, "the previous handler comes back"
 
 
 def test_entrypoint_bad_args_exits_nonzero() -> None:

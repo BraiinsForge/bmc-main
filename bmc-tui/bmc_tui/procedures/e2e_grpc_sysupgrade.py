@@ -303,8 +303,8 @@ def _resolve_started(  # noqa: PLR0913
             sleep=sleep,
             clock=clock,
         )
-    except KeyboardInterrupt:
-        return _Resolution("retain", KeyboardInterrupt(), retain=True)
+    except KeyboardInterrupt as interrupt:
+        return _Resolution("retain", interrupt, retain=True)
 
 
 def _restore_failure(

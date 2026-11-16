@@ -38,9 +38,10 @@ from contextvars import ContextVar
 from typing import ParamSpec, cast, get_type_hints
 
 import tyro
+from rich.markup import escape
 from rich.traceback import install as install_rich_traceback
 
-from bmc_tui import console
+from bmc_tui import console, exits
 
 # Set by scripts, consumed by the transport seam: turns mutating commands into
 # log-and-skip while read-only probes still run for real.
@@ -143,6 +144,10 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
     )
 
 
+def _report_cleanup(label: str, error: Exception) -> None:
+    console.warn(f"{label} failed: {error}")
+
+
 def entrypoint(main: Callable[..., None], *, name: str | None = None) -> Callable[..., None]:
     """Wrap a script's `main`: parse CLI args from its dataclass parameter via
     tyro (auto `--help`, usage-on-error), run it, turn an `Abort` into a rendered
@@ -154,6 +159,11 @@ def entrypoint(main: Callable[..., None], *, name: str | None = None) -> Callabl
 
     Its finished alert calls it `name`, or else by its module.
     A script started with `python -m` has to pass one, its module being `__main__`.
+
+    SIGTERM and SIGHUP end the run like Ctrl-C does, and what code registered
+    with `exits.on_exit` runs however the run ends.
+    A cleanup that fails can leave something behind for the next run,
+    so the run then exits 1 instead of announcing it finished.
     """
     title = name or main.__module__.rsplit(".", 1)[-1]
     _ = install_rich_traceback(show_locals=True, width=120)
@@ -165,14 +175,23 @@ def entrypoint(main: Callable[..., None], *, name: str | None = None) -> Callabl
     def wrapped(argv: list[str] | None = None) -> None:
         console.mark_run_start()
         started = time.monotonic()
+        with exits.trapped(report=_report_cleanup) as outcome:
+            _run(argv)
+        if outcome.failed:
+            failed = f"{', '.join(outcome.failed)} failed"
+            console.error(f"run failed: {escape(failed)}")
+            console.alert("run failed", body=failed, level="error")
+            raise SystemExit(1)
+        took = console.human_duration(time.monotonic() - started)
+        console.alert(f"{title} finished", body=f"took {took}", level="success")
+
+    def _run(argv: list[str] | None) -> None:
         try:
             if args_type is None:
                 main()
             else:
                 # tyro's overloads take a `TypeForm[OutT]`, which basedpyright leaves unsolved.
                 main(tyro.cli(args_type, args=argv))  # pyright: ignore[reportAny]
-            took = console.human_duration(time.monotonic() - started)
-            console.alert(f"{title} finished", body=f"took {took}", level="success")
         except Abort as e:
             console.error(e.hint)
             console.alert("run failed", body=e.hint, level="error")
@@ -193,6 +212,9 @@ def entrypoint(main: Callable[..., None], *, name: str | None = None) -> Callabl
                 if text.strip():
                     console.cmd_output(text)
             raise SystemExit(1) from e
+        except exits.Stopped as e:
+            console.warn(f"stopped by {e}")
+            raise SystemExit(128 + e.signum) from None
         except KeyboardInterrupt:
             console.warn("interrupted")
             raise SystemExit(130) from None
