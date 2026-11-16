@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
-# Font embedded via include_bytes! from the top-level assets tree; the nix
+# Font embedded via include_lfs! from the top-level assets tree; the nix
 # source filter keeps only rust/toml/lock unless a crate opts extra files here.
 [package.metadata.nix]
 include = ["../../assets/fonts/BraiinsDeckSans-Regular.otf"]
@@ -16,6 +16,7 @@ standalone = []
 # Widget SDK (gpu feature provides EGL/GBM/Wayland surface clients)
 bmc-gpu-render-lock = { workspace = true }
 bmc-log = { workspace = true }
+bmc-shared-utils = { workspace = true }
 bmc-widget = { workspace = true, features = ["gpu"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

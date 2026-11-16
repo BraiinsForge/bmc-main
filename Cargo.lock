@@ -1357,6 +1357,7 @@ name = "bmc-render-keyboard"
 version = "0.1.0"
 dependencies = [
  "bmc-render",
+ "bmc-shared-utils",
  "roxmltree 0.20.0",
  "tracing",
 ]
@@ -1365,6 +1366,7 @@ dependencies = [
 name = "bmc-render-macros"
 version = "0.1.0"
 dependencies = [
+ "bmc-shared-utils",
  "bmc-svg-compiler",
  "bmc-ui",
  "bmc-wasm-assets",
@@ -1374,6 +1376,7 @@ dependencies = [
  "quote",
  "serde_json",
  "syn 2.0.119",
+ "tempfile",
  "toml",
  "zip",
 ]
@@ -1882,6 +1885,7 @@ dependencies = [
  "anyhow",
  "bmc-gpu-render-lock",
  "bmc-log",
+ "bmc-shared-utils",
  "bmc-widget",
  "bytemuck",
  "chrono",

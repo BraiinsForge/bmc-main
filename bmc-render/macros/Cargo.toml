@@ -10,9 +10,11 @@ proc-macro = true
 [features]
 # A mesh `include_mesh!` cannot pack still compiles and warns at the call site,
 # carrying its error for `Draw::mesh` to show in its place.
+# A git-lfs pointer in place of the mesh or its MSDF texture still fails the build.
 deferred-mesh-errors = []
 
 [dependencies]
+bmc-shared-utils = { path = "../../bmc-shared/utils" }
 bmc-svg-compiler = { path = "../../bmc-wasm-runtime/svg-compiler" }
 bmc-ui = { path = "../ui" }
 bmc-wasm-assets = { path = "../../bmc-wasm-assets", default-features = false }
@@ -24,6 +26,9 @@ serde_json = { workspace = true }
 syn = { workspace = true }
 toml = { workspace = true }
 zip = { workspace = true, default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

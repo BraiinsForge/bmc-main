@@ -11,6 +11,7 @@ include = ["assets/**"]
 
 [dependencies]
 bmc-render = { path = ".." }
+bmc-shared-utils = { workspace = true }
 tracing.workspace = true
 
 [dev-dependencies]

@@ -375,6 +375,11 @@ struct MsdfBundle {
     label_color: [u8; 4],
 }
 
+/// The MSDF texture beside a mesh: `<stem>.msdf.png` next to `<stem>.glb`.
+pub fn msdf_png_path(glb_path: &Path) -> PathBuf {
+    glb_path.with_extension("msdf.png")
+}
+
 /// Look for `<stem>.msdf.png` + `<stem>.msdf.json` next to the .glb.
 ///
 /// Returns `Ok(Some(bundle))` when both sidecars exist and parse cleanly,
@@ -396,7 +401,7 @@ fn try_load_msdf(
     let dir = glb_path
         .parent()
         .ok_or_else(|| mesh_err!(span, "mesh `{}` has no parent dir", glb_path.display()))?;
-    let png_path = dir.join(format!("{stem}.msdf.png"));
+    let png_path = msdf_png_path(glb_path);
     let json_path = dir.join(format!("{stem}.msdf.json"));
 
     let png_exists = png_path.exists();

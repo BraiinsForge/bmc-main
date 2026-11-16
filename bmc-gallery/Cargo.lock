@@ -925,6 +925,7 @@ name = "bmc-render-keyboard"
 version = "0.1.0"
 dependencies = [
  "bmc-render",
+ "bmc-shared-utils",
  "roxmltree 0.20.0",
  "tracing",
 ]
@@ -933,6 +934,7 @@ dependencies = [
 name = "bmc-render-macros"
 version = "0.1.0"
 dependencies = [
+ "bmc-shared-utils",
  "bmc-svg-compiler",
  "bmc-ui",
  "bmc-wasm-assets",

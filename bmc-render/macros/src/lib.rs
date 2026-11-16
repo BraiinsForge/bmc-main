@@ -33,6 +33,7 @@
 //! The SDK and bmc-render wrap them so their callers write only the path,
 //! with `$crate` supplying a root that resolves through any re-export.
 
+mod asset_file;
 mod etc1;
 mod mesh;
 
@@ -67,14 +68,22 @@ impl Parse for AssetInput {
 /// not the source file's crate.  To handle this, we walk up parent
 /// directories of `CARGO_MANIFEST_DIR` until we find the file.
 fn resolve_asset(rel_path: &str) -> PathBuf {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .unwrap_or_else(|_| panic!("CARGO_MANIFEST_DIR not set"));
+    find_asset(rel_path).unwrap_or_else(|| {
+        panic!(
+            "asset not found: `{rel_path}` (searched from `{}`)",
+            manifest_dir()
+        )
+    })
+}
+
+fn find_asset(rel_path: &str) -> Option<PathBuf> {
+    let manifest_dir = manifest_dir();
     let base = Path::new(&manifest_dir);
 
     // Try the direct path first (normal case)
     let direct = base.join(rel_path);
     if direct.exists() {
-        return direct;
+        return Some(direct);
     }
 
     // Walk up parent directories (handles cross-crate #[path] includes)
@@ -82,11 +91,15 @@ fn resolve_asset(rel_path: &str) -> PathBuf {
     while dir.pop() {
         let candidate = dir.join(rel_path);
         if candidate.exists() {
-            return candidate;
+            return Some(candidate);
         }
     }
 
-    panic!("asset not found: `{rel_path}` (searched from `{manifest_dir}`)");
+    None
+}
+
+fn manifest_dir() -> String {
+    std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| panic!("CARGO_MANIFEST_DIR not set"))
 }
 
 /// Build a stable asset tag from the crate and normalized macro path.
@@ -178,8 +191,10 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
     let full_path = resolve_asset(&rel_path);
     let abs_path = full_path.display().to_string();
     let name = asset_tag(&rel_path);
-    let payload = std::fs::read(&full_path)
-        .unwrap_or_else(|error| panic!("failed to read bitmap `{}`: {error}", full_path.display()));
+    let payload = match asset_file::read(&full_path, path_lit.span()) {
+        Ok(payload) => payload,
+        Err(error) => return error.to_compile_error().into(),
+    };
     let source = static_asset_source(
         &root,
         PackageAssetKind::Bitmap,
@@ -225,8 +240,10 @@ pub fn include_audio(input: TokenStream) -> TokenStream {
     let full_path = resolve_asset(&rel_path);
     let abs_path = full_path.display().to_string();
     let name = asset_tag(&rel_path);
-    let payload = std::fs::read(&full_path)
-        .unwrap_or_else(|error| panic!("failed to read audio `{}`: {error}", full_path.display()));
+    let payload = match asset_file::read(&full_path, path_lit.span()) {
+        Ok(payload) => payload,
+        Err(error) => return error.to_compile_error().into(),
+    };
     let source = static_asset_source(
         &root,
         PackageAssetKind::Audio,
@@ -283,6 +300,18 @@ pub fn include_mesh(input: TokenStream) -> TokenStream {
         root,
         path: path_lit,
     } = parse_macro_input!(input as AssetInput);
+    // A pointer is a checkout without git-lfs, not a mesh to fix in the gallery, so it never defers.
+    // Any other read error is the mesh's own, and packing it below reports it.
+    if let Some(glb_path) = find_asset(&path_lit.value()) {
+        let msdf_png_path = mesh::msdf_png_path(&glb_path);
+        for path in [glb_path, msdf_png_path] {
+            if let Ok(bytes) = std::fs::read(&path)
+                && let Err(error) = asset_file::refuse_pointer(&path, &bytes, path_lit.span())
+            {
+                return error.to_compile_error().into();
+            }
+        }
+    }
     let packed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         include_mesh_impl(&root, &path_lit)
     }))
@@ -493,12 +522,7 @@ fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::Token
 
     let full_path = resolve_asset(&rel_path);
 
-    let file_data = std::fs::read(&full_path).map_err(|e| {
-        syn::Error::new(
-            span,
-            format!("failed to read .9.png `{}`: {e}", full_path.display()),
-        )
-    })?;
+    let file_data = asset_file::read(&full_path, span)?;
 
     let img = image::load_from_memory(&file_data).map_err(|e| {
         syn::Error::new(
@@ -594,7 +618,7 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
     let full_path = resolve_asset(&rel_path);
 
     let (files, meta) = if full_path.is_dir() {
-        load_skin_from_dir(&full_path)
+        load_skin_from_dir(&full_path, span)?
     } else {
         load_skin_from_zip(&full_path)
     };
@@ -785,7 +809,8 @@ fn load_skin_from_zip(
 
 fn load_skin_from_dir(
     dir: &std::path::Path,
-) -> (Vec<SkinFile>, toml::map::Map<String, toml::Value>) {
+    span: proc_macro2::Span,
+) -> syn::Result<(Vec<SkinFile>, toml::map::Map<String, toml::Value>)> {
     // Parse skin.toml if present — per-asset metadata (color, etc.)
     let meta: toml::map::Map<String, toml::Value> = (|| {
         let toml_str = std::fs::read_to_string(dir.join("skin.toml")).ok()?;
@@ -808,11 +833,10 @@ fn load_skin_from_dir(
 
     for entry in names {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let data = std::fs::read(entry.path())
-            .unwrap_or_else(|e| panic!("failed to read `{}`: {e}", entry.path().display()));
+        let data = asset_file::read(&entry.path(), span)?;
         files.push((name, data));
     }
-    (files, meta)
+    Ok((files, meta))
 }
 
 fn process_skin_files(

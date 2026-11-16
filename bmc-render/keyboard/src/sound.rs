@@ -71,10 +71,12 @@ impl AudioSink for SilentSink {
 
 // ── Sound assets ────────────────────────────────────────────────────
 
-static SOUND_STANDARD: &[u8] = include_bytes!("../assets/sounds/KeypressStandard.ogg");
-static SOUND_DELETE: &[u8] = include_bytes!("../assets/sounds/KeypressDelete.ogg");
-static SOUND_RETURN: &[u8] = include_bytes!("../assets/sounds/KeypressReturn.ogg");
-static SOUND_SPACEBAR: &[u8] = include_bytes!("../assets/sounds/KeypressSpacebar.ogg");
+static SOUND_STANDARD: &[u8] =
+    bmc_shared_utils::include_lfs!("../assets/sounds/KeypressStandard.ogg");
+static SOUND_DELETE: &[u8] = bmc_shared_utils::include_lfs!("../assets/sounds/KeypressDelete.ogg");
+static SOUND_RETURN: &[u8] = bmc_shared_utils::include_lfs!("../assets/sounds/KeypressReturn.ogg");
+static SOUND_SPACEBAR: &[u8] =
+    bmc_shared_utils::include_lfs!("../assets/sounds/KeypressSpacebar.ogg");
 
 /// Play the appropriate sound for a key action.
 pub fn play(sink: &mut dyn AudioSink, sound: KeySound) {
