@@ -190,6 +190,12 @@ describe('parseFieldViolations entry keys', () => {
         });
     });
 
+    test('a reason that only names its field says nothing', () => {
+        const input = [violation('address', "address ''")];
+
+        expect(parseFieldViolations(input, ['address'])).toEqual({ parsed: {}, unmatched: [] });
+    });
+
     test('a single-word map key is unaffected either way', () => {
         const input = [violation('credential_bindings["pool"]', 'Account not found')];
 

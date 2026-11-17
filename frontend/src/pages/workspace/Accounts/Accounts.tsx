@@ -136,9 +136,9 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to load accounts!' })),
+            );
         } finally {
             this.setState({ isLoading: false });
         }
@@ -228,7 +228,14 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const errors = pb.parseFormErrors<AccountErrors>($, ['name', 'typeId', 'fieldValues', 'allowHosts']);
+            const errors = pb.parseFormErrors<AccountErrors>($, {
+                knownFields: ['name', 'typeId', 'fieldValues', 'allowHosts'],
+                fallback: formatMessage({
+                    defaultMessage: 'Failed to save the account!',
+                    description:
+                        'Account dialog error when saving a new or edited account fails, such as with the device unreachable',
+                }),
+            });
             this.setState(s => ({ form: { ...s.form, errors } }));
         } finally {
             this.setState({ isSaving: false }, this.#fetch);
@@ -280,11 +287,10 @@ class View extends Component<Props, State> {
 
             // The count still stands, so the delete is still offered.
             // Say why the list is missing, or its absence reads as "nothing affected".
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= this.props.intl.formatMessage({
+            const fallback = this.props.intl.formatMessage({
                 defaultMessage: 'Could not list the widgets using this account.',
             });
-            toast.error(msg);
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
 
         return found;
@@ -348,9 +354,9 @@ class View extends Component<Props, State> {
             await pb.rpc.accounts.removeAccount({ value: acc.id });
             toast.success(formatMessage({ defaultMessage: 'Account deleted' }));
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Account deletion failed!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Account deletion failed!' })),
+            );
         } finally {
             void this.#fetch();
         }

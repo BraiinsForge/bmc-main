@@ -123,7 +123,7 @@ class View extends Component<Props, State> {
             };
         } catch ($) {
             if (pb.abort.is($)) return;
-            loadError = pb.collectAllErrors($) ?? [formatMessage({ defaultMessage: 'Failed to load initial values!' })];
+            loadError = pb.collectAllErrors($, formatMessage({ defaultMessage: 'Failed to load initial values!' }));
         }
 
         this.setState({ isLoading: false, loadError, timezones, data: res });
@@ -285,7 +285,14 @@ class View extends Component<Props, State> {
                     if (pb.abort.is(probeError)) return;
                 }
             }
-            const errors = toFormErrors($);
+            const errors = toFormErrors(
+                $,
+                formatMessage({
+                    defaultMessage: 'Failed to save the device setup!',
+                    description:
+                        'Initial setup form error when saving the setup fails, such as with the device unreachable',
+                }),
+            );
             this.setState(s => ({ isSaving: false, data: { ...s.data, errors } }));
         }
     };

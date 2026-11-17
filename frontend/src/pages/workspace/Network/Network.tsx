@@ -207,7 +207,15 @@ class View extends Component<Props, State> {
             });
         } catch ($) {
             if (pb.abort.is($) || options?.quiet) return;
-            this.setState({ globalErrors: pb.collectAllErrors($) });
+            const globalErrors = pb.collectAllErrors(
+                $,
+                this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to load the network configuration!',
+                    description:
+                        'Network page error when its settings cannot be read, such as with the device unreachable',
+                }),
+            );
+            this.setState({ globalErrors });
         }
     };
 
@@ -230,8 +238,10 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Wi-Fi scan: Unknown error!' });
+            const msg = pb.collectAllErrorsAsFormattedList(
+                $,
+                formatMessage({ defaultMessage: 'Wi-Fi scan: Unknown error!' }),
+            );
             this.setState(s => ({
                 wifi: {
                     ...s.wifi,
@@ -287,8 +297,10 @@ class View extends Component<Props, State> {
                 return true;
             }
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Wi-Fi connection: Unknown error!' });
+            const msg = pb.collectAllErrorsAsFormattedList(
+                $,
+                formatMessage({ defaultMessage: 'Wi-Fi connection: Unknown error!' }),
+            );
             toast.error(msg);
             return false;
         }
@@ -341,16 +353,20 @@ class View extends Component<Props, State> {
                 globalErrors: null,
                 isSaving: false,
             };
+            const fallback = this.props.intl.formatMessage({
+                defaultMessage: 'Failed to save the network configuration!',
+                description: 'Network page error when saving its settings fails, such as with the device unreachable',
+            });
             switch (confTemp.case) {
                 case 'dhcp':
-                    newState.globalErrors = pb.collectAllErrors($);
+                    newState.globalErrors = pb.collectAllErrors($, fallback);
                     break;
 
                 case 'static': {
-                    const { global, fields } = pb.parseFormErrors<pb.NetworkConfigStatic>(
-                        $,
-                        Object.keys(emptyStaticConf),
-                    );
+                    const { global, fields } = pb.parseFormErrors<pb.NetworkConfigStatic>($, {
+                        knownFields: Object.keys(emptyStaticConf),
+                        fallback,
+                    });
 
                     newState.globalErrors = global;
                     newState.confStaticErrors = {

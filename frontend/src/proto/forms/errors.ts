@@ -58,7 +58,8 @@ export function describeError(error: BareException, defaultMessagePreffix?: stri
     const res: RpcStatus = {
         rpc_reason_name: RPC_CODES_MAP[connectError.code] || 'Unknown',
         rpc_reason_code: connectError.code || Code.Unknown,
-        message: connectError.rawMessage || (error instanceof Error ? decodeURIComponent(error.message) : null),
+        // Not `message`, which for an empty sentence is the bare code: `[invalid_argument]`
+        message: connectError.rawMessage || null,
 
         // https://connectrpc.com/docs/web/errors/#error-details
         fieldViolations: connectError.findDetails(BadRequestSchema).flatMap(x => x.fieldViolations),
@@ -69,15 +70,29 @@ export function describeError(error: BareException, defaultMessagePreffix?: stri
     return res;
 }
 
+/** The error's text for the user. */
+export function errorMessage(error: BareException): string | undefined {
+    return describeError(error).message || undefined;
+}
+
+export interface ParseFormErrorsOptions<Input extends Rec> {
+    // The fields the form draws. Any other violation goes to `global`.
+    // Without them, every violation lands on its path.
+    // Plain strings take `Object.keys` of an empty request, `keyof` completes the names
+    knownFields?: string[] | Array<keyof Input>;
+    // Shown when the error says nothing a field or the page could show
+    fallback: string;
+}
+
 // Given how the form errors are constructed and transmitted through gRPC,
 // we can have multiple errors per field, so we need to account for that
 // in our unified form errors type.
 export function parseFormErrors<Input extends Rec>(
     exception: BareException,
-    // String allows usage of `Object.keys(Input)` and keyof provides intelisense
-    knownFields?: string[] | Array<keyof Input>,
+    { knownFields, fallback }: ParseFormErrorsOptions<Input>,
 ): FormErrors<Input> {
-    const { message, fieldViolations } = parseError(exception);
+    const { fieldViolations } = parseError(exception);
+    const message = errorMessage(exception);
 
     const global: string[] = [];
     if (message) global.push(message);
@@ -86,13 +101,18 @@ export function parseFormErrors<Input extends Rec>(
     if (unmatched.length) global.push(...unmatched);
     const fields: FieldBasedErrors<Input> = parsed;
 
-    return { global, fields };
+    const errors = { global, fields };
+    if (!hasFormErrors(errors)) global.push(fallback);
+    return errors;
+}
+
+function formatList(errors: FieldErrors): string {
+    if (errors.length === 1) return errors[0];
+    return errors.map(x => `- ${x}`).join('\n');
 }
 
 export function renderFieldErrorsAsList(fieldErrors: Maybe<FieldErrors>): null | string {
-    if (!fieldErrors) return null;
-    if (fieldErrors.length === 1) return fieldErrors[0];
-    return fieldErrors.map(x => `- ${x}`).join('\n');
+    return fieldErrors ? formatList(fieldErrors) : null;
 }
 
 /** A failure to reach the device at all, as opposed to a status it sent. */
@@ -101,14 +121,14 @@ export function isConnectionLost(error: unknown): boolean {
     return code === Code.Unavailable || code === Code.Unknown;
 }
 
-export function collectAllErrors(error: unknown | Error | ConnectError): null | string[] {
-    const $ = parseFormErrors(error, []);
-    return $.global.length ? $.global : null;
+/** Every reason `error` gives, or the `fallback` when it gives none. */
+export function collectAllErrors(error: unknown, fallback: string): string[] {
+    return parseFormErrors(error, { knownFields: [], fallback }).global;
 }
 
-export function collectAllErrorsAsFormattedList(error: unknown | Error | ConnectError): null | string {
-    const $ = collectAllErrors(error);
-    return renderFieldErrorsAsList($);
+/** `collectAllErrors` as one string, a list when there are several. */
+export function collectAllErrorsAsFormattedList(error: unknown, fallback: string): string {
+    return formatList(collectAllErrors(error, fallback));
 }
 
 export { hasFormErrors };

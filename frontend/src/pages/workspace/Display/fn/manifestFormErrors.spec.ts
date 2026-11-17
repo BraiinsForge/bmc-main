@@ -98,6 +98,18 @@ describe('mapManifestUpdateError', () => {
         expect(errors.items).toEqual({});
     });
 
+    test('a blank reason lands nowhere', () => {
+        const { global, fields, items, credentials } = mapManifestUpdateError(
+            badRequest([
+                ['params["color"]', ''],
+                ['params["counts"][0]', ' '],
+                ['credential_bindings["pool"]', '  '],
+                ['size', '\t'],
+            ]),
+        );
+        expect({ global, fields, items, credentials }).toEqual({ global: [], fields: {}, items: {}, credentials: {} });
+    });
+
     test("the refusal's own sentence stays apart from the violations", () => {
         const errors = mapManifestUpdateError(badRequest([['size', 'Unsupported size']]));
         expect(errors.status).toBe('Bad request');

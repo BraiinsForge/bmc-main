@@ -278,9 +278,8 @@ class View extends Component<Props, State> {
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load scene cycling settings!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to load scene cycling settings!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
     };
 
@@ -295,9 +294,8 @@ class View extends Component<Props, State> {
             return accounts;
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList(fn.explainTimeout(this.props.intl, $));
-            msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to load accounts!' });
+            toast.error(pb.collectAllErrorsAsFormattedList(fn.explainTimeout(this.props.intl, $), fallback));
         }
     };
 
@@ -311,9 +309,8 @@ class View extends Component<Props, State> {
             this.setState({ credentialTypes: new Map(credentialTypes.map(t => [t.id, t])) });
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load credential types!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to load credential types!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
     };
 
@@ -496,9 +493,9 @@ class View extends Component<Props, State> {
             await this.#sceneWrite(options => pb.rpc.scenes.removeScene({ value: sceneID }, options));
             this.#loadScenesDebounced();
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to remove scene!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to remove scene!' })),
+            );
         }
     };
 
@@ -561,8 +558,10 @@ class View extends Component<Props, State> {
             // Neither call above carries a client abort signal,
             // so Canceled is a server failure to be shown and cleaned up like any other.
             let msg = fn.runningWidgetLimitErrorMessage(this.props.intl, $);
-            msg ||= pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to add manifest widget!' });
+            msg ||= pb.collectAllErrorsAsFormattedList(
+                $,
+                formatMessage({ defaultMessage: 'Failed to add manifest widget!' }),
+            );
 
             this.setState({ openDialogKind: null });
             toast.error(msg);
@@ -589,9 +588,9 @@ class View extends Component<Props, State> {
                 },
             );
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= intl.formatMessage({ defaultMessage: 'Failed to add scene!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, intl.formatMessage({ defaultMessage: 'Failed to add scene!' })),
+            );
         }
     };
 
@@ -615,9 +614,9 @@ class View extends Component<Props, State> {
                 await this.#sceneWrite(options => pb.rpc.scenes.removeScene({ value: sceneID }, options));
                 this.#loadScenesDebounced();
             } catch ($) {
-                let msg = pb.collectAllErrorsAsFormattedList($);
-                msg ||= formatMessage({ defaultMessage: 'Failed to remove scene!' });
-                toast.error(msg);
+                toast.error(
+                    pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to remove scene!' })),
+                );
                 return DialogCloseResult.CleanupFailed;
             }
             return DialogCloseResult.Closed;
@@ -640,9 +639,9 @@ class View extends Component<Props, State> {
                 ),
             );
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to revert widget!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to revert widget!' })),
+            );
             return DialogCloseResult.CleanupFailed;
         }
         return DialogCloseResult.Closed;
@@ -926,9 +925,9 @@ class View extends Component<Props, State> {
             );
             toast.success(formatMessage({ defaultMessage: 'Widget moved!' }));
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to move widget!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to move widget!' })),
+            );
         }
 
         this.#loadScenesDebounced();
@@ -963,9 +962,8 @@ class View extends Component<Props, State> {
             );
             this.#notifySuccessDebounced(formatMessage({ defaultMessage: 'Widget duration updated!' }));
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to update widget duration! Please try again!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to update widget duration! Please try again!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
     }, 500);
 
@@ -997,8 +995,10 @@ class View extends Component<Props, State> {
             }));
         } catch ($) {
             let msg = fn.runningWidgetLimitErrorMessage(this.props.intl, $);
-            msg ||= pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to update widget state!' });
+            msg ||= pb.collectAllErrorsAsFormattedList(
+                $,
+                formatMessage({ defaultMessage: 'Failed to update widget state!' }),
+            );
             toast.error(msg);
         }
 
@@ -1015,9 +1015,9 @@ class View extends Component<Props, State> {
             await this.#sceneWrite(options => pb.rpc.scenes.removeScene({ value: id }, options));
             toast.success(formatMessage({ defaultMessage: 'Widget deleted!' }));
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to delete widget!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to delete widget!' })),
+            );
         }
 
         this.#loadScenesDebounced();
@@ -1049,8 +1049,10 @@ class View extends Component<Props, State> {
             this.setState(s => ({ scenes: s.scenes.filter(scene => scene.id !== optimisticId) }));
 
             let msg = fn.runningWidgetLimitErrorMessage(this.props.intl, $);
-            msg ||= pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to clone the widget!' });
+            msg ||= pb.collectAllErrorsAsFormattedList(
+                $,
+                formatMessage({ defaultMessage: 'Failed to clone the widget!' }),
+            );
             toast.error(msg);
         }
 
@@ -1162,9 +1164,8 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to update widget cycling settings!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to update widget cycling settings!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         } finally {
             this.#loadScenesDebounced();
         }

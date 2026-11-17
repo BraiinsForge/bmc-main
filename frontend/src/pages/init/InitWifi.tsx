@@ -74,8 +74,7 @@ class View extends Component<Props, State> {
 
     /** The device's own words when it answered, `worded` when it could not be reached. */
     #fail = (error: unknown, worded: string): void => {
-        const answered = pb.isConnectionLost(error) ? null : pb.collectAllErrors(error);
-        this.setState({ errors: answered ?? [worded] });
+        this.setState({ errors: pb.isConnectionLost(error) ? [worded] : pb.collectAllErrors(error, worded) });
     };
 
     private abortScanWifi = pb.abort.get();

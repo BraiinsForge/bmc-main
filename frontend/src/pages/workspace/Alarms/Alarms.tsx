@@ -121,10 +121,12 @@ export class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($) || signal.aborted) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load data for alarms!' });
-
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList(
+                    $,
+                    formatMessage({ defaultMessage: 'Failed to load data for alarms!' }),
+                ),
+            );
         } finally {
             this.setState({ isLoading: false });
         }
@@ -281,14 +283,14 @@ export class View extends Component<Props, State> {
             this.#alarmDialogClose();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const formErrors = pb.parseFormErrors<pb.AddAlarmRequest>($, [
-                'name',
-                'time',
-                'enabled',
-                'repeat',
-                'soundId',
-                'snoozeOptions',
-            ]);
+            const formErrors = pb.parseFormErrors<pb.AddAlarmRequest>($, {
+                knownFields: ['name', 'time', 'enabled', 'repeat', 'soundId', 'snoozeOptions'],
+                fallback: formatMessage({
+                    defaultMessage: 'Failed to save the alarm!',
+                    description:
+                        'Alarm dialog error when saving a new or edited alarm fails, such as with the device unreachable',
+                }),
+            });
             this.setState(s => {
                 const { openDialog } = s;
                 if (openDialog?.key !== 'alarm') return s;
@@ -531,9 +533,12 @@ export class View extends Component<Props, State> {
             toast.success(intl.formatMessage({ defaultMessage: 'Alarm has been deleted.' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= intl.formatMessage({ defaultMessage: 'Failed to delete alarm!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList(
+                    $,
+                    intl.formatMessage({ defaultMessage: 'Failed to delete alarm!' }),
+                ),
+            );
         } finally {
             // Always reload data to make sure
             // we have the latest state

@@ -67,7 +67,7 @@ export function parseFieldViolations<Input extends Rec, KnownKey extends Propert
         const resultKey: string[] = parseFieldPath(fieldPath);
 
         if (knownKeys && !knownKeys.includes(resultKey[0] as KnownKey)) {
-            unmatched.push(f.description);
+            if (f.description.trim()) unmatched.push(f.description);
         } else {
             const cleanedValue = f.description
                 // If the error message starts with the field path, we'll drop it
@@ -76,6 +76,7 @@ export function parseFieldViolations<Input extends Rec, KnownKey extends Propert
                 .replace(/["']{2}/, '')
                 // Drop trailing whitespace
                 .trim();
+            if (!cleanedValue) return;
 
             const value: string[] = [];
             const existingValue: Maybe<string[]> = get(parsed, resultKey);

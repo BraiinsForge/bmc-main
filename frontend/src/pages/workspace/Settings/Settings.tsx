@@ -331,7 +331,15 @@ class View extends Component<Props, State> {
             }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            this.setState({ globalErrors: pb.collectAllErrors($) });
+            const globalErrors = pb.collectAllErrors(
+                $,
+                this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to load the system information!',
+                    description:
+                        'Settings page error when the timezone and the installed versions cannot be read, such as with the device unreachable',
+                }),
+            );
+            this.setState({ globalErrors });
         }
     };
 
@@ -344,7 +352,15 @@ class View extends Component<Props, State> {
             this.setState(s => ({ data: { ...s.data, metadata } }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            this.setState({ globalErrors: pb.collectAllErrors($) });
+            const globalErrors = pb.collectAllErrors(
+                $,
+                this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to load the installed versions!',
+                    description:
+                        'Settings page error when the system and packages versions cannot be re-read after a packages update, such as with the device unreachable',
+                }),
+            );
+            this.setState({ globalErrors });
         }
     };
 
@@ -446,10 +462,8 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($) || signal.aborted) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load general settings!' });
-
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to load general settings!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
     };
 
@@ -510,7 +524,14 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const errors = pb.collectAllErrors($);
+            const errors = pb.collectAllErrors(
+                $,
+                formatMessage({
+                    defaultMessage: 'Failed to save the timezone!',
+                    description:
+                        'Settings timezone field error when saving it fails, such as with the device unreachable',
+                }),
+            );
             void this.#setFieldAttr('timezone', 'errors', errors);
         } finally {
             await this.#fetchSystemInfo();
@@ -534,8 +555,8 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let error = pb.collectAllErrorsAsFormattedList($);
-            error ||= formatMessage({ defaultMessage: 'Failed to save SecondsInStatusbar' });
+            const fallback = formatMessage({ defaultMessage: 'Failed to save SecondsInStatusbar' });
+            const error = pb.collectAllErrorsAsFormattedList($, fallback);
             void this.#setFieldAttr('timeFormat', 'errors', [error]);
         } finally {
             // An aborted or dropped save may still have landed on the device.
@@ -585,9 +606,9 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({ defaultMessage: 'Failed to save DateFormat' });
-            toast.error(message);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to save DateFormat' })),
+            );
         } finally {
             // An aborted or dropped save may still have landed on the device.
             await this.#generalFetch();
@@ -605,12 +626,11 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({
+            const fallback = formatMessage({
                 defaultMessage: 'Failed to load the languages',
                 description: 'Settings error toast when the device does not list the languages it offers',
             });
-            toast.error(message);
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
     };
 
@@ -648,12 +668,11 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
 
             const { formatMessage } = this.props.intl;
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({
+            const fallback = formatMessage({
                 defaultMessage: 'Failed to save the language',
                 description: 'Settings error toast when saving the device language fails',
             });
-            toast.error(message);
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         } finally {
             await this.#generalFetch();
             void this.#setField('language', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
@@ -676,9 +695,12 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({ defaultMessage: 'Failed to save firs week day' });
-            toast.error(message);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList(
+                    $,
+                    formatMessage({ defaultMessage: 'Failed to save firs week day' }),
+                ),
+            );
         } finally {
             // An aborted or dropped save may still have landed on the device.
             await this.#generalFetch();
@@ -702,9 +724,8 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({ defaultMessage: 'Failed to save TemperatureUnits' });
-            toast.error(message, { id: 'general-set-temperature-units' });
+            const fallback = formatMessage({ defaultMessage: 'Failed to save TemperatureUnits' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback), { id: 'general-set-temperature-units' });
         } finally {
             await this.#generalFetch();
             void this.#setField('temperatureUnit', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
@@ -727,9 +748,8 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({ defaultMessage: 'Failed to save unit system' });
-            toast.error(message, { id: 'general-set-unit-system' });
+            const fallback = formatMessage({ defaultMessage: 'Failed to save unit system' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback), { id: 'general-set-unit-system' });
         } finally {
             await this.#generalFetch();
             void this.#setField('unitSystem', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
@@ -752,9 +772,9 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= formatMessage({ defaultMessage: 'Failed to save NumberFormat' });
-            toast.error(message);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to save NumberFormat' })),
+            );
         } finally {
             // An aborted or dropped save may still have landed on the device.
             await this.#generalFetch();
@@ -799,9 +819,7 @@ class View extends Component<Props, State> {
             toast.success(formatMessage({ defaultMessage: 'Factory reset complete' }));
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Unknown error!' });
-            toast.error(msg);
+            toast.error(pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Unknown error!' })));
         }
     };
     #generalSystemReboot = async (): Promise<void> => {
@@ -813,9 +831,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Unknown error!' });
-            toast.error(msg);
+            toast.error(pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Unknown error!' })));
         }
     };
 
@@ -944,9 +960,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const errors = pb.collectAllErrors($) ?? [
-                formatMessage({ defaultMessage: 'Failed to save the brightness!' }),
-            ];
+            const errors = pb.collectAllErrors($, formatMessage({ defaultMessage: 'Failed to save the brightness!' }));
             void this.#setField('displayBrightness', s => getFieldStateDefault({ value: s.value, errors }));
         } finally {
             await this.#displayFetch();
@@ -998,9 +1012,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             // Error handling
             if (pb.abort.is($)) return;
-            const errors = pb.collectAllErrors($) ?? [
-                formatMessage({ defaultMessage: 'Failed to save the Night Mode!' }),
-            ];
+            const errors = pb.collectAllErrors($, formatMessage({ defaultMessage: 'Failed to save the Night Mode!' }));
             void this.#setFieldAttr('displayNightmodeEnabled', 'errors', errors);
         } finally {
             await this.#displayFetch();
@@ -1036,9 +1048,10 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const errors: string[] = pb.collectAllErrors($) ?? [
+            const errors = pb.collectAllErrors(
+                $,
                 formatMessage({ defaultMessage: 'Failed to save the night mode brightness!' }),
-            ];
+            );
             void this.#setFieldAttr('displayNightmodeBrightness', 'errors', errors);
         } finally {
             await this.#displayFetch();
@@ -1082,9 +1095,10 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const errors: string[] = pb.collectAllErrors($) ?? [
+            const errors = pb.collectAllErrors(
+                $,
                 formatMessage({ defaultMessage: 'Failed to save the night mode time interval!' }),
-            ];
+            );
             void this.#setFieldAttr('displayNightmodeInterval', 'errors', errors);
         } finally {
             await this.#displayFetch();
@@ -1108,9 +1122,10 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const errors = pb.collectAllErrors($) ?? [
+            const errors = pb.collectAllErrors(
+                $,
                 formatMessage({ defaultMessage: 'Failed to save screen auto-off timeout!' }),
-            ];
+            );
             void this.#setFieldAttr('displayNightmodeScreenOffTimeout', 'errors', errors);
         } finally {
             await this.#displayFetch();
@@ -1198,9 +1213,12 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load sound settings!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList(
+                    $,
+                    formatMessage({ defaultMessage: 'Failed to load sound settings!' }),
+                ),
+            );
         }
     };
 
@@ -1227,9 +1245,12 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load LED settings!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList(
+                    $,
+                    formatMessage({ defaultMessage: 'Failed to load LED settings!' }),
+                ),
+            );
         }
     };
 
@@ -1249,9 +1270,8 @@ class View extends Component<Props, State> {
 
             toast.success(formatMessage({ defaultMessage: 'Sound volume saved' }));
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to save the sound volume!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         } finally {
             await this.#soundFetch();
             void this.#setField('volume', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
@@ -1273,9 +1293,8 @@ class View extends Component<Props, State> {
 
             toast.success(formatMessage({ defaultMessage: 'Sound volume in night mode saved' }));
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to save the sound volume in night mode!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to save the sound volume in night mode!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         } finally {
             await this.#soundFetch();
             void this.#setField('volumeNightmode', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
@@ -1297,9 +1316,8 @@ class View extends Component<Props, State> {
                     : formatMessage({ defaultMessage: 'Boot sound disabled' }),
             );
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to save boot sound setting!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to save boot sound setting!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         } finally {
             await this.#soundFetch();
             void this.#setField('enableBootSound', s => getFieldStateDefault({ value: s.value, errors: s.errors }));
@@ -1321,9 +1339,8 @@ class View extends Component<Props, State> {
                     : formatMessage({ defaultMessage: 'LED notifications disabled' }),
             );
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to save LED notifications setting!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to save LED notifications setting!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         } finally {
             await this.#ledFetch();
             void this.#setField('enableLedNotifications', s =>
@@ -1347,9 +1364,8 @@ class View extends Component<Props, State> {
                     : formatMessage({ defaultMessage: 'LED notifications in night mode disabled' }),
             );
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to save LED notifications night mode setting!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to save LED notifications night mode setting!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         } finally {
             await this.#ledFetch();
             void this.#setField('enableLedNotificationsNightmode', s =>
@@ -1485,10 +1501,14 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const errors = pb.collectAllErrors($);
-            const message = formatMessage({ defaultMessage: 'Failed to check for upgrade!' });
-            toast.error(message);
-
+            const errors = pb.collectAllErrors(
+                $,
+                formatMessage({
+                    defaultMessage: 'Failed to check for upgrade!',
+                    description:
+                        'Settings, Upgrades tab, in place of the upgrade offer when checking for one fails, such as with the device unreachable',
+                }),
+            );
             this.setState(s => ({
                 data: { ...s.data, upgradeInfo: null },
                 upgradeFromFeedErrors: errors,
@@ -1669,7 +1689,7 @@ class View extends Component<Props, State> {
                     onSettled: this.#reportDeviceDidNotReturn,
                 });
             setBackWithError(
-                pb.collectAllErrors($) ?? [formatMessage({ defaultMessage: 'Failed to upgrade the system!' })],
+                pb.collectAllErrors($, formatMessage({ defaultMessage: 'Failed to upgrade the system!' })),
             );
         }
     };
@@ -1758,9 +1778,8 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
 
             void this.#setField('autoUpgrade', getFieldStateDefault());
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load automatic updates setting!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to load automatic updates setting!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
     };
     private upgradesEnableAutoAbort = pb.abort.get();
@@ -1775,9 +1794,8 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to enable automatic updates!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to enable automatic updates!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
         await this.#upgradesAutoFetch();
         void this.#setField('autoUpgrade', s => getFieldStateDefault({ value: s.value, errors: s.errors }));

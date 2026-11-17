@@ -113,6 +113,11 @@
     "source": "Invalid state, cannot move widget without combined scene!",
     "translation": "状态无效：没有组合场景，无法移动小组件！"
   },
+  "0VmMVcnpJl": {
+    "source": "Failed to save the alarm!",
+    "translation": "保存闹钟失败！",
+    "description": "Alarm dialog error when saving a new or edited alarm fails, such as with the device unreachable"
+  },
   "0YiaLrW4UW": {
     "source": "Sound",
     "translation": "声音"
@@ -230,6 +235,11 @@
   "2m+pAldxBC": {
     "source": "Finishing up…",
     "translation": "即将完成…"
+  },
+  "2sHD9gTCpN": {
+    "source": "Failed to log in!",
+    "translation": "登录失败！",
+    "description": "Login form error when logging in fails, such as with the device unreachable"
   },
   "3/x9lBGo11": {
     "source": "Add New Widget",
@@ -825,6 +835,11 @@
     "source": "Network",
     "translation": "网络"
   },
+  "IE3COGMPae": {
+    "source": "Failed to load the system information!",
+    "translation": "加载系统信息失败！",
+    "description": "Settings page error when the timezone and the installed versions cannot be read, such as with the device unreachable"
+  },
   "IFhoj6YIQD": {
     "source": "movable widget",
     "translation": "可移动的小组件",
@@ -933,6 +948,11 @@
     "source": "Verifying",
     "translation": "正在校验"
   },
+  "LZIf5hfxFU": {
+    "source": "Failed to change the password!",
+    "translation": "更改密码失败！",
+    "description": "Change Password dialog error when the change fails, such as with the device unreachable"
+  },
   "LmZmQy1UMy": {
     "source": "Failed to save the Night Mode!",
     "translation": "保存夜间模式失败！"
@@ -1007,6 +1027,11 @@
     "source": "Verifying packages",
     "translation": "正在校验软件包"
   },
+  "O9g87Ua4Q5": {
+    "source": "Failed to check for upgrade!",
+    "translation": "检查升级失败！",
+    "description": "Settings, Upgrades tab, in place of the upgrade offer when checking for one fails, such as with the device unreachable"
+  },
   "OLVyHLE2VH": {
     "source": "WEP",
     "translation": "WEP"
@@ -1078,6 +1103,11 @@
   "PeYyCLgn2e": {
     "source": "Failed to save LED notifications night mode setting!",
     "translation": "保存夜间模式 LED 通知设置失败！"
+  },
+  "PuXuYdLA7I": {
+    "source": "Failed to remove the password!",
+    "translation": "移除密码失败！",
+    "description": "Remove Password dialog error when the removal fails, such as with the device unreachable"
   },
   "PxzAu9yIoV": {
     "source": "Add Widget",
@@ -1360,6 +1390,11 @@
     "source": "SSID",
     "translation": "SSID"
   },
+  "ZQ5t8RgU1d": {
+    "source": "Failed to save the network configuration!",
+    "translation": "保存网络配置失败！",
+    "description": "Network page error when saving its settings fails, such as with the device unreachable"
+  },
   "ZeyseXFIms": {
     "source": "Decrement number",
     "translation": "减小数值",
@@ -1414,6 +1449,11 @@
   "b3QB1rD4Oj": {
     "source": "Select a sound…",
     "translation": "选择铃声…"
+  },
+  "bOR15kI/0W": {
+    "source": "Failed to load the network configuration!",
+    "translation": "加载网络配置失败！",
+    "description": "Network page error when its settings cannot be read, such as with the device unreachable"
   },
   "bRjypXFEXV": {
     "source": "Full Screen",
@@ -1611,6 +1651,11 @@
     "source": "Turn off the screen after a period of inactivity during night mode. Touch to wake.",
     "translation": "夜间模式期间，一段时间无操作后关闭屏幕。触摸即可唤醒。"
   },
+  "gX9oNwzmRE": {
+    "source": "Failed to save the account!",
+    "translation": "保存账户失败！",
+    "description": "Account dialog error when saving a new or edited account fails, such as with the device unreachable"
+  },
   "gnJyZ1YE4o": {
     "source": "No “Display widget” yet",
     "translation": "尚无“显示小组件”"
@@ -1753,6 +1798,11 @@
     "translation": "展开",
     "description": "Screen-reader name of a dropdown's arrow button while its list is closed"
   },
+  "keYFlBD/wY": {
+    "source": "Failed to create the password!",
+    "translation": "创建密码失败！",
+    "description": "Create Password dialog error when creating it fails, such as with the device unreachable"
+  },
   "kgDclasOl9": {
     "source": "Night Mode Saved",
     "translation": "夜间模式已保存"
@@ -1876,6 +1926,16 @@
   "o8xuT90FkD": {
     "source": "Factory reset complete",
     "translation": "恢复出厂设置完成"
+  },
+  "oCKCbh+nRO": {
+    "source": "Failed to save the device setup!",
+    "translation": "保存初始设置失败！",
+    "description": "Initial setup form error when saving the setup fails, such as with the device unreachable"
+  },
+  "oKuLmWIZjG": {
+    "source": "Failed to save the timezone!",
+    "translation": "保存时区失败！",
+    "description": "Settings timezone field error when saving it fails, such as with the device unreachable"
   },
   "oS/naeSX/F": {
     "source": "Building",
@@ -2058,10 +2118,6 @@
     "source": "Add to {list}",
     "translation": "添加到“{list}”"
   },
-  "sf72ybTg6t": {
-    "source": "Failed to check for upgrade!",
-    "translation": "检查升级失败！"
-  },
   "sjSEXT1XSi": {
     "source": "Side navigation",
     "translation": "侧边导航"
@@ -2078,6 +2134,11 @@
     "source": "Language",
     "translation": "语言",
     "description": "Accessible name of the language switch in the setup header"
+  },
+  "sznkAB7uJT": {
+    "source": "Failed to load the installed versions!",
+    "translation": "加载已安装版本失败！",
+    "description": "Settings page error when the system and packages versions cannot be re-read after a packages update, such as with the device unreachable"
   },
   "t24w8RMlYf": {
     "source": "Failed to save the night mode brightness!",

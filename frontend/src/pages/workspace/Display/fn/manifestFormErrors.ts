@@ -35,13 +35,14 @@ function ownList<T>(record: Record<string, T[] | undefined>, key: string): T[] {
  * error list and its items' index steps would land on the same array.
  */
 export function mapManifestUpdateError(rawError: unknown): ParamsFormErrors {
-    const { message, fieldViolations } = pb.parseError(rawError);
+    const { fieldViolations } = pb.parseError(rawError);
     const fields: Record<string, string[] | undefined> = {};
     const items: Record<string, Array<RowErrors | undefined> | undefined> = {};
     const credentials: Record<string, string[]> = {};
     const global: string[] = [];
+    const worded = fieldViolations.filter(({ description }) => description.trim());
 
-    for (const { field, description } of fieldViolations) {
+    for (const { field, description } of worded) {
         // Field names arrive camelCased:
         // `credential_bindings` → `credentialBindings`.
         const [root, key, index, rowField, ...rest] = pb.parseFieldPath(field);
@@ -64,5 +65,5 @@ export function mapManifestUpdateError(rawError: unknown): ParamsFormErrors {
         }
     }
 
-    return { status: message || undefined, global, fields, items, credentials };
+    return { status: pb.errorMessage(rawError), global, fields, items, credentials };
 }

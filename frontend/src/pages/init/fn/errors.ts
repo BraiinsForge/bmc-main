@@ -63,8 +63,8 @@ export const FORM_KEY_BY_WIRE_PATH = {
  * Maps a `SetupDevice` failure onto the flat form: violations arrive nested
  * the way the request message is, and ones naming no form field go global.
  */
-export function toFormErrors(exception: unknown): FormState['errors'] {
-    const { global, fields } = pb.parseFormErrors(exception);
+export function toFormErrors(exception: unknown, fallback: string): FormState['errors'] {
+    const { global, fields } = pb.parseFormErrors(exception, { fallback });
     const mapped: Partial<Record<FormKey, string[]>> = {};
 
     const visit = (node: unknown, path: string): void => {

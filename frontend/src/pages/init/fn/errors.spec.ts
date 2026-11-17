@@ -35,6 +35,8 @@ function badRequest(violations: Array<[field: string, description: string]>): Co
     ]);
 }
 
+const FALLBACK = 'Failed to save the device setup!';
+
 function expectErrors<T>(errors: null | T): T {
     expect(errors).not.toBeNull();
     return errors as T;
@@ -42,12 +44,14 @@ function expectErrors<T>(errors: null | T): T {
 
 describe('toFormErrors', () => {
     test('a top-level violation lands on the form field it names', () => {
-        const { fields } = expectErrors(toFormErrors(badRequest([['hostname', 'Too long!']])));
+        const { fields } = expectErrors(toFormErrors(badRequest([['hostname', 'Too long!']]), FALLBACK));
         expect(fields).toEqual({ hostname: ['Too long!'] });
     });
 
     test('a snake_case wire name maps onto the form field', () => {
-        const { fields } = expectErrors(toFormErrors(badRequest([['timezone_id', 'invalid timezone variant']])));
+        const { fields } = expectErrors(
+            toFormErrors(badRequest([['timezone_id', 'invalid timezone variant']]), FALLBACK),
+        );
         expect(fields).toEqual({ timezone: ['invalid timezone variant'] });
     });
 
@@ -59,6 +63,7 @@ describe('toFormErrors', () => {
                     ['network.protocol', 'Protocol must be specified!'],
                     ['network.static.address', 'Missing value!'],
                 ]),
+                FALLBACK,
             ),
         );
         expect(fields).toEqual({
@@ -70,13 +75,15 @@ describe('toFormErrors', () => {
 
     test('an indexed DNS server violation lands on the DNS field', () => {
         const { fields } = expectErrors(
-            toFormErrors(badRequest([['network.static.dns_servers[1]', "'x' is not a valid IPv4!"]])),
+            toFormErrors(badRequest([['network.static.dns_servers[1]', "'x' is not a valid IPv4!"]]), FALLBACK),
         );
         expect(fields).toEqual({ staticDns: ["'x' is not a valid IPv4!"] });
     });
 
     test('a violation naming no form field goes global with the status message', () => {
-        const { global, fields } = expectErrors(toFormErrors(badRequest([['pool.password', 'Missing value!']])));
+        const { global, fields } = expectErrors(
+            toFormErrors(badRequest([['pool.password', 'Missing value!']]), FALLBACK),
+        );
         expect(fields).toEqual({});
         expect(global).toEqual(['Bad request', 'Missing value!']);
     });

@@ -80,7 +80,11 @@ class View extends Component<Props, State> {
             await store.login(data.password, signal);
         } catch ($) {
             if (pb.abort.is($)) return;
-            this.setState({ errors: pb.parseFormErrors<Data>($, ['password']) });
+            const fallback = this.props.intl.formatMessage({
+                defaultMessage: 'Failed to log in!',
+                description: 'Login form error when logging in fails, such as with the device unreachable',
+            });
+            this.setState({ errors: pb.parseFormErrors<Data>($, { knownFields: ['password'], fallback }) });
             this.#ref.current?.querySelector('input')?.select();
         }
     };

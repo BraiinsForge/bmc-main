@@ -135,7 +135,14 @@ class View extends Component<Props, State> {
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const errors = pb.parseFormErrors<pb.ChangePasswordRequest>($, ['currentPassword', 'newPassword']);
+            const errors = pb.parseFormErrors<pb.ChangePasswordRequest>($, {
+                knownFields: ['currentPassword', 'newPassword'],
+                fallback: this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to change the password!',
+                    description:
+                        'Change Password dialog error when the change fails, such as with the device unreachable',
+                }),
+            });
             this.setState(s => ({ passChange: { ...s.passChange, errors } }));
         }
     };
@@ -178,7 +185,14 @@ class View extends Component<Props, State> {
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const errors = pb.parseFormErrors<pb.RemovePasswordRequest>($, ['password']);
+            const errors = pb.parseFormErrors<pb.RemovePasswordRequest>($, {
+                knownFields: ['password'],
+                fallback: this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to remove the password!',
+                    description:
+                        'Remove Password dialog error when the removal fails, such as with the device unreachable',
+                }),
+            });
             this.setState(s => ({ passRemove: { ...s.passRemove, errors } }));
         }
     };
@@ -223,7 +237,14 @@ class View extends Component<Props, State> {
             this.#passDialogCancel();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const errors = pb.parseFormErrors<pb.CreatePasswordRequest>($, ['password']);
+            const errors = pb.parseFormErrors<pb.CreatePasswordRequest>($, {
+                knownFields: ['password'],
+                fallback: this.props.intl.formatMessage({
+                    defaultMessage: 'Failed to create the password!',
+                    description:
+                        'Create Password dialog error when creating it fails, such as with the device unreachable',
+                }),
+            });
             this.setState(s => ({ passCreate: { ...s.passCreate, errors } }));
         }
     };

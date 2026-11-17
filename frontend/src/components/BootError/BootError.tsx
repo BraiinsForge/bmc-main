@@ -25,7 +25,6 @@ import { InlineNotification } from '@/components/InlineNotification';
 /** Shown in place of the app when the device's `system.js` did not yield usable capabilities. */
 export function BootError(props: { error: unknown }) {
     const { formatMessage } = useIntl();
-    const error = pb.parseError(props.error);
     return (
         <InlineNotification
             kind="error"
@@ -33,7 +32,7 @@ export function BootError(props: { error: unknown }) {
             hideCloseButton
             title={formatMessage({ defaultMessage: 'The device did not describe itself' })}
             action={{ label: formatMessage({ defaultMessage: 'Retry' }), onClick: () => window.location.reload() }}
-            children={error.message}
+            children={pb.errorMessage(props.error)}
         />
     );
 }

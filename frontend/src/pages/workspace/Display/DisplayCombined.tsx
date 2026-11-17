@@ -214,9 +214,8 @@ class View extends Component<Props, State> {
             return accounts;
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList(fn.explainTimeout(this.props.intl, $));
-            msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
-            toast.error(msg);
+            const fallback = formatMessage({ defaultMessage: 'Failed to load accounts!' });
+            toast.error(pb.collectAllErrorsAsFormattedList(fn.explainTimeout(this.props.intl, $), fallback));
         }
     };
 
@@ -230,9 +229,12 @@ class View extends Component<Props, State> {
             this.setState({ credentialTypes: new Map(credentialTypes.map(t => [t.id, t])) });
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load credential types!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList(
+                    $,
+                    formatMessage({ defaultMessage: 'Failed to load credential types!' }),
+                ),
+            );
         }
     };
 
@@ -269,9 +271,9 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= intl.formatMessage({ defaultMessage: 'Failed to load scene!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, intl.formatMessage({ defaultMessage: 'Failed to load scene!' })),
+            );
         }
     };
     #loadSceneDebounced = debounce(this.#loadScene, 200);
@@ -369,9 +371,9 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to update widget!' })),
+            );
         }
 
         this.#loadSceneDebounced();
@@ -473,9 +475,8 @@ class View extends Component<Props, State> {
             await this.#sceneWrite(options => pb.rpc.scenes.removeWidget({ id: widgetId, sceneId }, options));
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= this.props.intl.formatMessage({ defaultMessage: 'Failed to remove widget!' });
-            toast.error(msg);
+            const fallback = this.props.intl.formatMessage({ defaultMessage: 'Failed to remove widget!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
 
         this.#loadSceneDebounced();
@@ -517,8 +518,7 @@ class View extends Component<Props, State> {
             ));
         } catch ($) {
             let msg = fn.runningWidgetLimitErrorMessage(intl, $);
-            msg ||= pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to add widget!' });
+            msg ||= pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to add widget!' }));
             toast.error(msg);
             return;
         }
@@ -796,9 +796,12 @@ class View extends Component<Props, State> {
                 this.#loadSceneDebounced();
             } catch ($) {
                 if (pb.abort.is($)) return;
-                let msg = pb.collectAllErrorsAsFormattedList($);
-                msg ||= formatMessage({ defaultMessage: 'Failed to remove widget!' });
-                toast.error(msg);
+                toast.error(
+                    pb.collectAllErrorsAsFormattedList(
+                        $,
+                        formatMessage({ defaultMessage: 'Failed to remove widget!' }),
+                    ),
+                );
             }
             return;
         }
@@ -822,9 +825,9 @@ class View extends Component<Props, State> {
             this.#loadSceneDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to revert widget!' });
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList($, formatMessage({ defaultMessage: 'Failed to revert widget!' })),
+            );
         }
     };
 
@@ -862,9 +865,8 @@ class View extends Component<Props, State> {
             toast.success(intl.formatMessage({ defaultMessage: 'Scene deleted!' }));
             this.#goBack();
         } catch ($) {
-            let message = pb.collectAllErrorsAsFormattedList($);
-            message ||= intl.formatMessage({ defaultMessage: 'Failed to delete scene with an unknown error!' });
-            toast.error(message);
+            const fallback = intl.formatMessage({ defaultMessage: 'Failed to delete scene with an unknown error!' });
+            toast.error(pb.collectAllErrorsAsFormattedList($, fallback));
         }
     };
 

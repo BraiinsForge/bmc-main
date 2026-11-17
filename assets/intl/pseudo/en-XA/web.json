@@ -113,6 +113,11 @@
     "source": "Invalid state, cannot move widget without combined scene!",
     "translation": "[Īƞṽȧȧŀīḓ şŧȧȧŧḗḗ, ƈȧȧƞƞǿǿŧ ḿǿǿṽḗḗ ẇīḓɠḗḗŧ ẇīŧħǿǿŭŭŧ ƈǿǿḿƀīƞḗḗḓ şƈḗḗƞḗḗ!]"
   },
+  "0VmMVcnpJl": {
+    "source": "Failed to save the alarm!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ȧȧŀȧȧřḿ!]",
+    "description": "Alarm dialog error when saving a new or edited alarm fails, such as with the device unreachable"
+  },
   "0YiaLrW4UW": {
     "source": "Sound",
     "translation": "[Şǿǿŭŭƞḓ]"
@@ -230,6 +235,11 @@
   "2m+pAldxBC": {
     "source": "Finishing up…",
     "translation": "[Ƒīƞīşħīƞɠ ŭŭƥ…]"
+  },
+  "2sHD9gTCpN": {
+    "source": "Failed to log in!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿɠ īƞ!]",
+    "description": "Login form error when logging in fails, such as with the device unreachable"
   },
   "3/x9lBGo11": {
     "source": "Add New Widget",
@@ -825,6 +835,11 @@
     "source": "Network",
     "translation": "[Ƞḗḗŧẇǿǿřķ]"
   },
+  "IE3COGMPae": {
+    "source": "Failed to load the system information!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ŧħḗḗ şẏşŧḗḗḿ īƞƒǿǿřḿȧȧŧīǿǿƞ!]",
+    "description": "Settings page error when the timezone and the installed versions cannot be read, such as with the device unreachable"
+  },
   "IFhoj6YIQD": {
     "source": "movable widget",
     "translation": "[ḿǿǿṽȧȧƀŀḗḗ ẇīḓɠḗḗŧ]",
@@ -933,6 +948,11 @@
     "source": "Verifying",
     "translation": "[Ṽḗḗřīƒẏīƞɠ]"
   },
+  "LZIf5hfxFU": {
+    "source": "Failed to change the password!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħȧȧƞɠḗḗ ŧħḗḗ ƥȧȧşşẇǿǿřḓ!]",
+    "description": "Change Password dialog error when the change fails, such as with the device unreachable"
+  },
   "LmZmQy1UMy": {
     "source": "Failed to save the Night Mode!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ Ƞīɠħŧ Ḿǿǿḓḗḗ!]"
@@ -1007,6 +1027,11 @@
     "source": "Verifying packages",
     "translation": "[Ṽḗḗřīƒẏīƞɠ ƥȧȧƈķȧȧɠḗḗş]"
   },
+  "O9g87Ua4Q5": {
+    "source": "Failed to check for upgrade!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ!]",
+    "description": "Settings, Upgrades tab, in place of the upgrade offer when checking for one fails, such as with the device unreachable"
+  },
   "OLVyHLE2VH": {
     "source": "WEP",
     "translation": "[ẆḖƤ]"
@@ -1078,6 +1103,11 @@
   "PeYyCLgn2e": {
     "source": "Failed to save LED notifications night mode setting!",
     "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ĿḖḒ ƞǿǿŧīƒīƈȧȧŧīǿǿƞş ƞīɠħŧ ḿǿǿḓḗḗ şḗḗŧŧīƞɠ!]"
+  },
+  "PuXuYdLA7I": {
+    "source": "Failed to remove the password!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ řḗḗḿǿǿṽḗḗ ŧħḗḗ ƥȧȧşşẇǿǿřḓ!]",
+    "description": "Remove Password dialog error when the removal fails, such as with the device unreachable"
   },
   "PxzAu9yIoV": {
     "source": "Add Widget",
@@ -1360,6 +1390,11 @@
     "source": "SSID",
     "translation": "[ŞŞĪḒ]"
   },
+  "ZQ5t8RgU1d": {
+    "source": "Failed to save the network configuration!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ƞḗḗŧẇǿǿřķ ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ!]",
+    "description": "Network page error when saving its settings fails, such as with the device unreachable"
+  },
   "ZeyseXFIms": {
     "source": "Decrement number",
     "translation": "[Ḓḗḗƈřḗḗḿḗḗƞŧ ƞŭŭḿƀḗḗř]",
@@ -1414,6 +1449,11 @@
   "b3QB1rD4Oj": {
     "source": "Select a sound…",
     "translation": "[Şḗḗŀḗḗƈŧ ȧȧ şǿǿŭŭƞḓ…]"
+  },
+  "bOR15kI/0W": {
+    "source": "Failed to load the network configuration!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ŧħḗḗ ƞḗḗŧẇǿǿřķ ƈǿǿƞƒīɠŭŭřȧȧŧīǿǿƞ!]",
+    "description": "Network page error when its settings cannot be read, such as with the device unreachable"
   },
   "bRjypXFEXV": {
     "source": "Full Screen",
@@ -1611,6 +1651,11 @@
     "source": "Turn off the screen after a period of inactivity during night mode. Touch to wake.",
     "translation": "[Ŧŭŭřƞ ǿǿƒƒ ŧħḗḗ şƈřḗḗḗḗƞ ȧȧƒŧḗḗř ȧȧ ƥḗḗřīǿǿḓ ǿǿƒ īƞȧȧƈŧīṽīŧẏ ḓŭŭřīƞɠ ƞīɠħŧ ḿǿǿḓḗḗ. Ŧǿǿŭŭƈħ ŧǿǿ ẇȧȧķḗḗ.]"
   },
+  "gX9oNwzmRE": {
+    "source": "Failed to save the account!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ȧȧƈƈǿǿŭŭƞŧ!]",
+    "description": "Account dialog error when saving a new or edited account fails, such as with the device unreachable"
+  },
   "gnJyZ1YE4o": {
     "source": "No “Display widget” yet",
     "translation": "[Ƞǿǿ “Ḓīşƥŀȧȧẏ ẇīḓɠḗḗŧ” ẏḗḗŧ]"
@@ -1753,6 +1798,11 @@
     "translation": "[Ǿƥḗḗƞ]",
     "description": "Screen-reader name of a dropdown's arrow button while its list is closed"
   },
+  "keYFlBD/wY": {
+    "source": "Failed to create the password!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈřḗḗȧȧŧḗḗ ŧħḗḗ ƥȧȧşşẇǿǿřḓ!]",
+    "description": "Create Password dialog error when creating it fails, such as with the device unreachable"
+  },
   "kgDclasOl9": {
     "source": "Night Mode Saved",
     "translation": "[Ƞīɠħŧ Ḿǿǿḓḗḗ Şȧȧṽḗḗḓ]"
@@ -1876,6 +1926,16 @@
   "o8xuT90FkD": {
     "source": "Factory reset complete",
     "translation": "[Ƒȧȧƈŧǿǿřẏ řḗḗşḗḗŧ ƈǿǿḿƥŀḗḗŧḗḗ]"
+  },
+  "oCKCbh+nRO": {
+    "source": "Failed to save the device setup!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ḓḗḗṽīƈḗḗ şḗḗŧŭŭƥ!]",
+    "description": "Initial setup form error when saving the setup fails, such as with the device unreachable"
+  },
+  "oKuLmWIZjG": {
+    "source": "Failed to save the timezone!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ şȧȧṽḗḗ ŧħḗḗ ŧīḿḗḗẑǿǿƞḗḗ!]",
+    "description": "Settings timezone field error when saving it fails, such as with the device unreachable"
   },
   "oS/naeSX/F": {
     "source": "Building",
@@ -2058,10 +2118,6 @@
     "source": "Add to {list}",
     "translation": "[Ȧḓḓ ŧǿǿ {list}]"
   },
-  "sf72ybTg6t": {
-    "source": "Failed to check for upgrade!",
-    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ƈħḗḗƈķ ƒǿǿř ŭŭƥɠřȧȧḓḗḗ!]"
-  },
   "sjSEXT1XSi": {
     "source": "Side navigation",
     "translation": "[Şīḓḗḗ ƞȧȧṽīɠȧȧŧīǿǿƞ]"
@@ -2078,6 +2134,11 @@
     "source": "Language",
     "translation": "[Ŀȧȧƞɠŭŭȧȧɠḗḗ]",
     "description": "Accessible name of the language switch in the setup header"
+  },
+  "sznkAB7uJT": {
+    "source": "Failed to load the installed versions!",
+    "translation": "[Ƒȧȧīŀḗḗḓ ŧǿǿ ŀǿǿȧȧḓ ŧħḗḗ īƞşŧȧȧŀŀḗḗḓ ṽḗḗřşīǿǿƞş!]",
+    "description": "Settings page error when the system and packages versions cannot be re-read after a packages update, such as with the device unreachable"
   },
   "t24w8RMlYf": {
     "source": "Failed to save the night mode brightness!",

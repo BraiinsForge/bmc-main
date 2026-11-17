@@ -115,10 +115,12 @@ class View extends Component<Props, State> {
         try {
             await device.sound.play(selectedSoundObject, signal);
         } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= intl.formatMessage({ defaultMessage: 'Failed to play the sound!' });
-
-            toast.error(msg);
+            toast.error(
+                pb.collectAllErrorsAsFormattedList(
+                    $,
+                    intl.formatMessage({ defaultMessage: 'Failed to play the sound!' }),
+                ),
+            );
         }
 
         this.setState({ isPlaying: false });
