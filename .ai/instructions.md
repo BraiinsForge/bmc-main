@@ -335,7 +335,7 @@ The server registers no gRPC reflection; point grpcurl at the protos instead
 
   1. Adversarially reread the staged diff (not the `bmc-self-review` skill, which reviews the committed branch)
   2. Invoke the `comment-discipline` skill and run its comment pass over the result
-  3. Run `just validate` (formats, runs clippy and tests) bare
+  3. Run `just validate` (formats, runs clippy and tests) bare; a change to Markdown only runs `just format` instead
   4. Ensure the commit message explains "why"
 
   The review comes first because it changes code, and whatever it changes has never been through a comment pass.
