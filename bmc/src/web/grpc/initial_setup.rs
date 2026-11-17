@@ -725,6 +725,16 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_device_setup_logs_its_cause_whoever_asks() {
+        let (logs, _capturing) = crate::test_support::LogCapture::capture();
+
+        let cause = anyhow::anyhow!("disk full").context("Failed to replace config file");
+        let _ = DeviceSetupError::SyncConfigData(cause).to_status(&english());
+
+        assert!(logs.text().contains("disk full"), "{}", logs.text());
+    }
+
+    #[test]
     fn an_empty_form_names_every_unchosen_field_in_english() {
         let violations = parse_device_setup(&english(), SettingsRequest::default())
             .expect_err("BUG: an empty form leaves every field unchosen");
