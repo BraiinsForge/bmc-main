@@ -286,6 +286,9 @@ pub(crate) fn with_violations(
 
 /// The `InvalidArgument` of a refused form, with the reason for each field.
 pub(crate) fn bad_request(intl: &Intl, field_violations: Vec<FieldViolation>) -> ConnectError {
+    // Paths only: a violation's description can quote the submitted value.
+    let fields: Vec<&str> = field_violations.iter().map(|v| v.field.as_str()).collect();
+    warn!(?fields, "Request refused with field violations");
     let message = format_message!(
         intl,
         default_message: "Some of the fields are invalid.",
@@ -534,5 +537,21 @@ mod tests {
     fn an_unchecked_field_is_worded() {
         // Words as `internal_error`, so it needs a list of its own.
         assert_worded(|intl| vec![status_text(&unchecked_field(intl))]);
+    }
+
+    #[test]
+    fn a_refused_form_logs_its_field_paths_but_not_their_descriptions() {
+        let (logs, _capturing) = crate::test_support::LogCapture::capture();
+        let intl = bmc_intl::shared_formatter(Language::EN);
+        bad_request(
+            &intl,
+            vec![violation("fieldValues.password", "Too short: hunter2")],
+        );
+        let text = logs.text();
+        assert!(text.contains("fieldValues.password"), "got: {text}");
+        assert!(
+            !text.contains("hunter2"),
+            "a description reached the log: {text}"
+        );
     }
 }
