@@ -24,15 +24,20 @@
 //! writes data there, then passes the pointer to a callback export.
 //! The SDK calls `__dealloc` when done reading the data.
 
-/// Allocate `size` bytes of WASM memory and return the pointer.
+/// Allocate `size` bytes of WASM memory and return the pointer,
+/// or 0 if the heap cannot hold them.
 ///
-/// Uses `Vec::with_capacity` + `leak` to get a stable pointer that
-/// survives until `__dealloc` is called.
+/// A trap here would cut the guest stack, so a failed allocation is reported instead
+/// and that payload never reaches the guest.
+/// The pointer stays valid until `__dealloc` is called.
 #[unsafe(no_mangle)]
 pub extern "C" fn __alloc(size: u32) -> u32 {
-    let layout = Vec::<u8>::with_capacity(size as usize);
-    let ptr = layout.as_ptr() as u32;
-    core::mem::forget(layout);
+    let mut buffer = Vec::<u8>::new();
+    if buffer.try_reserve_exact(size as usize).is_err() {
+        return 0;
+    }
+    let ptr = buffer.as_ptr() as u32;
+    core::mem::forget(buffer);
     ptr
 }
 
@@ -44,5 +49,28 @@ pub extern "C" fn __alloc(size: u32) -> u32 {
 pub extern "C" fn __dealloc(ptr: u32, size: u32) {
     unsafe {
         let _ = Vec::from_raw_parts(ptr as *mut u8, 0, size as usize);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{__alloc, __dealloc};
+    use crate::wasm_test;
+
+    #[wasm_test]
+    fn a_size_beyond_the_address_space_is_reported_rather_than_trapping() {
+        assert_eq!(
+            __alloc(u32::MAX),
+            0,
+            "a trap here would cut the guest stack"
+        );
+    }
+
+    #[wasm_test]
+    fn a_size_the_heap_can_hold_gets_a_pointer() {
+        let ptr = __alloc(16);
+
+        assert_ne!(ptr, 0, "0 tells the host the payload did not fit");
+        __dealloc(ptr, 16);
     }
 }

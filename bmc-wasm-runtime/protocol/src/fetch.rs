@@ -53,7 +53,8 @@ pub enum FetchOutcome {
     Http(u16),
     /// No answer at all — DNS, connect, TLS or timeout.
     Network,
-    /// The host stopped reading: the body outgrew its cap. Retrying is futile.
+    /// The body outgrew the host's cap or could not be placed in the guest, which never sees it.
+    /// Retrying helps only when the guest heap was full and the widget has since freed memory.
     BodyTooLarge,
     /// The host never sent it: a credential would not resolve,
     /// or its type pins egress away from this destination. Retrying is futile.

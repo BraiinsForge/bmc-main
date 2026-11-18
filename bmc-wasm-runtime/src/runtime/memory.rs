@@ -113,6 +113,9 @@ pub(super) fn write_to_wasm(
 }
 
 /// Allocate guest memory for `bytes` and copy them into the guest heap.
+///
+/// The error is a trap `__alloc` took; `None` is a payload that could not be placed,
+/// which includes an `__alloc` that returned 0 because the guest heap cannot hold it.
 pub(super) fn alloc_and_copy_to_guest(
     instance: wasmi::Instance,
     store: &mut wasmi::Store<HostState>,
@@ -120,31 +123,31 @@ pub(super) fn alloc_and_copy_to_guest(
     fuel_per_frame: u64,
     bytes: &[u8],
     context: &str,
-) -> Option<(u32, u32)> {
-    let len = u32::try_from(bytes.len()).ok()?;
+) -> Result<Option<(u32, u32)>, wasmi::Error> {
+    let Ok(len) = u32::try_from(bytes.len()) else {
+        return Ok(None);
+    };
     if len == 0 {
-        return Some((0, 0));
+        return Ok(Some((0, 0)));
     }
 
     if let Err(e) = store.set_fuel(fuel_per_frame) {
         tracing::error!("set_fuel failed for {context}: {e}");
-        return None;
+        return Ok(None);
     }
 
-    let ptr = match alloc_func.call(&mut *store, len) {
-        Ok(ptr) => ptr,
-        Err(e) => {
-            tracing::error!("__alloc failed for {context}: {e}");
-            return None;
-        }
-    };
+    let ptr = alloc_func.call(&mut *store, len)?;
+    if ptr == 0 {
+        tracing::warn!(len, "guest heap cannot hold {context}");
+        return Ok(None);
+    }
 
     let memory = instance
         .get_export(&*store, "memory")
         .and_then(Extern::into_memory);
     let Some(memory) = memory else {
         tracing::error!("memory export missing for {context}");
-        return None;
+        return Ok(None);
     };
 
     let mem_data = memory.data_mut(store);
@@ -155,8 +158,8 @@ pub(super) fn alloc_and_copy_to_guest(
             mem_len = mem_data.len(),
             "guest memory too small for {context}"
         );
-        return None;
+        return Ok(None);
     };
     mem_data[range].copy_from_slice(bytes);
-    Some((ptr, len))
+    Ok(Some((ptr, len)))
 }
