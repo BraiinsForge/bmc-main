@@ -110,8 +110,8 @@ struct LedState {
 #[derive(Default)]
 struct ViewSched {
     ever_rendered: bool,
-    /// The widget is beyond driving: it trapped in a delivery, or burned
-    /// through its fuel once too often. Nothing further is asked of it.
+    /// The widget is beyond driving: it trapped or its renderer assets failed.
+    /// Nothing further is asked of it.
     dead: bool,
     /// Monotonic-ms deadline for the next WASM render, armed from
     /// `next_frame_delay()` after each render.
@@ -952,14 +952,16 @@ impl ViewCore {
                     self.sched.ever_rendered = true;
                 }
             }
-            Ok(RenderStatus::FuelExhausted) => tracing::warn!("{}: fuel exhausted", self.label),
             Ok(RenderStatus::Dead) => {
                 if !self.sched.dead {
-                    tracing::error!("{}: widget killed (repeated fuel overages)", self.label);
+                    tracing::error!("{}: widget killed", self.label);
                     self.sched.dead = true;
                 }
             }
-            Err(e) => tracing::error!("{}: render failed: {e}", self.label),
+            Err(e) => {
+                tracing::error!("{}: render failed: {e}", self.label);
+                self.sched.dead = true;
+            }
         }
     }
 

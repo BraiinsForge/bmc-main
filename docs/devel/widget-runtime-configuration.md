@@ -214,9 +214,9 @@ Spawn consumes only its exact match. A failed or cancelled upgrade uses this sam
 
 Detection is a chain of four edge-triggered hops, with no polling at any layer:
 
-1. A wasm guest trap, a host-side panic, or `max_fuel_strikes` consecutive fuel-outs makes `slot.render` return an error
-   or `RenderStatus::Dead`. The host sees this as an ordinary return value — it *is* the interpreter running the guest,
-   so there is no boundary to poll across.
+1. A wasm guest trap, a host-side panic, or running out of fuel makes `slot.render` or the slot's delivery pass return
+   an error or `RenderStatus::Dead`. The host sees this as an ordinary return value — it *is* the interpreter running
+   the guest, so there is no boundary to poll across.
 2. The host tears the slot down. `WidgetSlot` owns the thin's control socket, so dropping the slot closes that fd.
 3. The thin, parked in `poll(2)` on the control socket and a signal pipe, wakes on `POLLHUP` and exits 0.
 4. The kernel raises `SIGCHLD` in bmc, the thin's direct parent; `child.wait()` returns and the actor treats the exit as
@@ -231,10 +231,10 @@ Two consequences worth knowing:
 - **Exit status carries no policy signal.** A thin exits 0 when its slot goes away — including when the host dies, which
   is the normal fleet-wide failure — and non-zero for a bad manifest path *and* for a transient Wayland connect failure.
   Supervision therefore ignores exit status entirely.
-- **Only process death is observed.** Fuel metering does catch a compute-wedged widget (it escalates to `Dead`, which
-  tears the slot down), but a widget that returns promptly while being logically stuck — waiting on a fetch that never
-  resolves, re-rendering a stale frame — is indistinguishable from a healthy one. Neither the Wayland connection state
-  nor any heartbeat feeds supervision.
+- **Only process death is observed.** Fuel metering does catch a compute-wedged widget (running out ends the widget,
+  which tears the slot down), but a widget that returns promptly while being logically stuck — waiting on a fetch that
+  never resolves, re-rendering a stale frame — is indistinguishable from a healthy one. Neither the Wayland connection
+  state nor any heartbeat feeds supervision.
 
 ## Constraints
 

@@ -32,9 +32,16 @@
 
 #![cfg(all(target_os = "linux", feature = "testing"))]
 
+use std::io::Write as _;
+use std::time::{Duration, Instant};
+
 use chrono::Local;
 
-use bmc_wasm_runtime::{InterceptedReply, RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
+use bmc_wasm_protocol::WebsocketId;
+use bmc_wasm_runtime::{
+    FixtureEvent, FixtureEventKind, InterceptedReply, RuntimeConfig, RuntimeDisplayInfo,
+    WasmWidgetRuntime,
+};
 
 fn trapping_callback_wat() -> String {
     format!(
@@ -92,7 +99,7 @@ fn trapping_alloc_wat() -> String {
 
       (memory (export "memory") 1)
       (data (i32.const 0) "GEThttps://example.test/trap")
-      (global $entries (mut i32) (i32.const 0))
+      (global $entries (export "entries") (mut i32) (i32.const 0))
 
       (func $entered
         (global.set $entries (i32.add (global.get $entries) (i32.const 1))))
@@ -128,9 +135,6 @@ fn trapping_alloc_wat() -> String {
         (param $body_ptr i32)
         (param $body_len i32)
         call $entered)
-
-      (func (export "entries") (result i32)
-        global.get $entries)
 
       (func (export "render") (param i32)))
     "#,
@@ -237,6 +241,110 @@ fn spinning_timer_wat() -> String {
     )
 }
 
+/// Opens a websocket whose payloads `__alloc` cannot place without trapping.
+fn trapping_ws_alloc_wat() -> String {
+    format!(
+        r#"
+    (module
+      (import "env" "host_ws_connect"
+        (func $host_ws_connect (param i32 i32 i32 i32) (result i32)))
+
+      (memory (export "memory") 1)
+      (data (i32.const 0) "ws://127.0.0.1:9/")
+      (global $entries (export "entries") (mut i32) (i32.const 0))
+
+      (func $entered
+        (global.set $entries (i32.add (global.get $entries) (i32.const 1))))
+
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const {})
+
+      (func (export "__alloc") (param $len i32) (result i32)
+        call $entered
+        unreachable)
+
+      (func (export "init")
+        (drop
+          (call $host_ws_connect
+            (i32.const 0)    ;; url_ptr
+            (i32.const 17)   ;; url_len
+            (i32.const 0)    ;; headers_ptr
+            (i32.const 0)))) ;; headers_len
+
+      (func (export "__on_ws_event")
+        (param $ws_id i32)
+        (param $kind i32)
+        (param $data_ptr i32)
+        (param $data_len i32)
+        call $entered)
+
+      (func (export "render") (param i32)))
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
+    )
+}
+
+/// A websocket payload `__alloc` cannot place, and a timer due in the same pass.
+fn trapping_ws_alloc_with_timer_wat() -> String {
+    let wat = trapping_ws_alloc_wat()
+        .replacen(
+            "(func $host_ws_connect (param i32 i32 i32 i32) (result i32)))",
+            "(func $host_ws_connect (param i32 i32 i32 i32) (result i32)))\n      (import \"env\" \"host_timer_start\" (func $start (param i32) (result i32)))",
+            1,
+        )
+        .replacen(
+            "(func (export \"init\")",
+            "(func (export \"init\")\n        (drop (call $start (i32.const 1000)))",
+            1,
+        )
+        .replacen(
+            "(func (export \"render\")",
+            "(func (export \"__on_timer\") (param i32 i32)\n        call $entered)\n\n      (func (export \"render\")",
+            1,
+        );
+    assert!(
+        wat.contains("__on_timer") && wat.contains("host_timer_start"),
+        "BUG: the websocket fixture changed shape; the timer was not spliced in"
+    );
+    wat
+}
+
+/// Listens on an ephemeral port, exported as `port`,
+/// for requests whose method `__alloc` cannot place without trapping.
+fn trapping_http_alloc_wat() -> String {
+    format!(
+        r#"
+    (module
+      (import "env" "host_http_listen" (func $listen (param i32) (result i32)))
+      (import "env" "host_http_get_port" (func $get_port (param i32) (result i32)))
+
+      (memory (export "memory") 1)
+      (global $entries (export "entries") (mut i32) (i32.const 0))
+      (global $port (export "port") (mut i32) (i32.const 0))
+
+      (func $entered
+        (global.set $entries (i32.add (global.get $entries) (i32.const 1))))
+
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const {version})
+
+      (func (export "__alloc") (param $len i32) (result i32)
+        call $entered
+        unreachable)
+
+      (func (export "init")
+        (global.set $port (call $get_port (call $listen (i32.const 0)))))
+
+      (func (export "__on_http_request")
+        (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)
+        call $entered)
+
+      (func (export "render") (param i32)))
+    "#,
+        version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
+    )
+}
+
 fn runtime(wat: &str, config: RuntimeConfig) -> WasmWidgetRuntime {
     let wasm = wat::parse_str(wat).expect("BUG: fixture WAT must parse");
     WasmWidgetRuntime::new(
@@ -300,9 +408,105 @@ fn a_trap_in_the_allocator_ends_the_widget_like_one_in_a_callback() {
         "the reported trap should name the export that took it, got: {error}"
     );
     assert_eq!(
-        runtime.call_export_i32("entries"),
+        runtime.exported_global_i32("entries"),
         Some(1),
         "neither the second response's __alloc nor any callback may run after the trap"
+    );
+}
+
+#[test]
+fn a_trap_in_the_allocator_stops_the_payloads_queued_behind_it() {
+    let ws_id = WebsocketId::from_wire(1).expect("BUG: the first socket's id is 1");
+    let mut runtime = runtime(
+        &trapping_ws_alloc_wat(),
+        RuntimeConfig {
+            event_fixtures: ["first", "second"]
+                .into_iter()
+                .map(|text| FixtureEvent {
+                    at_ms: 0,
+                    kind: FixtureEventKind::WsMessage {
+                        ws_id,
+                        data: text.as_bytes().to_vec(),
+                    },
+                })
+                .collect(),
+            ..RuntimeConfig::default()
+        },
+    );
+
+    runtime.inject_fixture_events(0);
+    runtime
+        .poll_deliveries()
+        .expect_err("a trapping __alloc must be reported to the host");
+
+    assert_eq!(
+        runtime.exported_global_i32("entries"),
+        Some(1),
+        "the second message must not reach __alloc on the instance the first one trapped"
+    );
+}
+
+#[test]
+fn a_trap_in_one_channel_keeps_the_later_channels_of_the_pass_from_the_guest() {
+    let ws_id = WebsocketId::from_wire(1).expect("BUG: the first socket's id is 1");
+    let mut runtime = runtime(
+        &trapping_ws_alloc_with_timer_wat(),
+        RuntimeConfig {
+            event_fixtures: vec![FixtureEvent {
+                at_ms: 1_000,
+                kind: FixtureEventKind::WsMessage {
+                    ws_id,
+                    data: b"payload".to_vec(),
+                },
+            }],
+            ..RuntimeConfig::default()
+        },
+    );
+    runtime.set_time(Local::now().fixed_offset(), 0);
+    runtime
+        .poll_deliveries()
+        .expect("BUG: neither the message nor the tick is due yet");
+
+    runtime.set_time(Local::now().fixed_offset(), 1_000);
+    runtime.inject_fixture_events(1_000);
+    runtime
+        .poll_deliveries()
+        .expect_err("a trapping __alloc must be reported to the host");
+
+    assert_eq!(
+        runtime.exported_global_i32("entries"),
+        Some(1),
+        "the timer is delivered after websockets, so its tick must not reach the trapped instance"
+    );
+}
+
+#[test]
+fn a_trap_placing_a_request_keeps_the_rest_of_it_from_the_guest() {
+    let mut runtime = runtime(&trapping_http_alloc_wat(), RuntimeConfig::default());
+    let port = runtime
+        .exported_global_i32("port")
+        .and_then(|port| u16::try_from(port).ok())
+        .filter(|&port| port != 0)
+        .expect("BUG: the widget must listen on an ephemeral port");
+    let mut client =
+        std::net::TcpStream::connect(("127.0.0.1", port)).expect("BUG: the widget must listen");
+    client
+        .write_all(b"GET / HTTP/1.1\r\nHost: widget\r\n\r\n")
+        .expect("BUG: the listener must accept the request");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while runtime.poll_deliveries().is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "the request never reached the widget"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(
+        runtime.exported_global_i32("entries"),
+        Some(1),
+        "after the method's __alloc traps, neither the other parts' __alloc nor __on_http_request may run"
     );
 }
 

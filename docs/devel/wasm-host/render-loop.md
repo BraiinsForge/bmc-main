@@ -191,8 +191,9 @@ issue a fence merely because it exists.
 
 Deliveries include completed fetches and image decodes, sockets, WebSocket and discovery events, delayed work, and
 lifecycle hooks. A callback may mutate guest state and request a frame. Lifecycle gating still decides whether that
-request can become an actual render. Renderer asset suspension and restoration are described in
-[`renderer-assets.md`](renderer-assets.md).
+request can become an actual render. A trap in a callback or hook fails the pass, and the slot is torn down as after a
+`Dead` render; a trapped slot counts as pending work, so this happens in the same iteration even when it is idle.
+Renderer asset suspension and restoration are described in [`renderer-assets.md`](renderer-assets.md).
 
 ## Compositor Lifecycle Emission
 

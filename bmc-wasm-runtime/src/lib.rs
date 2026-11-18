@@ -72,9 +72,9 @@
 //!
 //! Each frame follows this sequence:
 //!
-//! 1. `renderer.begin_frame(w, h)` — set up the GL viewport
-//! 2. `runtime.deliver_fetch_responses()` — deliver any completed HTTP fetches
-//!    and `runtime.deliver_ws_messages()` — deliver any pending WebSocket events
+//! 1. `runtime.poll_deliveries_with_renderer(renderer)` — deliver completed fetches,
+//!    image decodes and the rest, and tear the widget down on the trap it returns
+//! 2. `renderer.begin_frame(w, h)` — set up the GL viewport
 //! 3. `runtime.render(delta_ms)` — execute WASM + layout + draw commands
 //! 4. `renderer.flush()` — submit draw commands to the GPU
 //! 5. Blit / swap buffers

@@ -20,7 +20,7 @@
 
 //! WASM runtime wrapper using wasmi.
 
-#![expect(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+#![expect(clippy::cast_possible_truncation)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ptr::NonNull;
@@ -172,12 +172,9 @@ fn check_protocol_version(
 pub enum RenderStatus {
     /// Frame rendered successfully within fuel budget.
     Ok,
-    /// Widget exceeded its fuel budget this frame.
-    /// The most recently submitted tree is shown with a warning indicator.
-    FuelExhausted,
-    /// Widget exceeded its budget too many times and has been killed.
-    /// An error overlay is shown; WASM will not be called again
-    /// until [`WasmWidgetRuntime::reset_fuel_state`] is called.
+    /// Widget has stopped for good, for trapping or losing its assets.
+    /// An error overlay is shown and the guest's `render` export is not entered again;
+    /// a widget that trapped is never entered again, `unload` included.
     Dead,
 }
 
@@ -901,21 +898,15 @@ pub struct WasmWidgetRuntime {
     protocol_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
     pub(super) fuel_per_frame: u64,
-    /// Consecutive frames that exceeded the fuel budget.
-    fuel_strikes: u32,
-    /// Trap taken by a guest callback, drained by `poll_deliveries`.
+    /// The first trap the guest took; once set, the guest is never entered again.
     ///
-    /// A trap unwinds the guest's wasm frames without running their epilogues,
-    /// so `__stack_pointer` keeps whatever value it had when the trap fired.
-    /// Later calls start from there; the instance must not be driven again.
+    /// A trap cuts the guest's wasm frames without running their epilogues,
+    /// so `__stack_pointer` keeps whatever value it had when the trap fired,
+    /// and the guest's own state can be left halfway through an update.
     pub(super) guest_trap: Option<anyhow::Error>,
     #[cfg(feature = "capture")]
     lifecycle_trap: Option<anyhow::Error>,
-    /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
-    fuel_dead: bool,
     last_asset_suspension: Option<RendererAssetSuspensionObservation>,
-    /// How many consecutive fuel-outs before the widget is killed.
-    max_fuel_strikes: u32,
     #[cfg(feature = "profiling")]
     wasm_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
@@ -1212,13 +1203,10 @@ impl WasmWidgetRuntime {
             pending_hook: None,
             protocol_version,
             fuel_per_frame,
-            fuel_strikes: 0,
             guest_trap: None,
             #[cfg(feature = "capture")]
             lifecycle_trap: None,
-            fuel_dead: false,
             last_asset_suspension: None,
-            max_fuel_strikes: 5,
             #[cfg(feature = "profiling")]
             wasm_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
@@ -1232,18 +1220,14 @@ impl WasmWidgetRuntime {
     /// On animation-only frames (no pending input, host auto-requested),
     /// skips WASM execution and re-renders from cached tree data.
     ///
-    /// Returns [`RenderStatus::FuelExhausted`] if the widget blew its budget
-    /// (the most recently submitted tree is shown with a warning bar).
-    /// After [`Self::max_fuel_strikes`] consecutive fuel-outs the widget is killed
-    /// and [`RenderStatus::Dead`] is returned on every subsequent call.
+    /// A widget that traps is never entered again:
+    /// [`RenderStatus::Dead`] is returned from then on.
     pub fn render(&mut self, delta_ms: u32, target: TargetContents) -> Result<RenderStatus> {
         let status = self.render_frame(delta_ms, target);
-        // The host exports the buffer whatever the frame drew, so one that drew no tree,
-        // or drew the fuel warning over it, holds nothing the damage history describes.
+        // The host exports the buffer whatever the frame drew,
+        // so one that drew no tree holds nothing the damage history describes.
         let state = self.store.data_mut();
-        if matches!(state.last_repaint, FrameRepaint::NoTree)
-            || matches!(status, Ok(RenderStatus::FuelExhausted))
-        {
+        if matches!(state.last_repaint, FrameRepaint::NoTree) {
             state.layered.owe_every_buffer();
         }
         status
@@ -1265,7 +1249,7 @@ impl WasmWidgetRuntime {
         tracing::trace!(
             instance_id = %state.instance_id,
             delta_ms,
-            fuel_dead = self.fuel_dead,
+            trapped = self.guest_trap.is_some(),
             cached_tree = state.cached_tree.is_some(),
             interaction_pending = state.walk.interaction.has_pending_events(),
             animation_only_candidate = state.frame_schedule.is_animation_only_frame(),
@@ -1283,8 +1267,7 @@ impl WasmWidgetRuntime {
         }
 
         // Dead widget — show overlay on every frame.
-        // Use `reset_fuel_state()` to revive (e.g. from a testbed button).
-        if self.fuel_dead {
+        if self.guest_trap.is_some() {
             state.walk.interaction.begin_frame();
             state.begin_render_frame();
             Self::render_stopped_cached_tree(state, delta_ms, target);
@@ -1391,7 +1374,6 @@ impl WasmWidgetRuntime {
                     Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
                     return Ok(RenderStatus::Dead);
                 }
-                self.fuel_strikes = 0;
                 tracing::trace!(
                     instance_id = %self.store.data().instance_id,
                     wasm_delta,
@@ -1404,47 +1386,21 @@ impl WasmWidgetRuntime {
                 Ok(RenderStatus::Ok)
             }
             Err(e) if e.as_trap_code() == Some(wasmi::TrapCode::OutOfFuel) => {
-                self.fuel_strikes += 1;
-                tracing::warn!(
-                    "widget exceeded fuel budget (strike {}/{})",
-                    self.fuel_strikes,
-                    self.max_fuel_strikes,
-                );
-                if self.fuel_strikes >= self.max_fuel_strikes {
-                    self.fuel_dead = true;
-                    let state = self.store.data_mut();
-                    if state.guest_tree == GuestTree::Committed {
-                        state.begin_render_frame();
-                    } else {
-                        Self::render_stopped_cached_tree(state, delta_ms, target);
-                    }
-                    let background = DeadOverlayBackground::for_stopped_widget(
-                        state.renderer_asset_failure.as_deref(),
-                    );
-                    Self::draw_dead_overlay(state, background);
-                    return Ok(RenderStatus::Dead);
-                }
-                // A tree committed before the trap is already on the target;
-                // otherwise show the last good frame under the warning bar.
+                let _ = self.record_guest_trap("render", &e);
                 let state = self.store.data_mut();
-                if state.guest_tree == GuestTree::Pending
-                    && !Self::render_cached_tree(state, delta_ms, target)
-                {
-                    Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
-                    return Ok(RenderStatus::Dead);
+                if state.guest_tree == GuestTree::Committed {
+                    state.begin_render_frame();
+                } else {
+                    Self::render_stopped_cached_tree(state, delta_ms, target);
                 }
-                Self::draw_fuel_warning(state, self.fuel_strikes, self.max_fuel_strikes);
-                // Force a retry next frame so the widget can run again with
-                // any state changes that happened before the fuel trap.
-                state.frame_schedule.widget_delay_ms = Some(0);
-                Ok(RenderStatus::FuelExhausted)
+                let background = DeadOverlayBackground::for_stopped_widget(
+                    state.renderer_asset_failure.as_deref(),
+                );
+                Self::draw_dead_overlay(state, background);
+                Ok(RenderStatus::Dead)
             }
             Err(e) => {
-                tracing::warn!(
-                    instance_id = %self.store.data().instance_id,
-                    trap = %e,
-                    "widget render trapped"
-                );
+                let _ = self.record_guest_trap("render", &e);
                 Err(e.into())
             }
         }
@@ -1569,23 +1525,6 @@ impl WasmWidgetRuntime {
         state.begin_render_frame();
     }
 
-    /// Subtle red bar at the top edge indicating fuel exhaustion.
-    fn draw_fuel_warning(state: &mut HostState, strikes: u32, max_strikes: u32) {
-        let mut ptr = state
-            .renderer_ptr
-            .expect("BUG: draw_fuel_warning called outside `with_renderer` scope");
-        // SAFETY: same as `render_cached_tree`.
-        let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
-        let w = renderer.width();
-        let fraction = strikes as f32 / max_strikes as f32;
-        let bar_w = w * fraction;
-        // Red bar, increasingly opaque as strikes accumulate
-        #[expect(clippy::cast_sign_loss)] // fraction is always 0..=1
-        let alpha = (100.0 + 155.0 * fraction) as u8;
-        let color = Color::from_rgba(0xFF, 0x00, 0x00, alpha);
-        renderer.fill_rect(0.0, 0.0, bar_w, 3.0, color);
-    }
-
     /// Full error overlay for a dead widget — CDS notification banner.
     fn draw_dead_overlay(state: &mut HostState, background: DeadOverlayBackground) {
         let mut ptr = state
@@ -1594,18 +1533,6 @@ impl WasmWidgetRuntime {
         // SAFETY: same as `render_cached_tree`.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
         tree::render_stopped_widget_banner(&state.host_intl, background.scrim(), renderer);
-    }
-
-    /// Reset the fuel strike counter and dead state.
-    ///
-    /// Call this after hot-reloading a widget or when the host wants to
-    /// give the widget another chance.
-    pub fn reset_fuel_state(&mut self) {
-        self.fuel_strikes = 0;
-        self.fuel_dead = false;
-        let state = self.store.data_mut();
-        let now = state.monotonic_ms;
-        state.frame_schedule.request_frame_after(0, now);
     }
 
     /// Set the wall-clock time and monotonic clock for the next render.
@@ -1650,29 +1577,15 @@ impl WasmWidgetRuntime {
     ///
     /// Stages the snapshot via [`Self::set_params`] (bumping the version) and, if the
     /// widget exported `on_params_update`, calls it under [`Lifecycle::ParamsUpdate`]
-    /// with a fresh fuel budget. The hook is best-effort: a trap is logged and swallowed
-    /// — the new snapshot is already staged, so the next `render` will pick it up via
-    /// `params::current()` regardless of whether the hook completed cleanly.
-    ///
-    /// No rollback on trap (by design).
-    ///
-    /// A trapped hook does not revert the snapshot.
-    /// The contract is that the compositor schema-validates against the widget's manifest
-    /// (see `validate_widget_params` in `bmc/src/web/grpc/scene_management.rs`) before
-    /// invoking delivery, so by the time the runtime sees the update, manifest invariants
-    /// — required keys present, enum/range constraints, typed kinds — already hold.
-    ///
-    /// A deterministic trap here (e.g. `ParamRead::read_required` panicking on a missing
-    /// required key) therefore implies a widget or SDK bug, not bad operator input;
-    /// reverting would mask the bug behind a stale snapshot while the operator-visible
-    /// change silently no-ops. Fuel exhaustion is similarly the widget's responsibility.
+    /// with a fresh fuel budget. A trap in the hook ends the widget like any other trap.
     ///
     /// Use this for every params delivery **after** the initial one (initial deliveries
     /// belong in [`RuntimeConfig::params`] so they're observable from `init`).
     ///
     /// Returns whether the guest's hook actually ran (`true` = widget exports
-    /// `on_params_update` and the call completed without a trap; `false` = no hook or
-    /// the hook trapped). Most callers ignore the return; tests use it to assert wiring.
+    /// `on_params_update` and the call completed without a trap;
+    /// `false` = no hook, or a trap in this call or an earlier one).
+    /// Most callers ignore the return; tests use it to assert wiring.
     pub fn deliver_params_update(
         &mut self,
         params: std::collections::BTreeMap<
@@ -1703,7 +1616,7 @@ impl WasmWidgetRuntime {
     /// channel's deliveries and surface the previous-channel's
     /// stale rotation as a spurious diff.
     ///
-    /// No rollback on trap (by design); see [`Self::deliver_params_update`].
+    /// A trap in the hook ends the widget like any other trap.
     ///
     /// Use this for every system delivery **after** the initial one (initial
     /// deliveries belong in [`RuntimeConfig::system`] so they're observable
@@ -1740,7 +1653,7 @@ impl WasmWidgetRuntime {
     /// The hook observes the view only, so a rotated secret fires it
     /// without the guest being able to tell what changed.
     ///
-    /// No rollback on trap (by design); see [`Self::deliver_params_update`].
+    /// A trap in the hook ends the widget like any other trap.
     pub fn deliver_credentials_update(
         &mut self,
         view: CredentialView,
@@ -1776,8 +1689,8 @@ impl WasmWidgetRuntime {
     /// re-render" notification; the widget responds by calling `request_frame()`
     /// under [`Lifecycle::Touch`].
     ///
-    /// Returns whether the guest's hook actually ran (`false` = no hook or a
-    /// trap), matching the other deliver methods.
+    /// Returns whether the guest's hook actually ran (`false` = no hook,
+    /// or a trap in this call or an earlier one), matching the other deliver methods.
     pub fn deliver_touch(&mut self) -> bool {
         self.fire_update_hook(self.on_touch_func, "on_touch", Lifecycle::Touch)
     }
@@ -1791,8 +1704,8 @@ impl WasmWidgetRuntime {
     /// the widget responds by calling `request_frame()` under
     /// [`Lifecycle::NetworkUpdate`].
     ///
-    /// Returns whether the guest's hook actually ran
-    /// (`false` = no hook or a trap), matching the other deliver methods.
+    /// Returns whether the guest's hook actually ran (`false` = no hook,
+    /// or a trap in this call or an earlier one), matching the other deliver methods.
     pub fn deliver_network_update(&mut self) -> bool {
         self.fire_update_hook(
             self.on_network_update_func,
@@ -1903,6 +1816,9 @@ impl WasmWidgetRuntime {
 
     fn fire_sleep(&mut self) {
         self.fire_update_hook(self.on_sleep_func, "on_sleep", Lifecycle::Sleep);
+        if self.guest_trap.is_some() {
+            return;
+        }
         match self.suspend_renderer_assets() {
             Ok(observation) => {
                 self.last_asset_suspension = Some(observation);
@@ -2039,10 +1955,8 @@ impl WasmWidgetRuntime {
         Ok(observation.finish(renderer))
     }
 
-    /// Common tail of `deliver_params_update` / `deliver_system_update`:
-    /// invoke the named guest export with a fresh fuel budget under
-    /// the matching lifecycle phase, swallowing traps (the snapshot
-    /// is already staged so the next `render` picks it up).
+    /// Invoke the named guest export with a fresh fuel budget under the matching lifecycle phase.
+    /// A trap ends the widget, which the next delivery pass reports as an error and `render` as `Dead`.
     fn fire_update_hook(
         &mut self,
         hook: Option<wasmi::TypedFunc<(), ()>>,
@@ -2052,13 +1966,14 @@ impl WasmWidgetRuntime {
         let Some(hook) = hook else {
             return false;
         };
+        if self.guest_trap.is_some() {
+            return false;
+        }
         if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
             tracing::warn!("{hook_name}: could not set fuel: {e}");
-            if self.guest_trap.is_none() {
-                self.guest_trap = Some(anyhow::anyhow!("{hook_name}: could not set fuel: {e}"));
-            }
+            self.guest_trap = Some(anyhow::anyhow!("{hook_name}: could not set fuel: {e}"));
             #[cfg(feature = "capture")]
-            if self.lifecycle_trap.is_none() {
+            {
                 self.lifecycle_trap = Some(anyhow::anyhow!("{hook_name}: could not set fuel: {e}"));
             }
             return false;
@@ -2067,12 +1982,9 @@ impl WasmWidgetRuntime {
         match call_result {
             Ok(()) => true,
             Err(e) => {
-                tracing::warn!("{hook_name} trapped: {e}");
-                if self.guest_trap.is_none() {
-                    self.guest_trap = Some(anyhow::anyhow!("{hook_name} trapped: {e}"));
-                }
+                let _ = self.record_guest_trap(hook_name, &e);
                 #[cfg(feature = "capture")]
-                if self.lifecycle_trap.is_none() {
+                {
                     self.lifecycle_trap = Some(anyhow::anyhow!("{hook_name} trapped: {e}"));
                 }
                 false
@@ -2149,7 +2061,7 @@ impl WasmWidgetRuntime {
     pub fn next_frame_target(&self, width: u32, height: u32) -> TargetContents {
         let state = self.store.data();
         state.layered.target_for(
-            !self.fuel_dead && state.will_replay_cached_tree(),
+            self.guest_trap.is_none() && state.will_replay_cached_tree(),
             width as f32,
             height as f32,
         )
@@ -2325,7 +2237,10 @@ impl WasmWidgetRuntime {
         &self.instance
     }
 
-    #[cfg(feature = "capture")]
+    /// Read an exported `i32` global without entering the guest.
+    ///
+    /// Hidden from the supported runtime API, like [`Self::call_export_i32`].
+    #[doc(hidden)]
     #[must_use]
     pub fn exported_global_i32(&self, name: &str) -> Option<i32> {
         self.instance
@@ -2447,6 +2362,9 @@ impl WasmWidgetRuntime {
     }
 
     fn run_unload_with_fresh_fuel(&mut self) {
+        if self.guest_trap.is_some() {
+            return;
+        }
         if let Some(unload) = self.unload_func {
             if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                 tracing::warn!("unload: could not set fuel: {e}");
@@ -2966,11 +2884,208 @@ mod tests {
             "the fixture must be one a live widget would preserve"
         );
 
-        runtime.fuel_dead = true;
+        runtime.guest_trap = Some(anyhow::anyhow!("a trap"));
 
         assert_eq!(
             runtime.next_frame_target(480, 480),
             crate::TargetContents::Cleared
+        );
+    }
+
+    /// `on_params_update` and `on_sleep` trap; `render`, `on_touch` and `unload` count their entries
+    /// in a global, which the host reads without entering the guest.
+    fn trap_fixture(render_body: &str, config: RuntimeConfig) -> WasmWidgetRuntime {
+        let wasm = wat::parse_str(format!(
+            r#"
+        (module
+          (memory (export "memory") 1)
+          (global $entries (export "entries") (mut i32) (i32.const 0))
+          (func $entered
+            (global.set $entries (i32.add (global.get $entries) (i32.const 1))))
+          (func (export "__bmc_sdk_init") (result i64)
+            i64.const {version})
+          (func (export "render") (param i32)
+            call $entered
+            {render_body})
+          (func (export "on_params_update")
+            unreachable)
+          (func (export "on_touch")
+            call $entered)
+          (func (export "on_sleep")
+            unreachable)
+          (func (export "unload")
+            call $entered))
+        "#,
+            version = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION)
+        ))
+        .expect("BUG: trap WAT must parse");
+        let module = WasmWidgetModule::compile(&wasm).expect("BUG: trap WAT must compile");
+        runtime_from_module(&module, config)
+    }
+
+    fn render_once(runtime: &mut WasmWidgetRuntime) -> anyhow::Result<crate::RenderStatus> {
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(320.0, 240.0);
+        runtime.with_renderer(renderer_ptr(&mut renderer), |runtime| {
+            runtime.render(16, crate::TargetContents::Cleared)
+        })
+    }
+
+    #[test]
+    fn a_trapped_widget_is_not_entered_again_to_unload() {
+        let mut runtime = trap_fixture("", RuntimeConfig::default());
+        runtime.run_unload_with_fresh_fuel();
+        assert_eq!(
+            runtime.exported_global_i32("entries"),
+            Some(1),
+            "the fixture must count the unload of a live widget"
+        );
+
+        runtime.guest_trap = Some(anyhow::anyhow!("a trap"));
+        runtime.run_unload_with_fresh_fuel();
+
+        assert_eq!(
+            runtime.exported_global_i32("entries"),
+            Some(1),
+            "the trap may have left the instance mid-update, so `unload` must not run on it"
+        );
+    }
+
+    #[test]
+    fn a_trapped_hook_ends_the_widget_at_the_next_frame_without_entering_it() {
+        let mut runtime = trap_fixture("", RuntimeConfig::default());
+        assert!(!runtime.deliver_params_update(BTreeMap::new()));
+
+        let status = render_once(&mut runtime).expect("BUG: a dead widget's frame cannot fail");
+
+        assert_eq!(
+            status,
+            crate::RenderStatus::Dead,
+            "a widget whose hook trapped must not draw a normal frame again"
+        );
+        assert_eq!(
+            runtime.exported_global_i32("entries"),
+            Some(0),
+            "the guest stack is unsafe to reuse after a trap"
+        );
+    }
+
+    #[test]
+    fn a_trapped_hook_makes_an_idle_widget_report_work_to_the_host() {
+        let mut runtime = trap_fixture("", RuntimeConfig::default());
+        runtime.stage_deliveries();
+        assert!(
+            !runtime.has_staged_renderer_delivery(),
+            "the fixture must start with nothing staged"
+        );
+
+        assert!(!runtime.deliver_params_update(BTreeMap::new()));
+        runtime.stage_deliveries();
+
+        assert!(
+            runtime.has_staged_renderer_delivery(),
+            "the host polls only a slot with work, and a trapped idle slot off screen would stay up"
+        );
+        runtime
+            .poll_deliveries()
+            .expect_err("the pass the host runs reports the trap that tears the slot down");
+    }
+
+    #[test]
+    fn a_trapped_widget_is_not_entered_by_a_later_hook() {
+        let mut runtime = trap_fixture("", RuntimeConfig::default());
+        assert!(!runtime.deliver_params_update(BTreeMap::new()));
+
+        assert!(
+            !runtime.deliver_touch(),
+            "the hook must report it did not run"
+        );
+
+        assert_eq!(runtime.exported_global_i32("entries"), Some(0));
+    }
+
+    #[test]
+    fn a_trap_rejects_every_delivery_pass_not_only_the_first() {
+        let mut runtime = trap_fixture("", RuntimeConfig::default());
+        assert!(!runtime.deliver_params_update(BTreeMap::new()));
+
+        runtime
+            .poll_deliveries()
+            .expect_err("the first pass reports the trap");
+
+        runtime
+            .poll_deliveries()
+            .expect_err("a host that keeps polling must not reach the guest either");
+    }
+
+    #[test]
+    fn a_widget_trapped_before_going_dormant_leaves_its_assets_alone() {
+        let mut runtime = trap_fixture("", RuntimeConfig::default());
+        assert!(!runtime.deliver_params_update(BTreeMap::new()));
+        runtime.notify_dormant();
+
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(320.0, 240.0);
+        runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect_err("the pass reports the trap");
+
+        assert!(
+            runtime.last_asset_suspension_for_test().is_none(),
+            "suspending a slot about to be torn down only holds the GPU lock longer"
+        );
+    }
+
+    #[test]
+    fn a_widget_that_traps_going_dormant_leaves_its_assets_alone() {
+        let mut runtime = trap_fixture("", RuntimeConfig::default());
+        runtime.notify_dormant();
+
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(320.0, 240.0);
+        runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect_err("the fixture's on_sleep traps");
+
+        assert!(
+            runtime.last_asset_suspension_for_test().is_none(),
+            "suspending a slot about to be torn down only holds the GPU lock longer"
+        );
+    }
+
+    #[test]
+    fn a_render_that_traps_is_entered_neither_by_the_next_frame_nor_to_unload() {
+        let mut runtime = trap_fixture("unreachable", RuntimeConfig::default());
+        render_once(&mut runtime).expect_err("the fixture's render traps");
+        assert_eq!(runtime.exported_global_i32("entries"), Some(1));
+
+        render_once(&mut runtime).expect("BUG: a dead widget's frame cannot fail");
+        runtime.run_unload_with_fresh_fuel();
+
+        assert_eq!(runtime.exported_global_i32("entries"), Some(1));
+    }
+
+    #[test]
+    fn the_first_frame_out_of_fuel_ends_the_widget() {
+        let mut runtime = trap_fixture(
+            "(loop $forever br $forever)",
+            RuntimeConfig {
+                fuel_per_frame: 1_000,
+                ..RuntimeConfig::default()
+            },
+        );
+
+        let status = render_once(&mut runtime).expect("BUG: a fuel trap is a status, not an error");
+        assert_eq!(
+            status,
+            crate::RenderStatus::Dead,
+            "a trap cuts the guest stack, so no retry may follow"
+        );
+
+        render_once(&mut runtime).expect("BUG: a dead widget's frame cannot fail");
+        runtime.run_unload_with_fresh_fuel();
+
+        assert_eq!(
+            runtime.exported_global_i32("entries"),
+            Some(1),
+            "neither the next frame nor `unload` may enter the guest the overrun cut short"
         );
     }
 
@@ -2982,7 +3097,7 @@ mod tests {
         let drawn_in = |language| {
             let mut runtime = minimal_runtime();
             runtime.set_language(language);
-            runtime.fuel_dead = true;
+            runtime.guest_trap = Some(anyhow::anyhow!("a trap"));
             let mut renderer =
                 bmc_render::renderer::test_support::ShapingRecorder::new(480.0, 480.0);
             runtime
@@ -3060,61 +3175,6 @@ mod tests {
             })
             .expect("BUG: the minimal fixture renders");
 
-        assert_eq!(
-            runtime.store.data().layered.damage().owed_full_repaints(),
-            bmc_render::repaint::EXPORT_BUFFERS
-        );
-    }
-
-    /// The warning bar lands in one buffer only, outside any walk's damage,
-    /// so a later replay kept over the other would leave it flickering.
-    #[test]
-    fn a_frame_out_of_fuel_owes_every_buffer() {
-        let wasm = wat::parse_str(format!(
-            r#"
-            (module
-              (memory (export "memory") 1)
-              (func (export "__bmc_sdk_init") (result i64)
-                i64.const {})
-              (func (export "render") (param i32)
-                (loop $forever
-                  br $forever)))
-            "#,
-            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::PROTOCOL_VERSION),
-        ))
-        .expect("BUG: the looping WAT must parse");
-        let module = WasmWidgetModule::compile(&wasm).expect("BUG: the looping WAT must compile");
-        let mut runtime = runtime_from_module(
-            &module,
-            RuntimeConfig {
-                fuel_per_frame: 1_000,
-                ..RuntimeConfig::default()
-            },
-        );
-        runtime.store.data_mut().cached_tree = Some(crate::host_api::CachedTree {
-            node: bmc_render::tree::Node::Spacer { flex: 1.0 },
-            width: 320.0,
-            height: 240.0,
-            static_bytes: bmc_render::partition::StaticBytesKey(0),
-        });
-        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(320.0, 240.0);
-        let status = runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| {
-                runtime.render(16, crate::TargetContents::Cleared)
-            })
-            .expect("BUG: a fuel trap is a status, not an error");
-
-        assert!(
-            matches!(status, crate::RenderStatus::FuelExhausted),
-            "got {status:?}"
-        );
-        assert!(
-            !matches!(
-                runtime.last_repaint(),
-                bmc_render::repaint::FrameRepaint::NoTree
-            ),
-            "the fixture must replay a tree under the bar"
-        );
         assert_eq!(
             runtime.store.data().layered.damage().owed_full_repaints(),
             bmc_render::repaint::EXPORT_BUFFERS

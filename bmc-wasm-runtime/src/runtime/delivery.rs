@@ -54,6 +54,10 @@ type DelayedFetchRequest = (
     FetchRequestId,
 );
 
+/// The guest trapped while the host was entering it, carrying the first trap the instance recorded.
+#[must_use = "a trap must end the delivery pass"]
+pub(super) struct GuestTrapped(anyhow::Error);
+
 impl WasmWidgetRuntime {
     /// Take all recorded events (drains the buffer). Used by the capture binary
     /// to write the combined fixture file after the capture loop finishes.
@@ -63,7 +67,7 @@ impl WasmWidgetRuntime {
 
     /// Inject fixture events whose `at_ms` <= `monotonic_ms` into stub channels.
     ///
-    /// Must be called each frame before `deliver_*` methods. Events are injected
+    /// Must be called each frame before `poll_deliveries*`. Events are injected
     /// in order; the cursor advances so each event fires exactly once.
     pub fn inject_fixture_events(&mut self, monotonic_ms: u64) {
         let state = self.store.data_mut();
@@ -216,16 +220,8 @@ impl WasmWidgetRuntime {
             .extend(responses);
     }
 
-    /// Check for completed fetch responses and delayed fetches, then deliver
-    /// them to WASM by calling `__on_fetch_response`.
-    ///
-    /// Call this before `render()` each frame.
-    pub fn deliver_fetch_responses(&mut self) {
-        self.stage_fetch_responses();
-        self.deliver_staged_fetch_responses();
-    }
-
-    fn deliver_staged_fetch_responses(&mut self) -> bool {
+    /// Deliver the staged fetch responses to WASM by calling `__on_fetch_response`.
+    fn deliver_staged_fetch_responses(&mut self) -> Result<(), GuestTrapped> {
         let responses = std::mem::take(
             &mut self
                 .store
@@ -234,7 +230,7 @@ impl WasmWidgetRuntime {
                 .fetch_responses,
         );
         if responses.is_empty() {
-            return false;
+            return Ok(());
         }
 
         {
@@ -330,7 +326,7 @@ impl WasmWidgetRuntime {
                 state.fetch_body_refs.remove(&settled.response.request_id);
             }
             tracing::warn!("widget missing __on_fetch_response export");
-            return false;
+            return Ok(());
         };
 
         let retained = {
@@ -369,14 +365,11 @@ impl WasmWidgetRuntime {
                 }
             } else if resp.body.is_empty() {
                 Some((0, 0))
+            } else if let Some(alloc_func) = alloc_func {
+                self.alloc_guest_bytes(alloc_func, &resp.body, "fetch response body")?
             } else {
-                alloc_func.and_then(|alloc_func| {
-                    self.alloc_guest_bytes(alloc_func, &resp.body, "fetch response body")
-                })
+                None
             };
-            if self.guest_trap.is_some() {
-                break;
-            }
             // Every request settles exactly once, so a body with nowhere to go still answers,
             // without the origin's headers, like every outcome the host decides.
             let (callback_args, headers) = match placed {
@@ -409,11 +402,10 @@ impl WasmWidgetRuntime {
             state.delivering_fetch_headers = None;
             state.active_fetch_bodies.remove(&request_id);
             if let Err(e) = result {
-                self.record_guest_trap("__on_fetch_response", &e);
-                break;
+                return Err(self.record_guest_trap("__on_fetch_response", &e));
             }
         }
-        true
+        Ok(())
     }
 
     fn stage_image_decode_results(&mut self) {
@@ -427,15 +419,10 @@ impl WasmWidgetRuntime {
     /// Register completed off-thread image decodes and notify the guest via
     /// `__on_image_ready`. Dormant cache-backed pixels upload when a draw uses them.
     /// A renderer-less poll stages completed work until a renderer is available.
-    pub fn deliver_image_decode_results(&mut self) {
-        self.stage_image_decode_results();
-        self.deliver_staged_image_decode_results();
-    }
-
-    fn deliver_staged_image_decode_results(&mut self) -> bool {
+    fn deliver_staged_image_decode_results(&mut self) -> Result<(), GuestTrapped> {
         let state = self.store.data_mut();
         if state.renderer_ptr.is_none() || state.staged_guest_deliveries.image_decodes.is_empty() {
-            return false;
+            return Ok(());
         }
         let completed = std::mem::take(&mut state.staged_guest_deliveries.image_decodes);
 
@@ -444,7 +431,7 @@ impl WasmWidgetRuntime {
             .get_typed_func::<(u32, u32), ()>(&self.store, "__on_image_ready")
         else {
             // Widget did not opt into async image decode; drop the results.
-            return false;
+            return Ok(());
         };
         // Fired while dormant to reclaim the guest's pending entry (optional export).
         let on_dropped = self
@@ -511,17 +498,15 @@ impl WasmWidgetRuntime {
                 if let Some(on_dropped) = on_dropped
                     && let Err(e) = on_dropped.call(&mut self.store, done.job_id.to_wire())
                 {
-                    self.record_guest_trap("__on_image_dropped", &e);
-                    break;
+                    return Err(self.record_guest_trap("__on_image_dropped", &e));
                 }
                 continue;
             }
             if let Err(e) = on_ready.call(&mut self.store, (done.job_id.to_wire(), bitmap_id)) {
-                self.record_guest_trap("__on_image_ready", &e);
-                break;
+                return Err(self.record_guest_trap("__on_image_ready", &e));
             }
         }
-        true
+        Ok(())
     }
 
     /// Reborrow the parked renderer to upload a pre-decoded RGBA buffer.
@@ -663,8 +648,8 @@ impl WasmWidgetRuntime {
             .extend(events);
     }
 
-    /// Drain WebSocket events from all active connections and deliver them
-    /// to WASM by calling `__on_ws_event(ws_id, event_type, data_ptr, data_len)`.
+    /// Deliver the staged WebSocket events to WASM
+    /// by calling `__on_ws_event(ws_id, event_type, data_ptr, data_len)`.
     ///
     /// Event types:
     /// 0 = Open;
@@ -673,12 +658,7 @@ impl WasmWidgetRuntime {
     /// 3 = HostClosed, one byte holding the `WsHostClose` wire value;
     /// 4 = Message the host checked is UTF-8, sent in place of 1 to a widget built after 4 existed.
     /// A widget built before 3 existed gets the host's close as a 2 with its legacy code.
-    pub fn deliver_ws_messages(&mut self) -> bool {
-        self.stage_ws_messages();
-        self.deliver_staged_ws_messages()
-    }
-
-    fn deliver_staged_ws_messages(&mut self) -> bool {
+    fn deliver_staged_ws_messages(&mut self) -> Result<(), GuestTrapped> {
         let events = std::mem::take(
             &mut self
                 .store
@@ -688,7 +668,7 @@ impl WasmWidgetRuntime {
         );
 
         if events.is_empty() {
-            return false;
+            return Ok(());
         }
 
         tracing::debug!("delivering {} WS event(s)", events.len());
@@ -702,7 +682,7 @@ impl WasmWidgetRuntime {
 
         let (Ok(on_ws_event), Ok(alloc_func)) = (on_ws_event, alloc_func) else {
             tracing::warn!("widget missing __on_ws_event or __alloc export");
-            return false;
+            return Ok(());
         };
 
         let reads_host_close = self.store.data().reads_ws_host_close();
@@ -725,9 +705,8 @@ impl WasmWidgetRuntime {
             };
             let event_type = kind.to_wire();
 
-            let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(alloc_func, data, "websocket event payload")
-            else {
+            let placed = self.alloc_guest_bytes(alloc_func, data, "websocket event payload")?;
+            let Some((data_ptr, data_len)) = placed else {
                 continue;
             };
 
@@ -739,11 +718,10 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (ws_id.to_wire(), event_type, data_ptr, data_len),
             ) {
-                self.record_guest_trap("__on_ws_event", &e);
-                break;
+                return Err(self.record_guest_trap("__on_ws_event", &e));
             }
         }
-        true
+        Ok(())
     }
 
     /// Whether there are any active WebSocket connections.
@@ -797,21 +775,16 @@ impl WasmWidgetRuntime {
         state.staged_guest_deliveries.socket_events.extend(events);
     }
 
-    /// Drain socket events from all active connections and deliver them
-    /// to WASM by calling `__on_socket_event(socket_id, event_type, data_ptr, data_len)`.
+    /// Deliver the staged socket events to WASM
+    /// by calling `__on_socket_event(socket_id, event_type, data_ptr, data_len)`.
     ///
     /// Event types: 0 = Connected, 1 = Data, 2 = Closed.
-    pub fn deliver_socket_events(&mut self) -> bool {
-        self.stage_socket_events();
-        self.deliver_staged_socket_events()
-    }
-
-    fn deliver_staged_socket_events(&mut self) -> bool {
+    fn deliver_staged_socket_events(&mut self) -> Result<(), GuestTrapped> {
         let events =
             std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.socket_events);
 
         if events.is_empty() {
-            return false;
+            return Ok(());
         }
 
         let on_socket_event = self
@@ -823,7 +796,7 @@ impl WasmWidgetRuntime {
 
         let (Ok(on_socket_event), Ok(alloc_func)) = (on_socket_event, alloc_func) else {
             tracing::warn!("widget missing __on_socket_event or __alloc export");
-            return false;
+            return Ok(());
         };
 
         for (socket_id, event) in events {
@@ -833,9 +806,8 @@ impl WasmWidgetRuntime {
                 SocketEvent::Closed(code) => (2, &code.to_le_bytes()),
             };
 
-            let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(alloc_func, data, "socket event payload")
-            else {
+            let placed = self.alloc_guest_bytes(alloc_func, data, "socket event payload")?;
+            let Some((data_ptr, data_len)) = placed else {
                 continue;
             };
 
@@ -847,11 +819,10 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (socket_id.to_wire(), event_type, data_ptr, data_len),
             ) {
-                self.record_guest_trap("__on_socket_event", &e);
-                break;
+                return Err(self.record_guest_trap("__on_socket_event", &e));
             }
         }
-        true
+        Ok(())
     }
 
     /// Whether there are any active socket connections.
@@ -894,18 +865,13 @@ impl WasmWidgetRuntime {
         state.staged_guest_deliveries.mdns_events.extend(events);
     }
 
-    /// Drain mDNS events from all active browse sessions and deliver them
-    /// to WASM by calling `__on_mdns_event(browse_id, event_type, data_ptr, data_len)`.
-    pub fn deliver_mdns_events(&mut self) -> bool {
-        self.stage_mdns_events();
-        self.deliver_staged_mdns_events()
-    }
-
-    fn deliver_staged_mdns_events(&mut self) -> bool {
+    /// Deliver the staged mDNS events to WASM
+    /// by calling `__on_mdns_event(browse_id, event_type, data_ptr, data_len)`.
+    fn deliver_staged_mdns_events(&mut self) -> Result<(), GuestTrapped> {
         let events = std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.mdns_events);
 
         if events.is_empty() {
-            return false;
+            return Ok(());
         }
 
         #[cfg(feature = "testing")]
@@ -933,7 +899,7 @@ impl WasmWidgetRuntime {
 
         let (Ok(on_mdns_event), Ok(alloc_func)) = (on_mdns_event, alloc_func) else {
             tracing::warn!("widget missing __on_mdns_event or __alloc export");
-            return false;
+            return Ok(());
         };
 
         for (browse_id, event) in events {
@@ -942,9 +908,8 @@ impl WasmWidgetRuntime {
                 MdnsEvent::Removed(name) => (1, name.as_bytes()),
             };
 
-            let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(alloc_func, data, "mDNS event payload")
-            else {
+            let placed = self.alloc_guest_bytes(alloc_func, data, "mDNS event payload")?;
+            let Some((data_ptr, data_len)) = placed else {
                 continue;
             };
 
@@ -956,11 +921,10 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (browse_id.to_wire(), event_type, data_ptr, data_len),
             ) {
-                self.record_guest_trap("__on_mdns_event", &e);
-                break;
+                return Err(self.record_guest_trap("__on_mdns_event", &e));
             }
         }
-        true
+        Ok(())
     }
 
     /// Whether there are any active mDNS browse sessions.
@@ -1003,18 +967,13 @@ impl WasmWidgetRuntime {
         state.staged_guest_deliveries.ssdp_events.extend(events);
     }
 
-    /// Drain SSDP events from all active search sessions and deliver them
-    /// to WASM by calling `__on_ssdp_event(search_id, event_type, data_ptr, data_len)`.
-    pub fn deliver_ssdp_events(&mut self) -> bool {
-        self.stage_ssdp_events();
-        self.deliver_staged_ssdp_events()
-    }
-
-    fn deliver_staged_ssdp_events(&mut self) -> bool {
+    /// Deliver the staged SSDP events to WASM
+    /// by calling `__on_ssdp_event(search_id, event_type, data_ptr, data_len)`.
+    fn deliver_staged_ssdp_events(&mut self) -> Result<(), GuestTrapped> {
         let events = std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.ssdp_events);
 
         if events.is_empty() {
-            return false;
+            return Ok(());
         }
 
         let on_ssdp_event = self
@@ -1026,7 +985,7 @@ impl WasmWidgetRuntime {
 
         let (Ok(on_ssdp_event), Ok(alloc_func)) = (on_ssdp_event, alloc_func) else {
             tracing::warn!("widget missing __on_ssdp_event or __alloc export");
-            return false;
+            return Ok(());
         };
 
         for (search_id, event) in events {
@@ -1035,9 +994,8 @@ impl WasmWidgetRuntime {
                 SsdpEvent::Removed(usn) => (1, usn.as_bytes()),
             };
 
-            let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(alloc_func, data, "SSDP event payload")
-            else {
+            let placed = self.alloc_guest_bytes(alloc_func, data, "SSDP event payload")?;
+            let Some((data_ptr, data_len)) = placed else {
                 continue;
             };
 
@@ -1049,11 +1007,10 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (search_id.to_wire(), event_type, data_ptr, data_len),
             ) {
-                self.record_guest_trap("__on_ssdp_event", &e);
-                break;
+                return Err(self.record_guest_trap("__on_ssdp_event", &e));
             }
         }
-        true
+        Ok(())
     }
 
     /// Whether there are any active SSDP search sessions.
@@ -1094,18 +1051,12 @@ impl WasmWidgetRuntime {
         state.staged_guest_deliveries.udp_events.extend(events);
     }
 
-    /// Drain UDP broadcast events from all active sessions and deliver them
-    /// to WASM by calling `__on_udp_broadcast_event`.
-    pub fn deliver_udp_broadcast_events(&mut self) -> bool {
-        self.stage_udp_broadcast_events();
-        self.deliver_staged_udp_broadcast_events()
-    }
-
-    fn deliver_staged_udp_broadcast_events(&mut self) -> bool {
+    /// Deliver the staged UDP broadcast events to WASM by calling `__on_udp_broadcast_event`.
+    fn deliver_staged_udp_broadcast_events(&mut self) -> Result<(), GuestTrapped> {
         let events = std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.udp_events);
 
         if events.is_empty() {
-            return false;
+            return Ok(());
         }
 
         let on_udp_broadcast_event = self
@@ -1121,20 +1072,20 @@ impl WasmWidgetRuntime {
         let (Ok(on_udp_broadcast_event), Ok(alloc_func)) = (on_udp_broadcast_event, alloc_func)
         else {
             tracing::warn!("widget missing __on_udp_broadcast_event or __alloc export");
-            return false;
+            return Ok(());
         };
 
         for (broadcast_id, event) in events {
             let UdpBroadcastEvent::Response(ref data, ref source) = event;
 
-            let Some((data_ptr, data_len)) =
-                self.alloc_guest_bytes(alloc_func, data.as_bytes(), "UDP broadcast payload")
-            else {
+            let placed =
+                self.alloc_guest_bytes(alloc_func, data.as_bytes(), "UDP broadcast payload")?;
+            let Some((data_ptr, data_len)) = placed else {
                 continue;
             };
-            let Some((source_ptr, source_len)) =
-                self.alloc_guest_bytes(alloc_func, source.as_bytes(), "UDP broadcast source")
-            else {
+            let placed =
+                self.alloc_guest_bytes(alloc_func, source.as_bytes(), "UDP broadcast source")?;
+            let Some((source_ptr, source_len)) = placed else {
                 continue;
             };
 
@@ -1152,11 +1103,10 @@ impl WasmWidgetRuntime {
                     source_len,
                 ),
             ) {
-                self.record_guest_trap("__on_udp_broadcast_event", &e);
-                break;
+                return Err(self.record_guest_trap("__on_udp_broadcast_event", &e));
             }
         }
-        true
+        Ok(())
     }
 
     /// Whether there are any active UDP broadcast sessions.
@@ -1182,19 +1132,13 @@ impl WasmWidgetRuntime {
         state.staged_guest_deliveries.http_requests.extend(requests);
     }
 
-    /// Drain inbound HTTP requests from all active listeners and deliver them
-    /// to WASM by calling `__on_http_request(...)`.
-    pub fn deliver_http_requests(&mut self) -> bool {
-        self.stage_http_requests();
-        self.deliver_staged_http_requests()
-    }
-
-    fn deliver_staged_http_requests(&mut self) -> bool {
+    /// Deliver the staged inbound HTTP requests to WASM by calling `__on_http_request(...)`.
+    fn deliver_staged_http_requests(&mut self) -> Result<(), GuestTrapped> {
         let requests =
             std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.http_requests);
 
         if requests.is_empty() {
-            return false;
+            return Ok(());
         }
 
         let on_http_request = self
@@ -1209,7 +1153,7 @@ impl WasmWidgetRuntime {
 
         let (Ok(on_http_request), Ok(alloc_func)) = (on_http_request, alloc_func) else {
             tracing::warn!("widget missing __on_http_request or __alloc export");
-            return false;
+            return Ok(());
         };
 
         for (listener_id, req) in requests {
@@ -1217,18 +1161,17 @@ impl WasmWidgetRuntime {
             let request_id = HttpRequestId::alloc(&mut state.next_http_request_id);
             state.http_response_txs.insert(request_id, req.response_tx);
 
-            let (method_ptr, method_len) = self
-                .alloc_guest_bytes(alloc_func, req.method.as_bytes(), "HTTP request method")
-                .unwrap_or((0, 0));
-            let (path_ptr, path_len) = self
-                .alloc_guest_bytes(alloc_func, req.path.as_bytes(), "HTTP request path")
-                .unwrap_or((0, 0));
-            let (headers_ptr, headers_len) = self
-                .alloc_guest_bytes(alloc_func, req.headers.as_bytes(), "HTTP request headers")
-                .unwrap_or((0, 0));
-            let (body_ptr, body_len) = self
-                .alloc_guest_bytes(alloc_func, &req.body, "HTTP request body")
-                .unwrap_or((0, 0));
+            let method =
+                self.alloc_guest_bytes(alloc_func, req.method.as_bytes(), "HTTP request method")?;
+            let path =
+                self.alloc_guest_bytes(alloc_func, req.path.as_bytes(), "HTTP request path")?;
+            let headers =
+                self.alloc_guest_bytes(alloc_func, req.headers.as_bytes(), "HTTP request headers")?;
+            let body = self.alloc_guest_bytes(alloc_func, &req.body, "HTTP request body")?;
+            let (method_ptr, method_len) = method.unwrap_or((0, 0));
+            let (path_ptr, path_len) = path.unwrap_or((0, 0));
+            let (headers_ptr, headers_len) = headers.unwrap_or((0, 0));
+            let (body_ptr, body_len) = body.unwrap_or((0, 0));
 
             if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                 tracing::error!("set_fuel failed: {e}");
@@ -1249,11 +1192,10 @@ impl WasmWidgetRuntime {
                     body_len,
                 ),
             ) {
-                self.record_guest_trap("__on_http_request", &e);
-                break;
+                return Err(self.record_guest_trap("__on_http_request", &e));
             }
         }
-        true
+        Ok(())
     }
 
     /// Whether there are any active HTTP listeners.
@@ -1273,10 +1215,10 @@ impl WasmWidgetRuntime {
     }
 
     /// Call `__on_timer(timer_id, elapsed_periods)` once per due timer.
-    fn deliver_staged_timer_ticks(&mut self) {
+    fn deliver_staged_timer_ticks(&mut self) -> Result<(), GuestTrapped> {
         let ticks = std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.timer_ticks);
         if ticks.is_empty() {
-            return;
+            return Ok(());
         }
 
         debug_assert!(
@@ -1288,7 +1230,7 @@ impl WasmWidgetRuntime {
                 dropped = ticks.len(),
                 "timer ticks staged for a widget without __on_timer"
             );
-            return;
+            return Ok(());
         };
 
         for tick in ticks {
@@ -1303,10 +1245,10 @@ impl WasmWidgetRuntime {
             if let Err(e) =
                 on_timer.call(&mut self.store, (tick.id.to_wire(), tick.elapsed_periods))
             {
-                self.record_guest_trap(ON_TIMER_EXPORT, &e);
-                break;
+                return Err(self.record_guest_trap(ON_TIMER_EXPORT, &e));
             }
         }
+        Ok(())
     }
 
     /// Time until the next timer tick is due, measured from `monotonic_ms`.
@@ -1319,25 +1261,23 @@ impl WasmWidgetRuntime {
             .map(Duration::from_millis)
     }
 
-    /// Record a trap taken by a guest delivery callback.
-    ///
-    /// Keeps the first one: later callbacks in the same pass run on an instance
-    /// that is already damaged, so their traps say nothing new.
-    pub(super) fn record_guest_trap(&mut self, export: &str, error: &wasmi::Error) {
+    /// Record a trap the guest took, which stops it being entered again.
+    pub(super) fn record_guest_trap(&mut self, export: &str, error: &wasmi::Error) -> GuestTrapped {
         tracing::error!(
             instance_id = %self.store.data().instance_id,
             export,
             trap = %error,
-            "widget delivery callback trapped; tearing down"
+            "widget trapped"
         );
-        if self.guest_trap.is_none() {
-            self.guest_trap = Some(anyhow::anyhow!("{export} trapped: {error}"));
-        }
+        let trap = self
+            .guest_trap
+            .get_or_insert_with(|| anyhow::anyhow!("{export} trapped: {error}"));
+        GuestTrapped(anyhow::anyhow!("{trap:#}"))
     }
 
-    fn take_guest_trap(&mut self) -> Result<()> {
-        match self.guest_trap.take() {
-            Some(trap) => Err(trap),
+    fn check_guest_trap(&self) -> Result<()> {
+        match &self.guest_trap {
+            Some(trap) => Err(anyhow::anyhow!("{trap:#}")),
             None => Ok(()),
         }
     }
@@ -1355,10 +1295,12 @@ impl WasmWidgetRuntime {
         self.stage_timer_ticks();
     }
 
-    /// Whether a renderer-backed delivery scope has concrete work to run.
+    /// Whether a renderer-backed delivery scope has concrete work to run, or a trap to report.
     #[must_use]
     pub fn has_staged_renderer_delivery(&self) -> bool {
-        self.has_pending_lifecycle() || !self.store.data().staged_guest_deliveries.is_empty()
+        self.guest_trap.is_some()
+            || self.has_pending_lifecycle()
+            || !self.store.data().staged_guest_deliveries.is_empty()
     }
 
     /// Drive every pending lifecycle hook and staged delivery in a fixed order.
@@ -1370,43 +1312,39 @@ impl WasmWidgetRuntime {
     ///
     /// # Errors
     ///
-    /// Returns the trap a delivery callback took. The instance cannot be
-    /// recovered afterwards and the caller must tear it down.
+    /// Returns the trap the instance holds, whether a delivery callback, a hook or `render` took it.
+    /// The instance cannot be recovered afterwards and the caller must tear it down.
     fn deliver_staged(&mut self) -> Result<()> {
         self.flush_pending_lifecycle();
-        self.take_guest_trap()?;
-        self.deliver_staged_fetch_responses();
-        self.take_guest_trap()?;
-        self.deliver_staged_image_decode_results();
-        self.take_guest_trap()?;
-        self.deliver_staged_ws_messages();
-        self.take_guest_trap()?;
-        self.deliver_staged_socket_events();
-        self.take_guest_trap()?;
-        self.deliver_staged_mdns_events();
-        self.take_guest_trap()?;
-        self.deliver_staged_ssdp_events();
-        self.take_guest_trap()?;
-        self.deliver_staged_udp_broadcast_events();
-        self.take_guest_trap()?;
-        self.deliver_staged_http_requests();
-        self.take_guest_trap()?;
-        self.deliver_staged_timer_ticks();
-        self.take_guest_trap()
+        self.check_guest_trap()?;
+        self.deliver_staged_channels()
+            .map_err(|GuestTrapped(trap)| trap)
+    }
+
+    fn deliver_staged_channels(&mut self) -> Result<(), GuestTrapped> {
+        self.deliver_staged_fetch_responses()?;
+        self.deliver_staged_image_decode_results()?;
+        self.deliver_staged_ws_messages()?;
+        self.deliver_staged_socket_events()?;
+        self.deliver_staged_mdns_events()?;
+        self.deliver_staged_ssdp_events()?;
+        self.deliver_staged_udp_broadcast_events()?;
+        self.deliver_staged_http_requests()?;
+        self.deliver_staged_timer_ticks()
     }
 
     /// Stage and deliver all pending work.
     ///
     /// # Errors
     ///
-    /// Returns the first trap taken by a delivery callback.
+    /// Returns the trap the instance holds, whether a delivery callback, a hook or `render` took it.
     pub fn poll_deliveries(&mut self) -> Result<()> {
         self.stage_deliveries();
         self.deliver_staged()
     }
 
-    /// Fan out to every `deliver_*` entry point while renderer-backed imports
-    /// are available to guest callbacks.
+    /// Stage and deliver all pending work
+    /// while renderer-backed imports are available to guest callbacks.
     ///
     /// Dynamic assets can arrive from async callbacks rather than `render`
     /// itself. For example, media-control receives MPD album art on a socket
@@ -1417,7 +1355,7 @@ impl WasmWidgetRuntime {
     ///
     /// # Errors
     ///
-    /// Propagates a delivery callback's trap; see [`Self::poll_deliveries`].
+    /// Propagates the instance's trap; see [`Self::poll_deliveries`].
     pub fn poll_deliveries_with_renderer(
         &mut self,
         renderer: NonNull<dyn Renderer>,
@@ -1443,7 +1381,7 @@ impl WasmWidgetRuntime {
     ///
     /// # Errors
     ///
-    /// Propagates a staged delivery callback's trap.
+    /// Propagates the instance's trap; see [`Self::poll_deliveries`].
     pub fn poll_staged_deliveries_with_renderer(
         &mut self,
         renderer: NonNull<dyn Renderer>,
@@ -1455,7 +1393,7 @@ impl WasmWidgetRuntime {
     ///
     /// # Errors
     ///
-    /// Propagates a staged callback trap or GPU-access acquisition failure.
+    /// Propagates the instance's trap or a GPU-access acquisition failure.
     pub fn poll_staged_deliveries_with_renderer_and_gpu_access<F>(
         &mut self,
         renderer: NonNull<dyn Renderer>,
@@ -1530,12 +1468,14 @@ impl WasmWidgetRuntime {
             || self.has_active_http_listeners()
     }
 
+    /// `Ok(None)` when the bytes have nowhere to go and the widget lives on;
+    /// `Err` when `__alloc` trapped, so the caller enters the guest no more.
     fn alloc_guest_bytes(
         &mut self,
         alloc_func: wasmi::TypedFunc<u32, u32>,
         bytes: &[u8],
         context: &str,
-    ) -> Option<(u32, u32)> {
+    ) -> Result<Option<(u32, u32)>, GuestTrapped> {
         alloc_and_copy_to_guest(
             self.instance,
             &mut self.store,
@@ -1544,10 +1484,7 @@ impl WasmWidgetRuntime {
             bytes,
             context,
         )
-        .unwrap_or_else(|e| {
-            self.record_guest_trap(&format!("__alloc for {context}"), &e);
-            None
-        })
+        .map_err(|e| self.record_guest_trap(&format!("__alloc for {context}"), &e))
     }
 
     fn fire_ready_delayed_fetches(&mut self) {

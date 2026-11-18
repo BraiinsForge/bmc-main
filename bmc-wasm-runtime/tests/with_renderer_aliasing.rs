@@ -176,21 +176,13 @@ fn host_import_outside_render_scope_traps_guest() {
     )
     .expect("BUG: probe runtime must construct");
 
-    // No `with_renderer` bracket — the painting import inside `render` must trap
-    // the guest, surfacing as `RenderStatus::Dead` (after fuel-strike accumulation)
-    // or an immediate `Err` depending on how the runtime classifies host traps.
-    // Either way, the host must NOT panic.
+    // No `with_renderer` bracket — the painting import inside `render` must trap the guest.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         runtime.render(16, TargetContents::Cleared)
     }));
     let result = outcome.expect("BUG: host must not panic on out-of-scope renderer access");
-    match result {
-        // Either wasmi trap reported as Err or fuel-strike accumulation to Dead — both acceptable.
-        Err(_) | Ok(bmc_wasm_runtime::RenderStatus::Dead) => {}
-        Ok(other) => panic!(
-            "expected wasmi trap or Dead status, got {other:?} — renderer was accessed without trap"
-        ),
-    }
+    result
+        .expect_err("the trap must surface as an `Err`, or the renderer was accessed without one");
 }
 
 #[test]

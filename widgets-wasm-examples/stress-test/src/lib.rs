@@ -23,8 +23,7 @@
 //! Host limit stress test — toggles between normal, CPU-burn, draw-spam
 //! and stack-bomb modes to exercise the fuel budget and the stack reservation.
 //!
-//! The two limits fail differently on purpose: a fuel overrun is recoverable,
-//! so `render` retries and the instance lives on, while a stack overflow traps
+//! Both limits end the instance: running out of fuel or the stack traps,
 //! and the host tears the slot down.
 
 use bmc_wasm_sdk::{
@@ -116,7 +115,7 @@ pub extern "C" fn render(_delta_ms: u32) {
     }
 
     // Expensive work runs AFTER the tree is submitted.
-    // Fuel dies here — the UI is already committed and clicks processed.
+    // Fuel dies here, after the tree is submitted: the widget ends with this frame.
     match mode {
         1 => cpu_burn(),
         2 => draw_spam(),
@@ -127,7 +126,7 @@ pub extern "C" fn render(_delta_ms: u32) {
 
 fn mode_description(mode: u32) -> &'static str {
     match mode {
-        1 => "Tight math loop that exceeds fuel budget every frame.",
+        1 => "Tight math loop that exceeds the fuel budget and ends the widget.",
         2 => "Heavy memory allocation that simulates complex tree building.",
         3 => "Recursion that runs the stack off the bottom of linear memory.",
         _ => "Well-behaved render, comfortably within budget.",

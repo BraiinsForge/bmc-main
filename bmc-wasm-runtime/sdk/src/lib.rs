@@ -232,6 +232,7 @@
 //!
 //! Optional. The host runs it once, synchronously, immediately before the widget instance
 //! is dropped (scene swap, hot reload, shutdown). The place to flush in-memory state to KV.
+//! A widget that trapped, running out of fuel included, is dropped without it.
 //! Frame requests fired from `unload` are silently ignored — the runtime is about to be torn down.
 //!
 //! ### `on_wake` / `on_sleep`

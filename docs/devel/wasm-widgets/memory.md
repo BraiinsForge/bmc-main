@@ -72,13 +72,10 @@ The stack occupies the bottom of linear memory and grows downwards, so overflowi
 an ordinary out-of-bounds access. It does not quietly corrupt the static data sitting above it.
 
 A trap is terminal for the instance wherever it surfaces, in `render` or in a delivery callback (a fetch response, a
-socket or mesh message). The host logs it and tears the slot down. It has to: a trap is a non-local exit, so the guest's
-frames never run their epilogues and `__stack_pointer` keeps the value it held when the trap fired. Re-driving a trapped
+socket or mesh message, a hook), and running out of fuel is a trap like any other. The host logs it, tears the slot down
+and never enters the instance again, not even for `unload`. It has to: a trap is a non-local exit, so the guest's frames
+never run their epilogues and `__stack_pointer` keeps the value it held when the trap fired. Re-driving a trapped
 instance would hand it a permanently smaller stack.
-
-Fuel exhaustion is the exception. `render` treats it as recoverable and retries, so a widget that overruns its
-instruction budget keeps its instance — along with whatever stack the trap consumed. The strike counter resets on any
-successful render, so repeated overruns ratchet the usable stack down across an instance's life without a bound.
 
 ## What uses stack
 

@@ -935,10 +935,6 @@ fn run_loop(
             }));
             match result {
                 Ok(Ok(bmc_wasm_runtime::RenderStatus::Ok)) => {}
-                Ok(Ok(bmc_wasm_runtime::RenderStatus::FuelExhausted)) => tracing::warn!(
-                    peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename,
-                    "widget exceeded fuel budget"
-                ),
                 Ok(Ok(bmc_wasm_runtime::RenderStatus::Dead)) => {
                     if shared.is_context_lost() {
                         return Err(FatalError::EglContextLost);

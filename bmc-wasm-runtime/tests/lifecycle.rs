@@ -67,8 +67,6 @@ use bmc_widget_protocol::CredentialSecrets;
 #[path = "common/asset_fixtures.rs"]
 mod asset_fixtures;
 mod common;
-#[path = "common/pixel_readback.rs"]
-mod pixel_readback;
 use asset_fixtures::{compiled_empty_svg, one_px_png, renderer_ptr, wat_string_literal};
 use common::headless_egl;
 
@@ -692,7 +690,7 @@ fn active_asset_probe_wat(burn_after_first_render: bool) -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $asset_id (mut i32) (i32.const 0))
-          (global $render_count (mut i32) (i32.const 0))
+          (global $render_count (export "render_count_global") (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64) i64.const {protocol})
           (func (export "render") (param i32)
             global.get $render_count
@@ -726,7 +724,6 @@ fn active_asset_probe_wat(burn_after_first_render: bool) -> String {
 /// spins out of fuel after `host_submit_tree` has returned.
 /// The frame request keeps the animation from replaying the tree
 /// without running the guest.
-/// The rect is translucent so a second draw over it shows in its pixels.
 fn submit_then_burn_wat() -> String {
     let tree = bmc_ui::encode(&bmc_ui::canvas(
         bmc_ui::PropsData::default(),
@@ -2023,23 +2020,16 @@ fn a_fuel_trap_after_submit_does_not_replay_the_committed_tree() {
     };
     let (mut runtime, mut renderer) = submit_then_burn_runtime(&gl);
 
-    let expected = [
-        RenderStatus::FuelExhausted,
-        RenderStatus::FuelExhausted,
-        RenderStatus::FuelExhausted,
-        RenderStatus::FuelExhausted,
-        RenderStatus::Dead,
-    ];
-    for (strike, status) in expected.into_iter().enumerate() {
-        let frame_counter_before = runtime.frame_counter_for_test();
-        assert_eq!(render_frame(&mut runtime, &mut renderer, 16), status);
-        assert_eq!(
-            runtime.frame_counter_for_test(),
-            frame_counter_before + 1,
-            "strike {} must draw the committed tree once, not replay it over itself",
-            strike + 1
-        );
-    }
+    let frame_counter_before = runtime.frame_counter_for_test();
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Dead
+    );
+    assert_eq!(
+        runtime.frame_counter_for_test(),
+        frame_counter_before + 1,
+        "the death frame must draw the committed tree once, not replay it over itself"
+    );
     assert!(
         !runtime.wants_next_frame(),
         "the death frame must not schedule the tree its guest committed"
@@ -2047,27 +2037,7 @@ fn a_fuel_trap_after_submit_does_not_replay_the_committed_tree() {
 }
 
 #[test]
-fn a_fuel_trap_after_submit_blends_the_committed_tree_once() {
-    let Some(gl) = headless_egl::try_init(320, 240) else {
-        return;
-    };
-    let (mut runtime, mut renderer) = submit_then_burn_runtime(&gl);
-    let [drawn_once, ..] = gl.read_pixel(160, 120);
-
-    assert_eq!(
-        render_frame(&mut runtime, &mut renderer, 16),
-        RenderStatus::FuelExhausted
-    );
-    let [struck, ..] = gl.read_pixel(160, 120);
-    assert!(
-        struck.abs_diff(drawn_once) <= 2,
-        "the strike frame must blend the translucent rect once: \
-         {struck} against {drawn_once} for a single draw"
-    );
-}
-
-#[test]
-fn fuel_dead_frames_replay_cached_assets_without_scheduling_and_reset_forces_guest_execution() {
+fn fuel_exhaustion_replays_cached_assets_without_scheduling_or_entering_the_guest() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -2090,19 +2060,6 @@ fn fuel_dead_frames_replay_cached_assets_without_scheduling_and_reset_forces_gue
         AssetTagState::Resident(asset_id)
     );
 
-    for strike in 1..5 {
-        let frame_counter_before = runtime.frame_counter_for_test();
-        assert_eq!(
-            render_frame(&mut runtime, &mut renderer, 16),
-            RenderStatus::FuelExhausted,
-            "strike {strike} must remain transient"
-        );
-        assert_eq!(
-            runtime.frame_counter_for_test(),
-            frame_counter_before + 1,
-            "strike {strike} must replay the last good tree under the warning bar"
-        );
-    }
     let frame_counter_before_death = runtime.frame_counter_for_test();
     assert_eq!(
         render_frame(&mut runtime, &mut renderer, 16),
@@ -2136,19 +2093,10 @@ fn fuel_dead_frames_replay_cached_assets_without_scheduling_and_reset_forces_gue
         AssetTagState::Resident(asset_id)
     );
 
-    runtime.reset_fuel_state();
-    assert!(
-        runtime.wants_next_frame(),
-        "reset must request an immediate frame"
-    );
     assert_eq!(
-        render_frame(&mut runtime, &mut renderer, 16),
-        RenderStatus::Ok
-    );
-    assert_eq!(
-        runtime.call_export_i32("render_count"),
-        Some(7),
-        "reset must force guest execution instead of cached-tree replay"
+        runtime.exported_global_i32("render_count_global"),
+        Some(2),
+        "one good frame and the fatal one: running out of fuel must end the guest's renders"
     );
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),

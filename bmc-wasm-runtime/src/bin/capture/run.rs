@@ -1284,15 +1284,15 @@ fn render_frame(
     let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(*renderer);
     let ptr = std::ptr::NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
     match runtime.with_renderer(ptr, |rt| rt.render(DELTA_MS, TargetContents::Cleared)) {
+        Ok(RenderStatus::Dead) if ctx.stack_profiling.is_enabled() => {
+            eprintln!("Stack profile invalid: widget died at frame {frame_count}");
+            false
+        }
         Ok(RenderStatus::Dead) => {
             eprintln!("Widget died at frame {frame_count}");
             false
         }
-        Ok(RenderStatus::FuelExhausted) if ctx.stack_profiling.is_enabled() => {
-            eprintln!("Stack profile invalid: widget exhausted its production fuel budget");
-            false
-        }
-        Ok(_) => {
+        Ok(RenderStatus::Ok) => {
             renderer.flush();
             true
         }
