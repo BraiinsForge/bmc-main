@@ -95,7 +95,7 @@ fn mark_stale_reverts_the_corrupt_reply_to_the_last_good_anchor() {
     // A later 2xx banks ok (header passed) but its decode fails async.
     deliver_at(&mut reg, &mut be, 2, true, 100);
     assert_eq!(reg.last_success_secs(h), Some(100), "the reply banked ok");
-    reg.mark_stale(h);
+    reg.mark_stale(h, 100);
     assert_eq!(
         reg.last_success_secs(h),
         Some(0),
@@ -192,4 +192,24 @@ fn not_stale_without_prior_success_or_interval() {
         "one-shot polls never stale on a cadence"
     );
     assert_eq!(reg.last_success_age(h, 5), None);
+}
+
+#[wasm_test]
+fn a_first_reply_that_proves_bad_starts_the_offline_grace() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG); // 7.5 s grace
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, true, 0);
+
+    reg.mark_stale(h, 10);
+
+    assert!(
+        !reg.is_offline(h, 17),
+        "the grace runs from when the reply proved bad"
+    );
+    assert!(
+        reg.is_offline(h, 18),
+        "a poll that never loaded good data is offline once the grace runs out"
+    );
 }

@@ -459,9 +459,10 @@ impl Registry {
 
     /// A just-banked reply proved bad (a late decode failure):
     /// flag failing and revert the anchor it displaced.
-    pub(crate) fn mark_stale(&mut self, index: usize) {
+    pub(crate) fn mark_stale(&mut self, index: usize, now_secs: i64) {
         if let Some(poll) = poll_mut(&mut self.polls, index) {
             poll.last_failed = true;
+            poll.failing_since_secs.get_or_insert(now_secs);
             poll.last_success_secs = poll.prev_success_secs;
         }
     }

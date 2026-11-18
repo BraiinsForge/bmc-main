@@ -226,7 +226,8 @@ impl Handle {
 
     /// Flag stale after a reply was banked ok (e.g. a late decode failure).
     pub fn mark_stale(&self) {
-        REGISTRY.with_borrow_mut(|registry| registry.mark_stale(self.0));
+        let now = now_secs();
+        REGISTRY.with_borrow_mut(|registry| registry.mark_stale(self.0, now));
     }
 
     /// Seed the last-success anchor from a restored cache entry
