@@ -69,8 +69,10 @@ fn forced_retry_does_not_count_as_a_refresh() {
     deliver_at(&mut reg, &mut be, 1, true, 0);
     // A 2xx the handler rejected via retry(): no refresh despite ok=true.
     let id = FetchRequestId::from_wire(2).expect("BUG: test id is nonzero");
+    let action = begin_reply(&mut reg, &mut be, id);
     assert!(
-        matches!(begin_reply(&mut reg, &mut be, id), ReplyAction::Deliver(index, _) if index == h)
+        matches!(action, ReplyAction::Deliver(index, _) if index == h),
+        "a reply to the live request goes to the handler: {action:?}"
     );
     reg.request_retry(h);
     reschedule(&mut reg, &mut be, h, true, 100);
@@ -211,5 +213,20 @@ fn a_first_reply_that_proves_bad_starts_the_offline_grace() {
     assert!(
         reg.is_offline(h, 18),
         "a poll that never loaded good data is offline once the grace runs out"
+    );
+}
+
+#[wasm_test]
+fn retries_inside_the_grace_do_not_restart_it() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG); // 1 s retry, 7.5 s grace
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, false, 0);
+    deliver_at(&mut reg, &mut be, 2, false, 5);
+
+    assert!(
+        reg.is_offline(h, 8),
+        "the grace runs from the first failure of the streak"
     );
 }

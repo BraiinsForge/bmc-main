@@ -52,10 +52,22 @@ fn disable_cancels_queued_request() {
 fn set_enabled_is_idempotent() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
-    let h = register_in(&mut reg, build_url, CFG);
+    let h = register_in(
+        &mut reg,
+        build_url,
+        Config {
+            interval_ms: None,
+            ..CFG
+        },
+    );
     start(&mut reg, &mut be, h);
+    deliver(&mut reg, &mut be, 1, true);
     set_enabled(&mut reg, &mut be, h, true);
-    assert_eq!(be.sends.len(), 1);
+    assert_eq!(
+        be.sends.len(),
+        1,
+        "enabling an enabled, idle poll neither kicks nor schedules it"
+    );
 }
 
 #[wasm_test]
@@ -85,8 +97,51 @@ fn reply_to_disabled_poll_stops_without_reschedule() {
     start(&mut reg, &mut be, h);
     set_enabled(&mut reg, &mut be, h, false);
     let action = deliver(&mut reg, &mut be, 1, true);
-    assert!(matches!(action, ReplyAction::Stopped));
+    assert!(
+        matches!(action, ReplyAction::Stopped),
+        "a reply to a disabled poll stops it: {action:?}"
+    );
     assert_eq!(be.sends.len(), 1);
+
+    set_enabled(&mut reg, &mut be, h, true);
+
+    assert_eq!(be.sends.len(), 2, "a re-enabled poll fetches again");
+}
+
+#[wasm_test]
+fn a_disable_drops_a_refresh_still_waiting_for_its_reply() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    invalidate(&mut reg, &mut be, h);
+
+    set_enabled(&mut reg, &mut be, h, false);
+
+    assert!(
+        matches!(deliver(&mut reg, &mut be, 1, true), ReplyAction::Stopped),
+        "a disabled poll sends nothing, not even the refresh asked for before"
+    );
+    assert_eq!(be.sends.len(), 1);
+}
+
+#[wasm_test]
+fn a_disable_does_not_cancel_again_what_the_host_refused_to() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    invalidate(&mut reg, &mut be, h);
+
+    set_enabled(&mut reg, &mut be, h, false);
+
+    assert_eq!(
+        be.cancels.len(),
+        1,
+        "the host refuses only a request already away, so asking again cannot stop it"
+    );
 }
 
 #[wasm_test]

@@ -33,6 +33,24 @@ fn an_ended_poll_cancels_its_live_fetch() {
 }
 
 #[wasm_test]
+fn an_ended_poll_does_not_cancel_again_what_the_host_refused_to() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    invalidate(&mut reg, &mut be, h);
+
+    reg.release(h, &mut be);
+
+    assert_eq!(
+        be.cancels.len(),
+        1,
+        "the host refuses only a request already away, so asking again cannot stop it"
+    );
+}
+
+#[wasm_test]
 fn a_reply_already_queued_for_an_ended_poll_is_not_delivered() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -42,10 +60,11 @@ fn a_reply_already_queued_for_an_ended_poll_is_not_delivered() {
 
     reg.release(h, &mut be);
 
-    assert!(matches!(
-        deliver(&mut reg, &mut be, 1, true),
-        ReplyAction::Ignore
-    ));
+    let action = deliver(&mut reg, &mut be, 1, true);
+    assert!(
+        matches!(action, ReplyAction::Ignore),
+        "a reply to an ended poll is ignored: {action:?}"
+    );
     assert_eq!(be.sends.len(), 1, "an ended poll never fetches again");
 }
 
@@ -73,8 +92,10 @@ fn a_poll_ended_by_its_reply_handler_is_not_rescheduled() {
     let h = register_in(&mut reg, build_url, CFG);
     start(&mut reg, &mut be, h);
     let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
+    let action = begin_reply(&mut reg, &mut be, id);
     assert!(
-        matches!(begin_reply(&mut reg, &mut be, id), ReplyAction::Deliver(index, _) if index == h)
+        matches!(action, ReplyAction::Deliver(index, _) if index == h),
+        "a reply to the live request goes to the handler: {action:?}"
     );
 
     reg.release(h, &mut be);

@@ -222,7 +222,7 @@ fn invalidate_with_queued_request_cancels_and_reschedules_after_debounce() {
 }
 
 #[wasm_test]
-fn invalidate_with_in_flight_request_marks_pending_and_does_not_send() {
+fn invalidate_with_in_flight_request_supersedes_it_and_does_not_send() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
     be.cancel_result = false;
@@ -231,7 +231,25 @@ fn invalidate_with_in_flight_request_marks_pending_and_does_not_send() {
     invalidate(&mut reg, &mut be, h);
     assert_eq!(be.cancels.len(), 1);
     assert_eq!(be.sends.len(), 1);
-    assert!(reg.is_pending(h));
+    assert!(matches!(reg.flight(h), Some(Flight::Superseded { .. })));
+}
+
+#[wasm_test]
+fn a_second_refresh_does_not_cancel_again_what_the_host_refused_to() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    invalidate(&mut reg, &mut be, h);
+
+    invalidate(&mut reg, &mut be, h);
+
+    assert_eq!(
+        be.cancels.len(),
+        1,
+        "the host refuses only a request already away, so asking again cannot stop it"
+    );
 }
 
 #[wasm_test]
@@ -252,7 +270,10 @@ fn successful_reply_reschedules_after_interval() {
     let h = register_in(&mut reg, build_url, CFG);
     start(&mut reg, &mut be, h);
     let action = deliver(&mut reg, &mut be, 1, true);
-    assert!(matches!(action, ReplyAction::Deliver(index, _) if index == h));
+    assert!(
+        matches!(action, ReplyAction::Deliver(index, _) if index == h),
+        "a reply to the live request goes to the handler: {action:?}"
+    );
     assert_eq!(be.sends.len(), 2);
     assert_eq!(be.sends[1].1, Some(5_000));
 }
@@ -310,8 +331,10 @@ fn retry_request_reschedules_after_retry_despite_ok() {
     // before the engine reschedules, so the next attempt must come after
     // retry_ms rather than the full interval.
     let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
+    let action = begin_reply(&mut reg, &mut be, id);
     assert!(
-        matches!(begin_reply(&mut reg, &mut be, id), ReplyAction::Deliver(index, _) if index == h)
+        matches!(action, ReplyAction::Deliver(index, _) if index == h),
+        "a reply to the live request goes to the handler: {action:?}"
     );
     reg.request_retry(h);
     reschedule(&mut reg, &mut be, h, true, 0);
@@ -328,8 +351,10 @@ fn retry_after_reschedules_with_the_requested_delay_despite_ok() {
     // A reply handler applying its own backoff: the next attempt must wait
     // the requested delay, not retry_ms and not the poll interval.
     let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
+    let action = begin_reply(&mut reg, &mut be, id);
     assert!(
-        matches!(begin_reply(&mut reg, &mut be, id), ReplyAction::Deliver(index, _) if index == h)
+        matches!(action, ReplyAction::Deliver(index, _) if index == h),
+        "a reply to the live request goes to the handler: {action:?}"
     );
     reg.request_retry_after(h, 42_000);
     reschedule(&mut reg, &mut be, h, true, 0);
@@ -342,10 +367,11 @@ fn reply_to_unknown_id_is_ignored() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
     let id = FetchRequestId::from_wire(99).expect("BUG: nonzero");
-    assert!(matches!(
-        begin_reply(&mut reg, &mut be, id),
-        ReplyAction::Ignore
-    ));
+    let action = begin_reply(&mut reg, &mut be, id);
+    assert!(
+        matches!(action, ReplyAction::Ignore),
+        "a reply to an unknown id is ignored: {action:?}"
+    );
 }
 
 #[wasm_test]
@@ -357,7 +383,10 @@ fn a_superseded_reply_reissues_after_the_debounce_and_skips_delivery() {
     start(&mut reg, &mut be, h);
     invalidate(&mut reg, &mut be, h);
     let action = deliver(&mut reg, &mut be, 1, true);
-    assert!(matches!(action, ReplyAction::Reissued(_)));
+    assert!(
+        matches!(action, ReplyAction::Reissued(_)),
+        "a reply to an invalidated request reissues it: {action:?}"
+    );
     assert_eq!(be.sends.len(), 2);
     assert_eq!(
         be.sends[1].1,

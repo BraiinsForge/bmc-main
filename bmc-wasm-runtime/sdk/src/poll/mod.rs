@@ -200,25 +200,76 @@ pub trait FetchBackend {
     fn cancel(&mut self, id: FetchRequestId) -> bool;
 }
 
+/// Whether a poll is enabled, and what became of its request.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Flight {
+    /// Enabled, nothing in flight: the next kick sends.
+    Idle,
+    /// Enabled, a request in flight: its reply is delivered.
+    Live(FetchRequestId),
+    /// Enabled, with a request the host would not cancel for an `invalidate` or a re-enable.
+    /// Its reply is dropped; the request is built again after the delay the latest call asked for.
+    Superseded { id: FetchRequestId, delay_ms: u32 },
+    /// Disabled, nothing in flight.
+    Disabled,
+    /// Disabled, with a request the host would not cancel: its reply is dropped.
+    Stopping(FetchRequestId),
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl Flight {
+    fn is_enabled(self) -> bool {
+        !matches!(self, Flight::Disabled | Flight::Stopping(_))
+    }
+
+    /// A request kept across a disable is superseded,
+    /// as enabling promises a fresh `build`.
+    fn enable(self, delay_ms: u32) -> Self {
+        match self {
+            Flight::Disabled => Flight::Idle,
+            Flight::Stopping(id) | Flight::Superseded { id, .. } => {
+                Flight::Superseded { id, delay_ms }
+            }
+            Flight::Idle | Flight::Live(_) => self,
+        }
+    }
+}
+
+/// How the poll's delivered replies have gone.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Health {
+    /// The last delivered reply was good, or none has come yet.
+    Ok,
+    /// Failing since this epoch second; anchors the offline grace.
+    Failing { since: i64 },
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl Health {
+    /// A failure at `now_secs`, continuing a streak already running.
+    fn failing_at(self, now_secs: i64) -> Self {
+        match self {
+            Health::Ok => Health::Failing { since: now_secs },
+            Health::Failing { .. } => self,
+        }
+    }
+}
+
 #[cfg(any(target_arch = "wasm32", test))]
 struct Poll {
     build: BuildFn,
     on_reply: OnReplyFn,
     build_timing: BuildTiming,
     config: Config,
-    enabled: bool,
-    live: Option<FetchRequestId>,
-    /// The live request is superseded: its replacement goes out after this delay instead of its reply.
-    pending: Option<u32>,
+    flight: Flight,
     force_retry: Option<u32>,
     /// Epoch secs of the last ok reply; `None` before the first success.
     last_success_secs: Option<i64>,
     /// The anchor before the last ok reply; `mark_stale` reverts to it.
     prev_success_secs: Option<i64>,
-    /// The last delivered reply failed.
-    last_failed: bool,
-    /// Epoch secs the failing streak began; anchors the offline grace.
-    failing_since_secs: Option<i64>,
+    health: Health,
     /// Counts the kicks asked for; a kick performed after a newer one was asked for yields to it.
     revision: usize,
 }
@@ -292,14 +343,15 @@ impl Registry {
             on_reply: Rc::new(on_reply),
             build_timing,
             config,
-            enabled: config.enabled,
-            live: None,
-            pending: None,
+            flight: if config.enabled {
+                Flight::Idle
+            } else {
+                Flight::Disabled
+            },
             force_retry: None,
             last_success_secs: None,
             prev_success_secs: None,
-            last_failed: false,
-            failing_since_secs: None,
+            health: Health::Ok,
             revision: 0,
         }));
         index
@@ -310,10 +362,16 @@ impl Registry {
         let Some(poll) = self.polls.get_mut(index).and_then(Option::take) else {
             return;
         };
-        if let Some(id) = poll.live {
-            // A reply the host already queued finds no route and is dropped.
-            backend.cancel(id);
-            self.routes.remove(&id);
+        // A reply the host already queued finds no route and is dropped.
+        match poll.flight {
+            Flight::Live(id) => {
+                backend.cancel(id);
+                self.routes.remove(&id);
+            }
+            Flight::Superseded { id, .. } | Flight::Stopping(id) => {
+                self.routes.remove(&id);
+            }
+            Flight::Idle | Flight::Disabled => {}
         }
     }
 
@@ -334,7 +392,7 @@ impl Registry {
     /// `None` when the poll is gone, disabled or has a request live.
     fn kick(&mut self, index: usize, delay_ms: Option<u32>) -> Option<Kick> {
         let poll = poll_mut(&mut self.polls, index)?;
-        if !poll.enabled || poll.live.is_some() {
+        if poll.flight != Flight::Idle {
             return None;
         }
         Some(request_kick(poll, index, delay_ms))
@@ -344,7 +402,7 @@ impl Registry {
     /// the poll ended, was disabled, or asked for a newer kick.
     fn current(&self, kick: &Kick) -> Option<&Poll> {
         let poll = self.poll(kick.index)?;
-        (poll.enabled && poll.revision == kick.revision).then_some(poll)
+        (poll.flight == Flight::Idle && poll.revision == kick.revision).then_some(poll)
     }
 
     /// The `build` to run for `kick`, or `None` for a stale kick.
@@ -379,7 +437,7 @@ impl Registry {
         if let Some(id) = id
             && let Some(poll) = poll_mut(&mut self.polls, kick.index)
         {
-            poll.live = Some(id);
+            poll.flight = Flight::Live(id);
             self.routes.insert(id, kick.index);
         }
     }
@@ -398,23 +456,30 @@ impl Registry {
     ) -> Option<Kick> {
         self.refuse_while_building();
         let poll = poll_mut(&mut self.polls, index)?;
-        if !poll.enabled {
-            return None;
-        }
         let debounce = poll.config.debounce_ms;
-        match poll.live {
-            Some(id) => {
-                if backend.cancel(id) {
-                    poll.live = None;
-                    self.routes.remove(&id);
-                    self.kick(index, Some(debounce))
-                } else {
-                    poll.pending = Some(debounce);
-                    None
+        match poll.flight {
+            Flight::Idle => {}
+            Flight::Live(id) => {
+                if !backend.cancel(id) {
+                    poll.flight = Flight::Superseded {
+                        id,
+                        delay_ms: debounce,
+                    };
+                    return None;
                 }
+                poll.flight = Flight::Idle;
+                self.routes.remove(&id);
             }
-            None => self.kick(index, Some(debounce)),
+            Flight::Superseded { id, .. } => {
+                poll.flight = Flight::Superseded {
+                    id,
+                    delay_ms: debounce,
+                };
+                return None;
+            }
+            Flight::Disabled | Flight::Stopping(_) => return None,
         }
+        self.kick(index, Some(debounce))
     }
 
     pub(crate) fn begin_reply(&mut self, id: FetchRequestId) -> ReplyAction {
@@ -424,18 +489,25 @@ impl Registry {
         let Some(poll) = poll_mut(&mut self.polls, index) else {
             return ReplyAction::Ignore;
         };
-        if poll.live != Some(id) {
-            return ReplyAction::Ignore;
+        match poll.flight {
+            Flight::Live(live) if live == id => {
+                poll.flight = Flight::Idle;
+                ReplyAction::Deliver(index, Rc::clone(&poll.on_reply))
+            }
+            Flight::Superseded { id: live, delay_ms } if live == id => {
+                poll.flight = Flight::Idle;
+                ReplyAction::Reissued(request_kick(poll, index, Some(delay_ms)))
+            }
+            Flight::Stopping(live) if live == id => {
+                poll.flight = Flight::Disabled;
+                ReplyAction::Stopped
+            }
+            Flight::Idle
+            | Flight::Live(_)
+            | Flight::Superseded { .. }
+            | Flight::Disabled
+            | Flight::Stopping(_) => ReplyAction::Ignore,
         }
-        poll.live = None;
-        let pending = std::mem::take(&mut poll.pending);
-        if !poll.enabled {
-            return ReplyAction::Stopped;
-        }
-        if let Some(delay_ms) = pending {
-            return ReplyAction::Reissued(request_kick(poll, index, Some(delay_ms)));
-        }
-        ReplyAction::Deliver(index, Rc::clone(&poll.on_reply))
     }
 
     /// Mark the in-flight reply as unusable: a 2xx whose body
@@ -462,8 +534,7 @@ impl Registry {
     /// flag failing and revert the anchor it displaced.
     pub(crate) fn mark_stale(&mut self, index: usize, now_secs: i64) {
         if let Some(poll) = poll_mut(&mut self.polls, index) {
-            poll.last_failed = true;
-            poll.failing_since_secs.get_or_insert(now_secs);
+            poll.health = poll.health.failing_at(now_secs);
             poll.last_success_secs = poll.prev_success_secs;
         }
     }
@@ -483,8 +554,7 @@ impl Registry {
         if let Some(poll) = poll_mut(&mut self.polls, index) {
             poll.last_success_secs = None;
             poll.prev_success_secs = None;
-            poll.last_failed = false;
-            poll.failing_since_secs = None;
+            poll.health = Health::Ok;
         }
     }
 
@@ -496,14 +566,9 @@ impl Registry {
         if ok && forced.is_none() {
             poll.prev_success_secs = poll.last_success_secs;
             poll.last_success_secs = Some(now_secs);
-            poll.last_failed = false;
-            poll.failing_since_secs = None;
+            poll.health = Health::Ok;
         } else {
-            poll.last_failed = true;
-            poll.failing_since_secs.get_or_insert(now_secs);
-        }
-        if !poll.enabled || poll.live.is_some() {
-            return None;
+            poll.health = poll.health.failing_at(now_secs);
         }
         let delay = match forced {
             Some(delay_ms) => delay_ms,
@@ -524,21 +589,26 @@ impl Registry {
             self.refuse_while_building();
         }
         let poll = poll_mut(&mut self.polls, index)?;
-        if poll.enabled == enabled {
-            return None;
-        }
-        poll.enabled = enabled;
         if enabled {
+            if poll.flight.is_enabled() {
+                return None;
+            }
             let debounce = poll.config.debounce_ms;
-            // Enabling promises a fresh `build`, so a request kept across the disable is superseded.
-            poll.pending = poll.live.map(|_| debounce);
+            poll.flight = poll.flight.enable(debounce);
             return self.kick(index, Some(debounce));
         }
-        if let Some(id) = poll.live
-            && backend.cancel(id)
-        {
-            poll.live = None;
-            self.routes.remove(&id);
+        match poll.flight {
+            Flight::Idle => poll.flight = Flight::Disabled,
+            Flight::Live(id) => {
+                if backend.cancel(id) {
+                    poll.flight = Flight::Disabled;
+                    self.routes.remove(&id);
+                } else {
+                    poll.flight = Flight::Stopping(id);
+                }
+            }
+            Flight::Superseded { id, .. } => poll.flight = Flight::Stopping(id),
+            Flight::Disabled | Flight::Stopping(_) => {}
         }
         None
     }
@@ -547,10 +617,7 @@ impl Registry {
     pub(crate) fn set_enabled_after(&mut self, index: usize, delay_ms: u32) -> Option<Kick> {
         self.refuse_while_building();
         let poll = poll_mut(&mut self.polls, index)?;
-        if !poll.enabled || poll.pending.is_some() {
-            poll.pending = poll.live.map(|_| delay_ms);
-        }
-        poll.enabled = true;
+        poll.flight = poll.flight.enable(delay_ms);
         self.kick(index, Some(delay_ms))
     }
 
@@ -562,7 +629,8 @@ impl Registry {
     }
 
     pub(crate) fn enabled(&self, index: usize) -> bool {
-        self.poll(index).is_some_and(|poll| poll.enabled)
+        self.poll(index)
+            .is_some_and(|poll| poll.flight.is_enabled())
     }
 
     /// Age of the last successful reply; `None` before the first success.
@@ -583,7 +651,7 @@ impl Registry {
         let Some(poll) = self.poll(index) else {
             return false;
         };
-        if !poll.last_failed {
+        if poll.health == Health::Ok {
             return false;
         }
         let (Some(interval_ms), Some(last)) = (poll.config.interval_ms, poll.last_success_secs)
@@ -605,7 +673,7 @@ impl Registry {
         if poll.last_success_secs.is_some() {
             return false;
         }
-        let (Some(interval_ms), Some(since)) = (poll.config.interval_ms, poll.failing_since_secs)
+        let (Some(interval_ms), Health::Failing { since }) = (poll.config.interval_ms, poll.health)
         else {
             return false;
         };
@@ -616,8 +684,8 @@ impl Registry {
     }
 
     #[cfg(test)]
-    fn is_pending(&self, index: usize) -> bool {
-        self.poll(index).is_some_and(|poll| poll.pending.is_some())
+    fn flight(&self, index: usize) -> Option<Flight> {
+        self.poll(index).map(|poll| poll.flight)
     }
 
     #[cfg(test)]
@@ -632,11 +700,29 @@ impl Registry {
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) enum ReplyAction {
+    /// The reply belongs to no request the poll still waits for.
     Ignore,
-    /// A refresh asked for while the reply was in flight goes out instead of delivering it.
+    /// The reply's request was superseded: a fresh one goes out instead of delivering it.
     Reissued(Kick),
+    /// The reply ends a disabled poll's request; the glue drops it as it does `Ignore`.
     Stopped,
+    /// The reply answers the poll's live request; the glue runs the poll's handler with it.
     Deliver(usize, OnReplyFn),
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl std::fmt::Debug for ReplyAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ignore => f.write_str("Ignore"),
+            Self::Reissued(kick) => f.debug_tuple("Reissued").field(kick).finish(),
+            Self::Stopped => f.write_str("Stopped"),
+            Self::Deliver(index, _) => f
+                .debug_tuple("Deliver")
+                .field(index)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
