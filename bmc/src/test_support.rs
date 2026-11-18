@@ -23,8 +23,9 @@
 //! Test doubles and helpers shared by the unit tests: a [`BmcManager`] that panics on every method,
 //! except a network stack the test hands it, so code under test cannot consult it by accident.
 
+use std::cell::RefCell;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum_extra::extract::cookie::Cookie;
 use bmc_platform::{BosPlatform, BosVersion};
@@ -217,26 +218,79 @@ pub(crate) fn answering_migrator(overlay: &serde_json::Value) -> String {
     migrator_script("", overlay)
 }
 
-/// A `tracing` writer the test reads back, for asserting on log lines.
+thread_local! {
+    static CAPTURING: RefCell<Option<LogCapture>> = const { RefCell::new(None) };
+}
+
+/// A log buffer the test reads back, for asserting on log lines.
 #[derive(Clone, Default)]
 pub(crate) struct LogCapture(Arc<Mutex<Vec<u8>>>);
 
 impl LogCapture {
     /// Captures what this thread logs until the guard drops.
-    pub(crate) fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+    ///
+    /// The subscriber is global and installed once.
+    /// tracing caches a callsite's interest process-wide on its first hit,
+    /// so a test running beside this one with no subscriber
+    /// would otherwise cache `never` for a line this one waits for.
+    pub(crate) fn capture() -> (Self, CaptureGuard) {
+        use tracing_subscriber::Layer as _;
         use tracing_subscriber::layer::SubscriberExt as _;
 
+        static INSTALLED: OnceLock<()> = OnceLock::new();
+        INSTALLED.get_or_init(|| {
+            // A plain `filter_fn` caches its first answer, a dynamic one asks on every event.
+            let capturing = tracing_subscriber::filter::dynamic_filter_fn(|_, _| {
+                CAPTURING.with(|capture| capture.borrow().is_some())
+            });
+            let subscriber = tracing_subscriber::registry().with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(|| ThreadCapture)
+                    .with_filter(capturing),
+            );
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("BUG: LogCapture installs the only global subscriber");
+        });
+
         let logs = Self::default();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(logs.clone()),
-        );
-        (logs, tracing::subscriber::set_default(subscriber))
+        CAPTURING.with(|capture| {
+            let previous = capture.borrow_mut().replace(logs.clone());
+            assert!(
+                previous.is_none(),
+                "BUG: this thread is already capturing its logs"
+            );
+        });
+        (logs, CaptureGuard)
     }
 
     pub(crate) fn text(&self) -> String {
         String::from_utf8_lossy(&self.0.lock().expect("BUG: log buffer poisoned")).into_owned()
+    }
+}
+
+/// Ends the thread's [`LogCapture`] when dropped.
+pub(crate) struct CaptureGuard;
+
+impl Drop for CaptureGuard {
+    fn drop(&mut self) {
+        CAPTURING.with(|capture| capture.borrow_mut().take());
+    }
+}
+
+/// Appends to the writing thread's [`LogCapture`], if it has one.
+struct ThreadCapture;
+
+impl std::io::Write for ThreadCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        CAPTURING.with(|capture| match capture.borrow().clone() {
+            Some(mut logs) => std::io::Write::write(&mut logs, buf),
+            None => Ok(buf.len()),
+        })
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
