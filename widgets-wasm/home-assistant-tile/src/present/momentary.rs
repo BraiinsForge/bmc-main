@@ -191,27 +191,13 @@ impl Presenter for Tile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::gate as context;
     use crate::interaction::gesture::{Gesture, OnTap};
     use crate::interaction::pending::Pending;
-    use crate::present::{Reach, Room};
+    use crate::present::Reach;
     use crate::view::card::Line;
     use bmc_wasm_sdk::wasm_test;
     use home_assistant::CallId;
-
-    fn context<'a>(pending: &'a Pending, gesture: &'a Gesture, reach: Reach) -> Context<'a> {
-        Context {
-            pending,
-            gesture,
-            name: "Gate",
-            notice: None,
-            reach,
-            room: Room {
-                width: 638.0,
-                height: 238.0,
-                size: SizeVariant::Medium,
-            },
-        }
-    }
 
     const NEVER_USED: State = State::Idle { last_used: None };
 

@@ -7,6 +7,7 @@ card. It talks to Home Assistant through the [`home-assistant`](../lib/home-assi
 
 | Module        | What it is                                                                                                  |
 | ------------- | ----------------------------------------------------------------------------------------------------------- |
+| `fixtures`    | Sizes, settings and contexts to stage a tile at, shared by the gallery scenes and the tests.                |
 | `interaction` | What lasts between frames: requests Home Assistant has yet to confirm, the card's tap and hold, the notice. |
 | `present`     | One module per group of domains, each a tile built from the entity; `Group` maps the library's `Domain`s.   |
 | `view`        | The card and the blocks, drawn from plain values, with no Home Assistant types.                             |
@@ -57,7 +58,9 @@ answer, or on Home Assistant's next report for an on or off.
    two domains, its slots as `Slot` consts and its icons from `assets/mdi/`.
 4. Tile: its arm in `Group::of`, and for a new group a `Group` variant and its arms in `Group::icon` and `Group::tile`.
    The compiler points at each.
-5. Gallery: `gallery/home_assistant_tile_<group>.scene.rs` and its `home-assistant-tile-<group>.capture.toml`.
+5. Gallery: `gallery/home_assistant_tile_<group>.scene.rs` on the shared `fixtures`, its
+   `home-assistant-tile-<group>.capture.toml`, and one more scene in `EXPECTED_SCENE_COUNT` in
+   `scripts/check_gallery_lints.py`.
 6. `just validate`, then `just wasm::scenes home-assistant-tile` for the shots.
 
 The tests and the gallery build entities and call IDs with the library's `testing` feature.

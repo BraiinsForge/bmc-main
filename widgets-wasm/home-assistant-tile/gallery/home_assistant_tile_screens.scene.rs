@@ -21,22 +21,13 @@
 //! What the tile shows while it has no entity to draw: its skeleton while the entity loads, or why there is none.
 
 use bmc_gallery::prelude::*;
-use bmc_wasm_sdk::WidgetSize;
+use home_assistant_tile::fixtures;
 use home_assistant_tile::present::momentary::Kind;
-use home_assistant_tile::present::{self, Group, Problem, Room, UNNAMED};
+use home_assistant_tile::present::{self, Group, Problem, UNNAMED};
 use home_assistant_tile::view::touches::Touches;
 
 scene_meta! { title: "Widgets / Home Assistant Tile / Screens" }
 
-/// The sizes a tile takes on a BMC100: the combined scene's slots, and a fullscreen scene.
-const SIZES: [((u32, u32), &str); 4] = [
-    ((317, 238), "1x1"),
-    ((638, 238), "2x1"),
-    ((638, 480), "2x2"),
-    ((1280, 480), "Full"),
-];
-/// 2x1, which the other knobs are captured at.
-const DEFAULT_SIZE: usize = 1;
 /// The tile's title: a configured name, or the entity ID where none is set.
 const NAMES: [&str; 2] = ["Gate", "button.gate"];
 
@@ -53,13 +44,9 @@ fn screens(ctx: &mut SceneCtx, ui: &mut Ui) {
     let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
     let screen = ctx.select("Screen", &labels, 0);
     let name = NAMES[ctx.select("Name", &NAMES, 0)];
-    let size_labels = SIZES.map(|(_, label)| label);
-    let (width, height) = SIZES[ctx.select("Size", &size_labels, DEFAULT_SIZE)].0;
-    let room = Room {
-        width: px(width),
-        height: px(height),
-        size: WidgetSize::from_dimensions(width, height).variant,
-    };
+    let size_labels = fixtures::SIZES.map(|(_, label)| label);
+    let size = fixtures::SIZES[ctx.select("Size", &size_labels, fixtures::DEFAULT_SIZE)].0;
+    let room = fixtures::room(size);
     let card = match screen.checked_sub(1) {
         None => present::loading(Group::Momentary(Kind::Button), name, room),
         Some(index) => {
@@ -74,7 +61,7 @@ fn screens(ctx: &mut SceneCtx, ui: &mut Ui) {
     };
     ctx.wrapping_flow(
         ui,
-        [titled("Tile", (width, height), move || {
+        [titled("Tile", size, move || {
             card.centred(&Touches::default())
         })],
     );

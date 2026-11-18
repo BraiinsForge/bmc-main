@@ -386,6 +386,7 @@ impl Group {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::{self, gate as context};
     use crate::interaction::gesture::OnTap;
     use crate::interaction::pending::Slot;
     use crate::view::icons::CHECK;
@@ -393,24 +394,6 @@ mod tests {
     use bmc_wasm_sdk::wasm_test;
     use home_assistant::ServiceCall;
     use home_assistant::domain::UNKNOWN;
-    use std::num::NonZeroU32;
-
-    const HOLD: Option<NonZeroU32> = NonZeroU32::new(2_000);
-
-    fn context<'a>(pending: &'a Pending, gesture: &'a Gesture, reach: Reach) -> Context<'a> {
-        Context {
-            pending,
-            gesture,
-            name: "Gate",
-            notice: None,
-            reach,
-            room: Room {
-                width: 638.0,
-                height: 238.0,
-                size: SizeVariant::Medium,
-            },
-        }
-    }
 
     fn request() -> Request {
         Request::no_value(Slot::new("press"), ServiceCall::new("button", "press"))
@@ -449,10 +432,10 @@ mod tests {
             };
             card(&context, display, &action).hint
         };
-        let hold_only = Gesture::new(OnTap::Nothing, HOLD);
+        let hold_only = Gesture::new(OnTap::Nothing, fixtures::HOLD);
         assert_eq!(hint(hold_only.clone()).as_deref(), Some("Hold 2 s"));
         assert_eq!(
-            hint(Gesture::new(OnTap::Fires, HOLD)),
+            hint(Gesture::new(OnTap::Fires, fixtures::HOLD)),
             None,
             "a tap fires it too"
         );
