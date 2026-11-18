@@ -83,11 +83,23 @@
         fill: $accent;
     }
 
-    :global(.cds--actionable-notification__action-button) {
-        background-color: $braiins-accent-violet;
-        border: 1px solid $braiins-accent-violet;
-        color: var(--text-on-color);
+    // `.cds--btn` outranks Carbon's tertiary-inverse action button, which is blue in every state
+    :global(.cds--actionable-notification__action-button.cds--btn) {
+        background-color: $button-primary;
+        border: 1px solid $button-primary;
+        color: $text-on-color;
         padding: mini-units(1) mini-units(2) !important;
+
+        &:hover {
+            background-color: $button-primary-hover;
+            color: $text-on-color;
+        }
+
+        &:focus,
+        &:active {
+            background-color: $button-primary-active;
+            color: $text-on-color;
+        }
     }
 }
 div.root.info {
