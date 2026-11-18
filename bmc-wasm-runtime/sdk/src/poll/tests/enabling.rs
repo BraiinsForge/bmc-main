@@ -106,3 +106,61 @@ fn a_request_kept_across_a_disable_and_enable_is_built_again() {
         "enabling runs build again, so the request built before the disable is dropped"
     );
 }
+
+#[wasm_test]
+fn a_request_kept_across_a_disable_is_built_again_after_the_enable_after_delay() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    set_enabled(&mut reg, &mut be, h, false);
+
+    set_enabled_after(&mut reg, &mut be, h, 9_000);
+    deliver(&mut reg, &mut be, 1, true);
+
+    assert_eq!(
+        be.sends[1].1,
+        Some(9_000),
+        "a widget backing off with enable_after keeps its delay"
+    );
+}
+
+#[wasm_test]
+fn an_invalidate_after_the_enable_after_rebuilds_at_the_debounce() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    set_enabled(&mut reg, &mut be, h, false);
+    set_enabled_after(&mut reg, &mut be, h, 60_000);
+
+    invalidate(&mut reg, &mut be, h);
+    deliver(&mut reg, &mut be, 1, true);
+
+    assert_eq!(
+        be.sends[1].1,
+        Some(CFG.debounce_ms),
+        "the refresh asked for last wins over the back-off before it"
+    );
+}
+
+#[wasm_test]
+fn an_enable_after_following_an_invalidate_keeps_its_back_off() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    invalidate(&mut reg, &mut be, h);
+
+    set_enabled_after(&mut reg, &mut be, h, 60_000);
+    deliver(&mut reg, &mut be, 1, true);
+
+    assert_eq!(
+        be.sends[1].1,
+        Some(60_000),
+        "the back-off asked for last wins over the debounce before it"
+    );
+}

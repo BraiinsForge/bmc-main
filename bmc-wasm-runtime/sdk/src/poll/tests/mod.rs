@@ -349,7 +349,7 @@ fn reply_to_unknown_id_is_ignored() {
 }
 
 #[wasm_test]
-fn pending_reply_reissues_immediately_and_skips_delivery() {
+fn a_superseded_reply_reissues_after_the_debounce_and_skips_delivery() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
     be.cancel_result = false;
@@ -359,7 +359,11 @@ fn pending_reply_reissues_immediately_and_skips_delivery() {
     let action = deliver(&mut reg, &mut be, 1, true);
     assert!(matches!(action, ReplyAction::Reissued(_)));
     assert_eq!(be.sends.len(), 2);
-    assert_eq!(be.sends[1].1, None);
+    assert_eq!(
+        be.sends[1].1,
+        Some(CFG.debounce_ms),
+        "the refresh keeps the debounce invalidate asked for"
+    );
 }
 
 #[wasm_test]

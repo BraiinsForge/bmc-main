@@ -208,7 +208,8 @@ struct Poll {
     config: Config,
     enabled: bool,
     live: Option<FetchRequestId>,
-    pending: bool,
+    /// The live request is superseded: its replacement goes out after this delay instead of its reply.
+    pending: Option<u32>,
     force_retry: Option<u32>,
     /// Epoch secs of the last ok reply; `None` before the first success.
     last_success_secs: Option<i64>,
@@ -293,7 +294,7 @@ impl Registry {
             config,
             enabled: config.enabled,
             live: None,
-            pending: false,
+            pending: None,
             force_retry: None,
             last_success_secs: None,
             prev_success_secs: None,
@@ -408,7 +409,7 @@ impl Registry {
                     self.routes.remove(&id);
                     self.kick(index, Some(debounce))
                 } else {
-                    poll.pending = true;
+                    poll.pending = Some(debounce);
                     None
                 }
             }
@@ -431,8 +432,8 @@ impl Registry {
         if !poll.enabled {
             return ReplyAction::Stopped;
         }
-        if pending {
-            return ReplyAction::Reissued(request_kick(poll, index, None));
+        if let Some(delay_ms) = pending {
+            return ReplyAction::Reissued(request_kick(poll, index, Some(delay_ms)));
         }
         ReplyAction::Deliver(index, Rc::clone(&poll.on_reply))
     }
@@ -528,9 +529,9 @@ impl Registry {
         }
         poll.enabled = enabled;
         if enabled {
-            // Enabling promises a fresh `build`, so a request kept across the disable is superseded.
-            poll.pending = poll.live.is_some();
             let debounce = poll.config.debounce_ms;
+            // Enabling promises a fresh `build`, so a request kept across the disable is superseded.
+            poll.pending = poll.live.map(|_| debounce);
             return self.kick(index, Some(debounce));
         }
         if let Some(id) = poll.live
@@ -546,8 +547,8 @@ impl Registry {
     pub(crate) fn set_enabled_after(&mut self, index: usize, delay_ms: u32) -> Option<Kick> {
         self.refuse_while_building();
         let poll = poll_mut(&mut self.polls, index)?;
-        if !poll.enabled {
-            poll.pending = poll.live.is_some();
+        if !poll.enabled || poll.pending.is_some() {
+            poll.pending = poll.live.map(|_| delay_ms);
         }
         poll.enabled = true;
         self.kick(index, Some(delay_ms))
@@ -616,7 +617,7 @@ impl Registry {
 
     #[cfg(test)]
     fn is_pending(&self, index: usize) -> bool {
-        self.poll(index).is_some_and(|poll| poll.pending)
+        self.poll(index).is_some_and(|poll| poll.pending.is_some())
     }
 
     #[cfg(test)]
