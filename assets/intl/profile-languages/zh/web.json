@@ -1730,6 +1730,11 @@
     "source": "Documentation",
     "translation": "文档"
   },
+  "j4oJRYW99S": {
+    "source": "Failed to check whether a password is set!",
+    "translation": "检查是否已设置密码失败！",
+    "description": "Settings, Device Password field, under its description and in place of its buttons when the device does not say whether a password is set"
+  },
   "j8vTk/IsNn": {
     "source": "Enter your current password and a new password to update your credentials.",
     "translation": "输入当前密码和新密码以更新您的登录凭据。"

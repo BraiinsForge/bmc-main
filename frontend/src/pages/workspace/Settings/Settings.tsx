@@ -24,6 +24,7 @@ import { debounce, isEqual } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
 import { type Location, useLocation } from 'react-router';
+import { Code, ConnectError } from '@connectrpc/connect';
 
 // Lib
 import { setState } from '@/lib/react';
@@ -133,7 +134,6 @@ function getFieldStateDefault<T>(init?: {
 
 interface State {
     activeTab: Tab;
-    globalErrors: Maybe<string[]>;
     // A failed read, until a read covering the same data answers
     loadErrors: Partial<Record<'systemInfo' | 'metadata', string[]>>;
 
@@ -202,7 +202,6 @@ function systemInfoAnswered(
 
 const getInitialState = (): State => ({
     activeTab: Tab.general,
-    globalErrors: null,
     loadErrors: {},
 
     data: {
@@ -1448,9 +1447,10 @@ class View extends Component<Props, State> {
 
         // Abort if we got called wrongly
         if (hasPassword !== true) {
-            return this.setState({
-                globalErrors: [intl.formatMessage({ defaultMessage: 'Password is not set!' })],
-            });
+            throw new ConnectError(
+                intl.formatMessage({ defaultMessage: 'Password is not set!' }),
+                Code.FailedPrecondition,
+            );
         }
 
         await pb.rpc.sys.changePassword(data);
@@ -1461,9 +1461,10 @@ class View extends Component<Props, State> {
 
         // Abort if we got called wrongly
         if (hasPassword !== true) {
-            return this.setState({
-                globalErrors: [intl.formatMessage({ defaultMessage: 'Password is not set!' })],
-            });
+            throw new ConnectError(
+                intl.formatMessage({ defaultMessage: 'Password is not set!' }),
+                Code.FailedPrecondition,
+            );
         }
 
         await pb.rpc.sys.removePassword(data);
@@ -1474,9 +1475,10 @@ class View extends Component<Props, State> {
 
         // Abort if we got called wrongly
         if (hasPassword !== false) {
-            return this.setState({
-                globalErrors: [intl.formatMessage({ defaultMessage: 'Password is already set!' })],
-            });
+            throw new ConnectError(
+                intl.formatMessage({ defaultMessage: 'Password is already set!' }),
+                Code.FailedPrecondition,
+            );
         }
 
         await pb.rpc.sys.createPassword(data);
@@ -1486,6 +1488,7 @@ class View extends Component<Props, State> {
         onPasswordChange: this.#secOnPasswordChange,
         onPasswordRemove: this.#secOnPasswordRemove,
         onPasswordCreate: this.#secOnPasswordCreate,
+        onPasswordRecheck: store.fetchSessionInfo,
     };
     #secRender = (): ReactNode => {
         const { hasPassword } = this.props;
@@ -1844,9 +1847,9 @@ class View extends Component<Props, State> {
     };
 
     render() {
-        const { activeTab, globalErrors, loadErrors } = this.state;
+        const { activeTab, loadErrors } = this.state;
         const { title } = this.#txt;
-        const errors = [...(globalErrors ?? []), ...Object.values(loadErrors).flatMap(list => list ?? [])];
+        const errors = Object.values(loadErrors).flatMap(list => list ?? []);
 
         let content: ReactNode;
         switch (activeTab) {

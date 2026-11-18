@@ -25,7 +25,15 @@ import { getID } from '../../const';
 import * as pb from '@/proto';
 
 import { FormPasswordChange } from '../FormPasswordChange';
-import { Modal, Button, ButtonGroup, InlineNotificationsGroup, Field, FieldSet } from '@/components';
+import {
+    Modal,
+    Button,
+    ButtonGroup,
+    InlineNotification,
+    InlineNotificationsGroup,
+    Field,
+    FieldSet,
+} from '@/components';
 
 // Styles
 import css from './SectionSecurity.scss';
@@ -37,6 +45,7 @@ export interface SectionSecurityProps {
         onPasswordChange(d: pb.ChangePasswordRequest): Promise<void>;
         onPasswordRemove(d: pb.RemovePasswordRequest): Promise<void>;
         onPasswordCreate(d: pb.CreatePasswordRequest): Promise<void>;
+        onPasswordRecheck(): Promise<void>;
     };
 }
 interface Props extends SectionSecurityProps {
@@ -387,10 +396,74 @@ class View extends Component<Props, State> {
         );
     };
 
-    render() {
+    #passwordReadErrorRender = (): ReactNode => {
         const {
             intl: { formatMessage },
             hasPassword,
+            actions,
+        } = this.props;
+        if (hasPassword != null) return null;
+
+        return (
+            <InlineNotification
+                stretch
+                kind="error"
+                theme="inverse"
+                hideCloseButton
+                action={
+                    actions
+                        ? { label: formatMessage({ defaultMessage: 'Retry' }), onClick: actions.onPasswordRecheck }
+                        : undefined
+                }
+                children={formatMessage({
+                    defaultMessage: 'Failed to check whether a password is set!',
+                    description:
+                        'Settings, Device Password field, under its description and in place of its buttons when the device does not say whether a password is set',
+                })}
+            />
+        );
+    };
+
+    #passwordControlsRender = (): ReactNode => {
+        const {
+            intl: { formatMessage },
+            hasPassword,
+        } = this.props;
+
+        if (hasPassword == null) return null;
+
+        if (hasPassword) {
+            return (
+                <ButtonGroup spaced>
+                    <Button
+                        id={$('change-password')}
+                        kind="secondary"
+                        children={formatMessage({ defaultMessage: 'Change Password' })}
+                        onClick={this.#passChangeToggle}
+                    />
+                    <Button
+                        id={$('remove-password')}
+                        kind="tertiary"
+                        children={formatMessage({ defaultMessage: 'Remove Password' })}
+                        onClick={this.#passRemoveToggle}
+                    />
+                </ButtonGroup>
+            );
+        }
+
+        return (
+            <Button
+                id={$('create-password')}
+                kind="secondary"
+                children={formatMessage({ defaultMessage: 'Create Password' })}
+                onClick={this.#passCreateToggle}
+            />
+        );
+    };
+
+    render() {
+        const {
+            intl: { formatMessage },
             actions,
         } = this.props;
 
@@ -403,31 +476,9 @@ class View extends Component<Props, State> {
                             defaultMessage: 'Change the password used to access device settings.',
                         })}
                         disabled={!actions}
-                    >
-                        {hasPassword ? (
-                            <ButtonGroup spaced>
-                                <Button
-                                    id={$('change-password')}
-                                    kind="secondary"
-                                    children={formatMessage({ defaultMessage: 'Change Password' })}
-                                    onClick={this.#passChangeToggle}
-                                />
-                                <Button
-                                    id={$('remove-password')}
-                                    kind="tertiary"
-                                    children={formatMessage({ defaultMessage: 'Remove Password' })}
-                                    onClick={this.#passRemoveToggle}
-                                />
-                            </ButtonGroup>
-                        ) : (
-                            <Button
-                                id={$('create-password')}
-                                kind="secondary"
-                                children={formatMessage({ defaultMessage: 'Create Password' })}
-                                onClick={this.#passCreateToggle}
-                            />
-                        )}
-                    </Field>
+                        notice={this.#passwordReadErrorRender()}
+                        children={this.#passwordControlsRender()}
+                    />
                 </FieldSet>
                 {this.#passDialogRender()}
             </section>

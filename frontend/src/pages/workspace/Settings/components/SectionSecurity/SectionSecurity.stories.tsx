@@ -31,10 +31,15 @@ export default {
             onPasswordChange: async d => action('onPasswordChange')(d),
             onPasswordRemove: async d => action('onPasswordRemove')(d),
             onPasswordCreate: async d => action('onPasswordCreate')(d),
+            onPasswordRecheck: async () => action('onPasswordRecheck')(),
         },
     } satisfies SectionSecurityProps,
 } satisfies Meta<SectionSecurityProps>;
 
 export function SectionSecurity(args: SectionSecurityProps) {
     return <Component {...args} />;
+}
+
+export function PasswordReadFailed(args: SectionSecurityProps) {
+    return <Component {...args} hasPassword={null} />;
 }

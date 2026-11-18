@@ -26,6 +26,8 @@ import css from './Field.scss';
 export interface FieldProps extends Omit<HTMLAttributes<HTMLInputElement>, 'title'> {
     title: ReactNode;
     description?: ReactNode;
+    // Below the description, such as why the widget cannot be shown
+    notice?: ReactNode;
     disabled?: boolean;
     children: ReactNode;
 
@@ -36,7 +38,7 @@ export interface FieldProps extends Omit<HTMLAttributes<HTMLInputElement>, 'titl
 }
 
 export function Field(props: FieldProps) {
-    const { title, description, disabled, children, variant = 'dark', className, ...rest } = props;
+    const { title, description, notice, disabled, children, variant = 'dark', className, ...rest } = props;
 
     const widgetRef = useRef<null | HTMLDivElement>(null);
     const handleClick = useCallback(() => {
@@ -49,6 +51,7 @@ export function Field(props: FieldProps) {
             <div onClick={handleClick} className={css.title} children={title} />
             {/* biome-ignore lint/a11y/useKeyWithClickEvents: Just a click helper, irrelevant for keyboard navigation */}
             <div onClick={handleClick} className={css.description} children={description} />
+            {notice != null && <div className={css.notice} children={notice} />}
             <div className={css.widget} children={children} ref={widgetRef} />
         </div>
     );

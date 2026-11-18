@@ -19,7 +19,7 @@
 // the grant above.
 
 import { afterEach, beforeEach, describe, test, expect, rstest } from '@rstest/core';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react/pure';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react/pure';
 import { MemoryRouter } from 'react-router';
 import { type IntlShape, RawIntlProvider } from 'react-intl';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
@@ -1404,5 +1404,23 @@ describe('Settings system information', () => {
         expect(reads, 'the full read asked for the metadata again').toBe(3);
         expect(screen.getByText('2026.10.19-new')).toBeTruthy();
         expect(screen.queryByText('2026.09.18-old')).toBeNull();
+    });
+});
+
+describe('Settings security', () => {
+    test('a failed password read is read again on retry', async () => {
+        rstest.useFakeTimers();
+        installMocks(() => (async function* () {})());
+        registerMocks(pb.services.AuthenticationService, { isAuthenticated: () => ({ value: true }) });
+        registerMocks(pb.services.SystemService, { hasPassword: () => ({ value: false }) });
+        rstest.spyOn(store, 'loadFormats').mockResolvedValue();
+        renderPage('#security');
+        await advance(300);
+
+        const error = screen.getByRole('alertdialog', { name: 'Failed to check whether a password is set!' });
+        fireEvent.click(within(error).getByRole('button', { name: 'Retry' }));
+        await advance(300);
+
+        expect(screen.getByRole('button', { name: 'Create Password' })).toBeTruthy();
     });
 });

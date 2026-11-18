@@ -56,6 +56,14 @@ $left-size-min: to-rem(280px);
         grid-template-rows: 1fr;
     }
 
+    &:has(> .notice) {
+        grid-template-areas:
+            'title       widget'
+            'description widget'
+            'notice      widget';
+        grid-template-rows: auto auto 1fr;
+    }
+
     &.variant-dark {
         --field-bg-color: #{$layer-01};
     }
@@ -102,6 +110,12 @@ $left-size-min: to-rem(280px);
     &:empty {
         display: none;
     }
+}
+
+.notice {
+    grid-area: notice;
+    max-inline-size: $left-size;
+    margin-block-start: mini-units(1);
 }
 
 .widget {
