@@ -84,6 +84,7 @@ impl FirmwareIndex for BmcIndex {
                     UpgradeResolverError::NoReleases => Ok(None),
                     UpgradeResolverError::AvailableVersionsDuplicates(_)
                     | UpgradeResolverError::DowngradeCrossesMajor => {
+                        warn!(error = %err, "Firmware index cannot resolve an upgrade");
                         Err(FirmwareDownloadError::FetchUpgradeDetails)
                     }
                 },
