@@ -21,6 +21,7 @@
 //! Scene renderer for compositing multiple widgets.
 
 mod branding;
+mod probe;
 
 pub use branding::Branding;
 
@@ -55,6 +56,7 @@ use super::render::{
 use super::scene_cycling::TransitionFrame;
 use super::widget_tracker::WidgetTracker;
 use branding::{BrandingOverlay, LogoCaption, LogoScene};
+use probe::Probe;
 
 const BACKGROUND_COLOR: Color32F = Color32F::new(0.0, 0.0, 0.0, 1.0);
 const SEPARATOR_COLOR: Color32F = Color32F::new(0.15, 0.15, 0.15, 1.0);
@@ -439,6 +441,7 @@ pub struct SceneRenderer {
     /// Logo and captions for scenes with no rendered content;
     /// `None` keeps the plain cleared background.
     branding_overlay: Option<BrandingOverlay>,
+    probe: Probe,
     /// Cached pixels from the last inline capture readback.
     /// Served to capture clients between renders (avoids re-rendering
     /// just to observe the same frame).
@@ -558,6 +561,7 @@ impl SceneRenderer {
             frame_differ,
             texture_cache: HashMap::new(),
             branding_overlay: branding.map(BrandingOverlay::new),
+            probe: Probe::from_env(),
             capture_cache: CaptureCache::empty(),
             gpu_render_lock,
             scanout_transform,
@@ -720,15 +724,17 @@ impl SceneRenderer {
         #[cfg(feature = "profiling")]
         self.output
             .render_started(transition_frame.is_some() || widgets.drag_offset().is_some());
+        let probe = self.probe.mode;
+        let dirty = probe.imports(dirty, |id| self.texture_cache.contains_key(id));
         let _gpu_render_lock = self.gpu_render_lock.lock("compositor_render_scene")?;
         // This lock serializes completed GPU jobs across the compositor and
         // WASM host contexts. Hold it until all GL work submitted from this
         // path has finished, so a handoff cannot leave overlapping in-flight
         // jobs on etnaviv.
-        self.import_textures(buffers, dirty);
+        self.import_textures(buffers, &dirty);
 
         for (buffer, _) in layers {
-            self.import_buffer_texture(buffer, dirty, ShmImport::WhenDirty, "layer");
+            self.import_buffer_texture(buffer, &dirty, ShmImport::WhenDirty, "layer");
         }
 
         let mut to_render = Vec::new();
@@ -855,13 +861,23 @@ impl SceneRenderer {
         // Clear regions not covered by any opaque widget before drawing widgets.
         // Clearing after widget draws can overpaint widget content on the
         // target hardware when the clear path and rotated texture path mix.
-        let clear_regions = uncovered_output_regions(output_rect, drawn_regions);
+        let clear_regions = probe.clear_regions(output_rect, || {
+            uncovered_output_regions(output_rect, drawn_regions)
+        });
 
         if !clear_regions.is_empty() {
             frame
                 .clear(BACKGROUND_COLOR, &clear_regions)
                 .context("Failed to clear uncovered output regions")?;
         }
+        let layers = if probe.draws_content() {
+            layers
+        } else {
+            renderable_items.clear();
+            logo_scenes.clear();
+            combined_scene_grids.clear();
+            &[]
+        };
 
         if let Some(overlay) = &self.branding_overlay {
             overlay.draw(
@@ -892,7 +908,8 @@ impl SceneRenderer {
                 (f64::from(tex_size.w), f64::from(tex_size.h)),
             );
             let damage = texture_damage_rect(*dst);
-            let transform = row_order.scanout_transform(self.scanout_transform);
+            let transform =
+                probe.widget_transform(row_order.scanout_transform(self.scanout_transform));
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
