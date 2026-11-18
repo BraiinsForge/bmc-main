@@ -528,6 +528,8 @@ impl Registry {
         }
         poll.enabled = enabled;
         if enabled {
+            // Enabling promises a fresh `build`, so a request kept across the disable is superseded.
+            poll.pending = poll.live.is_some();
             let debounce = poll.config.debounce_ms;
             return self.kick(index, Some(debounce));
         }
@@ -544,6 +546,9 @@ impl Registry {
     pub(crate) fn set_enabled_after(&mut self, index: usize, delay_ms: u32) -> Option<Kick> {
         self.refuse_while_building();
         let poll = poll_mut(&mut self.polls, index)?;
+        if !poll.enabled {
+            poll.pending = poll.live.is_some();
+        }
         poll.enabled = true;
         self.kick(index, Some(delay_ms))
     }

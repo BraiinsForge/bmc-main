@@ -88,3 +88,21 @@ fn reply_to_disabled_poll_stops_without_reschedule() {
     assert!(matches!(action, ReplyAction::Stopped));
     assert_eq!(be.sends.len(), 1);
 }
+
+#[wasm_test]
+fn a_request_kept_across_a_disable_and_enable_is_built_again() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.cancel_result = false;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    set_enabled(&mut reg, &mut be, h, false);
+
+    set_enabled(&mut reg, &mut be, h, true);
+    let action = deliver(&mut reg, &mut be, 1, true);
+
+    assert!(
+        matches!(action, ReplyAction::Reissued(_)),
+        "enabling runs build again, so the request built before the disable is dropped"
+    );
+}
