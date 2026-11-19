@@ -53,8 +53,8 @@ switched): buttons, scenes and scripts.
   while the finger is down, and the action fires once per hold, even if the finger stays down.
 - The two settings are independent, as in Home Assistant: with both set, a tap fires the action as well. To guard an
   action, set a hold and set _Tap action_ to _Nothing_.
-- Where only a hold fires the action, the tile says so, such as _Hold 2 s_, and letting go early reads _Released too
-  early_.
+- Where only a hold fires the action, the tile says so after the state, such as _5 minutes ago · Hold 2 s_, and letting
+  go early reads _Released too early_. On a tile one row high, a state too long for both is cut short, never the hint.
 - Where neither a tap nor a hold is set, the tile reads _No action set_ and touches do nothing.
 
 ### Know when the tile cannot act

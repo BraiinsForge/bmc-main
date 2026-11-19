@@ -20,6 +20,7 @@
 
 //! The card every tile is drawn on, the pieces of its heading, and the centred layout made of them.
 
+use bmc_wasm_sdk::typography::unbroken;
 use bmc_wasm_sdk::*;
 
 use crate::interaction::gesture::{Availability, Touch};
@@ -111,7 +112,7 @@ impl Centred {
         icon: 80.0,
         text: TextSizes::REGULAR,
         ring_clearance: 20.0,
-        hint: HintRow::InPlaceOfLine,
+        hint: HintRow::AfterLine,
     };
     /// On a card two rows high, its icon, text and clearance scaled up together.
     const TALL: Self = Self {
@@ -132,8 +133,8 @@ impl Centred {
 /// Where the centred layout shows the hint, where only a hold fires the card action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HintRow {
-    /// A card one row high has room for one line under the name.
-    InPlaceOfLine,
+    /// A card one row high has room for one line under the name, which the hint shares with the state.
+    AfterLine,
     UnderLine,
 }
 
@@ -184,7 +185,7 @@ impl Card {
         let align = TextAlign::Center;
         let mut texts = vec![self.title(text, width, align)];
         match hint {
-            HintRow::InPlaceOfLine => texts.extend(self.line_or_hint(text, width, align)),
+            HintRow::AfterLine => texts.extend(self.line_and_hint(text, width, align)),
             HintRow::UnderLine => {
                 texts.extend(self.line(text, width, align));
                 texts.extend(self.hint(text, width, align));
@@ -249,8 +250,17 @@ impl Card {
 
     /// The line under the name, a line row high; none where there is none.
     fn line(&self, sizes: TextSizes, width: f32, align: TextAlign) -> Option<Node> {
+        Some(in_row(
+            self.line_text(sizes, width, align)?,
+            (width, sizes.line_height),
+            align,
+        ))
+    }
+
+    /// The line's words, at most `width` wide.
+    fn line_text(&self, sizes: TextSizes, width: f32, align: TextAlign) -> Option<Node> {
         let style = |color| one_line_style(width, sizes.line, FontWeight::REGULAR, color, align);
-        let content = match self.line.as_ref()? {
+        Some(match self.line.as_ref()? {
             Line::State(words) => text(words, style(STATE_COLOR)),
             Line::Since(time) => relative_time_live(
                 *time,
@@ -259,8 +269,7 @@ impl Card {
                 style(STATE_COLOR),
             ),
             Line::Notice(words) => text(words, style(Accent::Warning.color())),
-        };
-        Some(in_row(content, (width, sizes.line_height), align))
+        })
     }
 
     /// The hint, a line row high, where only a hold fires the card action.
@@ -275,15 +284,26 @@ impl Card {
         ))
     }
 
-    /// The line, with the hint in place of the state, for a layout with room for one line under the name.
-    /// A notice keeps its place: it tells what became of a touch.
-    fn line_or_hint(&self, sizes: TextSizes, width: f32, align: TextAlign) -> Option<Node> {
-        match self.line {
-            Some(Line::Notice(_)) => self.line(sizes, width, align),
-            Some(Line::State(_) | Line::Since(_)) | None => self
-                .hint(sizes, width, align)
-                .or_else(|| self.line(sizes, width, align)),
-        }
+    /// The state with the hint after it, for a layout with room for one line under the name.
+    /// The hint stays whole, and a state too long for both gives way to it.
+    /// A notice stands alone: it tells what became of a touch.
+    fn line_and_hint(&self, sizes: TextSizes, width: f32, align: TextAlign) -> Option<Node> {
+        let (Some(Line::State(_) | Line::Since(_)), Some(hint)) = (&self.line, &self.hint) else {
+            return self
+                .line(sizes, width, align)
+                .or_else(|| self.hint(sizes, width, align));
+        };
+        let joined = row(
+            props!(max_width: width, cross_align: CrossAlign::Center),
+            [
+                self.line_text(sizes, width, align)?,
+                text(
+                    unbroken(fmt!(" · {}", hint.as_str())),
+                    style!(size: sizes.line, weight: FontWeight::REGULAR, color: STATE_COLOR),
+                ),
+            ],
+        );
+        Some(in_row(joined, (width, sizes.line_height), align))
     }
 
     /// The entity's badge, `diameter` across: it takes [`Badge::side`] of `diameter`.
@@ -437,15 +457,22 @@ mod tests {
     }
 
     #[wasm_test]
-    fn with_room_for_one_line_the_hint_takes_the_states_place_but_not_a_notices() {
+    fn with_room_for_one_line_the_hint_follows_the_state_but_not_a_notice() {
         let under_name = |line, hint| {
             card(line, hint)
-                .line_or_hint(TextSizes::REGULAR, 269.0, TextAlign::Center)
+                .line_and_hint(TextSizes::REGULAR, 269.0, TextAlign::Center)
                 .map(|node| texts(&node))
         };
         let state = || Some(Line::State("Last pressed 5 min ago".to_owned()));
         assert_eq!(
             under_name(state(), Some("Hold 2 s")),
+            Some(vec![
+                "Last pressed 5 min ago".to_owned(),
+                unbroken(" · Hold 2 s")
+            ])
+        );
+        assert_eq!(
+            under_name(None, Some("Hold 2 s")),
             Some(vec!["Hold 2 s".to_owned()])
         );
         assert_eq!(
