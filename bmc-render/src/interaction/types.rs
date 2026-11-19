@@ -96,6 +96,39 @@ impl Rect {
         self.y + self.h
     }
 
+    /// This rect in physical pixels, at `dpi` of them to a logical pixel.
+    #[must_use]
+    pub fn to_physical(&self, dpi: f32) -> Self {
+        Self::new(self.x * dpi, self.y * dpi, self.w * dpi, self.h * dpi)
+    }
+
+    /// This rect with y measured up from the bottom of a `height`-tall target,
+    /// where `glScissor` and a bottom-up buffer put their origin.
+    #[must_use]
+    pub fn bottom_up(&self, height: f32) -> Self {
+        Self::new(self.x, height - self.bottom(), self.w, self.h)
+    }
+
+    /// The whole pixels this rect covers on a `width_px`×`height_px` target, as `(x, y, w, h)`.
+    ///
+    /// Taffy hands out fractional bounds, so both edges round outwards: an
+    /// inscribed box leaves the fractional edge column unwritten, and on a
+    /// `FrameClear::Keep` frame that column keeps the previous frame's pixels — a
+    /// one-pixel trail behind anything moving right or down. Covering a pixel too
+    /// many only costs the pixel.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "pixel coordinates, bounded by the target and clamped to it"
+    )]
+    pub fn pixel_box(&self, width_px: i32, height_px: i32) -> (i32, i32, i32, i32) {
+        let left = (self.x.floor() as i32).clamp(0, width_px);
+        let right = (self.right().ceil() as i32).clamp(left, width_px);
+        let top = (self.y.floor() as i32).clamp(0, height_px);
+        let bottom = (self.bottom().ceil() as i32).clamp(top, height_px);
+        (left, top, right - left, bottom - top)
+    }
+
     #[must_use]
     pub fn centre(&self) -> (f32, f32) {
         (self.x + self.w / 2.0, self.y + self.h / 2.0)
@@ -241,6 +274,110 @@ impl<I: Iterator<Item = Rect>> CoalesceIterExt for I {}
 #[cfg(test)]
 mod tests {
     use super::{Coalesce, Rect};
+
+    const W: i32 = 1280;
+    const H: i32 = 480;
+    const H_PX: f32 = 480.0;
+
+    #[test]
+    fn to_physical_scales_the_position_with_the_size() {
+        assert_eq!(
+            Rect::new(10.0, 20.0, 5.0, 6.0).to_physical(2.0),
+            Rect::new(20.0, 40.0, 10.0, 12.0),
+            "a unit change moves the rect as well as sizing it"
+        );
+    }
+
+    #[test]
+    fn bottom_up_measures_y_from_the_targets_bottom() {
+        assert_eq!(
+            Rect::new(10.0, 20.0, 5.0, 6.0).bottom_up(100.0),
+            Rect::new(10.0, 74.0, 5.0, 6.0)
+        );
+    }
+
+    #[test]
+    fn pixel_box_keeps_the_origin_it_is_given() {
+        assert_eq!(
+            Rect::new(10.0, 20.0, 5.0, 6.0).pixel_box(W, H),
+            (10, 20, 5, 6)
+        );
+    }
+
+    #[test]
+    fn a_fractional_right_edge_is_covered_not_clipped() {
+        let (x, _, w, _) = Rect::new(10.2, 0.0, 5.2, 4.0)
+            .bottom_up(H_PX)
+            .pixel_box(W, H);
+        assert_eq!(
+            (x, x + w),
+            (10, 16),
+            "10.2..15.4 must cover columns 10..=15"
+        );
+    }
+
+    #[test]
+    fn a_fractional_bottom_edge_is_covered_not_clipped() {
+        let (_, y, _, h) = Rect::new(0.0, 10.2, 4.0, 5.2)
+            .bottom_up(H_PX)
+            .pixel_box(W, H);
+        assert_eq!(
+            (H - (y + h), H - y),
+            (10, 16),
+            "top-down 10.2..15.4 must cover rows 10..=15"
+        );
+    }
+
+    #[test]
+    fn a_whole_pixel_rect_gains_nothing() {
+        let (x, y, w, h) = Rect::new(10.0, 20.0, 5.0, 6.0)
+            .bottom_up(H_PX)
+            .pixel_box(W, H);
+        assert_eq!((x, w, h), (10, 5, 6));
+        assert_eq!(y, H - 26, "bottom-left origin, from the rect's lower edge");
+    }
+
+    #[test]
+    fn dpi_scales_before_rounding() {
+        let (x, _, w, _) = Rect::new(10.2, 0.0, 5.2, 4.0)
+            .to_physical(2.0)
+            .bottom_up(H_PX)
+            .pixel_box(W, H);
+        assert_eq!(
+            (x, x + w),
+            (20, 31),
+            "20.4..30.8 must cover columns 20..=30"
+        );
+    }
+
+    /// Unclamped, a rect past the target hands GL a box beyond it — and a
+    /// negative origin, a negative width.
+    #[test]
+    fn a_rect_outside_the_target_is_clamped_to_it() {
+        let (x, y, w, h) = Rect::new(-20.0, -20.0, 40.0, 40.0)
+            .bottom_up(H_PX)
+            .pixel_box(W, H);
+        assert_eq!((x, w), (0, 20));
+        assert_eq!((y + h, h), (H, 20));
+
+        let (x, _, w, _) = Rect::new(1270.0, 0.0, 40.0, 4.0)
+            .bottom_up(H_PX)
+            .pixel_box(W, H);
+        assert_eq!(
+            (x, w),
+            (1270, 10),
+            "clipped at the right edge, never past it"
+        );
+
+        let (x, y, w, h) = Rect::new(2000.0, 2000.0, 10.0, 10.0)
+            .bottom_up(H_PX)
+            .pixel_box(W, H);
+        assert!(
+            w >= 0 && h >= 0,
+            "a fully offscreen rect stays non-negative"
+        );
+        assert_eq!((x, y, w, h), (W, H - H, 0, 0));
+    }
 
     #[test]
     fn the_far_edges_and_the_centre_follow_the_size() {

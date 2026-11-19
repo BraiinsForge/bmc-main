@@ -18,40 +18,12 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Pure geometry for the draw calls: scissor boxes, arc spans, gradient endpoints and paths.
+//! Pure geometry for the draw calls: arc spans, gradient endpoints and paths.
 
 use crate::gpu::text::to_femtovg_color;
-use crate::interaction::Rect;
 use bmc_ui::colors::Color;
 use bmc_ui::{ArcFill, ArcSegments, Fill};
 use femtovg::{Paint, Path};
-
-/// Logical size scaled to device pixels, saturating rather than wrapping.
-/// The `glScissor` box covering `rect`, in physical pixels.
-///
-/// Taffy hands out fractional bounds, so both edges round outwards: an
-/// inscribed box leaves the fractional edge column unwritten, and on a
-/// `FrameClear::Keep` frame that column keeps the previous frame's pixels — a
-/// one-pixel trail behind anything moving right or down. Covering a pixel too
-/// many only costs the pixel.
-///
-/// GL's scissor origin is bottom-left, the tree's is top-left.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "physical pixel coordinates, bounded by the render target and clamped to it"
-)]
-pub(super) fn scissor_box(
-    rect: Rect,
-    dpi: f32,
-    width_px: i32,
-    height_px: i32,
-) -> (i32, i32, i32, i32) {
-    let left = ((rect.x * dpi).floor() as i32).clamp(0, width_px);
-    let right = ((rect.right() * dpi).ceil() as i32).clamp(left, width_px);
-    let top = ((rect.y * dpi).floor() as i32).clamp(0, height_px);
-    let bottom = ((rect.bottom() * dpi).ceil() as i32).clamp(top, height_px);
-    (left, height_px - bottom, right - left, bottom - top)
-}
 
 /// Build a femtovg [`Paint`] for `fill`. `lin_bbox` is the bounding box used
 /// for linear endpoint projection; `radial` is `(cx, cy, radius)` for the

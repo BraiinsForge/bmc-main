@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use super::geometry::{linear_endpoints, scissor_box};
+use super::geometry::linear_endpoints;
 #[cfg(target_os = "linux")]
 use super::render_targets::gl_name;
 #[cfg(target_os = "linux")]
@@ -63,8 +63,6 @@ mod text_overflow_pixel;
     reason = "frame numbers and the dimensions of a 96×64 target"
 )]
 mod static_layer_pixels;
-
-mod scissor;
 
 mod gradient_geometry;
 

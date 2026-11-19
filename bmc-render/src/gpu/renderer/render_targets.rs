@@ -22,7 +22,6 @@
 
 #![expect(clippy::cast_precision_loss)]
 
-use super::geometry::scissor_box;
 use super::{FemtoVgRenderer, background_color};
 use crate::gpu::text::to_femtovg_color;
 use crate::interaction::Rect;
@@ -1179,7 +1178,8 @@ impl RenderOffscreen for FemtoVgRenderer {
         };
 
         let dpi = self.dpi_scale;
-        let (width_px, height_px) = ((self.width * dpi) as i32, (self.height * dpi) as i32);
+        let (width, height) = ((self.width * dpi).trunc(), (self.height * dpi).trunc());
+        let (width_px, height_px) = (width as i32, height as i32);
         // SAFETY: the renderer's GL context is current for the whole frame.
         unsafe {
             self.gl.disable(glow::BLEND);
@@ -1209,7 +1209,10 @@ impl RenderOffscreen for FemtoVgRenderer {
             for &rect in rects {
                 // The quad covers the whole surface and the scissor restricts
                 // what is written, so cost tracks damage area, not rect count.
-                let (px, py, pw, ph) = scissor_box(rect, dpi, width_px, height_px);
+                let (px, py, pw, ph) = rect
+                    .to_physical(dpi)
+                    .bottom_up(height)
+                    .pixel_box(width_px, height_px);
                 self.gl.scissor(px, py, pw, ph);
                 self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             }
