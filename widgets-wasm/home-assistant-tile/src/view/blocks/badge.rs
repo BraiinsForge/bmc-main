@@ -21,11 +21,11 @@
 //! The entity's icon in its tinted circle, sinking in while the card is pressed,
 //! with a hold's progress as a ring around it.
 
-use std::f32::consts::TAU;
+use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 
 use bmc_wasm_sdk::*;
 
-use crate::view::style::{Icon, dimmed_unless};
+use crate::view::style::{Accent, Icon, dimmed_unless, fill_insets};
 
 /// Tile fills the icon background at 20 % of the state colour.
 const BACKGROUND: f32 = 0.2;
@@ -39,6 +39,14 @@ const RING_SHARE: f32 = 6.0 / 80.0;
 const MIN_RING_WIDTH: f32 = 6.0;
 /// Tile draws a 24 px icon in a 36 px circle.
 const ICON_SHARE: f32 = 24.0 / 36.0;
+/// The mark's radius, as a share of the circle's.
+const MARK_RADIUS_SHARE: f32 = 0.375;
+/// The side of the glyph in the mark, as a share of the mark's diameter.
+const MARK_GLYPH_SHARE: f32 = 0.7;
+/// The black rim that parts the mark from the circle it overlaps, as a share of the circle's diameter.
+const MARK_RIM_SHARE: f32 = 0.03;
+
+const EXCLAMATION_THICK: Svg = include_svg!("assets/mdi/exclamation-thick.svg");
 
 /// How the badge, and the card it heads, answer a finger on the card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +58,31 @@ pub enum Feedback {
     Pressed,
 }
 
+/// What a small disc on the circle's top right corner tells of the state, where Tile has its badge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    /// Home Assistant cannot reach the entity: Tile's white "!" on orange.
+    Unavailable,
+}
+
+impl Mark {
+    /// On the corner of a circle `radius` around `center`.
+    fn draws(self, center: f32, radius: f32, rim: f32) -> [Draw; 3] {
+        let (fill, Icon(glyph), ink) = match self {
+            Self::Unavailable => (Accent::Warning.color(), Icon(&EXCLAMATION_THICK), WHITE),
+        };
+        let corner = radius * FRAC_1_SQRT_2;
+        let (x, y) = (center + corner, center - corner);
+        let mark = radius * MARK_RADIUS_SHARE;
+        let side = 2.0 * mark * MARK_GLYPH_SHARE;
+        [
+            Draw::circle(x, y, mark + rim, BLACK),
+            Draw::circle(x, y, mark, fill),
+            Draw::svg(x - side / 2.0, y - side / 2.0, side, side, glyph, ink).with_anti_alias(),
+        ]
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Badge {
     pub icon: Icon,
@@ -58,6 +91,7 @@ pub struct Badge {
     pub feedback: Feedback,
     /// How far a hold has got, from 0 to 1.
     pub progress: Option<f32>,
+    pub mark: Option<Mark>,
 }
 
 impl Badge {
@@ -106,9 +140,28 @@ impl Badge {
                 ArcCap::Round,
             ));
         }
-        dimmed_unless(
+        let badge = dimmed_unless(
             self.feedback != Feedback::Inert,
             canvas(props!(width: side, height: side), draws),
+        );
+        let Some(mark) = self.mark else {
+            return badge;
+        };
+        // Over the ring, and at full brightness on a dimmed icon, as Tile's badge.
+        let rim = self.diameter * MARK_RIM_SHARE;
+        col(
+            props!(width: side, height: side),
+            [
+                badge,
+                canvas(
+                    PropsData {
+                        width: side,
+                        height: side,
+                        ..fill_insets()
+                    },
+                    mark.draws(center, radius, rim),
+                ),
+            ],
         )
     }
 }

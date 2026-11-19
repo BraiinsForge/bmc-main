@@ -21,7 +21,7 @@
 //! The tile's building blocks, each on its own at the widths a tile gives it, in every state.
 
 use bmc_gallery::prelude::*;
-use home_assistant_tile::view::blocks::badge::{Badge, Feedback};
+use home_assistant_tile::view::blocks::badge::{Badge, Feedback, Mark};
 use home_assistant_tile::view::blocks::chips::{Chip, Chips, Role};
 use home_assistant_tile::view::blocks::control_button::{ControlButton, Face, Look};
 use home_assistant_tile::view::blocks::control_switch::ControlSwitch;
@@ -57,6 +57,7 @@ const ACCENTS: [(Accent, &str); 9] = [
     (Accent::Red, "Red"),
 ];
 
+const MARKS: [(Option<Mark>, &str); 2] = [(None, "None"), (Some(Mark::Unavailable), "Unavailable")];
 const PROGRESS: [(Option<f32>, &str); 4] = [
     (None, "None"),
     (Some(0.0), "Start"),
@@ -391,6 +392,7 @@ fn badge(ctx: &mut SceneCtx, ui: &mut Ui) {
     let color = accent(ctx);
     let pressed = ctx.toggle("Pressed", false);
     let progress = select(ctx, "Hold progress", &PROGRESS);
+    let mark = select(ctx, "Mark", &MARKS);
     ctx.wrapping_flow(
         ui,
         [(80, "80 px"), (128, "128 px")].map(|(diameter, label)| {
@@ -404,6 +406,7 @@ fn badge(ctx: &mut SceneCtx, ui: &mut Ui) {
                     Feedback::Resting
                 },
                 progress,
+                mark,
             };
             #[expect(
                 clippy::cast_possible_truncation,

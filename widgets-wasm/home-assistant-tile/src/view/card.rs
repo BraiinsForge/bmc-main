@@ -24,7 +24,7 @@ use bmc_wasm_sdk::typography::unbroken;
 use bmc_wasm_sdk::*;
 
 use crate::interaction::gesture::{Availability, Touch};
-use crate::view::blocks::badge::{Badge, Feedback};
+use crate::view::blocks::badge::{Badge, Feedback, Mark};
 use crate::view::style::{Accent, Icon, LABEL_COLOR, fill_insets};
 use crate::view::touches::{Touches, middle};
 
@@ -163,6 +163,7 @@ pub struct Card {
     pub(crate) hold: Option<f32>,
     /// What to tell where only a hold fires the card action, such as "Hold 2 s".
     pub(crate) hint: Option<String>,
+    pub(crate) mark: Option<Mark>,
     /// The whole tile's width, height and size, which pick the layout's variant and place it.
     pub(crate) width: f32,
     pub(crate) height: f32,
@@ -314,6 +315,7 @@ impl Card {
             color: self.color(),
             feedback: self.feedback(touches),
             progress: self.hold,
+            mark: self.mark,
         }
         .view()
     }
@@ -429,6 +431,7 @@ mod tests {
             action: None,
             hold: None,
             hint: hint.map(str::to_owned),
+            mark: None,
             width: 317.0,
             height: 238.0,
             size: SizeVariant::Small,

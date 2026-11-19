@@ -64,7 +64,8 @@ switched): buttons, scenes and scripts.
 - While the tile loads, it shows the outline of what is coming: the entity type's icon in grey and _Loading…_.
 - When Home Assistant drops out, the tile keeps the last state without its colour, reads _Reconnecting…_ and takes no
   taps. It reconnects on its own.
-- An entity Home Assistant reports as unavailable reads _Unavailable_ and takes no taps.
+- An entity Home Assistant reports as unavailable reads _Unavailable_, with an orange _!_ on the corner of its icon as
+  in Home Assistant, and takes no taps.
 - When the tile cannot show the entity at all, a warning icon replaces the entity's, with what to fix: _No entity set_,
   _Invalid entity ID_, _Type not supported yet_, _No account set_, _Token refused_, _Use an http:// address_, _Home
   Assistant too old_, _Can't connect, retrying…_, _Communication error_ or _Entity not found_.

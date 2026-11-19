@@ -31,6 +31,7 @@ use home_assistant::{CallFailure, Entity, Presence, Status, is_entity_id};
 
 use crate::interaction::gesture::{Availability, Gesture};
 use crate::interaction::pending::{Pending, Request};
+use crate::view::blocks::badge::Mark;
 use crate::view::card::{Card, Line, StateDisplay};
 use crate::view::style::{Accent, Icon};
 use crate::view::touches::Touches;
@@ -203,6 +204,7 @@ fn placeholder(name: &str, line: Line, color: Option<Accent>, icon: Icon, room: 
         action: None,
         hold: None,
         hint: None,
+        mark: None,
         width: room.width,
         height: room.height,
         size: room.size,
@@ -323,6 +325,7 @@ pub fn card(context: &Context, display: StateDisplay, action: &CardAction) -> Ca
             .hold_only_ms()
             .filter(|_| availability == Some(Availability::Ready))
             .map(|hold_ms| fmt!("Hold {} s", hold_ms.get() / 1000)),
+        mark: (context.reach == Reach::Unavailable).then_some(Mark::Unavailable),
         width: context.room.width,
         height: context.room.height,
         size: context.room.size,
@@ -491,6 +494,27 @@ mod tests {
         let card = card(&context, display, &CardAction::Blocked);
         assert_eq!(card.line, Some(Line::State(UNAVAILABLE_LINE.to_owned())));
         assert_eq!(card.color, None);
+    }
+
+    #[wasm_test]
+    fn only_an_unavailable_entity_is_marked() {
+        let (pending, tap) = (Pending::default(), Gesture::new(OnTap::Fires, None));
+        let mark = |reach| {
+            let display = StateDisplay {
+                line: None,
+                color: None,
+                icon: Icon(&CHECK),
+            };
+            card(
+                &context(&pending, &tap, reach),
+                display,
+                &CardAction::Blocked,
+            )
+            .mark
+        };
+        assert_eq!(mark(Reach::Unavailable), Some(Mark::Unavailable));
+        assert_eq!(mark(Reach::Ready), None);
+        assert_eq!(mark(Reach::Reconnecting), None);
     }
 
     fn line(gesture: &Gesture, reach: Reach, action: &CardAction) -> Option<Line> {

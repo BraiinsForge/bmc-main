@@ -304,6 +304,14 @@ Pressed = true
 "Hold progress" = "Done"
 
 [[shot]]
+name = "badge-unavailable"
+scene = "bmc_gallery::home_assistant_tile::Badge"
+frames = 4
+
+[shot.knobs]
+Mark = "Unavailable"
+
+[[shot]]
 name = "keypad"
 scene = "bmc_gallery::home_assistant_tile::Keypad"
 frames = 4
