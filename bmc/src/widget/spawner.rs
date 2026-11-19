@@ -19,8 +19,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use std::path::Path;
 use std::process::Stdio;
 
+use bmc_platform::ETNA_MESA_DEBUG_ENV;
 use tokio::process::{Child, Command};
 use uuid::Uuid;
 
@@ -51,14 +53,34 @@ impl WaylandSpawner {
         env: &WidgetEnv,
         xdg_runtime_dir: &str,
     ) -> Result<Child, SpawnError> {
-        let mut cmd = Command::new(&widget.binary_path);
+        let mut cmd = self.command(&widget.binary_path, widget_key, env, xdg_runtime_dir);
+        let child = cmd.spawn().map_err(SpawnError::SpawnProcess)?;
+
+        tracing::info!(
+            "widget process spawned: instance={} pid={:?}",
+            widget_key,
+            child.id()
+        );
+
+        Ok(child)
+    }
+
+    fn command(
+        &self,
+        binary_path: &Path,
+        widget_key: Uuid,
+        env: &WidgetEnv,
+        xdg_runtime_dir: &str,
+    ) -> Command {
+        let mut cmd = Command::new(binary_path);
 
         cmd.env("WAYLAND_DISPLAY", &env.wayland_display)
             .env(
                 bmc_widget_protocol::BMC_WIDGET_KEY_ENV,
                 widget_key.to_string(),
             )
-            .env("XDG_RUNTIME_DIR", xdg_runtime_dir);
+            .env("XDG_RUNTIME_DIR", xdg_runtime_dir)
+            .env_remove(ETNA_MESA_DEBUG_ENV);
 
         let (stdout, stderr) = if self.capture_output {
             (Stdio::piped(), Stdio::piped())
@@ -69,15 +91,36 @@ impl WaylandSpawner {
             .stdout(stdout)
             .stderr(stderr)
             .kill_on_drop(true);
+        cmd
+    }
+}
 
-        let child = cmd.spawn().map_err(SpawnError::SpawnProcess)?;
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
 
-        tracing::info!(
-            "widget process spawned: instance={} pid={:?}",
-            widget_key,
-            child.id()
+    use bmc_platform::ETNA_MESA_DEBUG_ENV;
+    use uuid::Uuid;
+
+    use super::{WaylandSpawner, WidgetEnv};
+
+    #[test]
+    fn a_widget_does_not_inherit_the_compositors_mesa_flags() {
+        let env = WidgetEnv {
+            wayland_display: "wayland-7".to_owned(),
+        };
+        let command = WaylandSpawner::new(false).command(
+            Path::new("/bin/true"),
+            Uuid::nil(),
+            &env,
+            "/run/user/0",
         );
 
-        Ok(child)
+        assert!(
+            command
+                .as_std()
+                .get_envs()
+                .any(|(name, value)| name == ETNA_MESA_DEBUG_ENV && value.is_none())
+        );
     }
 }

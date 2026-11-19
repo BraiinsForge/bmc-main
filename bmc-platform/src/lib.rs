@@ -210,6 +210,9 @@ pub enum PanelTransfer {
     ChangedRegions,
 }
 
+/// Mesa's etnaviv debug flags, which the compositor sets for itself and keeps from its clients.
+pub const ETNA_MESA_DEBUG_ENV: &str = "ETNA_MESA_DEBUG";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibleArea {
     pub x: u32,

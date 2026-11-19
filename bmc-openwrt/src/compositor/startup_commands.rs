@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 use bmc::shutdown::COMPOSITOR_COMMAND_GRACE;
+use bmc_platform::ETNA_MESA_DEBUG_ENV;
 use bmc_shared_utils::process_supervisor::RestartPolicy;
 use serde::Deserialize;
 use tokio::process::Child;
@@ -393,6 +394,7 @@ fn build_command(argv: &[String], wayland_display: &str) -> Command {
     command
         .args(args)
         .env("WAYLAND_DISPLAY", wayland_display)
+        .env_remove(ETNA_MESA_DEBUG_ENV)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -437,9 +439,10 @@ mod tests {
 
     use super::{
         CHILD_POLL_INTERVAL, COMPOSITOR_COMMAND_RESTART_MAX, Child, ChildExit, Command,
-        RestartPolicy, StartupCommands, SystemConfig, advance_restart_backoff, build_command,
-        child_exited, compositor_command_restart_policy, process_group_has_live_members,
-        stop_child, supervise_command, validate_command, wait_for_child,
+        ETNA_MESA_DEBUG_ENV, RestartPolicy, StartupCommands, SystemConfig, advance_restart_backoff,
+        build_command, child_exited, compositor_command_restart_policy,
+        process_group_has_live_members, stop_child, supervise_command, validate_command,
+        wait_for_child,
     };
 
     // Serialize sibling spawns so they cannot reuse a PID during
@@ -804,6 +807,17 @@ mod tests {
         assert!(command.get_envs().any(|(name, value)| {
             name == "WAYLAND_DISPLAY" && value == Some(std::ffi::OsStr::new("wayland-7"))
         }));
+    }
+
+    #[test]
+    fn command_does_not_inherit_the_compositors_mesa_flags() {
+        let command = build_command(&["/bin/true".to_owned()], "wayland-7");
+
+        assert!(
+            command
+                .get_envs()
+                .any(|(name, value)| name == ETNA_MESA_DEBUG_ENV && value.is_none())
+        );
     }
 
     #[test]

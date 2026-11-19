@@ -33,6 +33,7 @@ use bmc_led::led_driver::LedDriverFactory;
 use bmc_net_drv::wifi::WifiChip;
 use bmc_openwrt::cli::Parser;
 use bmc_openwrt::compositor::EglCompositor;
+use bmc_openwrt::compositor::linear_pe::{self, LinearPe};
 use bmc_openwrt::{button_driver::UEventButtons, manager::Manager, session::OpenwrtSessionManager};
 use bmc_openwrt::{cli::Args, log::build_panic_hook_with_tracing};
 use bmc_platform::backlight::{BacklightVisibility, DisplayBacklightDriver};
@@ -75,12 +76,21 @@ fn led_driver_for_profile(
     }
 }
 
-#[tokio::main]
-#[expect(clippy::too_many_lines)]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
+    // SAFETY: the runtime is built below, so no other thread exists yet.
+    let linear_pe = unsafe { linear_pe::enable() };
 
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(args, linear_pe))
+}
+
+#[expect(clippy::too_many_lines)]
+async fn run(args: Args, linear_pe: LinearPe) -> Result<()> {
     bmc_openwrt::log::init(args.log_to_file);
+    info!("Etnaviv linear PE: {linear_pe}");
 
     panic::set_hook(build_panic_hook_with_tracing());
 
