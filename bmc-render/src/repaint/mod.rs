@@ -427,9 +427,8 @@ const DAMAGE_MERGE_TOLERANCE: f32 = 1.0;
 
 /// Damage covering the last two frames, or empty to repaint everything.
 ///
-/// Empty when the regions cover more of the surface than `BMC_DAMAGE_MAX_PCT`
-/// (default 60): past that the bookkeeping and extra draw calls cost more than
-/// the pixels they save.
+/// Empty when the regions cover more of the surface than the cap from [`damage_max_fraction`]:
+/// past that the bookkeeping and extra draw calls cost more than the pixels they save.
 fn damage_rects(recent: &[Vec<Rect>; EXPORT_BUFFERS], width: f32, height: f32) -> Vec<Rect> {
     let surface = width * height;
     if surface <= 0.0 || recent.iter().all(Vec::is_empty) {
@@ -449,6 +448,9 @@ fn damage_rects(recent: &[Vec<Rect>; EXPORT_BUFFERS], width: f32, height: f32) -
     rects
 }
 
+/// The damage cap in percent of the surface, unless `BMC_DAMAGE_MAX_PCT` sets one.
+const DEFAULT_DAMAGE_MAX_PCT: f32 = 80.0;
+
 /// Share of the surface above which damage tracking is abandoned.
 fn damage_max_fraction() -> f32 {
     static MAX: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
@@ -457,7 +459,7 @@ fn damage_max_fraction() -> f32 {
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|pct| (0.0..=100.0).contains(pct))
-            .unwrap_or(60.0)
+            .unwrap_or(DEFAULT_DAMAGE_MAX_PCT)
             / 100.0
     })
 }
