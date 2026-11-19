@@ -1,6 +1,7 @@
 # The SDK's tests run on wasm32 under the wasm test runner, which only sees `#[wasm_test]`.
 # A plain `#[test]` belongs only to a native-arm test, in a module gated off wasm32
-# (`off_device`, or a whole `cfg(all(test, not(target_arch = "wasm32")))` module);
+# (`off_device`, a whole `cfg(all(test, not(target_arch = "wasm32")))` module,
+# or a module file that opens with `#![cfg(not(target_arch = "wasm32"))]`);
 # anywhere else it compiles on wasm32 and never runs.
 
 id: no-plain-test-in-sdk
@@ -17,11 +18,18 @@ rule:
   kind: attribute_item
   regex: ^#\[test\]$
   not:
-    inside:
-      stopBy: end
-      kind: mod_item
-      follows:
-        kind: attribute_item
-        regex: not\(target_arch = "wasm32"\)
+    any:
+      - inside:
+          stopBy: end
+          kind: mod_item
+          follows:
+            kind: attribute_item
+            regex: ^#\[cfg\((not\(target_arch = "wasm32"\)|all\(test, not\(target_arch = "wasm32"\)\))\)\]$
+      - inside:
+          stopBy: end
+          kind: source_file
+          has:
+            kind: inner_attribute_item
+            regex: ^#!\[cfg\(not\(target_arch = "wasm32"\)\)\]$
 
 fix: "#[wasm_test]"
