@@ -654,7 +654,8 @@ fn home_assistant() -> CredentialType {
     let address = ScalarField {
         name: "Address".to_owned(),
         description: Some(
-            "The address you open Home Assistant at, such as http://homeassistant.local:8123."
+            "The address you type in your browser to open Home Assistant, \
+             such as http://homeassistant.local:8123."
                 .to_owned(),
         ),
         is_optional: false,
@@ -672,16 +673,17 @@ fn home_assistant() -> CredentialType {
     CredentialType {
         id: BuiltinType::HomeAssistant.id().to_owned(),
         name: "Home Assistant".to_owned(),
-        description: "A Home Assistant instance and a long-lived access token for it. \
-                      The token is only ever sent to that address."
-            .to_owned(),
+        description:
+            "Connects the Deck to your Home Assistant, so its widgets can show and control your devices."
+                .to_owned(),
         fields: field_map([
             (HOME_ASSISTANT_URL_FIELD, address),
             (
                 HOME_ASSISTANT_TOKEN_FIELD,
                 secret_field(
                     "Long-lived access token",
-                    "Create one in Home Assistant on your profile page, under Security.",
+                    "In Home Assistant, click your name at the bottom left, open Security \
+                     and create a token at the bottom of the page.",
                 ),
             ),
         ]),
