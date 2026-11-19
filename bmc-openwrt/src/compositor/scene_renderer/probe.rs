@@ -22,7 +22,13 @@
 
 use std::borrow::Cow;
 
+use anyhow::{Context, Result};
 use smithay::{
+    backend::allocator::Fourcc,
+    backend::renderer::{
+        Offscreen,
+        gles::{GlesRenderer, GlesTexture},
+    },
     reexports::wayland_server::backend::ObjectId,
     utils::{Physical, Rectangle, Size, Transform},
 };
@@ -52,6 +58,9 @@ pub(super) enum ComposeProbe {
     /// The normal frame, ignoring new commits to buffers already imported,
     /// to see what importing a client buffer costs the GPU.
     NoImport,
+    /// The normal frame drawn into a tiled offscreen texture instead of the linear scanout buffer,
+    /// which keeps showing the last frame, to see what linear writes cost.
+    Offscreen,
     /// The normal frame over a whole-output clear,
     /// to see whether one is cheaper than the scissored clears.
     FullClear,
@@ -67,6 +76,7 @@ impl ComposeProbe {
             Ok("tinyclear") => Self::TinyClear,
             Ok("norotate") => Self::NoRotate,
             Ok("noimport") => Self::NoImport,
+            Ok("offscreen") => Self::Offscreen,
             Ok("fullclear") => Self::FullClear,
             Ok(other) => {
                 tracing::warn!("unknown BMC_COMPOSE_PROBE {other:?}, drawing normally");
@@ -105,7 +115,7 @@ impl ComposeProbe {
         uncovered: impl FnOnce() -> Vec<Rectangle<i32, Physical>>,
     ) -> Vec<Rectangle<i32, Physical>> {
         match self {
-            Self::Normal | Self::NoRotate | Self::NoImport => uncovered(),
+            Self::Normal | Self::NoRotate | Self::NoImport | Self::Offscreen => uncovered(),
             Self::NoDraw => Vec::new(),
             Self::ClearOnly | Self::FullClear => vec![output],
             Self::HalfClear => vec![Rectangle::from_size(Size::from((
@@ -119,7 +129,7 @@ impl ComposeProbe {
     pub(super) fn draws_content(self) -> bool {
         matches!(
             self,
-            Self::Normal | Self::FullClear | Self::NoRotate | Self::NoImport
+            Self::Normal | Self::FullClear | Self::NoRotate | Self::NoImport | Self::Offscreen
         )
     }
 
@@ -133,16 +143,40 @@ impl ComposeProbe {
     }
 }
 
-/// The probe a compositor runs.
+/// The probe a compositor runs, with the offscreen target [`ComposeProbe::Offscreen`] draws into.
 pub(super) struct Probe {
     pub(super) mode: ComposeProbe,
+    offscreen: Option<GlesTexture>,
 }
 
 impl Probe {
     pub(super) fn from_env() -> Self {
         Self {
             mode: ComposeProbe::from_env(),
+            offscreen: None,
         }
+    }
+
+    /// The target to draw into instead of the scanout buffer, allocated on its first frame.
+    pub(super) fn offscreen_target(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        size: Size<i32, Physical>,
+    ) -> Result<Option<&mut GlesTexture>> {
+        if self.mode != ComposeProbe::Offscreen {
+            return Ok(None);
+        }
+        if self.offscreen.is_none() {
+            self.offscreen = Some(
+                Offscreen::<GlesTexture>::create_buffer(
+                    renderer,
+                    Fourcc::Abgr8888,
+                    Size::from((size.w, size.h)),
+                )
+                .context("Failed to allocate the probe's offscreen target")?,
+            );
+        }
+        Ok(self.offscreen.as_mut())
     }
 }
 

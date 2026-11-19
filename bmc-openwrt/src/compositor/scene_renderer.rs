@@ -794,15 +794,18 @@ impl SceneRenderer {
         let buffer = self.buffers.back_buffer(&self.output)?;
         let fb = buffer.fb;
 
-        let renderer = self.egl.renderer();
-        ii_stopwatch::stopwatch_start!(self.bind_w);
-        let mut framebuffer = renderer
-            .bind(&mut buffer.dmabuf)
-            .context("Failed to bind render target")?;
-        ii_stopwatch::stopwatch_stop!(self.bind_w);
-
         #[expect(clippy::cast_possible_wrap)]
         let output_size = Size::from((self.output.width() as i32, self.output.height() as i32));
+
+        let renderer = self.egl.renderer();
+        let offscreen = self.probe.offscreen_target(renderer, output_size)?;
+        ii_stopwatch::stopwatch_start!(self.bind_w);
+        let target = match offscreen {
+            Some(offscreen) => renderer.bind(offscreen),
+            None => renderer.bind(&mut buffer.dmabuf),
+        };
+        let mut framebuffer = target.context("Failed to bind render target")?;
+        ii_stopwatch::stopwatch_stop!(self.bind_w);
 
         let mut frame = renderer
             .render(&mut framebuffer, output_size, Transform::Normal)
