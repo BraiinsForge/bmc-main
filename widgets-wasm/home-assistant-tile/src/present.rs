@@ -382,6 +382,11 @@ impl Group {
             Domain::InputButton => Some(Self::Momentary(momentary::Kind::InputButton)),
             Domain::Scene => Some(Self::Momentary(momentary::Kind::Scene)),
             Domain::Script => Some(Self::Momentary(momentary::Kind::Script)),
+            Domain::Automation
+            | Domain::InputBoolean
+            | Domain::Remote
+            | Domain::Siren
+            | Domain::Switch => None,
         }
     }
 

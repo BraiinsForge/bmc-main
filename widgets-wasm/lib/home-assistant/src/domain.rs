@@ -25,10 +25,15 @@
 //! A builder is named after the service it calls, so `scene::turn_on()` is `scene.turn_on`.
 //! Nothing here holds state or talks to Home Assistant.
 
+pub mod automation;
 pub mod button;
+pub mod input_boolean;
 pub mod input_button;
+pub mod remote;
 pub mod scene;
 pub mod script;
+pub mod siren;
+pub mod switch;
 
 use crate::{Entity, is_entity_id};
 
@@ -42,10 +47,15 @@ const OFF: &str = "off";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Domain {
+    Automation,
     Button,
+    InputBoolean,
     InputButton,
+    Remote,
     Scene,
     Script,
+    Siren,
+    Switch,
 }
 
 impl Domain {
@@ -58,10 +68,15 @@ impl Domain {
             return None;
         }
         match name {
+            automation::DOMAIN => Some(Self::Automation),
             button::DOMAIN => Some(Self::Button),
+            input_boolean::DOMAIN => Some(Self::InputBoolean),
             input_button::DOMAIN => Some(Self::InputButton),
+            remote::DOMAIN => Some(Self::Remote),
             scene::DOMAIN => Some(Self::Scene),
             script::DOMAIN => Some(Self::Script),
+            siren::DOMAIN => Some(Self::Siren),
+            switch::DOMAIN => Some(Self::Switch),
             _ => None,
         }
     }
@@ -70,10 +85,15 @@ impl Domain {
     #[must_use]
     pub fn attributes(self) -> &'static [&'static str] {
         match self {
+            Self::Automation => automation::ATTRIBUTES,
             Self::Button => button::ATTRIBUTES,
+            Self::InputBoolean => input_boolean::ATTRIBUTES,
             Self::InputButton => input_button::ATTRIBUTES,
+            Self::Remote => remote::ATTRIBUTES,
             Self::Scene => scene::ATTRIBUTES,
             Self::Script => script::ATTRIBUTES,
+            Self::Siren => siren::ATTRIBUTES,
+            Self::Switch => switch::ATTRIBUTES,
         }
     }
 }
@@ -105,10 +125,18 @@ mod tests {
 
     #[wasm_test]
     fn only_an_entity_id_of_a_known_domain_names_one() {
+        assert_eq!(Domain::of("automation.porch"), Some(Domain::Automation));
         assert_eq!(Domain::of("button.gate"), Some(Domain::Button));
+        assert_eq!(
+            Domain::of("input_boolean.guests"),
+            Some(Domain::InputBoolean)
+        );
         assert_eq!(Domain::of("input_button.gate"), Some(Domain::InputButton));
+        assert_eq!(Domain::of("remote.living_room"), Some(Domain::Remote));
         assert_eq!(Domain::of("scene.evening"), Some(Domain::Scene));
         assert_eq!(Domain::of("script.wake_up"), Some(Domain::Script));
+        assert_eq!(Domain::of("siren.hallway"), Some(Domain::Siren));
+        assert_eq!(Domain::of("switch.kettle"), Some(Domain::Switch));
         for other in [
             "light.kitchen",
             "scene",
@@ -125,8 +153,17 @@ mod tests {
     #[wasm_test]
     fn a_subscription_keeps_what_the_domains_readers_read() {
         assert_eq!(Domain::Script.attributes(), ["last_triggered"]);
-        for timestamped in [Domain::Button, Domain::InputButton, Domain::Scene] {
-            assert!(timestamped.attributes().is_empty(), "{timestamped:?}");
+        assert_eq!(Domain::Switch.attributes(), ["device_class"]);
+        for bare in [
+            Domain::Automation,
+            Domain::Button,
+            Domain::InputBoolean,
+            Domain::InputButton,
+            Domain::Remote,
+            Domain::Scene,
+            Domain::Siren,
+        ] {
+            assert!(bare.attributes().is_empty(), "{bare:?}");
         }
     }
 
