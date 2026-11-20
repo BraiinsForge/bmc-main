@@ -225,7 +225,8 @@ impl Handle {
         REGISTRY.with_borrow_mut(|registry| registry.request_retry_after(self.0, delay_ms));
     }
 
-    /// Flag stale after a reply was banked ok (e.g. a late decode failure).
+    /// Count the last ok reply as failed after all (e.g. a late decode failure),
+    /// even if failed replies banked since; with none left to undo, count a plain failure.
     pub fn mark_stale(&self) {
         let now = now_secs();
         REGISTRY.with_borrow_mut(|registry| registry.mark_stale(self.0, now));

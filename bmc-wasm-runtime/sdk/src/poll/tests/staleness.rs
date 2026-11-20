@@ -152,6 +152,26 @@ fn reset_staleness_forgets_all_history() {
 }
 
 #[wasm_test]
+fn a_reply_from_before_a_reset_is_not_undone() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, true, 0);
+    deliver_at(&mut reg, &mut be, 2, true, 10);
+    reg.reset_staleness(h);
+    reg.restore_anchor(h, 50);
+
+    reg.mark_stale(h, 60);
+
+    assert_eq!(
+        reg.last_success_secs(h),
+        Some(50),
+        "undoing the reply at 10 would bring back the anchor at 0 the reset forgot"
+    );
+}
+
+#[wasm_test]
 fn is_offline_after_failing_past_grace_without_ever_loading() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -213,6 +233,111 @@ fn a_first_reply_that_proves_bad_starts_the_offline_grace() {
     assert!(
         reg.is_offline(h, 18),
         "a poll that never loaded good data is offline once the grace runs out"
+    );
+}
+
+#[wasm_test]
+fn a_reply_that_proves_bad_does_not_restart_the_grace() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG); // 7.5 s grace
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, false, 0);
+    deliver_at(&mut reg, &mut be, 2, true, 5);
+
+    reg.mark_stale(h, 5);
+
+    assert!(
+        reg.is_offline(h, 8),
+        "a reply that proved bad continues the streak, as a failed one does"
+    );
+}
+
+#[wasm_test]
+fn a_reply_that_proves_bad_after_a_failed_one_still_reverts_the_anchor() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, true, 0);
+    deliver_at(&mut reg, &mut be, 2, true, 10);
+    deliver_at(&mut reg, &mut be, 3, false, 20);
+
+    reg.mark_stale(h, 25);
+
+    assert_eq!(
+        reg.last_success_secs(h),
+        Some(0),
+        "the reply at 10 proved bad, though a fetch failed while it was being checked"
+    );
+}
+
+#[wasm_test]
+fn a_reply_that_proves_bad_after_a_failed_one_keeps_the_streak_it_broke() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG); // 7.5 s grace
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, false, 0);
+    deliver_at(&mut reg, &mut be, 2, true, 5);
+    deliver_at(&mut reg, &mut be, 3, false, 10);
+
+    reg.mark_stale(h, 12);
+
+    assert!(
+        reg.is_offline(h, 12),
+        "with the reply at 5 undone, the poll has been failing since 0"
+    );
+}
+
+#[wasm_test]
+fn a_reply_that_proves_bad_after_a_failed_one_keeps_the_later_streak() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG); // 7.5 s grace
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, true, 10);
+    deliver_at(&mut reg, &mut be, 2, false, 20);
+
+    reg.mark_stale(h, 25);
+
+    assert!(
+        reg.is_offline(h, 28),
+        "the poll never had good data and has been failing since 20, not just since 25"
+    );
+}
+
+#[wasm_test]
+fn a_reply_is_undone_only_once() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, true, 10);
+    reg.mark_stale(h, 12);
+    reg.restore_anchor(h, 5);
+
+    reg.mark_stale(h, 14);
+
+    assert_eq!(
+        reg.last_success_secs(h),
+        Some(5),
+        "the reply at 10 was already undone; undoing it again would wipe the restored anchor"
+    );
+}
+
+#[wasm_test]
+fn mark_stale_with_no_reply_to_undo_counts_a_failure() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG); // 7.5 s grace
+    start(&mut reg, &mut be, h);
+
+    reg.mark_stale(h, 0);
+
+    assert!(
+        reg.is_offline(h, 8),
+        "a never-loaded poll marked stale goes offline like one that failed"
     );
 }
 
@@ -296,5 +421,9 @@ fn the_reply_after_a_widget_rejection_counts_again() {
         reg.last_success_secs(h),
         Some(10),
         "a widget's retry rejects only the reply it was told of"
+    );
+    assert!(
+        !reg.is_stale(h, 1_000_000),
+        "the next good reply ends the failure the rejection started"
     );
 }

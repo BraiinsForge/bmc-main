@@ -257,6 +257,14 @@ impl Health {
     }
 }
 
+/// What an ok reply replaced, so that reply can be undone if it proves bad.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Debug)]
+struct Undo {
+    last_success_secs: Option<i64>,
+    health: Health,
+}
+
 #[cfg(any(target_arch = "wasm32", test))]
 struct Poll {
     build: BuildFn,
@@ -267,24 +275,30 @@ struct Poll {
     force_retry: Option<u32>,
     /// Epoch secs of the last ok reply; `None` before the first success.
     last_success_secs: Option<i64>,
-    /// The anchor before the last ok reply; undoing that reply reverts to it.
-    prev_success_secs: Option<i64>,
     health: Health,
-    /// The health before the last ok reply, so undoing it keeps a failing streak's start.
-    prev_health: Health,
+    /// What the last ok reply replaced; `None` before one, once it was undone, and after a reset.
+    undo: Option<Undo>,
     /// Counts the kicks asked for; a kick performed after a newer one was asked for yields to it.
     revision: usize,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
 impl Poll {
-    /// Count the success the last reply banked as a failure at `now_secs`,
-    /// as if that reply had failed; a no-op if it already counted as one.
+    /// Count the last ok reply as a failure after all, once, even with failed replies banked since;
+    /// with none left to undo, count a failure at `now_secs`.
     fn undo_success(&mut self, now_secs: i64) {
-        if self.health == Health::Ok {
-            self.health = self.prev_health.failing_at(now_secs);
-            self.last_success_secs = self.prev_success_secs;
-        }
+        let failing = self.health.failing_at(now_secs);
+        self.health = match self.undo.take() {
+            Some(undo) => {
+                self.last_success_secs = undo.last_success_secs;
+                // A streak the undone reply broke runs on from its start.
+                match undo.health {
+                    Health::Ok => failing,
+                    Health::Failing { .. } => undo.health,
+                }
+            }
+            None => failing,
+        };
     }
 }
 
@@ -364,9 +378,8 @@ impl Registry {
             },
             force_retry: None,
             last_success_secs: None,
-            prev_success_secs: None,
             health: Health::Ok,
-            prev_health: Health::Ok,
+            undo: None,
             revision: 0,
         }));
         index
@@ -545,12 +558,10 @@ impl Registry {
         }
     }
 
-    /// A just-banked reply proved bad (a late decode failure):
-    /// flag failing and revert the anchor it displaced.
+    /// The last ok reply proved bad (a late decode failure); see `Poll::undo_success`.
     pub(crate) fn mark_stale(&mut self, index: usize, now_secs: i64) {
         if let Some(poll) = poll_mut(&mut self.polls, index) {
-            poll.health = poll.health.failing_at(now_secs);
-            poll.last_success_secs = poll.prev_success_secs;
+            poll.undo_success(now_secs);
         }
     }
 
@@ -568,9 +579,8 @@ impl Registry {
     pub(crate) fn reset_staleness(&mut self, index: usize) {
         if let Some(poll) = poll_mut(&mut self.polls, index) {
             poll.last_success_secs = None;
-            poll.prev_success_secs = None;
             poll.health = Health::Ok;
-            poll.prev_health = Health::Ok;
+            poll.undo = None;
         }
     }
 
@@ -582,9 +592,11 @@ impl Registry {
         // A forced retry means the handler rejected this reply, so it is no
         // refresh however the HTTP call went.
         if ok && forced.is_none() {
-            poll.prev_success_secs = poll.last_success_secs;
+            poll.undo = Some(Undo {
+                last_success_secs: poll.last_success_secs,
+                health: poll.health,
+            });
             poll.last_success_secs = Some(now_secs);
-            poll.prev_health = poll.health;
             poll.health = Health::Ok;
         } else {
             poll.health = poll.health.failing_at(now_secs);
@@ -609,7 +621,11 @@ impl Registry {
         let poll = poll_mut(&mut self.polls, index)?;
         let delay_ms = match poll.force_retry.take() {
             Some(forced) => {
-                poll.undo_success(now_secs);
+                // Only an ok reply banked a success to undo;
+                // after a failed one, the undo record is an earlier reply's.
+                if poll.health == Health::Ok {
+                    poll.undo_success(now_secs);
+                }
                 forced
             }
             None => banked_delay_ms?,
