@@ -25,8 +25,7 @@ use bmc_wasm_sdk::*;
 use crate::render::{fact_draw, header_draw};
 use crate::source::FactSource;
 
-/// Shown only until the first fact arrives; afterwards the last-known-good
-/// fact is kept on screen across failures.
+/// Shown only until the first fact arrives.
 const LOADING_TEXT: &str = "Loading...";
 
 struct RandomFacts {
