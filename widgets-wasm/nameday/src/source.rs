@@ -57,7 +57,8 @@ impl NamedayData {
 
 pub(super) struct NamedaySource {
     poll: PollHandle,
-    /// What the last fetch asked for; an accepted reply copies it to [`NamedayData`].
+    /// What the last request built asked for, so its reply can be checked against today;
+    /// `None` until a build succeeds and after one fails, so the day check asks again.
     requested_for: Option<TimeWithTimezone>,
     /// The day of the names last sent, so the widget can be told once it has passed.
     served_for: Option<TimeWithTimezone>,
@@ -112,16 +113,9 @@ impl NamedaySource {
         })
     }
 
-    /// Refetch once the day the names were asked for has passed,
-    /// and tell the widget once the day of the names last sent has.
+    /// Tell the widget and refetch once the day of the names last sent has passed,
+    /// and ask again while no request could be built, for want of a timezone.
     pub(super) fn check_day(&mut self) {
-        if self
-            .requested_for
-            .as_ref()
-            .is_some_and(|asked| !is_today(asked))
-        {
-            self.poll.invalidate();
-        }
         // Decided from what was sent, not asked for: a retry built after midnight
         // asks for today while the widget still shows yesterday's names.
         if self
@@ -130,7 +124,10 @@ impl NamedaySource {
             .is_some_and(|served| !is_today(served))
         {
             self.served_for = None;
+            self.poll.invalidate();
             self.on_day_change.send(());
+        } else if self.requested_for.is_none() {
+            self.poll.invalidate();
         }
     }
 
@@ -139,6 +136,7 @@ impl NamedaySource {
     }
 
     fn build_request(&mut self, _handle: &PollHandle) -> Option<FetchSpec> {
+        self.requested_for = None;
         let tz = system::current().timezone().map(Tz::from_runtime)?;
         let time = SystemTime::now();
         let local_time = time.local(&tz)?;
