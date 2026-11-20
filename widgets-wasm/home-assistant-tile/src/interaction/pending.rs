@@ -199,6 +199,7 @@ impl Stage {
 #[derive(Debug, Clone, PartialEq)]
 struct Entry {
     wanted: Wanted,
+    timing: Timing,
     settles: Settles,
     stage: Stage,
 }
@@ -254,6 +255,7 @@ impl Pending {
             slot,
             Entry {
                 wanted,
+                timing,
                 settles,
                 stage,
             },
@@ -374,6 +376,14 @@ impl Pending {
     #[must_use]
     pub fn asked(&self, slot: Slot) -> bool {
         self.entries.contains_key(&slot)
+    }
+
+    /// What was asked for `slot` came from a run of taps, and Home Assistant has yet to confirm it.
+    #[must_use]
+    pub fn asked_by_taps(&self, slot: Slot) -> bool {
+        self.entries
+            .get(&slot)
+            .is_some_and(|entry| entry.timing == Timing::AfterTaps)
     }
 }
 
@@ -692,11 +702,30 @@ mod tests {
     }
 
     #[wasm_test]
+    fn a_value_from_a_run_of_taps_reads_so_until_confirmed() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(80.0, Timing::AfterTaps), unsendable);
+        pending.send_waiting(as_call(1));
+        assert!(pending.asked_by_taps(BRIGHTNESS), "still on its way");
+        pending.answered(id(1), SUCCEEDED);
+        pending.reported();
+        assert!(!pending.asked_by_taps(BRIGHTNESS));
+    }
+
+    #[wasm_test]
     fn a_report_says_whether_it_settled_a_request() {
         let mut pending = Pending::default();
         pending.submit(brightness(80.0, Timing::Now), as_call(1));
         pending.answered(id(1), SUCCEEDED);
         assert!(pending.reported());
         assert!(!pending.reported(), "nothing left to settle");
+    }
+
+    #[wasm_test]
+    fn a_value_sent_at_once_is_not_from_a_run_of_taps() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(80.0, Timing::Now), as_call(1));
+        assert!(pending.asked(BRIGHTNESS));
+        assert!(!pending.asked_by_taps(BRIGHTNESS));
     }
 }
