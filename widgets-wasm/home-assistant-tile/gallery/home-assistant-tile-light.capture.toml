@@ -1,0 +1,183 @@
+# A light's tile: each size, the kinds of light, and the states that change its look.
+
+size = "1400x600"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "1x1"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Size = "1x1"
+
+[[shot]]
+name = "2x1"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[[shot]]
+name = "2x2"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+
+[[shot]]
+name = "full"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Size = "Full"
+
+[[shot]]
+name = "off"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Position = "Off"
+
+[[shot]]
+name = "unknown"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Position = "Unknown"
+
+[[shot]]
+name = "1x1-off"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Size = "1x1"
+Position = "Off"
+
+[[shot]]
+name = "switch"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Kind = "Switch"
+
+[[shot]]
+name = "switch-off"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Kind = "Switch"
+Position = "Off"
+
+[[shot]]
+name = "dimmer-2x2"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Kind = "Dimmer"
+Size = "2x2"
+
+[[shot]]
+name = "white-showing-colour-2x2"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Kind = "White"
+Size = "2x2"
+"Showing a colour" = true
+
+[[shot]]
+name = "colour-showing-colour-2x2"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+"Showing a colour" = true
+
+[[shot]]
+name = "pale-colour-2x2"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+"Showing a colour" = true
+"Pale colour" = true
+
+[[shot]]
+name = "unknown-brightness"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Brightness = "Unknown"
+
+[[shot]]
+name = "pending"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+"Brightness on its way" = true
+Position = "Off"
+
+[[shot]]
+name = "neither"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Settings = "Neither"
+
+[[shot]]
+name = "neither-switch"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Settings = "Neither"
+Kind = "Switch"
+
+[[shot]]
+name = "unavailable"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Readiness = "Unavailable"
+Position = "Off"
+
+[[shot]]
+name = "reconnecting"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Readiness = "Reconnecting"
+
+[[shot]]
+name = "pressed"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+"Card pressed" = true
+
+[[shot]]
+name = "long-name"
+scene = "bmc_gallery::home_assistant_tile_light::Light"
+frames = 4
+
+[shot.knobs]
+Name = "Long"
+Size = "1x1"

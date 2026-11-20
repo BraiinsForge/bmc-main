@@ -52,6 +52,7 @@ pub enum Domain {
     Button,
     InputBoolean,
     InputButton,
+    Light,
     Remote,
     Scene,
     Script,
@@ -73,6 +74,7 @@ impl Domain {
             button::DOMAIN => Some(Self::Button),
             input_boolean::DOMAIN => Some(Self::InputBoolean),
             input_button::DOMAIN => Some(Self::InputButton),
+            light::DOMAIN => Some(Self::Light),
             remote::DOMAIN => Some(Self::Remote),
             scene::DOMAIN => Some(Self::Scene),
             script::DOMAIN => Some(Self::Script),
@@ -90,6 +92,7 @@ impl Domain {
             Self::Button => button::ATTRIBUTES,
             Self::InputBoolean => input_boolean::ATTRIBUTES,
             Self::InputButton => input_button::ATTRIBUTES,
+            Self::Light => light::ATTRIBUTES,
             Self::Remote => remote::ATTRIBUTES,
             Self::Scene => scene::ATTRIBUTES,
             Self::Script => script::ATTRIBUTES,
@@ -133,13 +136,14 @@ mod tests {
             Some(Domain::InputBoolean)
         );
         assert_eq!(Domain::of("input_button.gate"), Some(Domain::InputButton));
+        assert_eq!(Domain::of("light.kitchen"), Some(Domain::Light));
         assert_eq!(Domain::of("remote.living_room"), Some(Domain::Remote));
         assert_eq!(Domain::of("scene.evening"), Some(Domain::Scene));
         assert_eq!(Domain::of("script.wake_up"), Some(Domain::Script));
         assert_eq!(Domain::of("siren.hallway"), Some(Domain::Siren));
         assert_eq!(Domain::of("switch.kettle"), Some(Domain::Switch));
         for other in [
-            "light.kitchen",
+            "climate.living_room",
             "scene",
             "scene.",
             ".evening",

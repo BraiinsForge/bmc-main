@@ -2,7 +2,8 @@
 
 The Home Assistant Tile shows one entity from the user's Home Assistant and lets them operate it from the Deck, the way
 the Tile card does on a Home Assistant dashboard. The current version covers the entities that are pressed: buttons,
-scenes and scripts, and those that are switched on and off: switches, input booleans, automations, sirens and remotes.
+scenes and scripts; those that are switched on and off: switches, input booleans, automations, sirens and remotes; and
+lights.
 
 ## User stories
 
@@ -13,7 +14,7 @@ scenes and scripts, and those that are switched on and off: switches, input bool
 
 - The user saves a Home Assistant account once, with the instance's address and a long-lived access token, and binds it
   to the tile. See [Credential Accounts](../credential-accounts.md).
-- The tile asks for the entity ID, such as `button.garage_gate` or `scene.evening`, and refuses to save without one. Its
+- The tile asks for the entity ID, such as `scene.evening` or `light.kitchen`, and refuses to save without one. Its
   settings say which types it supports and where Home Assistant shows an entity's ID.
 - The tile shows the entity's name from Home Assistant, unless the user sets a name of their own.
 - A change made in Home Assistant, such as a press from its dashboard, shows on the Deck within about a second, without
@@ -65,21 +66,49 @@ scenes and scripts, and those that are switched on and off: switches, input bool
   stays shown.
 - An automation is on while enabled: the tile enables and disables it, and never runs it.
 
+### Switch and dim a light
+
+> As a user, I want to switch a light on and off and set its brightness and colour from the tile, so that I need not
+> reach for my phone.
+
+- The card is the light's switch: a tap turns it on or off, under the same tap and hold settings as a press. The bulb is
+  struck through while the light is off.
+- A flip shows at once, as Home Assistant's own toggle does. Home Assistant's next report replaces it, and when none
+  comes within 2 s of the answer, the tile shows the position Home Assistant reported last.
+- The line reads _On_ or _Off_, or the brightness, such as _60%_, on a tile with no brightness bar. A light whose
+  position Home Assistant does not know reads _Unknown_, with a _?_ on the corner of its icon, and a tap turns it on.
+- Where the tile has room, rows of controls sit beside or under the name, in this order: brightness − and + around a
+  bar, the colour temperature, the hue, and brightness presets of 25, 50, 75 and 100 %. Each shows only for a light that
+  takes it, and a tile with less room drops the last: 1x1 shows none, 2x1 two, 2x2 three and fullscreen all four.
+- − and + step the brightness to the next ten percent. − from 10 % or below turns the light off, and + turns a light
+  that is off back on at the brightness it had. A tap on the bar sets the brightness under the finger, never below 1 %,
+  so the bar never turns the light off.
+- The colour temperature and hue bars are painted in their colours, with a cursor at the light's value: on the colour
+  temperature while the light shows a white, on the hue while it shows a colour. − and + move a tenth of the light's
+  range or 30° of hue, and a tap sets the value under the finger. A hue goes out fully saturated.
+- A run of − and + taps goes to Home Assistant once the taps stop, drawn faint until Home Assistant confirms it; a tap
+  on a bar or a preset goes at once. A colour temperature replaces a hue still waiting to go, and the other way round,
+  and turning the light off drops whatever still waits.
+- A change that fails reads as a failed press does, and the tile returns to what Home Assistant reports.
+- The icon wears the light's colour or colour temperature, made readable as Home Assistant's own badge makes it: a pale
+  colour more vivid, a white one grey. A light that reports neither is amber, as are the brightness bar and presets,
+  where white would vanish under white text.
+
 ### Guard an action with a hold
 
 > As a user, I want an action that runs only when I hold the tile, so that a stray touch never opens the gate.
 
 - The _Tap action_ setting chooses whether a tap fires the action (_Toggle_) or does nothing (_Nothing_). _Toggle_ is
   Home Assistant's name for it, and does what Home Assistant's own toggle does: it presses a button, activates a scene,
-  starts or stops a script, and switches a switch.
+  starts or stops a script, and switches a switch or a light.
 - The _Hold to toggle_ setting fires the action once the tile is held for 1, 2, 3 or 5 s. A ring fills around the icon
   while the finger is down, and the action fires once per hold, even if the finger stays down.
 - The two settings are independent, as in Home Assistant: with both set, a tap fires the action as well. To guard an
   action, set a hold and set _Tap action_ to _Nothing_.
 - Where only a hold fires the action, the tile says so after the state, such as _5 minutes ago · Hold 2 s_, and letting
   go early reads _Released too early_. On a tile one row high, a state too long for both is cut short, never the hint.
-- Where neither a tap nor a hold is set, the tile reads _No action set_ and touches do nothing. A switch's tile instead
-  keeps showing its position, as a status that touches do not change.
+- Where neither a tap nor a hold is set, the tile reads _No action set_ and touches do nothing. A switch's or light's
+  tile instead keeps showing its position, as a status that touches on the card do not change; a light's rows still act.
 
 ### Know when the tile cannot act
 
@@ -94,15 +123,17 @@ scenes and scripts, and those that are switched on and off: switches, input bool
   _Invalid entity ID_, _Type not supported yet_, _No account set_, _Token refused_, _Use an http:// address_, _Home
   Assistant too old_, _Can't connect, retrying…_, _Communication error_ or _Entity not found_.
 - Orange text needs the user's attention: something to fix, or a touch that did not do what it should. A tile that
-  cannot act for now drops its colour and dims its icon; a switch's tile set to neither tap nor hold, a status that
-  takes no touch anyway, keeps its icon undimmed.
+  cannot act for now drops its colour and dims its icon; a switch's or light's tile set to neither tap nor hold, a
+  status that takes no touch on the card anyway, keeps its icon undimmed.
 
 ### Fit any tile size
 
 > As a user, I want the tile to look right in every slot I put it in, so that a scene of tiles reads as one.
 
-- On 1x1 and 2x1 tiles the icon is 80 px; on 2x2 and fullscreen tiles it is 128 px, with larger type, and _Hold N s_
-  sits on a row of its own.
+- On 1x1 and 2x1 tiles the icon is 80 px; on 2x2 and fullscreen tiles it is 128 px, with larger type. A tile without
+  controls puts _Hold N s_ on a row of its own there.
+- Controls sit beside the name on a 2x1 or fullscreen tile and under it on a 2x2 tile, which keeps the large icon only
+  while the controls fit under it.
 - A name or line too long for its row ends in an ellipsis, so neighbouring tiles keep one type size and their icons stay
   level.
 
@@ -135,6 +166,10 @@ To verify the tile, a test Home Assistant instance needs:
 - three template switches: one fixed to off whose `turn_on` and `turn_off` do nothing, for a device that ignores the
   call; one whose `turn_on` and `turn_off` call a script that does not exist, so Home Assistant refuses them; and one
   that reports an `input_boolean` it turns on or off after a 3 s delay, for a slow device;
+- the `demo` integration's lights, among them one that takes both a colour temperature and a colour; and three template
+  lights: one that only switches; one that dims, whose `turn_on`, `turn_off` and `set_level` call a script that does not
+  exist, so Home Assistant refuses them; and one that dims, reporting an `input_boolean` and an `input_number` it sets
+  after a 3 s delay, for a slow device;
 - a non-administrator user with a long-lived access token.
 
 In the Deck web app, save two Home Assistant accounts: one with that token and one with a wrong token.
@@ -158,7 +193,13 @@ In the Deck web app, save two Home Assistant accounts: one with that token and o
   scene, fires nothing and leaves no tint; each tap and hold combination behaves as described above. With a 1 s hold and
   _Tap action_ set to _Nothing_, a hold let go early and then held through at once reads _Pressing…_ in place of
   _Released too early_. A setting saved while a finger stays on the tile after its hold fired fires nothing more.
-- **Sizes:** the tile at every size, with a long name.
+- **Lights:** the card switches each light on and off, and a change made in Home Assistant shows on the Deck. −, +, the
+  bar and the presets set the brightness, and a run of taps sends one call, as Home Assistant's logbook shows. The
+  colour temperature and hue bars set the light, and the icon follows its colour. The light that only switches shows no
+  controls. The gallery's light capture shows the _Unknown_ state.
+- **Slow and refused lights:** on the slow light, + shows the new brightness faint until Home Assistant reports it; on
+  the one Home Assistant refuses, a preset springs back reading _Home Assistant refused_.
+- **Sizes:** the tile at every size, with a long name, and a colour light with the rows each size fits.
 - **Problems:** each message above, by unbinding the account, entering a malformed ID, an unsupported type and a missing
   entity, binding the wrong-token account, stopping Home Assistant before and after the tile starts, and disabling an
   entity's integration. _Home Assistant too old_, _Communication error_ and _Use an http:// address_ need an instance
@@ -168,10 +209,12 @@ In the Deck web app, save two Home Assistant accounts: one with that token and o
 ## Constraints
 
 - BMC100 only, at every widget size: 1x1, 2x1, 2x2 and fullscreen.
-- Buttons, input buttons, scenes, scripts, switches, input booleans, automations, sirens and remotes only; other entity
-  types read _Type not supported yet_ until the tile supports them.
+- Buttons, input buttons, scenes, scripts, switches, input booleans, automations, sirens, remotes and lights only; other
+  entity types read _Type not supported yet_ until the tile supports them.
 - A switch whose state Home Assistant only assumes (`assumed_state`), such as a radio outlet, is flipped like any other:
   the tile cannot send _on_ to one it shows on.
+- A light's colour is set by its hue alone, at full saturation; its saturation, effects and favourite colours cannot be
+  set from the tile yet.
 - Home Assistant 2024.3 or newer, reached over plain `http://`; encrypted connections are not supported yet.
 - Each type is drawn with the tile's icon for that type rather than the entity's own.
 - An entity Home Assistant reports as unavailable keeps its type's icon under the orange _!_, the same for every type,

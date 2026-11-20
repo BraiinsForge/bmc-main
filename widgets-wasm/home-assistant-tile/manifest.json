@@ -5,7 +5,7 @@
   "name": "Home Assistant",
   "subname": "Tile",
   "description": "Show a Home Assistant entity and control it",
-  "config_help": "Shows one thing from your Home Assistant, such as a button, a scene or a switch, as a tile on the Deck, and presses or switches it with a tap or a hold. It works like Home Assistant's [Tile card](https://www.home-assistant.io/dashboards/tile/).\n\n**What it can show:** buttons, scenes, scripts, switches, input booleans (*Toggle* helpers), automations, sirens and remotes. Their entity IDs start with `button.`, `input_button.`, `scene.`, `script.`, `switch.`, `input_boolean.`, `automation.`, `siren.` or `remote.`. The tile turns an automation on and off; it does not run it. For anything else, the tile says *Type not supported yet*.\n\n**Where to find the entity ID**, which looks like `scene.evening`:\n\n- In Home Assistant, open *Settings → Devices & services → Entities*.\n- Search for the thing by its name and click it.\n- In the window that opens, click the cogwheel (⚙) in the top right corner.\n- Copy the text in the *Entity ID* box and paste it into *Entity ID* in this form below.\n\nClicking the thing on a dashboard opens the same window. If you don't see *Settings*, ask whoever set up your Home Assistant.",
+  "config_help": "Shows one thing from your Home Assistant, such as a button, a switch or a light, as a tile on the Deck, and presses or switches it with a tap or a hold. A larger tile also shows a light's brightness and colour. It works like Home Assistant's [Tile card](https://www.home-assistant.io/dashboards/tile/).\n\n**What it can show:** buttons, scenes, scripts, switches, input booleans (*Toggle* helpers), automations, sirens, remotes and lights. Their entity IDs start with `button.`, `input_button.`, `scene.`, `script.`, `switch.`, `input_boolean.`, `automation.`, `siren.`, `remote.` or `light.` The tile turns an automation on and off; it does not run it. For anything else, the tile says *Type not supported yet*.\n\n**Where to find the entity ID**, which looks like `scene.evening`:\n\n- In Home Assistant, open *Settings → Devices & services → Entities*.\n- Search for the thing by its name and click it.\n- In the window that opens, click the cogwheel (⚙) in the top right corner.\n- Copy the text in the *Entity ID* box and paste it into *Entity ID* in this form below.\n\nClicking the thing on a dashboard opens the same window. If you don't see *Settings*, ask whoever set up your Home Assistant.",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
@@ -35,7 +35,7 @@
   "params": {
     "entity_id": {
       "name": "Entity ID",
-      "description": "The entity the tile shows, such as button.garage_gate, scene.evening or switch.kettle. See the help above.",
+      "description": "The entity the tile shows, such as scene.evening, switch.kettle or light.kitchen. See the help above.",
       "type": "string",
       "default_value": ""
     },

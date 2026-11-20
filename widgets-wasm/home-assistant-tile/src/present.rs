@@ -23,6 +23,7 @@
 //!
 //! The crate README describes a group module's shape.
 
+pub mod light;
 pub mod momentary;
 pub mod switch;
 
@@ -374,6 +375,7 @@ pub trait Presenter {
 pub enum Group {
     Momentary(momentary::Kind),
     Switch(switch::Kind),
+    Light,
 }
 
 impl Group {
@@ -390,6 +392,7 @@ impl Group {
             Domain::Remote => Some(Self::Switch(switch::Kind::Remote)),
             Domain::Siren => Some(Self::Switch(switch::Kind::Siren)),
             Domain::Switch => Some(Self::Switch(switch::Kind::Switch)),
+            Domain::Light => Some(Self::Light),
         }
     }
 
@@ -399,6 +402,7 @@ impl Group {
         match self {
             Self::Momentary(kind) => kind.icon(),
             Self::Switch(kind) => kind.icon(),
+            Self::Light => light::icon(),
         }
     }
 
@@ -415,6 +419,7 @@ impl Group {
                 &switch::State::read(kind, entity),
                 context,
             )),
+            Self::Light => Box::new(light::Tile::new(&light::State::read(entity), context)),
         }
     }
 }
@@ -585,13 +590,14 @@ mod tests {
         assert_eq!(group_of(Some("gate")), Err(Problem::InvalidEntityId));
         assert_eq!(group_of(Some("Button.Gate")), Err(Problem::InvalidEntityId));
         assert_eq!(
-            group_of(Some("light.kitchen")),
+            group_of(Some("climate.living_room")),
             Err(Problem::UnsupportedDomain)
         );
         assert_eq!(
             group_of(Some("button.gate")),
             Ok(Group::Momentary(momentary::Kind::Button))
         );
+        assert_eq!(group_of(Some("light.kitchen")), Ok(Group::Light));
         let switches = [
             ("switch.kettle", switch::Kind::Switch),
             ("input_boolean.guests", switch::Kind::InputBoolean),

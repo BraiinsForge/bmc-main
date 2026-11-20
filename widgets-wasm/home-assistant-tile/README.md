@@ -61,8 +61,9 @@ answer for the rest.
 1. Library: `domain/<name>.rs` with its `ATTRIBUTES`, readers and service builders, named after the service. Test the
    readers on an entity built with `Entity::tracked(state, attributes, ATTRIBUTES)`.
 2. Library: a `Domain` variant, with its arms in `Domain::of` and `Domain::attributes`.
-3. Tile: a `Kind` in the group it joins, or a new `present/<group>.rs` with `State` and `Tile`, a `Kind` once it covers
-   two domains, its slots as `Slot` consts and its icons from `assets/mdi/`.
+3. Tile: a `Kind` in the group it joins, or a new `present/<group>.rs` with `State` and `Tile`, split into
+   `present/<group>/mod.rs` and `tests.rs` once its tests outgrow the file, a `Kind` once it covers two domains, its
+   slots as `Slot` consts and its icons from `assets/mdi/`.
 4. Tile: its arm in `Group::of`, and for a new group a `Group` variant and its arms in `Group::icon` and `Group::tile`.
    The compiler points at each.
 5. Gallery: `gallery/home_assistant_tile_<group>.scene.rs` on the shared `fixtures`, its
