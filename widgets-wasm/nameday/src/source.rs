@@ -84,19 +84,19 @@ fn ms_to_next_local_midnight() -> u32 {
 /// Whether localized date in timestamp falls on the current local calendar date. Used to tell
 /// whether the cached data was downloaded today and is therefore still current.
 pub(super) fn is_today(time_with_timezone: &TimeWithTimezone) -> bool {
-    let now = SystemTime::now();
     let tz = system::current().timezone().map(Tz::from_runtime);
-    let local_now = tz
-        .as_ref()
+    is_same_local_date(time_with_timezone, SystemTime::now(), tz.as_ref())
+}
+
+/// Whether `then`, read in its own timezone, falls on the date `now` reads in `now_tz`,
+/// or in UTC when the device has no timezone.
+fn is_same_local_date(then: &TimeWithTimezone, now: SystemTime, now_tz: Option<&Tz>) -> bool {
+    let local_now = now_tz
         .and_then(|tz| now.local(tz))
         .unwrap_or_else(|| now.utc());
+    let local_then = then.time.local(&then.tz).unwrap_or_else(|| then.time.utc());
 
-    let local_time = time_with_timezone
-        .time
-        .local(&time_with_timezone.tz)
-        .unwrap_or_else(|| time_with_timezone.time.utc());
-
-    local_now.month == local_time.month && local_now.day == local_time.day
+    (local_now.month, local_now.day) == (local_then.month, local_then.day)
 }
 
 impl NamedaySource {
@@ -221,5 +221,99 @@ impl NamedaySource {
             // If response is not OK, poll engine will reschedule new fetch automatically.
             log_warn!("nameday: fetch failed (status {})", response.status);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_wasm_sdk::{SystemTime, tz, wasm_test};
+
+    use super::{TimeWithTimezone, is_same_local_date};
+
+    /// 18 June 2026, 12:00 in Prague.
+    const NOON: i64 = 1_781_776_800;
+    /// 18 June 2026, 23:30 in Prague; 06:30 on the 19th in Tokyo.
+    const HALF_PAST_ELEVEN: i64 = 1_781_818_200;
+    /// 18 June 2026, 23:59 in Prague.
+    const MINUTE_TO_MIDNIGHT: i64 = 1_781_819_940;
+    /// 19 June 2026, 00:01 in Prague; still 18 June in UTC.
+    const MINUTE_PAST_MIDNIGHT: i64 = 1_781_820_060;
+
+    fn asked_in_prague(unix_secs: i64) -> TimeWithTimezone {
+        TimeWithTimezone {
+            time: SystemTime { unix_secs },
+            tz: tz!("Europe/Prague"),
+        }
+    }
+
+    fn in_prague(then: i64, now: i64) -> bool {
+        is_same_local_date(
+            &asked_in_prague(then),
+            SystemTime { unix_secs: now },
+            Some(&tz!("Europe/Prague")),
+        )
+    }
+
+    #[wasm_test]
+    fn names_asked_earlier_that_day_stay_current() {
+        assert!(
+            in_prague(NOON, MINUTE_TO_MIDNIGHT),
+            "noon's names serve until midnight; a miss would refetch them every minute"
+        );
+    }
+
+    #[wasm_test]
+    fn names_turn_stale_at_local_midnight() {
+        assert!(
+            !in_prague(MINUTE_TO_MIDNIGHT, MINUTE_PAST_MIDNIGHT),
+            "two minutes later it is the next day, whose names have to be fetched"
+        );
+    }
+
+    #[wasm_test]
+    fn names_asked_abroad_count_on_the_date_they_were_asked_for() {
+        assert!(
+            is_same_local_date(
+                &TimeWithTimezone {
+                    time: SystemTime {
+                        unix_secs: HALF_PAST_ELEVEN
+                    },
+                    tz: tz!("Asia/Tokyo"),
+                },
+                SystemTime {
+                    unix_secs: MINUTE_PAST_MIDNIGHT
+                },
+                Some(&tz!("Europe/Prague")),
+            ),
+            "asked on the 19th in Tokyo, the names serve Prague's 19th, though UTC is still on the 18th"
+        );
+    }
+
+    #[wasm_test]
+    fn a_device_without_a_timezone_reads_today_in_utc() {
+        assert!(
+            is_same_local_date(
+                &asked_in_prague(MINUTE_TO_MIDNIGHT),
+                SystemTime {
+                    unix_secs: MINUTE_PAST_MIDNIGHT
+                },
+                None,
+            ),
+            "00:01 in Prague is still the 18th in UTC, the date the names were asked for"
+        );
+    }
+
+    #[wasm_test]
+    fn a_timezone_past_midnight_moves_today_on() {
+        assert!(
+            !is_same_local_date(
+                &asked_in_prague(HALF_PAST_ELEVEN),
+                SystemTime {
+                    unix_secs: HALF_PAST_ELEVEN
+                },
+                Some(&tz!("Asia/Tokyo")),
+            ),
+            "moved to Tokyo, the device is already on the 19th, so Prague's 18th is past"
+        );
     }
 }
