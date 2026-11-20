@@ -46,8 +46,9 @@ pub trait Presenter {
 }
 ```
 
-A request comes from `Request::flip`, `number`, `choice` or `no_value`, which also say when it ends: on the call's
-answer, or on Home Assistant's next report for an on or off.
+A request comes from `Request::flip`, `number`, `choice` or `no_value`, which also say when it ends: on Home Assistant's
+next report for an on or off, on the call's answer and a report since it went out for a number or a choice, and on the
+answer for the rest.
 
 ## Adding a domain
 

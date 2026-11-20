@@ -52,9 +52,11 @@ mod wasm_glue {
     const SLOT: &str = "ha";
     /// How long the taps in a run must stop for before their change is sent: the shortest a timer runs.
     const QUIET_MS: u32 = 1_000;
-    /// The frontend's toggle waits this long after its call for a report before showing the reported position.
+    /// The frontend's toggle waits this long after its call for a report before showing the reported position;
+    /// a value asked on the tile waits as long.
     const GRACE_MS: u32 = 2_000;
-    /// A report from Home Assistant shows within this long, and a run of them is drawn once in it.
+    /// A report from Home Assistant shows within this long, and a run of them is drawn once in it;
+    /// one confirming a change made on the tile shows at once.
     const REPORT_FRAME_MS: u32 = 1_000;
 
     struct Followed {
@@ -207,8 +209,11 @@ mod wasm_glue {
     fn on_event(_client: &Client, event: &Event) {
         match event {
             Event::EntityChanged { .. } => {
-                STATE.with_borrow_mut(|state| state.pending.reported());
-                request_frame_after(REPORT_FRAME_MS);
+                if STATE.with_borrow_mut(|state| state.pending.reported()) {
+                    request_frame();
+                } else {
+                    request_frame_after(REPORT_FRAME_MS);
+                }
             }
             Event::CallFinished { call, result } => {
                 answered(*call, result.as_ref().map(|_| ()));

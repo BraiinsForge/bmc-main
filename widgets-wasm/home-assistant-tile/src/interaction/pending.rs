@@ -21,9 +21,9 @@
 //! What the user asked of the entity and Home Assistant has yet to confirm,
 //! shown in place of what Home Assistant reports, each under the slot it is shown in.
 //!
-//! A request settles either on its call's answer, as the frontend's `PendingValueSync` keeps a value,
-//! or on the next report, as its `ha-entity-toggle` keeps an on or off: see [`Settles`].
-//! A report settles one even while its call is in flight: a lock that jams while locking reports `jammed`,
+//! A request settles on its call's answer, on the next report, as the frontend's `ha-entity-toggle` keeps an on or off,
+//! or on a successful answer and a report since the call went out, in either order, as a value does: see [`Settles`].
+//! A report settles an on or off even while its call is in flight: a lock that jams while locking reports `jammed`,
 //! and nothing more. A switch that ignores the call reports nothing, hence [`Pending::give_up`].
 
 use std::collections::HashMap;
@@ -66,13 +66,19 @@ pub enum Timing {
     AfterTaps,
 }
 
-/// What settles a request, besides its call failing: the call's answer,
-/// or Home Assistant's next report, which can come before the answer.
+/// What settles a request, besides its call failing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Settles {
     OnAnswer,
-    /// The next report, or [`Pending::give_up`] if none comes in time.
+    /// The next report, which can come before the answer, or [`Pending::give_up`] if none comes in time.
     OnReport,
+    /// The call succeeding and a report since it went out, in either order,
+    /// or [`Pending::give_up`] if none comes in time.
+    /// Home Assistant answers once the service has run, so an integration that writes the state in the service
+    /// reports before the answer; one from before the call went out confirms nothing.
+    /// Any report since then counts, even one a slow device sent for an earlier change:
+    /// its value shows until the next report, as the frontend's controls follow every report.
+    OnAnswerAndReport,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,7 +107,7 @@ impl Request {
             Wanted::Number(number),
             call,
             timing,
-            Settles::OnAnswer,
+            Settles::OnAnswerAndReport,
         )
     }
 
@@ -112,7 +118,7 @@ impl Request {
             Wanted::Choice(choice),
             call,
             Timing::Now,
-            Settles::OnAnswer,
+            Settles::OnAnswerAndReport,
         )
     }
 
@@ -173,8 +179,21 @@ pub enum Answered<F> {
 #[derive(Debug, Clone, PartialEq)]
 enum Stage {
     Waiting(ServiceCall),
-    Sent(CallId),
+    Sent {
+        id: CallId,
+        /// Home Assistant reported the entity while the call was out.
+        reported: bool,
+    },
     AwaitingReport,
+}
+
+impl Stage {
+    fn sent(id: CallId) -> Self {
+        Self::Sent {
+            id,
+            reported: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -216,7 +235,7 @@ impl Pending {
             Timing::Now => match send(&call) {
                 Ok(id) => {
                     self.unanswered.push(id);
-                    (Stage::Sent(id), Submitted::Sent)
+                    (Stage::sent(id), Submitted::Sent)
                 }
                 Err(error) => {
                     // A request still waiting for taps would go out after the user asked for something else.
@@ -256,7 +275,7 @@ impl Pending {
             match send(call) {
                 Ok(id) => {
                     unanswered.push(id);
-                    entry.stage = Stage::Sent(id);
+                    entry.stage = Stage::sent(id);
                     true
                 }
                 Err(error) => {
@@ -278,33 +297,47 @@ impl Pending {
         let Some((&slot, entry)) = self
             .entries
             .iter_mut()
-            .find(|(_, entry)| matches!(entry.stage, Stage::Sent(id) if id == call))
+            .find(|(_, entry)| matches!(entry.stage, Stage::Sent { id, .. } if id == call))
         else {
             return result.err().map(|failure| Answered::Failed {
                 slot: None,
                 failure,
             });
         };
-        let answered = match (result, entry.settles) {
-            (Err(failure), _) => Answered::Failed {
+        let reported = matches!(entry.stage, Stage::Sent { reported: true, .. });
+        let answered = match (result, entry.settles, reported) {
+            (Err(failure), _, _) => Answered::Failed {
                 slot: Some(slot),
                 failure,
             },
-            (Ok(()), Settles::OnReport) => {
+            (Ok(()), Settles::OnReport, _) | (Ok(()), Settles::OnAnswerAndReport, false) => {
                 entry.stage = Stage::AwaitingReport;
                 return Some(Answered::AwaitingReport);
             }
-            (Ok(()), Settles::OnAnswer) => Answered::Done,
+            (Ok(()), Settles::OnAnswer, _) | (Ok(()), Settles::OnAnswerAndReport, true) => {
+                Answered::Done
+            }
         };
         self.entries.remove(&slot);
         Some(answered)
     }
 
-    /// Home Assistant reported the entity: a request that settles on a report does, unless it still waits for taps.
-    pub fn reported(&mut self) {
-        self.entries.retain(|_, entry| {
-            entry.settles == Settles::OnAnswer || matches!(entry.stage, Stage::Waiting(_))
-        });
+    /// Home Assistant reported the entity: a request that settles on this report does,
+    /// and one still waiting for its answer notes the report.
+    /// Returns whether one settled.
+    pub fn reported(&mut self) -> bool {
+        let before = self.entries.len();
+        self.entries
+            .retain(|_, entry| match (entry.settles, &mut entry.stage) {
+                (Settles::OnAnswerAndReport, Stage::Sent { reported, .. }) => {
+                    *reported = true;
+                    true
+                }
+                (_, Stage::Waiting(_)) | (Settles::OnAnswer, _) => true,
+                (Settles::OnReport, Stage::Sent { .. })
+                | (Settles::OnReport | Settles::OnAnswerAndReport, Stage::AwaitingReport) => false,
+            });
+        self.entries.len() < before
     }
 
     /// No report came in time: a request whose call succeeded and that waits for one shows what Home Assistant reports.
@@ -381,14 +414,50 @@ mod tests {
     }
 
     #[wasm_test]
-    fn a_value_shows_at_once_and_lasts_until_its_call_is_answered() {
+    fn a_value_shows_at_once_and_lasts_until_its_answer_and_a_report_after_it() {
         let mut pending = Pending::default();
         assert_eq!(
             pending.submit(brightness(80.0, Timing::Now), as_call(1)),
             Submitted::Sent
         );
         assert_eq!(pending.number(BRIGHTNESS), Some(80.0));
+        assert_eq!(
+            pending.answered(id(1), SUCCEEDED),
+            Some(Answered::AwaitingReport)
+        );
+        assert_eq!(pending.number(BRIGHTNESS), Some(80.0));
+        pending.reported();
+        assert_eq!(pending.number(BRIGHTNESS), None);
+    }
+
+    #[wasm_test]
+    fn a_report_while_the_call_is_out_settles_the_value_on_its_answer() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(80.0, Timing::Now), as_call(1));
+        assert!(!pending.reported(), "the call can still fail");
+        assert_eq!(pending.number(BRIGHTNESS), Some(80.0));
         assert_eq!(pending.answered(id(1), SUCCEEDED), Some(Answered::Done));
+        assert_eq!(pending.number(BRIGHTNESS), None);
+    }
+
+    #[wasm_test]
+    fn a_report_before_the_call_went_out_confirms_nothing() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(80.0, Timing::AfterTaps), unsendable);
+        pending.reported();
+        pending.send_waiting(as_call(1));
+        assert_eq!(
+            pending.answered(id(1), SUCCEEDED),
+            Some(Answered::AwaitingReport)
+        );
+    }
+
+    #[wasm_test]
+    fn a_value_with_no_report_after_its_answer_gives_up() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(80.0, Timing::Now), as_call(1));
+        pending.answered(id(1), SUCCEEDED);
+        pending.give_up();
         assert_eq!(pending.number(BRIGHTNESS), None);
     }
 
@@ -414,7 +483,10 @@ mod tests {
         let mut pending = Pending::default();
         pending.submit(brightness(80.0, Timing::AfterTaps), unsendable);
         pending.send_waiting(as_call(1));
-        assert_eq!(pending.answered(id(1), SUCCEEDED), Some(Answered::Done));
+        assert_eq!(
+            pending.answered(id(1), SUCCEEDED),
+            Some(Answered::AwaitingReport)
+        );
     }
 
     #[wasm_test]
@@ -538,13 +610,9 @@ mod tests {
     }
 
     #[wasm_test]
-    fn a_choice_asked_to_end_on_a_report_waits_for_one() {
+    fn a_choice_lasts_until_its_answer_and_a_report_after_it() {
         let mut pending = Pending::default();
-        let heat = Request {
-            settles: Settles::OnReport,
-            ..Request::choice(MODE, "heat".to_owned(), call())
-        };
-        pending.submit(heat, as_call(1));
+        pending.submit(Request::choice(MODE, "heat".to_owned(), call()), as_call(1));
         assert_eq!(
             pending.answered(id(1), SUCCEEDED),
             Some(Answered::AwaitingReport)
@@ -621,5 +689,14 @@ mod tests {
         assert_eq!(pending.on(BRIGHTNESS), None);
         assert_eq!(pending.choice(BRIGHTNESS), None);
         assert_eq!(pending.number(POWER), None);
+    }
+
+    #[wasm_test]
+    fn a_report_says_whether_it_settled_a_request() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(80.0, Timing::Now), as_call(1));
+        pending.answered(id(1), SUCCEEDED);
+        assert!(pending.reported());
+        assert!(!pending.reported(), "nothing left to settle");
     }
 }
