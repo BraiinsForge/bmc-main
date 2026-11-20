@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import final
 
 import pytest
+from rich.console import Console
+from rich.text import Text
 
 from bmc_tui import console, device, ssh
 from bmc_tui.device import Device, RemotePath, _RealExec
@@ -166,6 +168,20 @@ def stuck() -> Iterator[SharedConnections]:
         yield connections
     master.stop()
     shutil.rmtree(path.parent)
+
+
+@pytest.fixture
+def rendered(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> Callable[[Abort], str]:
+    """What `entrypoint` shows for an Abort, which it prints as markup."""
+    monkeypatch.setattr(console, "console", Console(stderr=True, width=200))
+
+    def render(abort: Abort) -> str:
+        console.error(abort.hint)
+        return Text.from_ansi(capsys.readouterr().err).plain
+
+    return render
 
 
 def test_every_ssh_to_a_device_shares_one_connection(
@@ -754,24 +770,49 @@ def test_a_forward_in_a_run_is_held_by_its_connection_until_the_block_ends(
 
 
 def test_a_forward_its_connection_refuses_aborts_without_logging_in_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rendered: Callable[[Abort], str]
 ) -> None:
     _ = _fake_ssh(tmp_path, monkeypatch, _FORWARDING_SSH)
     refusing = _Master(
         failing="forward",
-        error=subprocess.CalledProcessError(255, ["ssh"], stderr="Port forwarding failed"),
+        error=subprocess.CalledProcessError(255, ["ssh"], stderr="Port forwarding [/x] failed"),
     )
     connections = SharedConnections(refusing)
     try:
-        with (
-            pytest.raises(Abort, match="Port forwarding failed"),
-            Device("deck", connections=connections).forward(80),
-        ):
+        with pytest.raises(Abort) as aborted, Device("deck", connections=connections).forward(80):
             pytest.fail("a refused forward must not yield")
     finally:
         connections.close()
 
+    assert "Port forwarding [/x] failed" in rendered(aborted.value)
     assert len(_ssh_calls(tmp_path)) == 1, "only the ssh opening the connection, no second login"
+
+
+def test_a_forward_whose_login_fails_shows_what_ssh_said_word_for_word(
+    shared: SharedConnections, rendered: Callable[[Abort], str]
+) -> None:
+    refused = subprocess.CalledProcessError(255, ["ssh"], stderr="channel [/x] refused")
+    dev = Device("[fe80::1]", backend=_FakeExec(error=refused), connections=shared)
+
+    with pytest.raises(Abort) as aborted, dev.forward(80):
+        pytest.fail("a failed login must not yield")
+
+    assert "forwarding root@[fe80::1]:80 failed (ssh exit 255): channel [/x] refused" in (
+        rendered(aborted.value)
+    )
+
+
+def test_a_tunnel_whose_ssh_exits_shows_what_it_said_word_for_word(
+    rendered: Callable[[Abort], str],
+) -> None:
+    argv = ["sh", "-c", "echo 'bind [/x] failed' >&2; exit 255"]
+    with (
+        subprocess.Popen(argv, stderr=subprocess.PIPE, text=True) as proc,
+        pytest.raises(Abort) as aborted,
+    ):
+        device._await_listening(proc, device._free_port(), "the tunnel")
+
+    assert "the tunnel failed (ssh exit 255): bind [/x] failed" in rendered(aborted.value)
 
 
 def test_a_forward_cut_short_still_cancels_its_forward(

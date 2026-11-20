@@ -152,6 +152,18 @@ def test_a_report_stays_on_stderr_unless_both_streams_are_terminals(
     assert stdout.getvalue() == ""
 
 
+@pytest.mark.parametrize("report", [console.ok, console.warn, console.error, console.cmd_output])
+@pytest.mark.parametrize("text", ["deck:x: No such file", "2001:db8:a:b::1"])
+def test_a_report_keeps_text_that_reads_as_an_emoji_code(
+    monkeypatch: pytest.MonkeyPatch, report: Callable[[str], None], text: str
+) -> None:
+    stdout, stderr = _streams(monkeypatch, stdout_terminal=False, stderr_terminal=False)
+
+    report(text)
+
+    assert text in stdout.getvalue() + stderr.getvalue()
+
+
 def test_a_redirected_stderr_stays_there_under_force_color(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

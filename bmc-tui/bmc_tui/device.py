@@ -92,11 +92,11 @@ def _await_listening(proc: "subprocess.Popen[str]", port: int, what: str) -> Non
         if proc.poll() is not None:
             stderr_pipe: IO[str] | None = proc.stderr
             stderr = stderr_pipe.read().strip() if stderr_pipe is not None else ""
-            raise Abort(f"{what} failed (ssh exit {proc.returncode}): {stderr}")
+            raise Abort(escape(f"{what} failed (ssh exit {proc.returncode}): {stderr}"))
         if _listening(port):
             return
         if time.monotonic() >= deadline:
-            raise Abort(f"{what}: no listener within {_FORWARD_TIMEOUT_S:.0f}s")
+            raise Abort(escape(f"{what}: no listener within {_FORWARD_TIMEOUT_S:.0f}s"))
         time.sleep(0.1)
 
 
@@ -271,14 +271,14 @@ class Device:
             _ = self._exec.run(self._ssh_argv("true"))
         except subprocess.CalledProcessError as e:
             said = _captured_text(cast("str | bytes | None", e.stderr)).strip()
-            raise Abort(f"{what} failed (ssh exit {e.returncode}): {said}") from None
+            raise Abort(escape(f"{what} failed (ssh exit {e.returncode}): {said}")) from None
         # Picked only now, so the time a password takes cannot let another process take it
         local_port = _free_port()
         spec = f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
         try:
             self._connections.add_forward(self.login, spec)
         except ssh.ControlError as e:
-            raise Abort(f"{what}: {e}") from None
+            raise Abort(escape(f"{what}: {e}")) from None
         try:
             yield f"127.0.0.1:{local_port}"
         except BaseException:
@@ -293,7 +293,7 @@ class Device:
             try:
                 self._cancel_forward(self._connections, spec, local_port)
             except ssh.ControlError as e:
-                raise Abort(f"{what}: {e}") from None
+                raise Abort(escape(f"{what}: {e}")) from None
 
     def _end_connections(self) -> None:
         # Every login of the run, as a run addresses one device, by name and by its pinned address.

@@ -96,6 +96,16 @@ def test_best_effort_warns_on_stderr_and_swallows_the_failure(
     assert captured.out == ""
 
 
+def test_best_effort_warns_of_a_failure_that_reads_as_markup_word_for_word(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def boom() -> None:
+        raise OSError("[/x]")
+
+    best_effort(boom)
+    assert "cleanup failed: [/x]" in capsys.readouterr().err
+
+
 # ── stage wrapper ────────────────────────────────────────────────────────────
 
 
@@ -175,6 +185,19 @@ def test_the_finished_alert_says_how_long_the_run_took(monkeypatch: pytest.Monke
     main()
 
     assert alerts.bodies == ["took 4 min 12 s"]
+
+
+def test_the_failed_alert_says_why_as_plain_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    alerts = _Alerts(monkeypatch)
+
+    @entrypoint
+    def main() -> None:
+        raise Abort(f"{console.lit('root@[fe80::1]')} refused \\[/x] from 2001:db8:a:b::1")
+
+    with pytest.raises(SystemExit):
+        main()
+
+    assert alerts.bodies == ["root@[fe80::1] refused [/x] from 2001:db8:a:b::1"]
 
 
 def test_the_finished_alert_names_the_module_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

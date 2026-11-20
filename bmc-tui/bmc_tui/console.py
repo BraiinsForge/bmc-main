@@ -109,7 +109,9 @@ _MAX_BLANK = 2
 _LITERAL = "magenta"
 
 
-def line(*args: object, style: str | None = None, highlight: bool = True) -> None:
+def line(
+    *args: object, style: str | None = None, highlight: bool = True, emoji: bool = True
+) -> None:
     """Print with blank line collapsing."""
     global _blank_count  # noqa: PLW0603
     is_blank = not args or (len(args) == 1 and args[0] == "")
@@ -119,7 +121,7 @@ def line(*args: object, style: str | None = None, highlight: bool = True) -> Non
             out.print()
     else:
         _blank_count = 0
-        out.print(*args, style=style, highlight=highlight)
+        out.print(*args, style=style, highlight=highlight, emoji=emoji)
 
 
 Level = Literal["info", "success", "warn", "error"]
@@ -190,7 +192,7 @@ def blank() -> None:
 
 def ok(msg: str) -> None:
     """Print a success message (literals in `msg` may use console.lit)."""
-    line(f"[green]✓[/green] {msg}", highlight=False)
+    line(f"[green]✓[/green] {msg}", highlight=False, emoji=False)
 
 
 def _diagnostics() -> Console:
@@ -203,12 +205,14 @@ def _diagnostics() -> Console:
 def warn(msg: str, *, soft_wrap: bool = False) -> None:
     """Print a warning.
     `soft_wrap` leaves wrapping to the terminal, so Rich splits no line of `msg` apart."""
-    _diagnostics().print(f"[yellow]⚠[/yellow] {msg}", highlight=False, soft_wrap=soft_wrap)
+    _diagnostics().print(
+        f"[yellow]⚠[/yellow] {msg}", highlight=False, emoji=False, soft_wrap=soft_wrap
+    )
 
 
 def error(msg: str) -> None:
     """Print an error (literals in `msg` may use console.lit)."""
-    _diagnostics().print(f"[red]✗[/red] {msg}", highlight=False)
+    _diagnostics().print(f"[red]✗[/red] {msg}", highlight=False, emoji=False)
 
 
 def kv(key: str, value: str) -> None:
@@ -256,7 +260,7 @@ def cmd_output(text: str) -> None:
     not parse as rich markup — and auto-highlighting is off so lines stay
     uniform dim, not piecemeal-styled."""
     for line in text.rstrip().splitlines():
-        _diagnostics().print(f" [dim]{escape(line)}[/dim]", highlight=False)
+        _diagnostics().print(f" [dim]{escape(line)}[/dim]", highlight=False, emoji=False)
 
 
 def note(text: str) -> None:

@@ -39,6 +39,7 @@ from typing import ParamSpec, cast, get_type_hints
 
 import tyro
 from rich.markup import escape
+from rich.text import Text
 from rich.traceback import install as install_rich_traceback
 
 from bmc_tui import console, exits, ssh
@@ -94,7 +95,7 @@ def best_effort(action: Callable[[], object]) -> None:
     try:
         _ = action()
     except Exception as e:
-        console.warn(f"cleanup failed: {e}")
+        console.warn(f"cleanup failed: {escape(str(e))}")
 
 
 def stage(
@@ -194,7 +195,8 @@ def entrypoint(main: Callable[..., None], *, name: str | None = None) -> Callabl
                 main(tyro.cli(args_type, args=argv))  # pyright: ignore[reportAny]
         except Abort as e:
             console.error(e.hint)
-            console.alert("run failed", body=e.hint, level="error")
+            reason = Text.from_markup(e.hint, emoji=False).plain
+            console.alert("run failed", body=reason, level="error")
             raise SystemExit(1) from e
         except subprocess.CalledProcessError as e:
             command = cast("str | list[str]", e.cmd)
