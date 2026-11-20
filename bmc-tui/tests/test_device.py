@@ -21,16 +21,21 @@
 """Unit tests for the SSH device transport."""
 
 import errno
+import gc
+import inspect
+import os
+import shlex
 import shutil
 import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import suppress
 from pathlib import Path
-from typing import final
+from typing import cast, final
 
 import pytest
 from rich.console import Console
@@ -182,6 +187,16 @@ def rendered(
         return Text.from_ansi(capsys.readouterr().err).plain
 
     return render
+
+
+@pytest.fixture
+def stderr_holder(tmp_path: Path) -> Iterator[str]:
+    """Shell that leaves a process holding stderr open, as an ssh proxy would.
+    It is killed after the test, so neither it nor the thread draining its pipe outlives it."""
+    pid_file = tmp_path / "holder.pid"
+    yield f"sleep 5 < /dev/null & echo $! > {shlex.quote(str(pid_file))}"
+    with suppress(FileNotFoundError, ProcessLookupError):
+        os.kill(int(pid_file.read_text()), signal.SIGKILL)
 
 
 def test_every_ssh_to_a_device_shares_one_connection(
@@ -419,6 +434,95 @@ def test_an_upload_cut_short_after_its_child_died_raises_what_cut_it_short() -> 
         _RealExec().stream(["sh", "-c", "exit 0"], chunks())
 
 
+def test_an_upload_cut_short_does_not_wait_for_whatever_else_holds_its_stderr(
+    stderr_holder: str,
+) -> None:
+    def chunks() -> Iterator[bytes]:
+        yield b"x"
+        time.sleep(0.2)
+        raise RuntimeError("stopped")
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError):
+        _RealExec().stream(["sh", "-c", f"{stderr_holder}; exec sleep 60"], chunks())
+
+    assert time.monotonic() - started < 3
+
+
+_PIPE_FULL = 4 * 65_536
+
+
+def test_an_upload_whose_child_fills_stderr_before_reading_still_finishes() -> None:
+    # `timeout` frees a deadlocked thread,
+    # so a failure does not hang the suite
+    argv = ["timeout", "20", "sh", "-c", f"head -c {_PIPE_FULL} /dev/zero >&2; cat > /dev/null"]
+    errors: list[BaseException] = []
+
+    def upload() -> None:
+        try:
+            _RealExec().stream(argv, iter([b"x" * _PIPE_FULL]))
+        except BaseException as e:
+            errors.append(e)
+
+    uploading = threading.Thread(target=upload, daemon=True)
+    uploading.start()
+    uploading.join(timeout=10)
+
+    assert not uploading.is_alive(), "stdin and stderr both blocked"
+    assert errors == []
+
+
+def test_an_upload_whose_child_exits_early_fails_with_what_it_said() -> None:
+    argv = ["sh", "-c", "echo 'no space left' >&2; exit 1"]
+
+    with pytest.raises(subprocess.CalledProcessError) as failed:
+        _RealExec().stream(argv, iter([b"x" * _PIPE_FULL] * 16))
+
+    assert b"no space left" in cast("bytes", failed.value.stderr)
+
+
+def test_an_upload_whose_child_fails_does_not_wait_for_whatever_else_holds_its_stderr(
+    stderr_holder: str,
+) -> None:
+    argv = ["sh", "-c", f"{stderr_holder}; echo 'no space left' >&2; exit 1"]
+
+    started = time.monotonic()
+    with pytest.raises(subprocess.CalledProcessError) as failed:
+        _RealExec().stream(argv, iter([b"x" * _PIPE_FULL] * 16))
+
+    assert time.monotonic() - started < 3
+    assert b"no space left" in cast("bytes", failed.value.stderr)
+
+
+def test_an_upload_whose_child_exits_early_closes_what_it_was_reading_from() -> None:
+    closed: list[bool] = []
+
+    def chunks() -> Iterator[bytes]:
+        try:
+            while True:
+                yield b"x" * _PIPE_FULL
+        finally:
+            closed.append(True)
+
+    # A reference cycle keeps the generator, the file
+    # and progress bar it holds until a GC run
+    collecting = gc.isenabled()
+    gc.disable()
+
+    try:
+        with suppress(subprocess.CalledProcessError):
+            _RealExec().stream(["sh", "-c", "exit 1"], chunks())
+        assert closed == [True]
+    finally:
+        if collecting:
+            gc.enable()
+
+
+def test_an_upload_whose_child_exits_cleanly_without_taking_it_all_still_fails() -> None:
+    with pytest.raises(BrokenPipeError):
+        _RealExec().stream(["sh", "-c", "exit 0"], iter([b"x" * _PIPE_FULL] * 16))
+
+
 # ── read / run / push ─────────────────────────────────────────────────────────
 
 
@@ -443,6 +547,48 @@ def test_run_skips_under_dry_run() -> None:
     finally:
         dry_run.reset(token)
     assert backend.runs == []
+
+
+@final
+class _StreamFailsAfterAChunk:
+    def __init__(self) -> None:
+        self.fed: Iterable[bytes] | None = None
+
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        raise AssertionError(argv)
+
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        self.fed = chunks
+        _ = next(iter(chunks))
+        raise subprocess.CalledProcessError(1, argv)
+
+    def stream_output(self, argv: list[str], _on_line: Callable[[str], None]) -> int:
+        raise AssertionError(argv)
+
+
+def _push(dev: Device, local: Path) -> None:
+    dev.push(local, RemotePath("/mnt/data/fw.tar"))
+
+
+def _extract_tar(dev: Device, local: Path) -> None:
+    dev.extract_tar(local)
+
+
+@pytest.mark.parametrize("upload", [_push, _extract_tar], ids=["push", "extract_tar"])
+def test_an_upload_that_fails_has_closed_its_file_and_progress_bar_by_the_time_it_says_so(
+    tmp_path: Path, upload: Callable[[Device, Path], None]
+) -> None:
+    local = tmp_path / "fw.tar"
+    _ = local.write_bytes(b"firmware-bytes")
+    backend = _StreamFailsAfterAChunk()
+
+    try:
+        upload(Device("h", backend=backend), local)
+    except subprocess.CalledProcessError:
+        fed = cast("Generator[bytes]", backend.fed)
+        assert inspect.getgeneratorstate(fed) == inspect.GEN_CLOSED
+    else:
+        pytest.fail("the upload must fail")
 
 
 def test_push_streams_file_over_ssh(tmp_path: Path) -> None:

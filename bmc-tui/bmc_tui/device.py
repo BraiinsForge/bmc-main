@@ -32,13 +32,16 @@ Outside a run, `forward` spawns the ssh holding the tunnel itself,
 as the tunnel must keep listening while the caller dials it.
 """
 
+import errno
+import os
 import shlex
 import socket
 import subprocess
+import threading
 import time
 import uuid
-from collections.abc import Callable, Generator, Iterable, Iterator
-from contextlib import contextmanager, suppress
+from collections.abc import Callable, Generator, Iterable
+from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Literal, NewType, Protocol, TypedDict, cast
@@ -159,6 +162,10 @@ class Exec(Protocol):
         ...
 
 
+# Ample for bytes already sitting in a local pipe
+_STDERR_TAIL_TIMEOUT_S = 1.0
+
+
 class _RealExec:
     def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
         return subprocess.run(argv, capture_output=True, text=True, check=True)
@@ -171,15 +178,41 @@ class _RealExec:
             killed_if_cut_short(proc),
         ):
             stdin = proc.stdin
-            if stdin is None:
-                msg = "BUG: Popen(stdin=PIPE) produced no stdin"
+            stderr_pipe: IO[bytes] | None = proc.stderr
+            if stdin is None or stderr_pipe is None:
+                msg = "BUG: Popen(stdin=PIPE, stderr=PIPE) left out a pipe"
                 raise RuntimeError(msg)
-            for chunk in chunks:
-                _ = stdin.write(chunk)
-            stdin.close()
-            stderr = proc.stderr.read() if proc.stderr is not None else b""
+            stderr: list[bytes] = []
+
+            def drain() -> None:
+                with stderr_pipe:
+                    while piece := os.read(stderr_pipe.fileno(), 65_536):
+                        stderr.append(piece)
+
+            # Read while feeding, as a child blocked on a full stderr pipe stops reading stdin.
+            # The thread closes it, as `Popen.__exit__` would close it under the thread's read.
+            proc.stderr = None
+            draining = threading.Thread(target=drain, daemon=True)
+            draining.start()
+            # A flag, as the error kept would hold this frame and the chunks' generator in a cycle
+            broken = False
+            try:
+                for chunk in chunks:
+                    _ = stdin.write(chunk)
+                stdin.close()
+            except BrokenPipeError:
+                broken = True
+                # Closing flushes what is still buffered into the same broken pipe
+                with suppress(BrokenPipeError):
+                    stdin.close()
+            # All the child wrote is in the pipe once it exits, but its EOF can be an hour off,
+            # as a ProxyCommand started for a ControlPersist master holds the pipe as well
+            _ = proc.wait()
+            draining.join(timeout=_STDERR_TAIL_TIMEOUT_S)
         if proc.returncode:
-            raise subprocess.CalledProcessError(proc.returncode, argv, stderr=stderr)
+            raise subprocess.CalledProcessError(proc.returncode, argv, stderr=b"".join(stderr))
+        if broken:
+            raise BrokenPipeError(errno.EPIPE, "the child exited without taking the whole upload")
 
     def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
         return stream_lines(argv, on_line)
@@ -423,7 +456,8 @@ class Device:
             console.kv("would upload", f"{local.name} -> {remote}")
             return
         argv = ["ssh", *self._ssh_opts(), self.login, f"cat > {shlex.quote(remote)}"]
-        self._exec.stream(argv, _chunks(local))
+        with closing(_chunks(local)) as chunks:
+            self._exec.stream(argv, chunks)
 
     def extract_tar(self, local: Path) -> None:
         """Stream a local tarball into `tar xzf - -C /` on the device, with a
@@ -432,7 +466,8 @@ class Device:
             console.kv("would extract", f"{local.name} -> /")
             return
         argv = ["ssh", *self._ssh_opts(), self.login, "tar xzf - -C /"]
-        self._exec.stream(argv, _chunks(local))
+        with closing(_chunks(local)) as chunks:
+            self._exec.stream(argv, chunks)
 
     @property
     def reachable(self) -> bool:
@@ -523,7 +558,7 @@ class LogWindow:
         return self._closed
 
 
-def _chunks(local: Path) -> Iterator[bytes]:
+def _chunks(local: Path) -> Generator[bytes]:
     """Yield the file in chunks, advancing a byte-count progress bar as each is sent."""
     with local.open("rb") as f, console.progress(local.name, local.stat().st_size) as advance:
         while chunk := f.read(_CHUNK):
