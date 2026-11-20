@@ -1,8 +1,8 @@
 # Home Assistant Tile Widget
 
 The Home Assistant Tile shows one entity from the user's Home Assistant and lets them operate it from the Deck, the way
-the Tile card does on a Home Assistant dashboard. The current version covers the entities that are pressed (rather than
-switched): buttons, scenes and scripts.
+the Tile card does on a Home Assistant dashboard. The current version covers the entities that are pressed: buttons,
+scenes and scripts, and those that are switched on and off: switches, input booleans, automations, sirens and remotes.
 
 ## User stories
 
@@ -42,20 +42,43 @@ switched): buttons, scenes and scripts.
 - A tap while it runs stops it, as Home Assistant's own toggle does, whatever the script's mode. The line reads
   _Stopping…_ until Home Assistant answers.
 
+### Switch something on or off
+
+> As a user, I want to see whether a switch is on and flip it from the tile, so that I can turn the kettle on from where
+> I stand.
+
+- The tile looks like a button's: a large icon over the name, with the position in the line: _On_, _Off_, or _Unknown_
+  when Home Assistant does not know it.
+- While on, the icon sits on its tinted disc, amber, or red for a sounding siren. While off, the disc is gone and the
+  icon is grey, so the position shows without telling colours apart. The icon follows the position too: a switch and an
+  input boolean wear a toggle, filled while on and outlined while off, or a plug for an outlet; the rest wear Home
+  Assistant's own icons. Only a siren keeps its bullhorn either way.
+- A tap on the tile flips it, as on a button. A tile in no known position looks off, with a _?_ on a grey disc at the
+  corner of its icon, and a tap turns it on.
+- The tile flips at once. Whatever Home Assistant reports next shows instead, and when it reports nothing within 2 s of
+  answering, the tile goes back to the position it last reported, so a device that ignores the call does not stay shown
+  flipped.
+- A second tap before Home Assistant reports flips it back.
+- A flip that fails says so on the line, as a press does, even when a later tap or a report has replaced it. Taps that
+  Home Assistant leaves unanswered pile up: past a handful, another reads _Too many taps_, and a flip already on its way
+  stays shown.
+- An automation is on while enabled: the tile enables and disables it, and never runs it.
+
 ### Guard an action with a hold
 
 > As a user, I want an action that runs only when I hold the tile, so that a stray touch never opens the gate.
 
 - The _Tap action_ setting chooses whether a tap fires the action (_Toggle_) or does nothing (_Nothing_). _Toggle_ is
   Home Assistant's name for it, and does what Home Assistant's own toggle does: it presses a button, activates a scene,
-  and starts or stops a script.
+  starts or stops a script, and switches a switch.
 - The _Hold to toggle_ setting fires the action once the tile is held for 1, 2, 3 or 5 s. A ring fills around the icon
   while the finger is down, and the action fires once per hold, even if the finger stays down.
 - The two settings are independent, as in Home Assistant: with both set, a tap fires the action as well. To guard an
   action, set a hold and set _Tap action_ to _Nothing_.
 - Where only a hold fires the action, the tile says so after the state, such as _5 minutes ago · Hold 2 s_, and letting
   go early reads _Released too early_. On a tile one row high, a state too long for both is cut short, never the hint.
-- Where neither a tap nor a hold is set, the tile reads _No action set_ and touches do nothing.
+- Where neither a tap nor a hold is set, the tile reads _No action set_ and touches do nothing. A switch's tile instead
+  keeps showing its position, as a status that touches do not change.
 
 ### Know when the tile cannot act
 
@@ -70,7 +93,8 @@ switched): buttons, scenes and scripts.
   _Invalid entity ID_, _Type not supported yet_, _No account set_, _Token refused_, _Use an http:// address_, _Home
   Assistant too old_, _Can't connect, retrying…_, _Communication error_ or _Entity not found_.
 - Orange text needs the user's attention: something to fix, or a touch that did not do what it should. A tile that
-  cannot act for now drops its colour and dims its icon.
+  cannot act for now drops its colour and dims its icon; a switch's tile set to neither tap nor hold, a status that
+  takes no touch anyway, keeps its icon undimmed.
 
 ### Fit any tile size
 
@@ -105,6 +129,11 @@ To verify the tile, a test Home Assistant instance needs:
 - an `input_button` helper, and a `button` from the `demo` integration;
 - two scenes, one of them never activated;
 - a script with a `delay: 10` step;
+- an `input_boolean` helper, an automation, and the `demo` integration's switches (one of them an outlet), siren and
+  remote;
+- three template switches: one fixed to off whose `turn_on` and `turn_off` do nothing, for a device that ignores the
+  call; one whose `turn_on` and `turn_off` call a script that does not exist, so Home Assistant refuses them; and one
+  that reports an `input_boolean` it turns on or off after a 3 s delay, for a slow device;
 - a non-administrator user with a long-lived access token.
 
 In the Deck web app, save two Home Assistant accounts: one with that token and one with a wrong token.
@@ -117,6 +146,13 @@ In the Deck web app, save two Home Assistant accounts: one with that token and o
   shows, and the line tells when it was last used. A press made in Home Assistant shows on the Deck.
 - **Scripts:** the script, started from the tile and from Home Assistant, reads _Running_, and a tap while it runs stops
   it.
+- **Switches:** a tap and a hold flip each switch type, the icon and its disc at once, and the siren's disc is red; a
+  flip made in Home Assistant shows on the Deck; two quick taps on the slow switch end in the position the second asked
+  for; the switch that ignores the call springs back 2 s after a tap, and the one Home Assistant refuses springs back
+  reading _Home Assistant refused_. A tap on the automation disables it, and its traces show no run. A switch set to
+  `unknown` in the developer tools reads _Unknown_ with a grey _?_, and a tap turns it on. With Home Assistant paused,
+  taps pile up until one reads _Too many taps_. With neither a tap nor a hold set, the tile shows its position undimmed
+  and touches flip nothing.
 - **Touch:** a second tap while the press is on its way fires nothing; a swipe that starts on the tile changes the
   scene, fires nothing and leaves no tint; each tap and hold combination behaves as described above. With a 1 s hold and
   _Tap action_ set to _Nothing_, a hold let go early and then held through at once reads _Pressing…_ in place of
@@ -131,8 +167,12 @@ In the Deck web app, save two Home Assistant accounts: one with that token and o
 ## Constraints
 
 - BMC100 only, at every widget size: 1x1, 2x1, 2x2 and fullscreen.
-- Buttons, input buttons, scenes and scripts only; other entity types read _Type not supported yet_ until the tile
-  supports them.
+- Buttons, input buttons, scenes, scripts, switches, input booleans, automations, sirens and remotes only; other entity
+  types read _Type not supported yet_ until the tile supports them.
+- A switch whose state Home Assistant only assumes (`assumed_state`), such as a radio outlet, is flipped like any other:
+  the tile cannot send _on_ to one it shows on.
 - Home Assistant 2024.3 or newer, reached over plain `http://`; encrypted connections are not supported yet.
-- Each type is drawn with its default icon rather than the entity's own.
+- Each type is drawn with the tile's icon for that type rather than the entity's own.
+- An entity Home Assistant reports as unavailable keeps its type's icon under the orange _!_, the same for every type,
+  though Home Assistant gives an unavailable automation an icon of its own.
 - The tile's words are English.
