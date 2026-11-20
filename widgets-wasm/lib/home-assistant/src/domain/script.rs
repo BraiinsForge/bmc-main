@@ -20,12 +20,12 @@
 
 //! Scripts, which are on while they run.
 
+use super::on_off;
 use crate::{Entity, ServiceCall};
 
 pub(super) const DOMAIN: &str = "script";
 const LAST_TRIGGERED: &str = "last_triggered";
 pub const ATTRIBUTES: &[&str] = &[LAST_TRIGGERED];
-const RUNNING: &str = "on";
 
 #[must_use]
 pub fn turn_on() -> ServiceCall {
@@ -40,7 +40,7 @@ pub fn turn_off() -> ServiceCall {
 
 #[must_use]
 pub fn running(script: &Entity) -> bool {
-    script.state.as_deref() == Some(RUNNING)
+    on_off(script) == Some(true)
 }
 
 /// When the script last ran, as Home Assistant's ISO 8601 timestamp.

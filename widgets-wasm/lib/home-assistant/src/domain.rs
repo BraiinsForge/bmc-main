@@ -37,6 +37,8 @@ pub const FRIENDLY_NAME: &str = "friendly_name";
 pub const UNAVAILABLE: &str = "unavailable";
 /// The state of an entity without one yet, such as a button never pressed.
 pub const UNKNOWN: &str = "unknown";
+const ON: &str = "on";
+const OFF: &str = "off";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Domain {
@@ -73,6 +75,17 @@ impl Domain {
             Self::Scene => scene::ATTRIBUTES,
             Self::Script => script::ATTRIBUTES,
         }
+    }
+}
+
+/// Whether an entity that turns on and off, such as a switch, is on;
+/// none in any other state, such as `unknown` or `unavailable`.
+#[must_use]
+pub fn on_off(entity: &Entity) -> Option<bool> {
+    match entity.state.as_deref() {
+        Some(ON) => Some(true),
+        Some(OFF) => Some(false),
+        _ => None,
     }
 }
 
@@ -114,6 +127,16 @@ mod tests {
         assert_eq!(Domain::Script.attributes(), ["last_triggered"]);
         for timestamped in [Domain::Button, Domain::InputButton, Domain::Scene] {
             assert!(timestamped.attributes().is_empty(), "{timestamped:?}");
+        }
+    }
+
+    #[wasm_test]
+    fn only_on_and_off_read_as_a_position() {
+        let position = |state| on_off(&Entity::reporting(state, vec![]));
+        assert_eq!(position("on"), Some(true));
+        assert_eq!(position("off"), Some(false));
+        for other in [UNKNOWN, UNAVAILABLE, "open"] {
+            assert_eq!(position(other), None, "{other}");
         }
     }
 
