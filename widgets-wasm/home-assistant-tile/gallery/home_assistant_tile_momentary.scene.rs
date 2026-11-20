@@ -96,7 +96,7 @@ fn momentary(ctx: &mut SceneCtx, ui: &mut Ui) {
     };
     let mut pending = Pending::default();
     if on_its_way {
-        pending.submit(kind.request(&state), |_| Some(CallId::from_raw(1)));
+        pending.submit(kind.request(&state), |_| Ok(CallId::from_raw(1)));
     }
     ctx.wrapping_flow(
         ui,

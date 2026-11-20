@@ -29,6 +29,7 @@
 use std::collections::HashMap;
 
 use home_assistant::CallId;
+use home_assistant::RequestError;
 use home_assistant::ServiceCall;
 
 /// Where a wanted value is shown, such as a light's brightness.
@@ -150,8 +151,9 @@ pub enum Submitted {
     Sent,
     /// The caller (re)starts its wait for the taps to stop, then calls [`Pending::send_waiting`].
     Waiting,
-    /// It could not be sent, so nothing is shown waiting.
-    Unsent,
+    /// It could not be sent, so the slot shows an earlier call still on its way or awaiting its report,
+    /// or else what Home Assistant reports.
+    Unsent(RequestError),
 }
 
 /// What an answer to the latest call of a slot did; `F` is why a call failed.
@@ -187,11 +189,11 @@ pub struct Pending {
 
 impl Pending {
     /// Shows `request` waiting at once, replacing whatever its slot showed.
-    /// One to send now goes out with `send`, which names the call or returns none if it could not go.
+    /// One to send now goes out with `send`, which names the call or says why it could not go.
     pub fn submit(
         &mut self,
         request: Request,
-        send: impl FnOnce(&ServiceCall) -> Option<CallId>,
+        send: impl FnOnce(&ServiceCall) -> Result<CallId, RequestError>,
     ) -> Submitted {
         let Request {
             slot,
@@ -206,13 +208,20 @@ impl Pending {
         }
         let (stage, submitted) = match timing {
             Timing::AfterTaps => (Stage::Waiting(call), Submitted::Waiting),
-            Timing::Now => {
-                let Some(id) = send(&call) else {
-                    self.entries.remove(&slot);
-                    return Submitted::Unsent;
-                };
-                (Stage::Sent(id), Submitted::Sent)
-            }
+            Timing::Now => match send(&call) {
+                Ok(id) => (Stage::Sent(id), Submitted::Sent),
+                Err(error) => {
+                    // A request still waiting for taps would go out after the user asked for something else.
+                    if self
+                        .entries
+                        .get(&slot)
+                        .is_some_and(|entry| matches!(entry.stage, Stage::Waiting(_)))
+                    {
+                        self.entries.remove(&slot);
+                    }
+                    return Submitted::Unsent(error);
+                }
+            },
         };
         self.entries.insert(
             slot,
@@ -225,22 +234,25 @@ impl Pending {
         submitted
     }
 
-    /// The taps have stopped: sends what waited for them. Returns the slots whose call could not go.
+    /// The taps have stopped: sends what waited for them. Returns why each call that could not go did not.
     pub fn send_waiting(
         &mut self,
-        mut send: impl FnMut(&ServiceCall) -> Option<CallId>,
-    ) -> Vec<Slot> {
+        mut send: impl FnMut(&ServiceCall) -> Result<CallId, RequestError>,
+    ) -> Vec<RequestError> {
         let mut unsent = Vec::new();
-        self.entries.retain(|slot, entry| {
+        self.entries.retain(|_, entry| {
             let Stage::Waiting(call) = &entry.stage else {
                 return true;
             };
-            if let Some(id) = send(call) {
-                entry.stage = Stage::Sent(id);
-                true
-            } else {
-                unsent.push(*slot);
-                false
+            match send(call) {
+                Ok(id) => {
+                    entry.stage = Stage::Sent(id);
+                    true
+                }
+                Err(error) => {
+                    unsent.push(error);
+                    false
+                }
             }
         });
         unsent
@@ -333,12 +345,12 @@ mod tests {
     }
 
     /// Sends as call `id`.
-    fn as_call(id: usize) -> impl FnMut(&ServiceCall) -> Option<CallId> {
-        move |_| Some(CallId::from_raw(id))
+    fn as_call(id: usize) -> impl FnMut(&ServiceCall) -> Result<CallId, RequestError> {
+        move |_| Ok(CallId::from_raw(id))
     }
 
-    fn unsendable(_: &ServiceCall) -> Option<CallId> {
-        None
+    fn unsendable(_: &ServiceCall) -> Result<CallId, RequestError> {
+        Err(RequestError::NotConnected)
     }
 
     fn id(raw: usize) -> CallId {
@@ -368,7 +380,7 @@ mod tests {
         let mut sent = 0;
         let unsent = pending.send_waiting(|_| {
             sent += 1;
-            Some(id(1))
+            Ok(id(1))
         });
         assert_eq!((sent, unsent), (1, Vec::new()));
         assert_eq!(pending.number(BRIGHTNESS), Some(80.0));
@@ -403,13 +415,28 @@ mod tests {
         pending.submit(brightness(70.0, Timing::AfterTaps), unsendable);
         assert_eq!(
             pending.submit(brightness(80.0, Timing::Now), unsendable),
-            Submitted::Unsent
+            Submitted::Unsent(RequestError::NotConnected)
         );
         assert_eq!(pending.number(BRIGHTNESS), None, "nor the earlier wish");
 
         pending.submit(brightness(70.0, Timing::AfterTaps), unsendable);
-        assert_eq!(pending.send_waiting(unsendable), vec![BRIGHTNESS]);
+        assert_eq!(
+            pending.send_waiting(unsendable),
+            vec![RequestError::NotConnected]
+        );
         assert_eq!(pending.number(BRIGHTNESS), None);
+    }
+
+    #[wasm_test]
+    fn a_call_that_cannot_go_leaves_the_one_on_its_way_shown() {
+        let mut pending = Pending::default();
+        pending.submit(power(true), as_call(1));
+        pending.submit(power(false), unsendable);
+        assert_eq!(pending.on(POWER), Some(true));
+        assert_eq!(
+            pending.answered(id(1), SUCCEEDED),
+            Some(Answered::AwaitingReport)
+        );
     }
 
     #[wasm_test]
@@ -493,7 +520,7 @@ mod tests {
         let mut sent = 0;
         pending.send_waiting(|_| {
             sent += 1;
-            Some(id(2))
+            Ok(id(2))
         });
         assert_eq!(sent, 0, "the brightness would turn it back on");
         assert_eq!(pending.on(POWER), Some(false));

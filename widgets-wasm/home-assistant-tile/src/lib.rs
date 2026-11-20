@@ -35,15 +35,16 @@ mod wasm_glue {
     use bmc_wasm_sdk::timer::{self, Timer};
     use bmc_wasm_sdk::*;
     use home_assistant::domain::{Domain, FRIENDLY_NAME};
-    use home_assistant::{CallFailure, CallId, Client, Event, ServiceCall, Status, Subscription};
+    use home_assistant::{
+        CallFailure, CallId, Client, Event, RequestError, ServiceCall, Status, Subscription,
+    };
 
     use crate::interaction::gesture::{Availability, Gesture, OnTap, Step, Touch};
     use crate::interaction::notice::{FAILURE_MS, Notice, RELEASED_EARLY_MS};
     use crate::interaction::pending::{Answered, Pending, Request, Submitted};
     use crate::manifest_params::{Params, TapAction};
     use crate::present::{
-        self, CardAction, Context, Following, NOT_CONNECTED, Presenter, Problem, Reach, Room,
-        Showing, UNNAMED,
+        self, CardAction, Context, Following, Presenter, Problem, Reach, Room, Showing, UNNAMED,
     };
     use crate::view::card::{self, Card};
     use crate::view::touches::Touches;
@@ -286,14 +287,11 @@ mod wasm_glue {
                 };
                 state
                     .pending
-                    .send_waiting(|call| send(client.as_ref()?, &entity_id, call))
+                    .send_waiting(|call| send(client.as_ref(), &entity_id, call))
             })
         });
-        for slot in &unsent {
-            log_warn!("home-assistant-tile: {} could not be sent", slot.name());
-        }
-        if !unsent.is_empty() {
-            show_notice(NOT_CONNECTED.to_owned(), FAILURE_MS);
+        if let Some(&error) = unsent.first() {
+            show_notice(present::unsent_notice(error).to_owned(), FAILURE_MS);
         }
         request_frame();
     }
@@ -312,7 +310,7 @@ mod wasm_glue {
                 Some(
                     state
                         .pending
-                        .submit(request, |call| send(client.as_ref()?, &entity_id, call)),
+                        .submit(request, |call| send(client.as_ref(), &entity_id, call)),
                 )
             })
         });
@@ -320,7 +318,9 @@ mod wasm_glue {
             Some(Submitted::Waiting) => {
                 STATE.with_borrow_mut(|state| state.quiet = timer::start(QUIET_MS, on_quiet));
             }
-            Some(Submitted::Unsent) => show_notice(NOT_CONNECTED.to_owned(), FAILURE_MS),
+            Some(Submitted::Unsent(error)) => {
+                show_notice(present::unsent_notice(error).to_owned(), FAILURE_MS);
+            }
             Some(Submitted::Sent) | None => {}
         }
         // The frame that took the touch was drawn before the request,
@@ -328,13 +328,20 @@ mod wasm_glue {
         request_frame();
     }
 
-    fn send(client: &Client, entity_id: &str, call: &ServiceCall) -> Option<CallId> {
-        let sent = client.call(entity_id, call).ok();
-        if sent.is_none() {
+    fn send(
+        client: Option<&Client>,
+        entity_id: &str,
+        call: &ServiceCall,
+    ) -> Result<CallId, RequestError> {
+        let sent = client
+            .ok_or(RequestError::NotConnected)
+            .and_then(|client| client.call(entity_id, call));
+        if let Err(error) = sent {
             log_warn!(
-                "home-assistant-tile: {}.{} could not be sent",
+                "home-assistant-tile: {}.{} could not be sent: {}",
                 call.domain,
-                call.service
+                call.service,
+                error.name()
             );
         }
         sent

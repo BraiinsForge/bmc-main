@@ -27,7 +27,7 @@ pub mod momentary;
 
 use bmc_wasm_sdk::*;
 use home_assistant::domain::{Domain, UNAVAILABLE};
-use home_assistant::{CallFailure, Entity, Presence, Status, is_entity_id};
+use home_assistant::{CallFailure, Entity, Presence, RequestError, Status, is_entity_id};
 
 use crate::interaction::gesture::{Availability, Gesture};
 use crate::interaction::pending::{Pending, Request};
@@ -41,8 +41,6 @@ const RECONNECTING: &str = "Reconnecting…";
 const NO_ACTION: &str = "No action set";
 const UNAVAILABLE_LINE: &str = "Unavailable";
 const LOADING: &str = "Loading…";
-/// A request the client could not send, told on the line for a few seconds.
-pub const NOT_CONNECTED: &str = "Not connected";
 /// The tile's name with neither a name nor an entity ID set.
 pub const UNNAMED: &str = "Home Assistant";
 
@@ -161,6 +159,25 @@ pub fn failure_notice(failure: &CallFailure) -> &'static str {
         CallFailure::Rejected(_) => "Home Assistant refused",
         CallFailure::TimedOut => "No answer",
         CallFailure::Disconnected => "Connection lost",
+    }
+}
+
+/// What the line tells of a call the client could not send, for a few seconds.
+#[must_use]
+pub fn unsent_notice(error: RequestError) -> &'static str {
+    match error {
+        RequestError::NotConnected => "Not connected",
+        RequestError::TooManyPendingCalls => "Too many taps",
+        RequestError::TooManySubscriptions
+        | RequestError::NoEntities
+        | RequestError::TooManyEntities
+        | RequestError::TooManyAttributes
+        | RequestError::InvalidEntityId
+        | RequestError::InvalidName
+        | RequestError::InvalidData
+        | RequestError::TooManyReplyValues
+        | RequestError::InvalidPointer
+        | RequestError::InvalidTime => "Could not send",
     }
 }
 
@@ -546,6 +563,16 @@ mod tests {
             group_of(Some("button.gate")),
             Ok(Group::Momentary(momentary::Kind::Button))
         );
+    }
+
+    #[wasm_test]
+    fn a_call_that_could_not_go_tells_why_in_a_few_words() {
+        assert_eq!(
+            unsent_notice(RequestError::TooManyPendingCalls),
+            "Too many taps"
+        );
+        assert_eq!(unsent_notice(RequestError::NotConnected), "Not connected");
+        assert_eq!(unsent_notice(RequestError::InvalidData), "Could not send");
     }
 
     #[wasm_test]

@@ -258,7 +258,7 @@ mod tests {
         let mut pending = Pending::default();
         let gesture = tap();
         pending.submit(Kind::Button.request(&NEVER_USED), |_| {
-            Some(CallId::from_raw(1))
+            Ok(CallId::from_raw(1))
         });
         let tile = Tile::new(
             Kind::Button,
@@ -279,7 +279,7 @@ mod tests {
         ];
         for (kind, state, line) in cases {
             let mut pending = Pending::default();
-            pending.submit(kind.request(&state), |_| Some(CallId::from_raw(1)));
+            pending.submit(kind.request(&state), |_| Ok(CallId::from_raw(1)));
             let tile = Tile::new(kind, &state, &context(&pending, &gesture, Reach::Ready));
             assert_eq!(
                 tile.card.line,

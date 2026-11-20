@@ -138,6 +138,27 @@ pub enum RequestError {
     TooManyPendingCalls,
 }
 
+impl RequestError {
+    /// The variant's name, for a log written without `Debug`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::TooManySubscriptions => "TooManySubscriptions",
+            Self::NoEntities => "NoEntities",
+            Self::TooManyEntities => "TooManyEntities",
+            Self::TooManyAttributes => "TooManyAttributes",
+            Self::InvalidEntityId => "InvalidEntityId",
+            Self::InvalidName => "InvalidName",
+            Self::InvalidData => "InvalidData",
+            Self::TooManyReplyValues => "TooManyReplyValues",
+            Self::InvalidPointer => "InvalidPointer",
+            Self::InvalidTime => "InvalidTime",
+            Self::NotConnected => "NotConnected",
+            Self::TooManyPendingCalls => "TooManyPendingCalls",
+        }
+    }
+}
+
 /// What the session takes from the platform it runs on:
 /// what it writes where the transport fills in the account,
 /// what it must never pass on from a caller, and how to write a time.
