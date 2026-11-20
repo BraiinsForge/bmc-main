@@ -14,6 +14,25 @@ frames = 4
 Screen = "Loading"
 
 [[shot]]
+name = "screens-loading-reading"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "Loading"
+Group = "Reading"
+
+[[shot]]
+name = "screens-loading-reading-1x1"
+scene = "bmc_gallery::home_assistant_tile_screens::Screens"
+frames = 4
+
+[shot.knobs]
+Screen = "Loading"
+Group = "Reading"
+Size = "1x1"
+
+[[shot]]
 name = "screens-no-entity"
 scene = "bmc_gallery::home_assistant_tile_screens::Screens"
 frames = 4

@@ -18,18 +18,22 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! What the tile shows while it has no entity to draw: its skeleton while the entity loads, or why there is none.
+//! What the tile shows while it has no entity to draw: its group's skeleton while the entity loads, or why there is none.
 
 use bmc_gallery::prelude::*;
 use home_assistant_tile::fixtures;
-use home_assistant_tile::present::momentary::Kind;
-use home_assistant_tile::present::{self, Group, Problem, UNNAMED};
+use home_assistant_tile::present::{self, Group, Problem, UNNAMED, momentary, reading};
 use home_assistant_tile::view::touches::Touches;
 
 scene_meta! { title: "Widgets / Home Assistant Tile / Screens" }
 
 /// The tile's title: a configured name, or the entity ID where none is set.
 const NAMES: [&str; 2] = ["Gate", "button.gate"];
+/// The groups whose skeletons differ.
+const GROUPS: [(Group, &str); 2] = [
+    (Group::Momentary(momentary::Kind::Button), "Momentary"),
+    (Group::Reading(reading::Kind::Sensor), "Reading"),
+];
 
 fn screen_labels() -> Vec<String> {
     let mut labels = vec!["Loading".to_owned()];
@@ -44,11 +48,13 @@ fn screens(ctx: &mut SceneCtx, ui: &mut Ui) {
     let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
     let screen = ctx.select("Screen", &labels, 0);
     let name = NAMES[ctx.select("Name", &NAMES, 0)];
+    let group_labels = GROUPS.map(|(_, label)| label);
+    let group = GROUPS[ctx.select("Group", &group_labels, 0)].0;
     let size_labels = fixtures::SIZES.map(|(_, label)| label);
     let size = fixtures::SIZES[ctx.select("Size", &size_labels, fixtures::DEFAULT_SIZE)].0;
     let room = fixtures::room(size);
     let card = match screen.checked_sub(1) {
-        None => present::loading(Group::Momentary(Kind::Button), name, room),
+        None => present::loading(group, name, room),
         Some(index) => {
             let problem = Problem::ALL[index];
             let name = if problem == Problem::NoEntity {
@@ -59,10 +65,15 @@ fn screens(ctx: &mut SceneCtx, ui: &mut Ui) {
             present::problem(problem, name, room)
         }
     };
+    let loading = screen == 0;
     ctx.wrapping_flow(
         ui,
         [titled("Tile", size, move || {
-            card.centred(&Touches::default())
+            if loading {
+                group.skeleton(&card, &Touches::default())
+            } else {
+                card.centred(&Touches::default())
+            }
         })],
     );
 }

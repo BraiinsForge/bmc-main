@@ -36,7 +36,7 @@ mod wasm_glue {
     use bmc_wasm_sdk::*;
     use home_assistant::domain::{Domain, FRIENDLY_NAME};
     use home_assistant::{
-        CallFailure, CallId, Client, Event, RequestError, ServiceCall, Status, Subscription,
+        CallFailure, CallId, Client, Event, Reply, RequestError, ServiceCall, Status, Subscription,
     };
 
     use crate::interaction::gesture::{Availability, Gesture, OnTap, Step, Touch};
@@ -44,7 +44,8 @@ mod wasm_glue {
     use crate::interaction::pending::{Answered, Pending, Request, Slot, Submitted};
     use crate::manifest_params::{Params, TapAction};
     use crate::present::{
-        self, CardAction, Context, Following, Presenter, Problem, Reach, Room, Showing, UNNAMED,
+        self, CardAction, Context, Following, Group, Precision, Presenter, Problem, Reach, Room,
+        Showing, UNNAMED,
     };
     use crate::view::card::{self, Card};
     use crate::view::touches::Touches;
@@ -60,11 +61,38 @@ mod wasm_glue {
     const REPORT_FRAME_MS: u32 = 1_000;
     /// How long the LED strip previews the entity after the last change made on the tile.
     const LED_PREVIEW_MS: u32 = 3_000;
+    /// Home Assistant cannot tell the tile that one entity's display precision changed
+    /// without sending it every registry change in the installation, so the tile asks again this often.
+    const PRECISION_REFRESH_MS: u32 = 5 * 60 * 1_000;
 
     struct Followed {
         entity_id: String,
         subscription: Subscription,
         subscribed: Subscribed,
+        /// None for an entity shown without a display precision.
+        precision: Option<PrecisionWatch>,
+    }
+
+    struct PrecisionWatch {
+        /// The last one read, which stays shown while a refresh is on its way.
+        shown: Precision,
+        lookup: Option<CallId>,
+        /// None where the host had no timer to spare, so the precision is looked up only on login and on saving.
+        _refresh: Option<Timer>,
+    }
+
+    impl PrecisionWatch {
+        fn start() -> Self {
+            let refresh = timer::start(PRECISION_REFRESH_MS, on_precision_refresh);
+            if refresh.is_none() {
+                log_warn!("home-assistant-tile: no timer to refresh the display precision with");
+            }
+            Self {
+                shown: Precision::Awaiting,
+                lookup: None,
+                _refresh: refresh,
+            }
+        }
     }
 
     /// What Home Assistant made of the subscription since the client last logged in.
@@ -116,8 +144,10 @@ mod wasm_glue {
 
     /// What a frame shows.
     enum Screen {
-        /// The skeleton of the tile while its entity loads, or why there is none.
+        /// Why there is no entity to show.
         Placeholder(Card),
+        /// The skeleton of the tile `Group` draws, while its entity is on its way.
+        Loading(Group, Card),
         Tile {
             presenter: Box<dyn Presenter>,
             reach: Reach,
@@ -153,14 +183,24 @@ mod wasm_glue {
         if followed.as_deref() == entity_id(&params) {
             let (tap, hold_ms) = settings(&params);
             STATE.with_borrow_mut(|state| state.gesture.set(tap, hold_ms));
+            // Saving the settings shows a precision changed in Home Assistant without the 5-minute wait.
+            look_up_precision();
         } else {
             follow();
         }
         resume();
     }
 
+    /// The account may be another Home Assistant, whose precision the last one's must not stand in for.
     #[unsafe(no_mangle)]
     pub extern "C" fn on_credentials_update() {
+        STATE.with_borrow_mut(|state| {
+            if let Some(watch) = precision_watch(state) {
+                watch.shown = Precision::Awaiting;
+                watch.lookup = None;
+            }
+        });
+        look_up_precision();
         resume();
     }
 
@@ -178,7 +218,7 @@ mod wasm_glue {
         let params = Params::current();
         let followed = entity_id(&params).and_then(|entity_id| {
             let domain = Domain::of(entity_id)?;
-            present::group_of(Some(entity_id)).ok()?;
+            let group = present::group_of(Some(entity_id)).ok()?;
             let mut attributes = vec![FRIENDLY_NAME];
             attributes.extend_from_slice(domain.attributes());
             let subscribed = CLIENT
@@ -190,6 +230,7 @@ mod wasm_glue {
                 entity_id: entity_id.to_owned(),
                 subscription: subscribed?,
                 subscribed: Subscribed::Open,
+                precision: group.reads_precision().then(PrecisionWatch::start),
             })
         });
         let (tap, hold_ms) = settings(&params);
@@ -204,6 +245,75 @@ mod wasm_glue {
             gesture,
             ..State::default()
         });
+        look_up_precision();
+    }
+
+    fn precision_watch(state: &mut State) -> Option<&mut PrecisionWatch> {
+        state.followed.as_mut()?.precision.as_mut()
+    }
+
+    fn on_precision_refresh(_timer: &Timer, _elapsed_periods: u32) {
+        look_up_precision();
+    }
+
+    /// Ask for the followed entity's display precision, keeping the last one shown meanwhile.
+    /// A client that cannot send now asks again once it has logged in.
+    fn look_up_precision() {
+        let Some(entity_id) = STATE.with_borrow(|state| {
+            state
+                .followed
+                .as_ref()
+                .filter(|followed| followed.precision.is_some())
+                .map(|followed| followed.entity_id.clone())
+        }) else {
+            return;
+        };
+        let lookup = CLIENT.with_borrow(|client| {
+            client
+                .as_ref()
+                .ok_or(RequestError::NotConnected)
+                .and_then(|client| client.display_precision(&entity_id))
+        });
+        let lookup = match lookup {
+            Ok(call) => Some(call),
+            Err(RequestError::NotConnected) => None,
+            Err(error) => {
+                log_warn!(
+                    "home-assistant-tile: the display precision lookup could not be sent: {}",
+                    error.name()
+                );
+                None
+            }
+        };
+        STATE.with_borrow_mut(|state| {
+            if let Some(watch) = precision_watch(state) {
+                watch.lookup = lookup;
+            }
+        });
+    }
+
+    /// Whether `call` was the precision lookup, which takes its answer.
+    fn precision_answered(call: CallId, result: Result<&Reply, &CallFailure>) -> bool {
+        STATE.with_borrow_mut(|state| {
+            let Some(watch) = precision_watch(state).filter(|watch| watch.lookup == Some(call))
+            else {
+                return false;
+            };
+            watch.lookup = None;
+            match result {
+                Err(CallFailure::Rejected(error)) => log_warn!(
+                    "home-assistant-tile: the display precision lookup was refused ({}): {}",
+                    error.code.as_str(),
+                    error.message.as_str()
+                ),
+                Err(CallFailure::TimedOut) => {
+                    log_warn!("home-assistant-tile: the display precision lookup got no answer");
+                }
+                Ok(_) | Err(CallFailure::Disconnected) => {}
+            }
+            watch.shown = watch.shown.answered(result);
+            true
+        })
     }
 
     /// What a tap does, and how long a hold takes to fire; none where holding fires nothing.
@@ -231,7 +341,9 @@ mod wasm_glue {
                 }
             }
             Event::CallFinished { call, result } => {
-                answered(*call, result.as_ref().map(|_| ()));
+                if !precision_answered(*call, result.as_ref()) {
+                    answered(*call, result.as_ref().map(|_| ()));
+                }
                 request_frame();
             }
             Event::StatusChanged(status) => {
@@ -241,6 +353,7 @@ mod wasm_glue {
                             followed.subscribed = Subscribed::Open;
                         }
                     });
+                    look_up_precision();
                 }
                 request_frame();
             }
@@ -451,11 +564,12 @@ mod wasm_glue {
         let screen = screen(room);
         let node = match &screen {
             Screen::Placeholder(card) => card.centred(&touches),
+            Screen::Loading(group, card) => group.skeleton(card, &touches),
             Screen::Tile { presenter, .. } => presenter.view(&touches),
         };
         update_preview(match &screen {
             Screen::Tile { presenter, .. } => presenter.led(),
-            Screen::Placeholder(_) => None,
+            Screen::Placeholder(_) | Screen::Loading(..) => None,
         });
         let drawn_with = touches;
         let touches = Touches::read(render_ui(size.width, size.height, node));
@@ -475,7 +589,7 @@ mod wasm_glue {
                 fire_card_action(card::touch(&touches), presenter.card_action(), delta_ms);
             }
             // A finger on the placeholder stays down when the tile comes, and fires nothing when lifted.
-            Screen::Placeholder(_) => {
+            Screen::Placeholder(_) | Screen::Loading(..) => {
                 fire_card_action(card::touch(&touches), CardAction::Blocked, delta_ms);
             }
         }
@@ -535,8 +649,13 @@ mod wasm_glue {
             };
             match present::showing(status, following) {
                 Showing::Problem(problem_now) => problem(problem_now, name, room),
-                Showing::Loading => Screen::Placeholder(present::loading(group, name, room)),
+                Showing::Loading => Screen::Loading(group, present::loading(group, name, room)),
                 Showing::Entity(entity) => {
+                    let precision = state
+                        .followed
+                        .as_ref()
+                        .and_then(|followed| followed.precision.as_ref())
+                        .map_or(Precision::Known(None), |watch| watch.shown);
                     let context = Context {
                         pending: &state.pending,
                         gesture: &state.gesture,
@@ -548,7 +667,7 @@ mod wasm_glue {
                         room,
                     };
                     Screen::Tile {
-                        presenter: group.tile(entity, &context),
+                        presenter: group.tile(entity, &context, precision),
                         reach: context.reach,
                     }
                 }

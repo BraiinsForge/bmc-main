@@ -25,16 +25,17 @@
 
 pub mod light;
 pub mod momentary;
+pub mod reading;
 pub mod switch;
 
 use bmc_wasm_sdk::*;
 use home_assistant::domain::{Domain, UNAVAILABLE};
-use home_assistant::{CallFailure, Entity, Presence, RequestError, Status, is_entity_id};
+use home_assistant::{CallFailure, Entity, Presence, Reply, RequestError, Status, is_entity_id};
 
 use crate::interaction::gesture::{Availability, Gesture};
 use crate::interaction::pending::{Pending, Request};
 use crate::view::blocks::badge::{Disc, Mark};
-use crate::view::card::{Card, Line, StateDisplay};
+use crate::view::card::{Card, Line, Reading, StateDisplay};
 use crate::view::style::{Accent, Icon};
 use crate::view::touches::Touches;
 
@@ -384,6 +385,31 @@ pub fn card(context: &Context, display: StateDisplay, action: &CardAction) -> Ca
     }
 }
 
+/// A sensor's display precision from the entity registry, apart from its state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Precision {
+    /// Asked for and not answered: a number shown now could jump to other decimals a moment later.
+    Awaiting,
+    /// None where the user and the integration set none, the entity is not in the registry, or the lookup failed.
+    Known(Option<u32>),
+}
+
+impl Precision {
+    /// The precision once its lookup ended with `result`.
+    /// A dropped connection leaves it as it was, for the lookup the next login sends;
+    /// any other failure stops a number waiting, showing it as written until a refresh answers.
+    #[must_use]
+    pub fn answered(self, result: Result<&Reply, &CallFailure>) -> Self {
+        match (result, self) {
+            (Ok(Reply::Precision(precision)), _) => Self::Known(*precision),
+            (Err(CallFailure::Disconnected), _) | (_, Self::Known(_)) => self,
+            (Ok(_) | Err(CallFailure::Rejected(_) | CallFailure::TimedOut), Self::Awaiting) => {
+                Self::Known(None)
+            }
+        }
+    }
+}
+
 /// One frame of a group's tile, built from what Home Assistant reports and what the user asked for.
 pub trait Presenter {
     /// The whole tile, with the part a finger is on drawn pressed:
@@ -409,6 +435,7 @@ pub enum Group {
     Momentary(momentary::Kind),
     Switch(switch::Kind),
     Light,
+    Reading(reading::Kind),
 }
 
 impl Group {
@@ -426,7 +453,8 @@ impl Group {
             Domain::Siren => Some(Self::Switch(switch::Kind::Siren)),
             Domain::Switch => Some(Self::Switch(switch::Kind::Switch)),
             Domain::Light => Some(Self::Light),
-            Domain::BinarySensor | Domain::Sensor => None,
+            Domain::Sensor => Some(Self::Reading(reading::Kind::Sensor)),
+            Domain::BinarySensor => Some(Self::Reading(reading::Kind::BinarySensor)),
         }
     }
 
@@ -437,11 +465,36 @@ impl Group {
             Self::Momentary(kind) => kind.icon(),
             Self::Switch(kind) => kind.icon(),
             Self::Light => light::icon(),
+            Self::Reading(kind) => kind.icon(),
         }
     }
 
+    /// `card`, a [`loading`] skeleton, in the layout its tile will take, so the first state does not move it.
     #[must_use]
-    pub fn tile(self, entity: &Entity, context: &Context) -> Box<dyn Presenter> {
+    pub fn skeleton(self, card: &Card, touches: &Touches) -> Node {
+        match self {
+            Self::Momentary(_) | Self::Switch(_) | Self::Light => card.centred(touches),
+            Self::Reading(_) => card.over_reading(&Reading::none(), touches),
+        }
+    }
+
+    /// Whether its tile shows a number at the entity's display [`Precision`].
+    #[must_use]
+    pub fn reads_precision(self) -> bool {
+        match self {
+            Self::Reading(kind) => kind.reads_precision(),
+            Self::Momentary(_) | Self::Switch(_) | Self::Light => false,
+        }
+    }
+
+    /// `precision` is what the glue has looked up, where the group [reads it](Self::reads_precision).
+    #[must_use]
+    pub fn tile(
+        self,
+        entity: &Entity,
+        context: &Context,
+        precision: Precision,
+    ) -> Box<dyn Presenter> {
         match self {
             Self::Momentary(kind) => Box::new(momentary::Tile::new(
                 kind,
@@ -454,6 +507,10 @@ impl Group {
                 context,
             )),
             Self::Light => Box::new(light::Tile::new(&light::State::read(entity), context)),
+            Self::Reading(kind) => Box::new(reading::Tile::new(
+                &reading::State::read(kind, entity, precision),
+                context,
+            )),
         }
     }
 }
@@ -467,8 +524,8 @@ mod tests {
     use crate::view::icons::CHECK;
     use crate::view::style::{Accent, Icon};
     use bmc_wasm_sdk::wasm_test;
-    use home_assistant::ServiceCall;
     use home_assistant::domain::UNKNOWN;
+    use home_assistant::{HaError, ServiceCall};
 
     fn request() -> Request {
         Request::no_value(Slot::new("press"), ServiceCall::new("button", "press"))
@@ -646,6 +703,68 @@ mod tests {
                 "{entity_id}"
             );
         }
+        assert_eq!(
+            group_of(Some("sensor.outdoor")),
+            Ok(Group::Reading(reading::Kind::Sensor))
+        );
+        assert_eq!(
+            group_of(Some("binary_sensor.front_door")),
+            Ok(Group::Reading(reading::Kind::BinarySensor))
+        );
+    }
+
+    #[wasm_test]
+    fn only_a_sensor_reads_a_display_precision() {
+        assert!(Group::Reading(reading::Kind::Sensor).reads_precision());
+        assert!(!Group::Reading(reading::Kind::BinarySensor).reads_precision());
+        assert!(!Group::Momentary(momentary::Kind::Button).reads_precision());
+        assert!(!Group::Switch(switch::Kind::Switch).reads_precision());
+    }
+
+    #[wasm_test]
+    fn a_precision_that_does_not_come_stops_the_number_waiting_unless_the_connection_dropped() {
+        let refused = CallFailure::Rejected(HaError {
+            code: "unknown_error".to_owned(),
+            message: String::new(),
+        });
+        assert_eq!(
+            Precision::Awaiting.answered(Ok(&Reply::Precision(Some(1)))),
+            Precision::Known(Some(1))
+        );
+        assert_eq!(
+            Precision::Awaiting.answered(Err(&CallFailure::TimedOut)),
+            Precision::Known(None),
+            "no answer shows the number as written"
+        );
+        assert_eq!(
+            Precision::Awaiting.answered(Err(&refused)),
+            Precision::Known(None),
+            "a refusal shows the number as written"
+        );
+        assert_eq!(
+            Precision::Awaiting.answered(Err(&CallFailure::Disconnected)),
+            Precision::Awaiting,
+            "the next login asks again"
+        );
+        assert_eq!(
+            Precision::Known(Some(2)).answered(Err(&CallFailure::TimedOut)),
+            Precision::Known(Some(2)),
+            "a failed refresh keeps the precision already known"
+        );
+    }
+
+    #[wasm_test]
+    fn a_refresh_replaces_the_precision_shown() {
+        assert_eq!(
+            Precision::Known(Some(2)).answered(Ok(&Reply::Precision(Some(3)))),
+            Precision::Known(Some(3)),
+            "a precision changed since"
+        );
+        assert_eq!(
+            Precision::Known(Some(2)).answered(Ok(&Reply::Precision(None))),
+            Precision::Known(None),
+            "a precision cleared since"
+        );
     }
 
     #[wasm_test]

@@ -1,0 +1,234 @@
+# A sensor's or a binary sensor's tile at each size, and each kind of value it reads.
+
+size = "1400x600"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "reading-temperature-1x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Size = "1x1"
+
+[[shot]]
+name = "reading-door-open-1x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Door open"
+Size = "1x1"
+
+[[shot]]
+name = "reading-text-1x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Text"
+Size = "1x1"
+
+[[shot]]
+name = "reading-temperature-2x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Size = "2x1"
+
+[[shot]]
+name = "reading-door-open-2x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Door open"
+Size = "2x1"
+
+[[shot]]
+name = "reading-text-2x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Text"
+Size = "2x1"
+
+[[shot]]
+name = "reading-temperature-2x2"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+
+[[shot]]
+name = "reading-door-open-2x2"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Door open"
+Size = "2x2"
+
+[[shot]]
+name = "reading-text-2x2"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Text"
+Size = "2x2"
+
+[[shot]]
+name = "reading-temperature-full"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Size = "Full"
+
+[[shot]]
+name = "reading-door-open-full"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Door open"
+Size = "Full"
+
+[[shot]]
+name = "reading-text-full"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Text"
+Size = "Full"
+
+[[shot]]
+name = "reading-power"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Power"
+
+[[shot]]
+name = "reading-battery-full"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Battery full"
+
+[[shot]]
+name = "reading-battery-low"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Battery low"
+
+[[shot]]
+name = "reading-time-ahead"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Time ahead"
+
+[[shot]]
+name = "reading-uptime"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Uptime"
+
+[[shot]]
+name = "reading-door-closed"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Door closed"
+
+[[shot]]
+name = "reading-smoke"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Smoke"
+
+[[shot]]
+name = "reading-unknown"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Unknown"
+
+[[shot]]
+name = "reading-precision-on-its-way"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+"Precision on its way" = true
+
+[[shot]]
+name = "reading-unavailable"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Readiness = "Unavailable"
+
+[[shot]]
+name = "reading-reconnecting"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Readiness = "Reconnecting"
+
+[[shot]]
+name = "reading-reconnecting-1x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Readiness = "Reconnecting"
+Size = "1x1"
+
+[[shot]]
+name = "reading-long-name-1x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Name = "Long"
+Size = "1x1"
+
+[[shot]]
+name = "reading-long-name-2x2"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Name = "Long"
+Size = "2x2"
+
+[[shot]]
+name = "reading-time-ahead-1x1"
+scene = "bmc_gallery::home_assistant_tile_reading::Reading"
+frames = 4
+
+[shot.knobs]
+Sample = "Time ahead"
+Size = "1x1"

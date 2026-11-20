@@ -18,9 +18,10 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The card every tile is drawn on, the pieces of its heading, and the centred layout made of them.
+//! The card every tile is drawn on, the pieces of its heading, and the layouts made of them:
+//! centred, and over a large reading.
 
-use bmc_wasm_sdk::typography::unbroken;
+use bmc_wasm_sdk::typography::{EMDASH, unbroken};
 use bmc_wasm_sdk::*;
 
 use crate::interaction::gesture::{Availability, Touch};
@@ -49,6 +50,12 @@ const SINCE_FORMAT: RelTimeFormat = RelTimeFormat {
     length: RelTimeLength::Long,
     segments: RelTimeSegments::Single,
 };
+/// A reading's row, as a share of its font size, with room for descenders.
+const READING_LINE: f32 = 1.2;
+/// The line height of a time that wraps onto two lines, as a share of its font size.
+const TIME_LINE: f32 = 1.1;
+/// The reading's font size beside the heading, where it has the card's whole height.
+const BESIDE_READING: u32 = 80;
 
 /// What the card says of the entity's state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +149,7 @@ enum HintRow {
 
 /// Between the heading and the rows of blocks under it, picked by eye in the gallery.
 const HEADING_GAP: f32 = 16.0;
-/// The share of a wide card the centred block takes, left of the rows, picked by eye in the gallery.
+/// The share of a wide card the centred block takes, left of the rows or the reading, picked by eye in the gallery.
 const BESIDE_HEADING_SHARE: f32 = 0.42;
 
 /// The room a card leaves for rows of blocks.
@@ -250,6 +257,74 @@ fn rows_fitting(height: f32) -> usize {
         .max(0.0) as usize
 }
 
+/// How the layout over a reading is set on a card of one height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OverReading {
+    /// The circle's diameter.
+    icon: f32,
+    text: TextSizes,
+    /// Between the circle and the capitals of the name under it.
+    ring_clearance: f32,
+    /// The reading's font size, which a reading too wide for the card shrinks from.
+    reading: u32,
+    /// Between the heading and the reading.
+    reading_gap: f32,
+    line: LineRow,
+}
+
+impl OverReading {
+    /// On a card one row high and narrow the reading takes the line's place, to keep its size.
+    const SHORT: Self = Self {
+        icon: 64.0,
+        text: TextSizes::REGULAR,
+        ring_clearance: 12.0,
+        reading: 64,
+        reading_gap: 0.0,
+        line: LineRow::InPlaceOfReading,
+    };
+    const TALL: Self = Self {
+        icon: 96.0,
+        text: TextSizes::LARGE,
+        ring_clearance: 20.0,
+        reading: 120,
+        reading_gap: 16.0,
+        line: LineRow::UnderName,
+    };
+
+    fn of(size: SizeVariant) -> Self {
+        match size {
+            SizeVariant::Small | SizeVariant::Medium => Self::SHORT,
+            SizeVariant::Large | SizeVariant::Full => Self::TALL,
+        }
+    }
+}
+
+/// Where the layout over a reading shows the line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineRow {
+    UnderName,
+    /// Only a line that says why the tile cannot show the reading, such as "Loading…" or "Reconnecting…",
+    /// in its row; a time on the line is left out.
+    InPlaceOfReading,
+}
+
+/// What a card shows large under its heading, such as a sensor's value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reading {
+    Words(String),
+    /// How long ago a time was, or how soon it comes, such as "in 5 minutes":
+    /// the host words it in the device language and keeps it current.
+    Time(SystemTime),
+}
+
+impl Reading {
+    /// No value, as the frontend's tile shows one.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::Words(EMDASH.to_owned())
+    }
+}
+
 /// What the line under the name tells.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -315,20 +390,24 @@ impl Card {
                 texts.extend(self.hint(text, width, align));
             }
         }
-        // The badge keeps room around its circle for the hold ring.
-        let ring_room = (Badge::side(icon) - icon) / 2.0;
-        let cap_inset = text.title_cap_inset();
-        // From the top of the circle to the foot of the line.
-        let seen =
-            icon + ring_room + ring_clearance + text.title_height + text.line_height - cap_inset;
-        let above_circle = (self.height - seen) / 2.0 - OPTICAL_LIFT * self.height;
+        let under_icon =
+            ring_clearance - text.title_cap_inset() + text.title_height + text.line_height;
         vec![
-            col(
-                props!(height: (above_circle - ring_room).max(0.0)),
-                Vec::<Node>::new(),
-            ),
+            self.space_above_icon(icon, under_icon),
             self.icon_over(centred, texts, touches),
         ]
+    }
+
+    /// The space that puts an `icon`, with what hangs `under_icon` high below it, at the optical centre.
+    fn space_above_icon(&self, icon: f32, under_icon: f32) -> Node {
+        // The badge keeps room around its circle for the hold ring.
+        let ring_room = (Badge::side(icon) - icon) / 2.0;
+        let seen = icon + ring_room + under_icon;
+        let above_circle = (self.height - seen) / 2.0 - OPTICAL_LIFT * self.height;
+        col(
+            props!(height: (above_circle - ring_room).max(0.0)),
+            Vec::<Node>::new(),
+        )
     }
 
     /// The centred block with the first of `rows` beside or under it, as many as [`rows`] has room for,
@@ -416,6 +495,178 @@ impl Card {
         )
     }
 
+    /// The heading with `reading` set large, to be read across the room:
+    /// beside it on a card one row high and wide, else under it.
+    #[must_use]
+    pub fn over_reading(&self, reading: &Reading, touches: &Touches) -> Node {
+        match self.size {
+            SizeVariant::Medium => self.reading_beside(reading, touches),
+            SizeVariant::Small | SizeVariant::Large | SizeVariant::Full => {
+                self.reading_under(reading, touches)
+            }
+        }
+    }
+
+    /// The icon over the name and `reading`, all centred,
+    /// the circle to the reading's foot at the optical centre, as [`Self::centred`] sets its block.
+    fn reading_under(&self, reading: &Reading, touches: &Touches) -> Node {
+        let OverReading {
+            icon,
+            text,
+            ring_clearance,
+            reading: reading_size,
+            reading_gap,
+            line,
+        } = OverReading::of(self.size);
+        let width = body_width(self.width);
+        let align = TextAlign::Center;
+        #[expect(clippy::cast_precision_loss, reason = "a font size, exact in f32")]
+        let reading_height = reading_size as f32 * READING_LINE;
+        let mut heading = vec![self.title(text, width, align)];
+        let reading = match line {
+            LineRow::UnderName => {
+                heading.extend(self.line(text, width, align));
+                Self::reading(reading, reading_size, (width, reading_height))
+            }
+            // Under the name, as on a taller card, in a row kept as high as the reading's,
+            // so the icon and the name stay put when the reading comes.
+            LineRow::InPlaceOfReading => match self.words_line(text, width, align) {
+                Some(line) => col(props!(height: reading_height), [line]),
+                None => Self::reading(reading, reading_size, (width, reading_height)),
+            },
+        };
+        let line_height = match line {
+            LineRow::UnderName if self.line.is_some() => text.line_height,
+            LineRow::UnderName | LineRow::InPlaceOfReading => 0.0,
+        };
+        let cap_inset = text.title_cap_inset();
+        let under_icon = ring_clearance - cap_inset
+            + text.title_height
+            + line_height
+            + reading_gap
+            + reading_height;
+        self.surface(
+            props!(cross_align: CrossAlign::Center),
+            vec![
+                self.space_above_icon(icon, under_icon),
+                col(
+                    props!(gap: ring_clearance - cap_inset, cross_align: CrossAlign::Center),
+                    [
+                        self.icon(icon, touches),
+                        col(
+                            props!(gap: reading_gap, cross_align: CrossAlign::Center),
+                            [col(props!(), heading), reading],
+                        ),
+                    ],
+                ),
+            ],
+            touches,
+        )
+    }
+
+    /// The icon over the name and the line, centred in a column on the left, and `reading` centred on the right:
+    /// a card one row high and wide has room for both side by side, the reading at the card's full height.
+    /// Its heading is the narrow card's, so a sensor's name sits alike on both.
+    fn reading_beside(&self, reading: &Reading, touches: &Touches) -> Node {
+        let OverReading {
+            icon,
+            text,
+            ring_clearance,
+            ..
+        } = OverReading::SHORT;
+        // The columns of a card with rows of blocks beside its heading, so the headings line up.
+        let right = self.shape().beside_width();
+        let left = self.width - PADDING - right;
+        let texts_width = body_width(left);
+        let mut texts = vec![self.title(text, texts_width, TextAlign::Center)];
+        texts.extend(self.line(text, texts_width, TextAlign::Center));
+        let reading_height = (self.height - 2.0 * PADDING).max(0.0);
+        let reading = Self::reading(reading, BESIDE_READING, (right, reading_height));
+        self.surface(
+            props!(),
+            vec![row(
+                props!(
+                    width: self.width,
+                    height: self.height,
+                    cross_align: CrossAlign::Center
+                ),
+                [
+                    col(
+                        props!(
+                            width: left,
+                            gap: ring_clearance - text.title_cap_inset(),
+                            cross_align: CrossAlign::Center
+                        ),
+                        [self.icon(icon, touches), col(props!(), texts)],
+                    ),
+                    reading,
+                ],
+            )],
+            touches,
+        )
+    }
+
+    /// `reading` in a `width` by `height` row, white and bold.
+    /// Words too wide shrink to fit, wrapping where that leaves them larger, rather than being cut:
+    /// no other line says what they are.
+    fn reading(reading: &Reading, size: u32, (width, height): (f32, f32)) -> Node {
+        let style = style!(
+            size: size,
+            weight: FontWeight::BOLD,
+            color: LABEL_COLOR,
+            align: TextAlign::Center,
+            valign: VerticalAlign::Center
+        );
+        match reading {
+            Reading::Words(words) => {
+                // AutoFit wraps with cosmic-text's `WordOrGlyph`: a word too wide for its line
+                // is split wherever the halves fit the box at a smaller size.
+                // A line of room per word leaves a lone word no room for halves.
+                // TODO(BDK-555): drop it once AutoFit can wrap at words alone.
+                #[expect(clippy::cast_precision_loss, reason = "a few words and a font size")]
+                let words_height = words
+                    .split(' ')
+                    .filter(|word| !word.is_empty())
+                    .count()
+                    .max(1) as f32
+                    * size as f32
+                    * READING_LINE;
+                let fit_height = height.min(words_height);
+                canvas(
+                    props!(width: width, height: height),
+                    [Draw::autofit_text(
+                        0.0,
+                        (height - fit_height) / 2.0,
+                        width,
+                        fit_height,
+                        unbroken_at_joints(words),
+                        style,
+                    )],
+                )
+            }
+            // TODO(BDK-1153): shrink to fit as words do, once the host can fit a time it words;
+            // until then it wraps, set small enough for two lines to fit.
+            Reading::Time(time) => in_row(
+                relative_time_live(
+                    *time,
+                    SINCE_FORMAT,
+                    RelTimeClamp::Auto,
+                    style!(
+                        size: size.min(two_lines_in(height)),
+                        weight: FontWeight::BOLD,
+                        color: LABEL_COLOR,
+                        align: TextAlign::Center,
+                        line_height: TIME_LINE,
+                        max_width: whole_pixels(width)
+                    )
+                    .into(),
+                ),
+                (width, height),
+                TextAlign::Center,
+            ),
+        }
+    }
+
     /// `children` laid out by `props` on the black card, over its touch target and under its tint.
     fn surface(&self, props: PropsData, children: Vec<Node>, touches: &Touches) -> Node {
         let mut layers = vec![touchable(CARD, fill_insets(), Vec::<Draw>::new())];
@@ -457,6 +708,14 @@ impl Card {
             (width, sizes.line_height),
             align,
         ))
+    }
+
+    /// The line where it is a state or a notice, not a time.
+    fn words_line(&self, sizes: TextSizes, width: f32, align: TextAlign) -> Option<Node> {
+        match self.line.as_ref()? {
+            Line::State(_) | Line::Notice(_) => self.line(sizes, width, align),
+            Line::Since(_) => None,
+        }
     }
 
     /// The line's words, at most `width` wide.
@@ -552,6 +811,30 @@ pub fn touch(touches: &Touches) -> Touch {
 
 fn body_width(width: f32) -> f32 {
     (width - 2.0 * PADDING).max(0.0)
+}
+
+/// `words` breakable at spaces alone: UAX #14 also breaks after a slash or a hyphen,
+/// splitting a unit such as "mmol/L" or a date.
+fn unbroken_at_joints(words: &str) -> String {
+    const WORD_JOINER: char = '\u{2060}';
+    let mut joined = String::with_capacity(words.len());
+    for character in words.chars() {
+        joined.push(character);
+        if matches!(character, '/' | '-') {
+            joined.push(WORD_JOINER);
+        }
+    }
+    joined
+}
+
+/// The largest font size at which two lines of a time fit `height`.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a card's height is a few hundred pixels, and a negative one clamps to zero"
+)]
+fn two_lines_in(height: f32) -> u32 {
+    (height / (2.0 * TIME_LINE)).floor().max(0.0) as u32
 }
 
 /// A text's `max_width`, which the style takes in whole pixels.
@@ -778,5 +1061,45 @@ mod tests {
             }
         );
         assert_eq!(touch(&Touches::tap("power", hit)), Touch::default());
+    }
+
+    /// The text and box height of the reading's fitted words.
+    fn fitted(words: &str, height: f32) -> (String, f32) {
+        let reading = Card::reading(&Reading::Words(words.to_owned()), 80, (300.0, height));
+        let Node::Canvas { draws, .. } = reading else {
+            panic!("BUG: words are drawn on a canvas, got {reading:?}");
+        };
+        match draws.as_slice() {
+            [
+                Draw::AutofitText {
+                    text, box_height, ..
+                },
+            ] => (text.clone(), *box_height),
+            other => panic!("BUG: words are one fitted text, got {other:?}"),
+        }
+    }
+
+    #[wasm_test]
+    fn a_reading_breaks_at_spaces_but_not_after_a_slash_or_a_hyphen() {
+        assert_eq!(
+            fitted("5,4 mmol/L on 2026-11-21", 300.0).0,
+            "5,4 mmol/\u{2060}L on 2026-\u{2060}11-\u{2060}21"
+        );
+    }
+
+    #[wasm_test]
+    fn a_single_word_has_room_for_one_line_so_it_shrinks_rather_than_splits() {
+        let line = 80.0 * READING_LINE;
+        assert_eq!(fitted("Calibrating", 300.0).1, line);
+        assert_eq!(
+            fitted("Partly cloudy", 300.0).1,
+            2.0 * line,
+            "two words have room for a line each"
+        );
+        assert_eq!(
+            fitted("Partly cloudy with rain", 300.0).1,
+            300.0,
+            "words beyond the box share its lines"
+        );
     }
 }

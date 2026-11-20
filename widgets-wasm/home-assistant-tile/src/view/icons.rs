@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The icons the view draws itself, whatever entity the tile shows.
+//! The icons the view draws itself, whatever entity the tile shows, and those more than one group draws.
 
 use bmc_wasm_sdk::{Svg, include_svg};
 
@@ -27,3 +27,5 @@ pub const ARROW_RIGHT: Svg = include_svg!("assets/mdi/arrow-right.svg");
 pub const BACKSPACE_OUTLINE: Svg = include_svg!("assets/mdi/backspace-outline.svg");
 pub const CHECK: Svg = include_svg!("assets/mdi/check.svg");
 pub const CLOSE: Svg = include_svg!("assets/mdi/close.svg");
+pub const POWER_PLUG: Svg = include_svg!("assets/mdi/power-plug.svg");
+pub const POWER_PLUG_OFF: Svg = include_svg!("assets/mdi/power-plug-off.svg");

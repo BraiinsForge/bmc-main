@@ -31,14 +31,13 @@ use super::{CardAction, Context, Position, Presenter, card, card_action};
 use crate::interaction::pending::{Request, Slot};
 use crate::view::blocks::badge::{Disc, Mark};
 use crate::view::card::{Card, Line, StateDisplay};
+use crate::view::icons::{POWER_PLUG, POWER_PLUG_OFF};
 use crate::view::style::{Accent, Icon};
 use crate::view::touches::Touches;
 
 const POWER: Slot = Slot::new("power");
 
 const BULLHORN: Svg = include_svg!("assets/mdi/bullhorn.svg");
-const POWER_PLUG: Svg = include_svg!("assets/mdi/power-plug.svg");
-const POWER_PLUG_OFF: Svg = include_svg!("assets/mdi/power-plug-off.svg");
 const REMOTE: Svg = include_svg!("assets/mdi/remote.svg");
 const REMOTE_OFF: Svg = include_svg!("assets/mdi/remote-off.svg");
 const ROBOT: Svg = include_svg!("assets/mdi/robot.svg");
