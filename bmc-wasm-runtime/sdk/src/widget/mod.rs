@@ -464,7 +464,7 @@ pub(crate) fn leave() {
     not(any(target_arch = "wasm32", test)),
     expect(
         dead_code,
-        reason = "the poll glue that uses it exists on wasm32 and in tests"
+        reason = "the poll glue and Notify that use it exist on wasm32 and in tests"
     )
 )]
 pub(crate) fn defer(op: impl FnOnce() + 'static) {
@@ -472,7 +472,7 @@ pub(crate) fn defer(op: impl FnOnce() + 'static) {
         deferred
             .as_mut()
             .expect(
-                "BUG: a method poll driven outside an SDK export; \
+                "BUG: a Notify or a method poll driven outside an SDK export; \
                  use a #[widget] hook or an SDK callback",
             )
             .push_back(Box::new(op));

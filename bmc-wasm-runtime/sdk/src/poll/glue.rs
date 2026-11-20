@@ -72,13 +72,14 @@ pub(super) fn trampoline(response: &FetchResponse) {
         ReplyAction::Deliver(index, on_reply) => {
             // Borrowed for the reply only; dropping it would end the poll.
             on_reply(&ManuallyDrop::new(Handle(index)), response);
-            // What the handler asked for (`enable_after`, `invalidate`) goes out
-            // before the reschedule looks for a live request.
-            widget::drain();
             let now = now_secs();
-            schedule(
-                REGISTRY.with_borrow_mut(|registry| registry.reschedule(index, response.ok(), now)),
-            );
+            let delay =
+                REGISTRY.with_borrow_mut(|registry| registry.bank_reply(index, response.ok(), now));
+            // Banked first, so a `Notify` the handler sent sees this reply's freshness;
+            // what the handler asked for (`enable_after`, `invalidate`) goes out
+            // before the kick looks for a live request.
+            widget::drain();
+            schedule(REGISTRY.with_borrow_mut(|registry| registry.kick_after(index, delay, now)));
         }
     }
 }
@@ -210,7 +211,7 @@ impl Handle {
     }
 
     /// Treat the reply being delivered as unusable, for a body
-    /// this handler cannot use despite the 2xx.
+    /// this handler, or a widget it notified, cannot use despite the 2xx.
     ///
     /// The poll then reads as failing and keeps the anchor it had,
     /// and the next attempt waits `retry_ms` rather than the interval.

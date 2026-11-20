@@ -11,8 +11,10 @@ and SDK callbacks are its methods: `Timer::start(self, period_ms, Self::tick)`,
 `PollHandle::register(me, Self::build, Self::on_reply, config)` in `init`. See [Widget Struct](widget-struct.md).
 
 Give a sub-object its own `Part<T>` when its callbacks touch only its own state, such as a list row that polls its own
-price or a loader that chains a fetch into a decode. A sub-object whose callbacks write the widget's state stays a plain
-struct, driven from the widget's own methods.
+price or a loader that chains a fetch into a decode. When the widget should react to the part, the part tells it through
+a `Notify` ([A Part That Tells the Widget](widget-struct.md#a-part-that-tells-the-widget)) and leaves `request_frame()`
+to the widget. A sub-object whose callbacks write the widget's state stays a plain struct, driven from the widget's own
+methods.
 
 Hand-written `#[unsafe(no_mangle)] pub extern "C"` exports and state in `thread_local!` cells are obsolete. The
 free-function forms (`timer::start`, `register_poll`, `request.send`, …) stay only so that a widget not yet ported still

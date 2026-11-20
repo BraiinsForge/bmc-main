@@ -113,7 +113,8 @@ fn set_enabled_after(reg: &mut Registry, be: &mut FakeBackend, h: usize, delay_m
 }
 
 fn reschedule(reg: &mut Registry, be: &mut FakeBackend, h: usize, ok: bool, now_secs: i64) {
-    let kick = reg.reschedule(h, ok, now_secs);
+    let delay = reg.bank_reply(h, ok, now_secs);
+    let kick = reg.kick_after(h, delay, now_secs);
     perform(reg, be, kick);
 }
 

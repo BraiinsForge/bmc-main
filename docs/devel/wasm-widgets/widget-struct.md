@@ -180,8 +180,81 @@ impl Loader {
   when the host itself refuses the request, such as a decode.
 - A callback that drops its own part keeps the value until it returns; a registration it makes after the drop is
   accepted and delivers nothing.
-- A sub-object whose callbacks must change the widget's state cannot be a part: the widget owns it as a plain field and
-  runs its callbacks itself, passing `self.me()` to the field for the registrations it makes.
+- A part cannot reach the widget while its callback runs. It tells the widget through a `Notify`, and the widget reacts
+  once the callback has returned. A sub-object that needs the widget inside its callback cannot be a part: the widget
+  owns it as a plain field and runs its callbacks itself, passing `self.me()` to the field for the registrations it
+  makes.
+
+### A Part That Tells the Widget
+
+When the widget should react to a part, it hands the part a `Notify` bound to one of its own methods, and the part sends
+through it. A part that fetches for this one widget sends what it fetched, and the widget keeps it:
+
+```rust
+struct FactSource {
+    _poll: PollHandle,
+    on_fact: Notify<String>,
+}
+
+impl FactSource {
+    fn new(on_fact: Notify<String>) -> Part<Self> {
+        Part::new_cyclic(|me| Self {
+            _poll: PollHandle::register(me, Self::build_request, Self::on_reply, PollConfig::default()),
+            on_fact,
+        })
+    }
+
+    fn build_request(&mut self, _poll: &PollHandle) -> Option<FetchSpec> {
+        Some(FetchSpec::get(FACTS_API_URL))
+    }
+
+    fn on_reply(&mut self, _poll: &PollHandle, response: &FetchResponse) {
+        if let Some(fact) = response.ok().then(|| response.json().str("/data/text")).flatten() {
+            self.on_fact.send(fact);
+        }
+    }
+}
+
+type Facts = Part<FactSource>;
+
+struct FactCard {
+    _source: Facts,
+    fact: Option<String>,
+}
+
+#[widget]
+impl Widget for FactCard {
+    fn init(me: &Building<Self>) -> Self {
+        Self { _source: FactSource::new(Notify::new(me, Self::on_fact)), fact: None }
+    }
+
+    fn render(&mut self, _delta_ms: u32) {
+        let fact = self.fact.as_deref().unwrap_or("Loading...");
+        // …
+    }
+}
+
+impl FactCard {
+    fn on_fact(&mut self, fact: String) {
+        self.fact = Some(fact);
+        request_frame();
+    }
+}
+```
+
+- The part does not name the widget's type, so a part in a library serves any widget.
+- The part reports what changed and leaves `request_frame()` to the widget, which knows what it shows.
+- A part whose data outlives one send keeps it and sends `()`: a cache the part reads again, such as decoded images, or
+  state several readers share, such as a feed behind many list rows. The widget reads it when it renders.
+- Name the `Notify` and the widget's method for what happened, such as `on_fact` or `on_day_change`; `on_update` is for
+  a part whose state changed as a whole.
+- A widget told of a reply it cannot use may call `retry()` or `retry_after()` on the part's poll from the method the
+  `Notify` runs, if the part exposes its `PollHandle` and sends from its reply handler. The reply then counts as no
+  refresh, as if the part's own handler had rejected it.
+- A send is delivered once the part's callback has returned, never inside it. The widget can then look into the part
+  that sent; called at once, it would find it still borrowed.
+- Every send is delivered, in order. One whose receiver is gone by then runs nothing.
+- Like a method poll, a send needs an SDK export around it, and outside one the SDK refuses with a `BUG:` panic.
 
 ## Two Rules
 

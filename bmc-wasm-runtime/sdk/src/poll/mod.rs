@@ -267,11 +267,25 @@ struct Poll {
     force_retry: Option<u32>,
     /// Epoch secs of the last ok reply; `None` before the first success.
     last_success_secs: Option<i64>,
-    /// The anchor before the last ok reply; `mark_stale` reverts to it.
+    /// The anchor before the last ok reply; undoing that reply reverts to it.
     prev_success_secs: Option<i64>,
     health: Health,
+    /// The health before the last ok reply, so undoing it keeps a failing streak's start.
+    prev_health: Health,
     /// Counts the kicks asked for; a kick performed after a newer one was asked for yields to it.
     revision: usize,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl Poll {
+    /// Count the success the last reply banked as a failure at `now_secs`,
+    /// as if that reply had failed; a no-op if it already counted as one.
+    fn undo_success(&mut self, now_secs: i64) {
+        if self.health == Health::Ok {
+            self.health = self.prev_health.failing_at(now_secs);
+            self.last_success_secs = self.prev_success_secs;
+        }
+    }
 }
 
 /// A request the registry wants sent, performed outside its borrow:
@@ -352,6 +366,7 @@ impl Registry {
             last_success_secs: None,
             prev_success_secs: None,
             health: Health::Ok,
+            prev_health: Health::Ok,
             revision: 0,
         }));
         index
@@ -555,10 +570,13 @@ impl Registry {
             poll.last_success_secs = None;
             poll.prev_success_secs = None;
             poll.health = Health::Ok;
+            poll.prev_health = Health::Ok;
         }
     }
 
-    pub(crate) fn reschedule(&mut self, index: usize, ok: bool, now_secs: i64) -> Option<Kick> {
+    /// Record the delivered reply as a refresh or a failure,
+    /// and return how long the next attempt waits; `None` for no next attempt.
+    pub(crate) fn bank_reply(&mut self, index: usize, ok: bool, now_secs: i64) -> Option<u32> {
         let poll = poll_mut(&mut self.polls, index)?;
         let forced = std::mem::take(&mut poll.force_retry);
         // A forced retry means the handler rejected this reply, so it is no
@@ -566,16 +584,37 @@ impl Registry {
         if ok && forced.is_none() {
             poll.prev_success_secs = poll.last_success_secs;
             poll.last_success_secs = Some(now_secs);
+            poll.prev_health = poll.health;
             poll.health = Health::Ok;
         } else {
             poll.health = poll.health.failing_at(now_secs);
         }
-        let delay = match forced {
-            Some(delay_ms) => delay_ms,
-            None if ok => poll.config.interval_ms?,
-            None => poll.config.retry_ms,
+        match forced {
+            Some(delay_ms) => Some(delay_ms),
+            None if ok => poll.config.interval_ms,
+            None => Some(poll.config.retry_ms),
+        }
+    }
+
+    /// Ask for the attempt after a banked reply, unless a request went out meanwhile.
+    ///
+    /// A retry asked for since the banking, by a widget the reply's handler notified,
+    /// rejects the reply after all: a refresh it banked is undone, and the retry's delay wins.
+    pub(crate) fn kick_after(
+        &mut self,
+        index: usize,
+        banked_delay_ms: Option<u32>,
+        now_secs: i64,
+    ) -> Option<Kick> {
+        let poll = poll_mut(&mut self.polls, index)?;
+        let delay_ms = match poll.force_retry.take() {
+            Some(forced) => {
+                poll.undo_success(now_secs);
+                forced
+            }
+            None => banked_delay_ms?,
         };
-        self.kick(index, Some(delay))
+        self.kick(index, Some(delay_ms))
     }
 
     /// Enable the poll and ask for a request, or disable it and cancel the live one in place.

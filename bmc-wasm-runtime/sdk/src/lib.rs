@@ -401,6 +401,8 @@ pub mod math;
 pub mod mdns;
 pub mod net;
 pub mod network;
+#[cfg(any(target_arch = "wasm32", test))]
+pub mod notify;
 pub mod params;
 pub mod poll;
 pub mod profile;
@@ -440,6 +442,8 @@ pub use json_str::JsonStr;
 pub use led::LedEffect;
 pub use net::*;
 pub use network::NetworkInfo;
+#[cfg(any(target_arch = "wasm32", test))]
+pub use notify::Notify;
 #[cfg(any(target_arch = "wasm32", test))]
 pub use poll::register as register_poll;
 pub use poll::{Config as PollConfig, FetchSpec, Handle as PollHandle, Method as FetchMethod};

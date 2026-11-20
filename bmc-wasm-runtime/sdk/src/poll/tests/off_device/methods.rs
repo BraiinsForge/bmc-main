@@ -115,7 +115,7 @@ fn a_method_poll_sends_once_the_export_ended() {
 }
 
 #[test]
-#[should_panic(expected = "outside an SDK export")]
+#[should_panic(expected = "driven outside an SDK export")]
 fn a_method_poll_driven_outside_an_export_is_a_bug() {
     let part = Poller::new();
 
@@ -418,4 +418,137 @@ fn method_builds_that_invalidate_each_other_are_a_bug() {
     });
 
     widget::drain();
+}
+
+struct Teller {
+    handle: Option<Handle>,
+    told: crate::Notify<()>,
+}
+
+impl Teller {
+    #[expect(
+        clippy::unnecessary_wraps,
+        clippy::unused_self,
+        reason = "a Build method"
+    )]
+    fn build(&mut self, _handle: &Handle) -> Option<FetchSpec> {
+        Some(FetchSpec::get("http://x/data"))
+    }
+
+    fn on_reply(&mut self, _handle: &Handle, _response: &FetchResponse) {
+        self.told.send(());
+    }
+}
+
+/// Runs `f` on the handle of the seated teller.
+fn teller_handle<R>(seated: Option<&Part<Teller>>, f: impl FnOnce(&Handle) -> R) -> R {
+    let teller = seated.expect("BUG: the test seats the teller first");
+    teller.with(|teller| {
+        f(teller
+            .handle
+            .as_ref()
+            .expect("BUG: the test stores the handle first"))
+    })
+}
+
+/// Seats `widget` behind a teller that tells it of each reply, then delivers the first one.
+fn told_of_the_first_reply<W: 'static>(
+    widget: W,
+    on_told: fn(&mut W, ()),
+    seat: fn(&mut W, Part<Teller>),
+) -> Part<W> {
+    widget::enter();
+    let mut receiver = Part::new(widget);
+    let mut teller = Part::new(Teller {
+        handle: None,
+        told: crate::Notify::new(&receiver, on_told),
+    });
+    let handle = Handle::register(&teller, Teller::build, Teller::on_reply, CFG);
+    teller.with_mut(|teller| teller.handle = Some(handle));
+    receiver.with_mut(|widget| seat(widget, teller));
+    widget::drain();
+
+    reply_to_first_fetch();
+    receiver
+}
+
+#[derive(Default)]
+struct Listener {
+    teller: Option<Part<Teller>>,
+    told_anchor: Option<i64>,
+}
+
+impl Listener {
+    fn on_told(&mut self, (): ()) {
+        self.told_anchor = teller_handle(self.teller.as_ref(), |handle| {
+            handle.last_success_time().map(|time| time.unix_secs)
+        });
+    }
+}
+
+#[test]
+fn a_part_told_of_a_reply_reads_the_poll_with_that_reply_banked() {
+    let listener = told_of_the_first_reply(
+        Listener::default(),
+        Listener::on_told,
+        |listener, teller| {
+            listener.teller = Some(teller);
+        },
+    );
+
+    assert_ne!(
+        listener.with(|listener| listener.told_anchor),
+        None,
+        "the widget told of a fresh reply must not read the part's poll as never refreshed"
+    );
+}
+
+/// Rejects every reply its teller tells it of.
+#[derive(Default)]
+struct Rejecter {
+    teller: Option<Part<Teller>>,
+}
+
+impl Rejecter {
+    const RETRY_MS: u32 = 7_000;
+
+    fn on_told(&mut self, (): ()) {
+        teller_handle(self.teller.as_ref(), |handle| {
+            handle.retry_after(Self::RETRY_MS);
+        });
+    }
+}
+
+/// A poll whose first reply the widget rejects once its teller has told it.
+fn reply_rejected_on_notify() -> Part<Rejecter> {
+    told_of_the_first_reply(
+        Rejecter::default(),
+        Rejecter::on_told,
+        |rejecter, teller| {
+            rejecter.teller = Some(teller);
+        },
+    )
+}
+
+#[test]
+fn a_retry_from_a_notified_widget_decides_the_next_fetch() {
+    let _rejecter = reply_rejected_on_notify();
+
+    assert_eq!(
+        backend::last_delay(),
+        Some(Rejecter::RETRY_MS),
+        "a rejected reply is retried after the widget's delay, not the full interval"
+    );
+}
+
+#[test]
+fn a_retry_from_a_notified_widget_counts_the_reply_as_no_refresh() {
+    let rejecter = reply_rejected_on_notify();
+
+    assert_eq!(
+        rejecter
+            .with(|rejecter| teller_handle(rejecter.teller.as_ref(), Handle::last_success_time)),
+        None,
+        "a reply the widget rejected must not make the poll read as fresh"
+    );
 }

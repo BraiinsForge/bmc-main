@@ -34,8 +34,11 @@ panics for want of an asset host.
 
 The body runs as a host export, the way a `#[widget]` hook does: a method callback may deliver into a `Part`, and a
 method poll registered in the test never builds before the body returns, and only if something still holds its handle
-then. The SDK does not install the widget for a test, which has no `Building` to call `init` with, and a widget built by
-hand panics at the first callback it registers through `self`; test the parts and helpers `init` builds instead.
+then. A `Notify` sent in the body is delivered once the body returns too, so a test checks what the sending part keeps
+rather than the delivery. A part that sends what it fetched and keeps nothing leaves nothing to check; test its parsing
+as a function of the body instead, which a test builds with `JsonDoc::parse`, since it cannot build a `FetchResponse`.
+The SDK does not install the widget for a test, which has no `Building` to call `init` with, and a widget built by hand
+panics at the first callback it registers through `self`; test the parts and helpers `init` builds instead.
 
 A plain `#[test]` never reaches the runner, so the `no-plain-test-in-widgets` ast-grep rule refuses one in
 `widgets-wasm/` and `widgets-wasm-examples/`. Its fix swaps in `#[wasm_test]`, which is how the widgets were ported; the

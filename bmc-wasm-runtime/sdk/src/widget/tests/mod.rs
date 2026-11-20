@@ -52,6 +52,12 @@ struct Counter {
     n: usize,
 }
 
+impl Counter {
+    fn bump(&mut self, (): ()) {
+        self.n += 1;
+    }
+}
+
 impl Drop for Counter {
     fn drop(&mut self) {
         DROPPED.set(true);
@@ -459,12 +465,12 @@ fn a_hook_before_init_is_a_bug() {
 #[wasm_test]
 fn a_registration_never_keeps_the_value_alive() {
     let part = Part::new(Counter { n: 0 });
-    let target = part.target();
+    let _kept = crate::Notify::new(&part, Counter::bump);
     drop(part);
 
     assert!(
-        DROPPED.get() && target.0.strong_count() == 0,
-        "the value went with its part"
+        DROPPED.get(),
+        "the value went with its part, past a Notify still bound to it"
     );
 }
 
