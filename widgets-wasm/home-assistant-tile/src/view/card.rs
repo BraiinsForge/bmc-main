@@ -25,7 +25,7 @@ use bmc_wasm_sdk::*;
 
 use crate::interaction::gesture::{Availability, Touch};
 use crate::view::blocks::badge::{Badge, Disc, Feedback, Mark};
-use crate::view::style::{Accent, Icon, LABEL_COLOR, fill_insets};
+use crate::view::style::{Accent, CONTROL_HEIGHT, Icon, LABEL_COLOR, ROW_GAP, fill_insets};
 use crate::view::touches::{Touches, middle};
 
 /// The whole card, under its blocks: the host gives a finger to the smallest target under it,
@@ -140,6 +140,116 @@ enum HintRow {
     UnderLine,
 }
 
+/// Between the heading and the rows of blocks under it, picked by eye in the gallery.
+const HEADING_GAP: f32 = 16.0;
+/// The share of a wide card the centred block takes, left of the rows, picked by eye in the gallery.
+const BESIDE_HEADING_SHARE: f32 = 0.42;
+
+/// The room a card leaves for rows of blocks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rows {
+    pub count: usize,
+    pub width: f32,
+}
+
+/// Where a card puts rows of blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Arrangement {
+    /// None: a card one row high and narrow has no room for them.
+    Alone,
+    /// Right of the centred block, on a wide card.
+    Beside,
+    /// Under the icon, the name and the line, on a tall card.
+    Under,
+}
+
+/// How many rows of blocks a card `width` by `height` has room for, and how wide they are.
+#[must_use]
+pub fn rows((width, height): (f32, f32), size: SizeVariant) -> Rows {
+    Shape {
+        width,
+        height,
+        size,
+    }
+    .rows()
+}
+
+/// A card's measures, which pick where it puts its blocks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Shape {
+    width: f32,
+    height: f32,
+    size: SizeVariant,
+}
+
+impl Shape {
+    fn rows(self) -> Rows {
+        let body = self.height - 2.0 * PADDING;
+        let (room, width) = match self.arrangement() {
+            Arrangement::Alone => (0.0, 0.0),
+            Arrangement::Beside => (body, self.beside_width()),
+            Arrangement::Under => (
+                body - heading_height(Centred::SHORT) - HEADING_GAP,
+                body_width(self.width),
+            ),
+        };
+        Rows {
+            count: rows_fitting(room),
+            width,
+        }
+    }
+
+    fn arrangement(self) -> Arrangement {
+        let short = matches!(self.size, SizeVariant::Small | SizeVariant::Medium);
+        let wide = self.width > 2.0 * self.height;
+        match (short, wide) {
+            (_, true) => Arrangement::Beside,
+            (true, false) => Arrangement::Alone,
+            (false, false) => Arrangement::Under,
+        }
+    }
+
+    /// The rows' column beside the centred block, to the card's right padding.
+    fn beside_width(self) -> f32 {
+        (self.width * (1.0 - BESIDE_HEADING_SHARE) - PADDING).max(0.0)
+    }
+}
+
+/// The card's own centred block where rows `rows_height` high fit under it in `body`, else the short card's:
+/// a larger icon reads better, and the short one lines up with nothing either way.
+fn heading_over(size: SizeVariant, body: f32, rows_height: f32) -> Centred {
+    let own = Centred::of(size);
+    if heading_height(own) + HEADING_GAP + rows_height <= body {
+        own
+    } else {
+        Centred::SHORT
+    }
+}
+
+/// The icon over the name and the line, set by `centred`, from the top of the badge to the foot of the line.
+fn heading_height(centred: Centred) -> f32 {
+    let Centred {
+        icon,
+        text,
+        ring_clearance,
+        ..
+    } = centred;
+    Badge::side(icon) + ring_clearance - text.title_cap_inset()
+        + text.title_height
+        + text.line_height
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a handful of rows, clamped at zero"
+)]
+fn rows_fitting(height: f32) -> usize {
+    ((height + ROW_GAP) / (CONTROL_HEIGHT + ROW_GAP))
+        .floor()
+        .max(0.0) as usize
+}
+
 /// What the line under the name tells.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -179,13 +289,23 @@ impl Card {
     /// so a tile with a hint holds its icon and name level with one without.
     #[must_use]
     pub fn centred(&self, touches: &Touches) -> Node {
+        self.surface(
+            props!(cross_align: CrossAlign::Center),
+            self.centred_block(self.width, touches),
+            touches,
+        )
+    }
+
+    /// The centred layout's block in a column `width` wide and as high as the card, with the space above it.
+    fn centred_block(&self, width: f32, touches: &Touches) -> Vec<Node> {
+        let centred = Centred::of(self.size);
         let Centred {
             icon,
             text,
             ring_clearance,
             hint,
-        } = Centred::of(self.size);
-        let width = body_width(self.width);
+        } = centred;
+        let width = body_width(width);
         let align = TextAlign::Center;
         let mut texts = vec![self.title(text, width, align)];
         match hint {
@@ -202,19 +322,97 @@ impl Card {
         let seen =
             icon + ring_room + ring_clearance + text.title_height + text.line_height - cap_inset;
         let above_circle = (self.height - seen) / 2.0 - OPTICAL_LIFT * self.height;
-        self.surface(
-            props!(cross_align: CrossAlign::Center),
-            vec![
-                col(
-                    props!(height: (above_circle - ring_room).max(0.0)),
-                    Vec::<Node>::new(),
-                ),
-                col(
-                    props!(gap: ring_clearance - cap_inset, cross_align: CrossAlign::Center),
-                    [self.icon(icon, touches), col(props!(), texts)],
-                ),
-            ],
-            touches,
+        vec![
+            col(
+                props!(height: (above_circle - ring_room).max(0.0)),
+                Vec::<Node>::new(),
+            ),
+            self.icon_over(centred, texts, touches),
+        ]
+    }
+
+    /// The centred block with the first of `rows` beside or under it, as many as [`rows`] has room for,
+    /// each one control high; the centred layout where none fit.
+    #[must_use]
+    pub fn with_rows(&self, mut rows: Vec<Node>, touches: &Touches) -> Node {
+        let shape = self.shape();
+        rows.truncate(shape.rows().count);
+        let none = rows.is_empty();
+        #[expect(clippy::cast_precision_loss, reason = "a handful of rows")]
+        let rows_height = rows.len() as f32 * (CONTROL_HEIGHT + ROW_GAP) - ROW_GAP;
+        let rows = col(props!(gap: ROW_GAP), rows);
+        match (shape.arrangement(), none) {
+            (Arrangement::Alone, _) | (Arrangement::Beside | Arrangement::Under, true) => {
+                self.centred(touches)
+            }
+            (Arrangement::Beside, false) => {
+                let left = self.width - PADDING - shape.beside_width();
+                self.surface(
+                    props!(),
+                    vec![row(
+                        props!(width: self.width, height: self.height),
+                        [
+                            col(
+                                props!(width: left, cross_align: CrossAlign::Center),
+                                self.centred_block(left, touches),
+                            ),
+                            col(
+                                props!(
+                                    width: shape.beside_width(),
+                                    justify_content: Justify::Center
+                                ),
+                                [rows],
+                            ),
+                        ],
+                    )],
+                    touches,
+                )
+            }
+            (Arrangement::Under, false) => {
+                let centred = heading_over(self.size, self.height - 2.0 * PADDING, rows_height);
+                let content = heading_height(centred) + HEADING_GAP + rows_height;
+                let top = ((self.height - content) / 2.0).max(PADDING);
+                self.surface(
+                    props!(cross_align: CrossAlign::Center),
+                    vec![
+                        col(props!(height: top), Vec::<Node>::new()),
+                        col(
+                            props!(width: body_width(self.width), gap: HEADING_GAP),
+                            [self.heading(centred, touches), rows],
+                        ),
+                    ],
+                    touches,
+                )
+            }
+        }
+    }
+
+    fn shape(&self) -> Shape {
+        Shape {
+            width: self.width,
+            height: self.height,
+            size: self.size,
+        }
+    }
+
+    /// A centred block set by `centred` over rows of blocks, the hint after its line.
+    fn heading(&self, centred: Centred, touches: &Touches) -> Node {
+        let text = centred.text;
+        let width = body_width(self.width);
+        let align = TextAlign::Center;
+        let mut lines = vec![self.title(text, width, align)];
+        lines.extend(self.line_and_hint(text, width, align));
+        self.icon_over(centred, lines, touches)
+    }
+
+    /// The icon set by `centred` over `texts`, its gap measured to the name's capitals.
+    fn icon_over(&self, centred: Centred, texts: Vec<Node>, touches: &Touches) -> Node {
+        col(
+            props!(
+                gap: centred.ring_clearance - centred.text.title_cap_inset(),
+                cross_align: CrossAlign::Center
+            ),
+            [self.icon(centred.icon, touches), col(props!(), texts)],
         )
     }
 
@@ -495,6 +693,60 @@ mod tests {
             Some(vec!["Last pressed 5 min ago".to_owned()])
         );
         assert_eq!(under_name(None, None), None);
+    }
+
+    #[wasm_test]
+    fn rows_past_the_room_are_left_out_from_the_last() {
+        let row = |label| {
+            text(
+                label,
+                one_line_style(300.0, 20, FontWeight::REGULAR, LABEL_COLOR, TextAlign::Left),
+            )
+        };
+        let tall = Card {
+            width: 638.0,
+            height: 480.0,
+            size: SizeVariant::Large,
+            ..card(None, None)
+        };
+        let drawn = texts(&tall.with_rows(
+            ["row 1", "row 2", "row 3", "row 4"].map(row).to_vec(),
+            &Touches::default(),
+        ));
+        assert_eq!(drawn, ["Gate", "row 1", "row 2", "row 3"]);
+    }
+
+    #[wasm_test]
+    fn a_wide_card_puts_its_rows_beside_and_a_short_narrow_one_has_none() {
+        let count = |width, height, size| rows((width, height), size).count;
+        assert_eq!(count(317.0, 238.0, SizeVariant::Small), 0, "1x1");
+        assert_eq!(
+            count(476.0, 238.0, SizeVariant::Medium),
+            0,
+            "twice as wide as high is not wide"
+        );
+        assert_eq!(count(477.0, 238.0, SizeVariant::Medium), 2, "wider is");
+        assert_eq!(count(638.0, 238.0, SizeVariant::Medium), 2, "2x1");
+        assert_eq!(count(1280.0, 480.0, SizeVariant::Full), 5, "fullscreen");
+    }
+
+    #[wasm_test]
+    fn rows_under_the_heading_keep_the_cards_own_icon_while_they_fit_under_it() {
+        assert_eq!(
+            rows((638.0, 480.0), SizeVariant::Large).count,
+            3,
+            "the short heading leaves room for three rows"
+        );
+        let body = 480.0 - 2.0 * PADDING;
+        let height = |count: f32| count * (CONTROL_HEIGHT + ROW_GAP) - ROW_GAP;
+        assert_eq!(
+            heading_over(SizeVariant::Large, body, height(2.0)),
+            Centred::TALL
+        );
+        assert_eq!(
+            heading_over(SizeVariant::Large, body, height(3.0)),
+            Centred::SHORT
+        );
     }
 
     #[wasm_test]

@@ -38,6 +38,10 @@ arrives, the glue draws the group's skeleton with `present::loading`, and any pr
 the same `Card::centred` layout. A time on the line, such as a button's last press, is a `Line::Since`, which the host
 words in the device language and keeps current.
 
+A group with blocks lays them out with `Card::with_rows`, as many rows as `card::rows` says the card has room for, each
+one control high: beside the centred block on a wide card, under it on a tall one, and none on a narrow card one row
+high.
+
 ```rust
 pub trait Presenter {
     fn view(&self, touches: &Touches) -> Node;
