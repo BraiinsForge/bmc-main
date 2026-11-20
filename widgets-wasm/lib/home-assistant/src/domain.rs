@@ -26,6 +26,7 @@
 //! Nothing here holds state or talks to Home Assistant.
 
 pub mod automation;
+pub mod binary_sensor;
 pub mod button;
 pub mod input_boolean;
 pub mod input_button;
@@ -33,6 +34,7 @@ pub mod light;
 pub mod remote;
 pub mod scene;
 pub mod script;
+pub mod sensor;
 pub mod siren;
 pub mod switch;
 
@@ -49,6 +51,7 @@ const OFF: &str = "off";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Domain {
     Automation,
+    BinarySensor,
     Button,
     InputBoolean,
     InputButton,
@@ -56,6 +59,7 @@ pub enum Domain {
     Remote,
     Scene,
     Script,
+    Sensor,
     Siren,
     Switch,
 }
@@ -71,6 +75,7 @@ impl Domain {
         }
         match name {
             automation::DOMAIN => Some(Self::Automation),
+            binary_sensor::DOMAIN => Some(Self::BinarySensor),
             button::DOMAIN => Some(Self::Button),
             input_boolean::DOMAIN => Some(Self::InputBoolean),
             input_button::DOMAIN => Some(Self::InputButton),
@@ -78,6 +83,7 @@ impl Domain {
             remote::DOMAIN => Some(Self::Remote),
             scene::DOMAIN => Some(Self::Scene),
             script::DOMAIN => Some(Self::Script),
+            sensor::DOMAIN => Some(Self::Sensor),
             siren::DOMAIN => Some(Self::Siren),
             switch::DOMAIN => Some(Self::Switch),
             _ => None,
@@ -89,6 +95,7 @@ impl Domain {
     pub fn attributes(self) -> &'static [&'static str] {
         match self {
             Self::Automation => automation::ATTRIBUTES,
+            Self::BinarySensor => binary_sensor::ATTRIBUTES,
             Self::Button => button::ATTRIBUTES,
             Self::InputBoolean => input_boolean::ATTRIBUTES,
             Self::InputButton => input_button::ATTRIBUTES,
@@ -96,6 +103,7 @@ impl Domain {
             Self::Remote => remote::ATTRIBUTES,
             Self::Scene => scene::ATTRIBUTES,
             Self::Script => script::ATTRIBUTES,
+            Self::Sensor => sensor::ATTRIBUTES,
             Self::Siren => siren::ATTRIBUTES,
             Self::Switch => switch::ATTRIBUTES,
         }
@@ -129,6 +137,10 @@ mod tests {
     #[wasm_test]
     fn only_an_entity_id_of_a_known_domain_names_one() {
         assert_eq!(Domain::of("automation.porch"), Some(Domain::Automation));
+        assert_eq!(
+            Domain::of("binary_sensor.front_door"),
+            Some(Domain::BinarySensor)
+        );
         assert_eq!(Domain::of("button.gate"), Some(Domain::Button));
         assert_eq!(
             Domain::of("input_boolean.guests"),
@@ -139,6 +151,7 @@ mod tests {
         assert_eq!(Domain::of("remote.living_room"), Some(Domain::Remote));
         assert_eq!(Domain::of("scene.evening"), Some(Domain::Scene));
         assert_eq!(Domain::of("script.wake_up"), Some(Domain::Script));
+        assert_eq!(Domain::of("sensor.outdoor"), Some(Domain::Sensor));
         assert_eq!(Domain::of("siren.hallway"), Some(Domain::Siren));
         assert_eq!(Domain::of("switch.kettle"), Some(Domain::Switch));
         for other in [

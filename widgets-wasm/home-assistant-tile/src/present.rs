@@ -426,6 +426,7 @@ impl Group {
             Domain::Siren => Some(Self::Switch(switch::Kind::Siren)),
             Domain::Switch => Some(Self::Switch(switch::Kind::Switch)),
             Domain::Light => Some(Self::Light),
+            Domain::BinarySensor | Domain::Sensor => None,
         }
     }
 

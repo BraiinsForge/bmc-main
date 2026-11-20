@@ -124,16 +124,9 @@ pub fn is_numeric(
                 .is_some_and(|class| SENSOR_NUMERIC_DEVICE_CLASSES.binary_search(&class).is_ok())
 }
 
-/// The decimals the frontend shows a sensor's `state` with:
-/// its display `precision`, else as many as the state was written with.
+/// What follows a numeric state's `.`, as the frontend counts it, an exponent included.
 /// Past six places the value is rounded to six, trailing zeros trimmed.
-#[must_use]
-pub fn sensor_decimals(state: &str, precision: Option<u32>) -> u32 {
-    precision.unwrap_or_else(|| written_decimals(state))
-}
-
-/// What follows a state's `.`, as the frontend counts it, an exponent included.
-fn written_decimals(state: &str) -> u32 {
+pub(crate) fn written_decimals(state: &str) -> u32 {
     let Some((_, fraction)) = state.split_once('.') else {
         return 0;
     };
@@ -248,13 +241,7 @@ mod tests {
     }
 
     #[wasm_test]
-    fn a_sensor_shows_its_precision_or_the_places_it_was_written_with() {
-        assert_eq!(sensor_decimals("21.456789", Some(1)), 1);
-        assert_eq!(
-            sensor_decimals("21", Some(2)),
-            2,
-            "a precision is not trimmed"
-        );
+    fn a_state_keeps_the_places_it_was_written_with() {
         let cases = [
             ("0.0004", 4),
             ("21.50", 2),
@@ -264,14 +251,14 @@ mod tests {
             ("1.5e-05", 5),
         ];
         for (state, decimals) in cases {
-            assert_eq!(sensor_decimals(state, None), decimals, "{state}");
+            assert_eq!(written_decimals(state), decimals, "{state}");
         }
     }
 
     #[wasm_test]
     fn a_state_written_past_six_places_is_rounded_to_six_and_trimmed() {
-        assert_eq!(sensor_decimals("0.30000000000000004", None), 1);
-        assert_eq!(sensor_decimals("21.4567891", None), 6);
+        assert_eq!(written_decimals("0.30000000000000004"), 1);
+        assert_eq!(written_decimals("21.4567891"), 6);
     }
 
     #[wasm_test]
