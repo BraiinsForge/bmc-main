@@ -57,6 +57,10 @@ const UNKNOWN: &str = "\u{2013}";
 const UNKNOWN_POSITION: &str = "Unknown";
 const ON: &str = "On";
 const OFF: &str = "Off";
+/// The strip's colour for a light that tells neither a colour temperature nor a colour: a warm white bulb.
+const PLAIN_KELVIN: f32 = 2700.0;
+/// The dimmest share of full the strip previews a light at; dimmer reads as off.
+const LED_FLOOR: f32 = 0.1;
 /// The frontend's `state-badge`: an icon colour paler than this is a white, drawn at [`WHITE_VALUE`] of 255…
 const WHITE_SATURATION: f32 = 0.1;
 const WHITE_VALUE: f32 = 225.0;
@@ -192,6 +196,7 @@ pub struct Tile {
     brightness: Option<Shown<Option<u8>>>,
     warmth: Option<(Kelvins, Shown<Option<f32>>)>,
     hue: Option<Shown<Option<f32>>>,
+    led: Option<Color>,
 }
 
 impl Tile {
@@ -275,6 +280,7 @@ impl Tile {
                     pending.asked_by_taps(HUE),
                 )
             }),
+            led: percent.map(|percent| led_color(color, percent)),
         }
     }
 
@@ -473,6 +479,10 @@ impl Presenter for Tile {
     fn card_action(&self) -> CardAction {
         self.card_action.clone()
     }
+
+    fn led(&self) -> Option<Color> {
+        self.led
+    }
 }
 
 /// The light's colour at full brightness, what the user asked for over what Home Assistant reports;
@@ -487,6 +497,12 @@ fn light_color(state: &State, pending: &Pending) -> Option<Color> {
             (None, None) => None,
         },
     }
+}
+
+/// The strip's colour: the light's, as bright as the light.
+fn led_color(color: Option<Color>, percent: u8) -> Color {
+    let color = color.unwrap_or_else(|| gradient::temperature_color(PLAIN_KELVIN));
+    color.brightness((f32::from(percent) / 100.0).max(LED_FLOOR))
 }
 
 /// The icon's colour for a light's own: the frontend's `state-badge` saturates a pale colour

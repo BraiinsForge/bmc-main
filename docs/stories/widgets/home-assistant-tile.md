@@ -93,6 +93,10 @@ lights.
 - The icon wears the light's colour or colour temperature, made readable as Home Assistant's own badge makes it: a pale
   colour more vivid, a white one grey. A light that reports neither is amber, as are the brightness bar and presets,
   where white would vanish under white text.
+- For 3 s after each change made on the rows, the Deck's LED strip shows the light's colour, as bright as the light but
+  never darker than a tenth, so the user sees what they set before Home Assistant confirms it. A tap on the card leaves
+  the strip alone, as the light itself shows the change. The tile shows nothing on the strip for a light that is off,
+  nor for one just turned on until Home Assistant reports its brightness.
 
 ### Guard an action with a hold
 
@@ -195,8 +199,9 @@ In the Deck web app, save two Home Assistant accounts: one with that token and o
   _Released too early_. A setting saved while a finger stays on the tile after its hold fired fires nothing more.
 - **Lights:** the card switches each light on and off, and a change made in Home Assistant shows on the Deck. −, +, the
   bar and the presets set the brightness, and a run of taps sends one call, as Home Assistant's logbook shows. The
-  colour temperature and hue bars set the light, and the icon follows its colour. The light that only switches shows no
-  controls. The gallery's light capture shows the _Unknown_ state.
+  colour temperature and hue bars set the light, the icon follows its colour, and the LED strip shows it for 3 s after
+  each change on the rows, and stays as it was when the card is tapped. The light that only switches shows no controls.
+  The gallery's light capture shows the _Unknown_ state.
 - **Slow and refused lights:** on the slow light, + shows the new brightness faint until Home Assistant reports it; on
   the one Home Assistant refuses, a preset springs back reading _Home Assistant refused_.
 - **Sizes:** the tile at every size, with a long name, and a colour light with the rows each size fits.

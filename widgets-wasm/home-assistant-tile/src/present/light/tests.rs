@@ -506,6 +506,90 @@ fn a_light_with_no_colour_keeps_the_amber_icon() {
 }
 
 #[wasm_test]
+fn the_strip_stays_dark_for_a_light_that_is_off() {
+    assert_eq!(tile(&state(false, None)).led(), None);
+}
+
+#[wasm_test]
+fn the_strip_shows_the_colour_temperature_while_the_light_shows_one() {
+    let warm = gradient::temperature_color(2000.0);
+    assert_eq!(tile(&state(true, Some(100))).led(), Some(warm));
+}
+
+#[wasm_test]
+fn the_strip_shows_the_hue_while_the_light_shows_a_colour() {
+    let coloured = State {
+        kelvin: None,
+        colour: Some(full(120.0)),
+        ..state(true, Some(100))
+    };
+    assert_eq!(tile(&coloured).led(), Some(Color::from_rgb(0, 255, 0)));
+}
+
+#[wasm_test]
+fn the_strip_keeps_the_saturation_the_light_reports() {
+    assert_eq!(
+        tile(&pale_pink()).led(),
+        Some(Color::from_rgb(255, 204, 204))
+    );
+}
+
+#[wasm_test]
+fn the_strip_shows_what_was_asked_for_before_home_assistant_confirms_it() {
+    let mut pending = Pending::default();
+    pending.submit(
+        Request::number(HUE, 240.0, light::turn_on_at_hue(240.0, 100.0), Timing::Now),
+        |_, _| Ok(CallId::from_raw(1)),
+    );
+    pending.submit(set_brightness(50, Timing::Now), |_, _| {
+        Ok(CallId::from_raw(2))
+    });
+    let gesture = Gesture::new(OnTap::Fires, None);
+    let tile = Tile::new(&state(false, None), &context(&pending, &gesture, FULL));
+    assert_eq!(tile.led(), Some(Color::from_rgb(0, 0, 255).brightness(0.5)));
+}
+
+#[wasm_test]
+fn the_strip_waits_for_a_light_turned_on_to_report_how_it_looks() {
+    let mut pending = Pending::default();
+    pending.submit(turn(true), |_, _| Ok(CallId::from_raw(1)));
+    let gesture = Gesture::new(OnTap::Fires, None);
+    let off = State {
+        kelvin: None,
+        colour: None,
+        ..state(false, None)
+    };
+    let tile = Tile::new(&off, &context(&pending, &gesture, FULL));
+    assert_eq!(
+        tile.led(),
+        None,
+        "a bare turn_on restores a brightness and colour Home Assistant has yet to report"
+    );
+}
+
+#[wasm_test]
+fn a_dim_light_is_previewed_no_dimmer_than_the_floor() {
+    let dimmest = tile(&state(true, Some(1)));
+    assert_eq!(
+        dimmest.led(),
+        Some(gradient::temperature_color(2000.0).brightness(LED_FLOOR))
+    );
+}
+
+#[wasm_test]
+fn a_light_that_tells_no_colour_is_previewed_as_a_warm_white_bulb() {
+    let plain = State {
+        kelvin: None,
+        colour: None,
+        ..state(true, Some(100))
+    };
+    assert_eq!(
+        tile(&plain).led(),
+        Some(gradient::temperature_color(PLAIN_KELVIN))
+    );
+}
+
+#[wasm_test]
 fn the_bulb_is_struck_through_while_the_light_is_off() {
     assert_eq!(tile(&state(true, Some(60))).card.icon, Icon(&LIGHTBULB));
     assert_eq!(tile(&state(false, None)).card.icon, Icon(&LIGHTBULB_OFF));

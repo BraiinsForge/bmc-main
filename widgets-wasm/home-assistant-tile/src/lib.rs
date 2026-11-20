@@ -32,7 +32,7 @@ mod wasm_glue {
     use std::cell::RefCell;
     use std::num::NonZeroU32;
 
-    use bmc_wasm_sdk::timer::{self, Timer};
+    use bmc_wasm_sdk::timer::{self, Timer, TimerCallback};
     use bmc_wasm_sdk::*;
     use home_assistant::domain::{Domain, FRIENDLY_NAME};
     use home_assistant::{
@@ -58,6 +58,8 @@ mod wasm_glue {
     /// A report from Home Assistant shows within this long, and a run of them is drawn once in it;
     /// one confirming a change made on the tile shows at once.
     const REPORT_FRAME_MS: u32 = 1_000;
+    /// How long the LED strip previews the entity after the last change made on the tile.
+    const LED_PREVIEW_MS: u32 = 3_000;
 
     struct Followed {
         entity_id: String,
@@ -82,6 +84,7 @@ mod wasm_glue {
         notice: Notice,
         quiet: Option<Timer>,
         grace: Option<Timer>,
+        preview: Option<Preview>,
     }
 
     impl Default for State {
@@ -94,8 +97,16 @@ mod wasm_glue {
                 notice: Notice::default(),
                 quiet: None,
                 grace: None,
+                preview: None,
             }
         }
+    }
+
+    /// The LED strip showing the entity for a while after a change made on the tile.
+    struct Preview {
+        until: Timer,
+        /// What the strip was last set to; none while it is dark.
+        shown: Option<Color>,
     }
 
     thread_local! {
@@ -182,8 +193,12 @@ mod wasm_glue {
             })
         });
         let (tap, hold_ms) = settings(&params);
-        let mut gesture = STATE.with_borrow(|state| state.gesture.clone());
+        let (mut gesture, previewing) =
+            STATE.with_borrow(|state| (state.gesture.clone(), state.preview.is_some()));
         gesture.set_for_another_action(tap, hold_ms);
+        if previewing {
+            led::stop();
+        }
         STATE.set(State {
             followed,
             gesture,
@@ -246,9 +261,7 @@ mod wasm_glue {
         let answered = STATE.with_borrow_mut(|state| state.pending.answered(call, result));
         match answered {
             Some(Answered::AwaitingReport) => {
-                if let Some(grace) = timer::start(GRACE_MS, on_grace) {
-                    STATE.with_borrow_mut(|state| state.grace = Some(grace));
-                } else {
+                if !STATE.with_borrow_mut(|state| run_for(&mut state.grace, GRACE_MS, on_grace)) {
                     // Waiting with no grace to end it would leave a device that ignores the call shown as asked.
                     log_warn!(
                         "home-assistant-tile: no timer to wait for a report; showing the reported state"
@@ -327,7 +340,7 @@ mod wasm_glue {
         });
         match submitted {
             Some(Submitted::Waiting) => {
-                STATE.with_borrow_mut(|state| state.quiet = timer::start(QUIET_MS, on_quiet));
+                STATE.with_borrow_mut(|state| run_for(&mut state.quiet, QUIET_MS, on_quiet));
             }
             Some(Submitted::Unsent(error)) => {
                 show_notice(present::unsent_notice(error).to_owned(), FAILURE_MS);
@@ -337,6 +350,65 @@ mod wasm_glue {
         // The frame that took the touch was drawn before the request,
         // and a finger held still on a filled hold asks for no other.
         request_frame();
+    }
+
+    /// Runs `timer` for `period_ms` from now, and tells whether it runs.
+    /// One already running is pushed out rather than replaced:
+    /// a new one would need a free timer while the old one still holds its own.
+    fn run_for(timer: &mut Option<Timer>, period_ms: u32, on_end: TimerCallback) -> bool {
+        if timer
+            .as_ref()
+            .is_some_and(|running| running.set_period(period_ms))
+        {
+            return true;
+        }
+        *timer = timer::start(period_ms, on_end);
+        timer.is_some()
+    }
+
+    /// Starts the preview, or keeps one already on for [`LED_PREVIEW_MS`] more; frames set its colour.
+    fn preview_for_a_while() {
+        let pushed_out = STATE.with_borrow(|state| {
+            state
+                .preview
+                .as_ref()
+                .is_some_and(|preview| preview.until.set_period(LED_PREVIEW_MS))
+        });
+        if pushed_out {
+            return;
+        }
+        let Some(until) = timer::start(LED_PREVIEW_MS, on_preview_end) else {
+            log_warn!("home-assistant-tile: no timer to end the LED preview, so none starts");
+            return;
+        };
+        STATE.with_borrow_mut(|state| {
+            let shown = state.preview.take().and_then(|preview| preview.shown);
+            state.preview = Some(Preview { until, shown });
+        });
+    }
+
+    fn on_preview_end(_timer: &Timer, _elapsed_periods: u32) {
+        let previewed = STATE.with_borrow_mut(|state| state.preview.take());
+        if previewed.is_some_and(|preview| preview.shown.is_some()) {
+            led::stop();
+        }
+    }
+
+    /// Sets the strip to what the tile previews now, when that changed.
+    fn update_preview(color: Option<Color>) {
+        let changed = STATE.with_borrow_mut(|state| match &mut state.preview {
+            Some(preview) if preview.shown != color => {
+                preview.shown = color;
+                true
+            }
+            Some(_) | None => false,
+        });
+        if changed {
+            match color {
+                Some(color) => led::set_effect(led::LedEffect::Solid, color, 0, None),
+                None => led::stop(),
+            }
+        }
     }
 
     fn send(
@@ -381,6 +453,10 @@ mod wasm_glue {
             Screen::Placeholder(card) => card.centred(&touches),
             Screen::Tile { presenter, .. } => presenter.view(&touches),
         };
+        update_preview(match &screen {
+            Screen::Tile { presenter, .. } => presenter.led(),
+            Screen::Placeholder(_) => None,
+        });
         let drawn_with = touches;
         let touches = Touches::read(render_ui(size.width, size.height, node));
         // This frame was drawn from the last one's touches: one more shows a finger landing, lifting or cancelled.
@@ -393,6 +469,8 @@ mod wasm_glue {
                     && let Some(request) = presenter.touched(&touches)
                 {
                     submit(request);
+                    // A value dialled in on the rows shows on the strip; an on or off shows in the room.
+                    preview_for_a_while();
                 }
                 fire_card_action(card::touch(&touches), presenter.card_action(), delta_ms);
             }

@@ -368,6 +368,12 @@ pub trait Presenter {
 
     /// What a tap or a hold on the card does now, as [`card_action`] decides it unless the tile is a status on purpose.
     fn card_action(&self) -> CardAction;
+
+    /// The colour the Deck's LED strip previews the entity in after a change made on the tile;
+    /// none leaves the strip dark.
+    fn led(&self) -> Option<Color> {
+        None
+    }
 }
 
 /// The groups of domains the tile shows, each with a tile of its own.

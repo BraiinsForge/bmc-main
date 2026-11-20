@@ -49,6 +49,10 @@ pub trait Presenter {
     fn view(&self, touches: &Touches) -> Node;
     fn touched(&self, touches: &Touches) -> Option<Request>;
     fn card_action(&self) -> CardAction;
+    /// The LED strip's colour after a change made on the tile; none leaves it dark.
+    fn led(&self) -> Option<Color> {
+        None
+    }
 }
 ```
 
