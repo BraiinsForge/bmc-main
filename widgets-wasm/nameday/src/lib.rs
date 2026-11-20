@@ -32,6 +32,7 @@ mod wasm_glue {
     use super::manifest_params;
     use super::render;
 
+    use bmc_wasm_sdk::timer::Timer;
     use bmc_wasm_sdk::*;
 
     use crate::manifest_params::Country;
@@ -40,11 +41,9 @@ mod wasm_glue {
     const NAMEDAY_API_URL_TEMPLATE: &str =
         "https://nameday.abalin.net/api/V2/date?day={DAY_PLACEHOLDER}&month={MONTH_PLACEHOLDER}";
 
-    // As the data are checked for validity in render (as we do not have
-    // a scheduler and fetch_after is unreliable due to RTC implementation),
-    // we need to periodically call render.
-    // This constant sets a delay for request_frame_after().
-    const RERENDER_AFTER_MS: u32 = 60 * 1000;
+    // Checked every minute rather than once at midnight:
+    // a wait computed before a clock jump, such as the first NTP sync, ends at the wrong time.
+    const DAY_CHECK_MS: u32 = 60 * 1000;
 
     const LOADING_TEXT: &str = "Loading...";
     const NOT_APPLICABLE_TEXT: &str = "N/A";
@@ -78,6 +77,7 @@ mod wasm_glue {
         poll: PollHandle,
         /// What the last fetch asked for; an accepted reply copies it to [`NamedayData`].
         requested_for: Option<TimeWithTimezone>,
+        _day_check: Option<Timer>,
     }
 
     /// Milliseconds from now until the next local midnight.
@@ -114,6 +114,29 @@ mod wasm_glue {
     }
 
     impl Nameday {
+        /// Refetch once the day the data were asked for has passed,
+        /// and repaint while a past day's names show, so their age keeps counting.
+        fn check_day(&mut self) {
+            if self
+                .requested_for
+                .as_ref()
+                .is_some_and(|asked| !is_today(asked))
+            {
+                self.poll.invalidate();
+            }
+            if self
+                .data
+                .as_ref()
+                .is_some_and(|data| !is_today(&data.fetched_at))
+            {
+                request_frame();
+            }
+        }
+
+        fn on_day_check(&mut self, _timer: &Timer, _elapsed_periods: u32) {
+            self.check_day();
+        }
+
         fn build_request(&mut self, _handle: &PollHandle) -> Option<FetchSpec> {
             let tz = system::current().timezone().map(Tz::from_runtime)?;
             let time = SystemTime::now();
@@ -208,6 +231,7 @@ mod wasm_glue {
                 data: None,
                 poll,
                 requested_for: None,
+                _day_check: Timer::start(me, DAY_CHECK_MS, Self::on_day_check),
             }
         }
 
@@ -256,15 +280,6 @@ mod wasm_glue {
             }
 
             let _ = render_ui(ws.width, ws.height, root);
-
-            // If the data are outdated, schedule a new retrieval.
-            if let Some(timestamp) = &self.requested_for
-                && !is_today(timestamp)
-            {
-                self.poll.invalidate();
-            } else {
-                request_frame_after(RERENDER_AFTER_MS);
-            }
         }
 
         fn on_params_update(&mut self) {
@@ -274,6 +289,8 @@ mod wasm_glue {
         }
 
         fn on_system_update(&mut self) {
+            // A new timezone may move today to another date.
+            self.check_day();
             request_frame();
         }
     }
