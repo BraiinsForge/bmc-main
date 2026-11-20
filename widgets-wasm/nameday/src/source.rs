@@ -61,24 +61,9 @@ pub(super) struct NamedaySource {
     requested_for: Option<TimeWithTimezone>,
     /// The day of the names last sent, so the widget can be told once it has passed.
     served_for: Option<TimeWithTimezone>,
-    _day_check: Option<Timer>,
+    _day_check: Timer,
     on_names: Notify<NamedayData>,
     on_day_change: Notify<()>,
-}
-
-/// Milliseconds from now until the next local midnight.
-/// Note: The result is off by an hour on DST changes.
-fn ms_to_next_local_midnight() -> u32 {
-    const SECS_PER_DAY: i64 = 86_400;
-    let now = SystemTime::now();
-    let tz = system::current().timezone().map(Tz::from_runtime);
-    let secs_since_midnight = tz.as_ref().and_then(|tz| now.local(tz)).map_or_else(
-        || now.utc().seconds_since_midnight(),
-        |l| l.seconds_since_midnight(),
-    );
-    let remaining = SECS_PER_DAY - i64::from(secs_since_midnight);
-    u32::try_from(remaining.max(1) * 1_000)
-        .expect("BUG: ms-to-midnight always fits in u32 (< 1 day)")
 }
 
 /// Whether localized date in timestamp falls on the current local calendar date. Used to tell
@@ -110,13 +95,18 @@ impl NamedaySource {
                 Self::build_request,
                 Self::on_nameday_data,
                 PollConfig {
+                    // Refetched by the day check, not on a cadence.
+                    interval_ms: None,
                     debounce_ms: 0,
                     ..Default::default()
                 },
             ),
             requested_for: None,
             served_for: None,
-            _day_check: Timer::start(me, DAY_CHECK_MS, Self::on_day_check),
+            _day_check: Timer::start(me, DAY_CHECK_MS, Self::on_day_check).expect(
+                "BUG: a one-minute timer is well within the host's timer limits, \
+                 and without it the names never move on to the next day",
+            ),
             on_names,
             on_day_change,
         })
@@ -199,8 +189,6 @@ impl NamedaySource {
                         names_per_country,
                         fetched_at: requested_for,
                     });
-
-                    handle.retry_after(ms_to_next_local_midnight());
                 }
                 Some(_) => {
                     // No country parsed at all => `/data` is absent or the schema

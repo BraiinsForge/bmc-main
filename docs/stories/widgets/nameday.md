@@ -4,8 +4,8 @@ The nameday widget displays the name or names celebrated today in a chosen count
 flag, today's names as a large headline, and an optional date readout. It fetches the day's names from a public nameday
 API and refreshes once a day at local midnight.
 
-Implementation note: Currently we also check data validity each minute: if the device's time is incorrect on boot (e.g.,
-RTC backup drained), next retry will be scheduled incorrectly.
+Implementation note: the widget checks the date every minute rather than waking at midnight. A wait computed while the
+device's clock is wrong, such as on boot with the RTC backup drained, would end at the wrong time once NTP corrects it.
 
 ## User stories
 
