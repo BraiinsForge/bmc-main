@@ -72,12 +72,15 @@ mod wasm_glue {
         }
     }
 
-    struct Nameday {
-        data: Option<NamedayData>,
+    struct NamedaySource {
         poll: PollHandle,
         /// What the last fetch asked for; an accepted reply copies it to [`NamedayData`].
         requested_for: Option<TimeWithTimezone>,
+        /// The day of the names last sent, so the widget can be told once it has passed.
+        served_for: Option<TimeWithTimezone>,
         _day_check: Option<Timer>,
+        on_names: Notify<NamedayData>,
+        on_day_change: Notify<()>,
     }
 
     /// Milliseconds from now until the next local midnight.
@@ -113,9 +116,31 @@ mod wasm_glue {
         local_now.month == local_time.month && local_now.day == local_time.day
     }
 
-    impl Nameday {
-        /// Refetch once the day the data were asked for has passed,
-        /// and repaint while a past day's names show, so their age keeps counting.
+    impl NamedaySource {
+        /// `on_names` gets the names of each reply for today;
+        /// a failed or empty reply, or one for another day, sends nothing.
+        /// `on_day_change` is sent once the day of the names last sent has passed.
+        fn new(on_names: Notify<NamedayData>, on_day_change: Notify<()>) -> Part<Self> {
+            Part::new_cyclic(|me| Self {
+                poll: PollHandle::register(
+                    me,
+                    Self::build_request,
+                    Self::on_nameday_data,
+                    PollConfig {
+                        debounce_ms: 0,
+                        ..Default::default()
+                    },
+                ),
+                requested_for: None,
+                served_for: None,
+                _day_check: Timer::start(me, DAY_CHECK_MS, Self::on_day_check),
+                on_names,
+                on_day_change,
+            })
+        }
+
+        /// Refetch once the day the names were asked for has passed,
+        /// and tell the widget once the day of the names last sent has.
         fn check_day(&mut self) {
             if self
                 .requested_for
@@ -124,12 +149,15 @@ mod wasm_glue {
             {
                 self.poll.invalidate();
             }
+            // Decided from what was sent, not asked for: a retry built after midnight
+            // asks for today while the widget still shows yesterday's names.
             if self
-                .data
+                .served_for
                 .as_ref()
-                .is_some_and(|data| !is_today(&data.fetched_at))
+                .is_some_and(|served| !is_today(served))
             {
-                request_frame();
+                self.served_for = None;
+                self.on_day_change.send(());
             }
         }
 
@@ -184,7 +212,8 @@ mod wasm_glue {
                         handle.retry();
                     }
                     Some(requested_for) if data_found => {
-                        self.data = Some(NamedayData {
+                        self.served_for = Some(requested_for.clone());
+                        self.on_names.send(NamedayData {
                             names_per_country,
                             fetched_at: requested_for,
                         });
@@ -210,7 +239,24 @@ mod wasm_glue {
                 // If response is not OK, poll engine will reschedule new fetch automatically.
                 log_warn!("nameday: fetch failed (status {})", response.status);
             }
+        }
+    }
 
+    struct Nameday {
+        source: Part<NamedaySource>,
+        /// The last accepted day's names, kept on screen across failed fetches.
+        names: Option<NamedayData>,
+    }
+
+    impl Nameday {
+        fn on_names(&mut self, names: NamedayData) {
+            self.names = Some(names);
+            request_frame();
+        }
+
+        /// Shown names from a past day now get the stale pill.
+        #[expect(clippy::unused_self, reason = "the SDK calls this as a method")]
+        fn on_day_change(&mut self, (): ()) {
             request_frame();
         }
     }
@@ -218,20 +264,12 @@ mod wasm_glue {
     #[widget]
     impl Widget for Nameday {
         fn init(me: &Building<Self>) -> Self {
-            let poll = PollHandle::register(
-                me,
-                Self::build_request,
-                Self::on_nameday_data,
-                PollConfig {
-                    debounce_ms: 0,
-                    ..Default::default()
-                },
-            );
             Self {
-                data: None,
-                poll,
-                requested_for: None,
-                _day_check: Timer::start(me, DAY_CHECK_MS, Self::on_day_check),
+                source: NamedaySource::new(
+                    Notify::new(me, Self::on_names),
+                    Notify::new(me, Self::on_day_change),
+                ),
+                names: None,
             }
         }
 
@@ -241,8 +279,8 @@ mod wasm_glue {
             let mut root_children: Vec<Node> = vec![country_draw(ws, params.country)];
             let mut stale_anchor: Option<SystemTime> = None;
 
-            let names_string: &str = match self.data.as_ref() {
-                Some(data) => data
+            let names_string: &str = match self.names.as_ref() {
+                Some(names) => names
                     .names_for(params.country)
                     .unwrap_or(NOT_APPLICABLE_TEXT),
                 None => LOADING_TEXT,
@@ -251,21 +289,21 @@ mod wasm_glue {
             root_children.push(render::names_draw(ws, names_string));
 
             if params.show_date {
-                match self.data.as_ref() {
-                    Some(data) => {
+                match self.names.as_ref() {
+                    Some(names) => {
                         let date_string = format_date(
-                            data.fetched_at.time,
+                            names.fetched_at.time,
                             FormatDateOpts {
                                 format: None,
-                                timezone: Some(data.fetched_at.tz.clone()),
+                                timezone: Some(names.fetched_at.tz.clone()),
                             },
                         );
 
                         root_children.push(date_draw(ws, &date_string));
 
                         // Names for a past day are stale; flag with the shared pill.
-                        if !is_today(&data.fetched_at) {
-                            stale_anchor = Some(data.fetched_at.time);
+                        if !is_today(&names.fetched_at) {
+                            stale_anchor = Some(names.fetched_at.time);
                         }
                     }
                     None => {
@@ -290,7 +328,7 @@ mod wasm_glue {
 
         fn on_system_update(&mut self) {
             // A new timezone may move today to another date.
-            self.check_day();
+            self.source.with_mut(NamedaySource::check_day);
             request_frame();
         }
     }
