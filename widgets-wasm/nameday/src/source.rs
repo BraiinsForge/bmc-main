@@ -67,11 +67,10 @@ pub(super) struct NamedaySource {
     on_day_change: Notify<()>,
 }
 
-/// Whether localized date in timestamp falls on the current local calendar date. Used to tell
-/// whether the cached data was downloaded today and is therefore still current.
-pub(super) fn is_today(time_with_timezone: &TimeWithTimezone) -> bool {
+/// Whether `then` falls on today's local date; see [`is_same_local_date`].
+pub(super) fn is_today(then: &TimeWithTimezone) -> bool {
     let tz = system::current().timezone().map(Tz::from_runtime);
-    is_same_local_date(time_with_timezone, SystemTime::now(), tz.as_ref())
+    is_same_local_date(then, SystemTime::now(), tz.as_ref())
 }
 
 /// Whether `then`, read in its own timezone, falls on the date `now` reads in `now_tz`,
@@ -82,7 +81,8 @@ fn is_same_local_date(then: &TimeWithTimezone, now: SystemTime, now_tz: Option<&
         .unwrap_or_else(|| now.utc());
     let local_then = then.time.local(&then.tz).unwrap_or_else(|| then.time.utc());
 
-    (local_now.month, local_now.day) == (local_then.month, local_then.day)
+    (local_now.year, local_now.month, local_now.day)
+        == (local_then.year, local_then.month, local_then.day)
 }
 
 impl NamedaySource {
@@ -224,6 +224,8 @@ mod tests {
     const MINUTE_TO_MIDNIGHT: i64 = 1_781_819_940;
     /// 19 June 2026, 00:01 in Prague; still 18 June in UTC.
     const MINUTE_PAST_MIDNIGHT: i64 = 1_781_820_060;
+    /// 18 June 2027, 12:00 in Prague.
+    const NOON_A_YEAR_ON: i64 = 1_813_312_800;
 
     fn asked_in_prague(unix_secs: i64) -> TimeWithTimezone {
         TimeWithTimezone {
@@ -253,6 +255,14 @@ mod tests {
         assert!(
             !in_prague(MINUTE_TO_MIDNIGHT, MINUTE_PAST_MIDNIGHT),
             "two minutes later it is the next day, whose names have to be fetched"
+        );
+    }
+
+    #[wasm_test]
+    fn the_same_date_a_year_on_is_another_day() {
+        assert!(
+            !in_prague(NOON, NOON_A_YEAR_ON),
+            "a year-old fetch is a past day's names, though the API asks only for day and month"
         );
     }
 
