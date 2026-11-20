@@ -24,6 +24,7 @@
 //! The crate README describes a group module's shape.
 
 pub mod momentary;
+pub mod switch;
 
 use bmc_wasm_sdk::*;
 use home_assistant::domain::{Domain, UNAVAILABLE};
@@ -288,7 +289,8 @@ impl Context<'_> {
 /// What a tap or a hold on the card does now.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CardAction {
-    /// The domain has no card action: the icon is not dimmed.
+    /// The domain has no card action, or neither a tap nor a hold fires one on a tile that shows a status:
+    /// the icon is not dimmed.
     None,
     /// It has one that cannot fire now.
     Blocked,
@@ -363,7 +365,7 @@ pub trait Presenter {
     /// What a finger lifted from one of its blocks asks of Home Assistant.
     fn touched(&self, touches: &Touches) -> Option<Request>;
 
-    /// What a tap or a hold on the card does now, as [`card_action`] decides it.
+    /// What a tap or a hold on the card does now, as [`card_action`] decides it unless the tile is a status on purpose.
     fn card_action(&self) -> CardAction;
 }
 
@@ -371,6 +373,7 @@ pub trait Presenter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     Momentary(momentary::Kind),
+    Switch(switch::Kind),
 }
 
 impl Group {
@@ -382,11 +385,11 @@ impl Group {
             Domain::InputButton => Some(Self::Momentary(momentary::Kind::InputButton)),
             Domain::Scene => Some(Self::Momentary(momentary::Kind::Scene)),
             Domain::Script => Some(Self::Momentary(momentary::Kind::Script)),
-            Domain::Automation
-            | Domain::InputBoolean
-            | Domain::Remote
-            | Domain::Siren
-            | Domain::Switch => None,
+            Domain::Automation => Some(Self::Switch(switch::Kind::Automation)),
+            Domain::InputBoolean => Some(Self::Switch(switch::Kind::InputBoolean)),
+            Domain::Remote => Some(Self::Switch(switch::Kind::Remote)),
+            Domain::Siren => Some(Self::Switch(switch::Kind::Siren)),
+            Domain::Switch => Some(Self::Switch(switch::Kind::Switch)),
         }
     }
 
@@ -395,6 +398,7 @@ impl Group {
     pub fn icon(self) -> Icon {
         match self {
             Self::Momentary(kind) => kind.icon(),
+            Self::Switch(kind) => kind.icon(),
         }
     }
 
@@ -404,6 +408,11 @@ impl Group {
             Self::Momentary(kind) => Box::new(momentary::Tile::new(
                 kind,
                 &momentary::State::read(kind, entity),
+                context,
+            )),
+            Self::Switch(kind) => Box::new(switch::Tile::new(
+                kind,
+                &switch::State::read(kind, entity),
                 context,
             )),
         }
@@ -583,6 +592,20 @@ mod tests {
             group_of(Some("button.gate")),
             Ok(Group::Momentary(momentary::Kind::Button))
         );
+        let switches = [
+            ("switch.kettle", switch::Kind::Switch),
+            ("input_boolean.guests", switch::Kind::InputBoolean),
+            ("automation.porch", switch::Kind::Automation),
+            ("siren.hall", switch::Kind::Siren),
+            ("remote.tv", switch::Kind::Remote),
+        ];
+        for (entity_id, kind) in switches {
+            assert_eq!(
+                group_of(Some(entity_id)),
+                Ok(Group::Switch(kind)),
+                "{entity_id}"
+            );
+        }
     }
 
     #[wasm_test]

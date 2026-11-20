@@ -16,7 +16,8 @@ card. It talks to Home Assistant through the [`home-assistant`](../lib/home-assi
 ## Words
 
 - **Domain** is Home Assistant's: `light`, `scene`. The library's `Domain` enum lists the ones it knows.
-- **Group** is the Tile's: domains that share a tile, such as `momentary` for button, input_button, scene and script.
+- **Group** is the Tile's: domains that share a tile, such as `momentary` for button, input_button, scene and script, or
+  `switch` for the entities that are on or off.
 - **Card action** is what a tap or a hold on the card fires, under the tap and hold settings.
 - **Slot** is where a value the user asked for is shown until Home Assistant confirms it, such as a brightness.
 
@@ -31,12 +32,13 @@ Each group module splits its tile into up to three types:
   `touched` need, the kind among them when a block calls a service.
 
 A `Tile` gets a `Context`: what is pending, the gesture, the name, any notice, the `Reach` and the room. It builds its
-blocks with `enabled: context.can_act()`, its card action with `present::card_action`, and its card with
-`present::card`. The card says "Reconnecting…" or "Unavailable" in place of the state and drops its colour, so a tile
-handles neither itself. `present::showing` decides whether a frame shows the tile at all: until the entity's first state
-arrives, the glue draws the group's skeleton with `present::loading`, and any problem with `present::problem`, both on
-the same `Card::centred` layout. A time on the line, such as a button's last press, is a `Line::Since`, which the host
-words in the device language and keeps current.
+blocks with `enabled: context.can_act()`, its card action with `present::card_action` (or `CardAction::None` when it is
+a status on purpose, as a switch set to neither tap nor hold is), and its card with `present::card`. The card says
+"Reconnecting…" or "Unavailable" in place of the state and drops its colour, so a tile handles neither itself.
+`present::showing` decides whether a frame shows the tile at all: until the entity's first state arrives, the glue draws
+the group's skeleton with `present::loading`, and any problem with `present::problem`, both on the same `Card::centred`
+layout. A time on the line, such as a button's last press, is a `Line::Since`, which the host words in the device
+language and keeps current.
 
 A group with blocks lays them out with `Card::with_rows`, as many rows as `card::rows` says the card has room for, each
 one control high: beside the centred block on a wide card, under it on a tall one, and none on a narrow card one row

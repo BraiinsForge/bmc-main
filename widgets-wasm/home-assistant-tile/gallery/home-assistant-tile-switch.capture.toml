@@ -1,0 +1,221 @@
+# A switch's tile, and those of the other entities that are on or off, at each size.
+
+size = "1400x600"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "switch-on"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[[shot]]
+name = "switch-off"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Position = "Off"
+
+[[shot]]
+name = "switch-unknown"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Position = "Unknown"
+
+[[shot]]
+name = "switch-1x1"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Size = "1x1"
+
+[[shot]]
+name = "switch-2x2"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+
+[[shot]]
+name = "switch-full"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Size = "Full"
+
+[[shot]]
+name = "switch-2x2-hold-only"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Size = "2x2"
+Settings = "Hold 2 s"
+
+[[shot]]
+name = "switch-outlet"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+"Device class" = "Outlet"
+
+[[shot]]
+name = "switch-outlet-off"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Position = "Off"
+"Device class" = "Outlet"
+
+[[shot]]
+name = "switch-input-boolean"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Kind = "Input boolean"
+
+[[shot]]
+name = "switch-input-boolean-off"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Kind = "Input boolean"
+Position = "Off"
+
+[[shot]]
+name = "switch-automation"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Kind = "Automation"
+
+[[shot]]
+name = "switch-automation-off"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Kind = "Automation"
+Position = "Off"
+
+[[shot]]
+name = "switch-siren"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Kind = "Siren"
+
+[[shot]]
+name = "switch-siren-off"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Kind = "Siren"
+Position = "Off"
+
+[[shot]]
+name = "switch-remote"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Kind = "Remote"
+
+[[shot]]
+name = "switch-remote-off"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Kind = "Remote"
+Position = "Off"
+
+[[shot]]
+name = "switch-flip-on-its-way"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Position = "Off"
+"Flip on its way" = true
+
+[[shot]]
+name = "switch-unavailable"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Position = "Unknown"
+Readiness = "Unavailable"
+
+[[shot]]
+name = "switch-reconnecting"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Line = "Reconnecting"
+
+[[shot]]
+name = "switch-refused"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Line = "Refused"
+
+[[shot]]
+name = "switch-hold-only"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Settings = "Hold 2 s"
+
+[[shot]]
+name = "switch-hold-half-way"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Settings = "Hold 2 s"
+"Held half way" = true
+
+[[shot]]
+name = "switch-neither"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Settings = "Neither"
+
+[[shot]]
+name = "switch-long-name"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+Name = "Long"
+Size = "1x1"
+
+[[shot]]
+name = "switch-card-pressed"
+scene = "bmc_gallery::home_assistant_tile_switch::Switch"
+frames = 4
+
+[shot.knobs]
+"Card pressed" = true
