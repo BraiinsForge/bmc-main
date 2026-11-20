@@ -29,6 +29,7 @@ pub mod automation;
 pub mod button;
 pub mod input_boolean;
 pub mod input_button;
+pub mod light;
 pub mod remote;
 pub mod scene;
 pub mod script;
