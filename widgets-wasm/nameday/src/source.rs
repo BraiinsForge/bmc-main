@@ -28,9 +28,13 @@ use crate::manifest_params::Country;
 const NAMEDAY_API_URL_TEMPLATE: &str =
     "https://nameday.abalin.net/api/V2/date?day={DAY_PLACEHOLDER}&month={MONTH_PLACEHOLDER}";
 
-// Checked every minute rather than once at midnight:
+// Checked at least every minute rather than waiting for midnight from hours ahead:
 // a wait computed before a clock jump, such as the first NTP sync, ends at the wrong time.
-const DAY_CHECK_MS: u32 = 60 * 1000;
+const DAY_CHECK_MS: u32 = 60 * 1_000;
+
+/// How far past midnight the check aimed at it is due,
+/// so a tick that fires a little early still reads the new date.
+const PAST_MIDNIGHT_MS: u32 = 1_000;
 
 #[derive(Debug, Clone)]
 pub(super) struct TimeWithTimezone {
@@ -69,17 +73,33 @@ pub(super) struct NamedaySource {
 
 /// Whether `then` falls on today's local date; see [`is_same_local_date`].
 pub(super) fn is_today(then: &TimeWithTimezone) -> bool {
-    let tz = system::current().timezone().map(Tz::from_runtime);
-    is_same_local_date(then, SystemTime::now(), tz.as_ref())
+    is_same_local_date(then, SystemTime::now(), current_tz().as_ref())
+}
+
+fn current_tz() -> Option<Tz> {
+    system::current().timezone().map(Tz::from_runtime)
+}
+
+/// The wait until the next day check: a minute, or less to aim
+/// just past the midnight that `now` reads as coming;
+/// the minute cap covers a timezone change that moves it.
+fn next_check_ms(now: SystemTime, tz: Option<&Tz>) -> u32 {
+    const SECS_PER_DAY: u32 = 86_400;
+    let to_midnight_ms = (SECS_PER_DAY - local_or_utc(now, tz).seconds_since_midnight()) * 1_000;
+    DAY_CHECK_MS.min(to_midnight_ms + PAST_MIDNIGHT_MS)
+}
+
+/// `time` read in `tz`, or in UTC when there is none or the host cannot read it.
+fn local_or_utc(time: SystemTime, tz: Option<&Tz>) -> LocalDateTime {
+    tz.and_then(|tz| time.local(tz))
+        .unwrap_or_else(|| time.utc())
 }
 
 /// Whether `then`, read in its own timezone, falls on the date `now` reads in `now_tz`,
 /// or in UTC when the device has no timezone.
 fn is_same_local_date(then: &TimeWithTimezone, now: SystemTime, now_tz: Option<&Tz>) -> bool {
-    let local_now = now_tz
-        .and_then(|tz| now.local(tz))
-        .unwrap_or_else(|| now.utc());
-    let local_then = then.time.local(&then.tz).unwrap_or_else(|| then.time.utc());
+    let local_now = local_or_utc(now, now_tz);
+    let local_then = local_or_utc(then.time, Some(&then.tz));
 
     (local_now.year, local_now.month, local_now.day)
         == (local_then.year, local_then.month, local_then.day)
@@ -104,8 +124,13 @@ impl NamedaySource {
             ),
             requested_for: None,
             served_for: None,
-            _day_check: Timer::start(me, DAY_CHECK_MS, Self::on_day_check).expect(
-                "BUG: a one-minute timer is well within the host's timer limits, \
+            _day_check: Timer::start(
+                me,
+                next_check_ms(SystemTime::now(), current_tz().as_ref()),
+                Self::on_day_check,
+            )
+            .expect(
+                "BUG: the first check is at least a second away, the host's shortest timer period, \
                  and without it the names never move on to the next day",
             ),
             on_names,
@@ -131,13 +156,22 @@ impl NamedaySource {
         }
     }
 
-    fn on_day_check(&mut self, _timer: &Timer, _elapsed_periods: u32) {
+    fn on_day_check(&mut self, timer: &Timer, _elapsed_periods: u32) {
+        // Read before the day check: a midnight passing between the two clock reads
+        // is then checked twice rather than skipped for a minute.
+        let next_ms = next_check_ms(SystemTime::now(), current_tz().as_ref());
         self.check_day();
+        if !timer.set_period(next_ms) {
+            log_warn!(
+                "nameday: the host refused a {} ms day check; it keeps its previous period",
+                next_ms
+            );
+        }
     }
 
     fn build_request(&mut self, _handle: &PollHandle) -> Option<FetchSpec> {
         self.requested_for = None;
-        let tz = system::current().timezone().map(Tz::from_runtime)?;
+        let tz = current_tz()?;
         let time = SystemTime::now();
         let local_time = time.local(&tz)?;
 
@@ -214,7 +248,7 @@ impl NamedaySource {
 mod tests {
     use bmc_wasm_sdk::{SystemTime, tz, wasm_test};
 
-    use super::{TimeWithTimezone, is_same_local_date};
+    use super::{TimeWithTimezone, is_same_local_date, next_check_ms};
 
     /// 18 June 2026, 12:00 in Prague.
     const NOON: i64 = 1_781_776_800;
@@ -222,6 +256,10 @@ mod tests {
     const HALF_PAST_ELEVEN: i64 = 1_781_818_200;
     /// 18 June 2026, 23:59 in Prague.
     const MINUTE_TO_MIDNIGHT: i64 = 1_781_819_940;
+    /// 18 June 2026, 23:59:30 in Prague.
+    const HALF_A_MINUTE_TO_MIDNIGHT: i64 = 1_781_819_970;
+    /// 18 June 2026, 23:59:30 in UTC; 01:59:30 on the 19th in Prague.
+    const HALF_A_MINUTE_TO_UTC_MIDNIGHT: i64 = 1_781_827_170;
     /// 19 June 2026, 00:01 in Prague; still 18 June in UTC.
     const MINUTE_PAST_MIDNIGHT: i64 = 1_781_820_060;
     /// 18 June 2027, 12:00 in Prague.
@@ -310,6 +348,43 @@ mod tests {
                 Some(&tz!("Asia/Tokyo")),
             ),
             "moved to Tokyo, the device is already on the 19th, so Prague's 18th is past"
+        );
+    }
+
+    #[wasm_test]
+    fn the_check_before_midnight_lands_just_past_it() {
+        assert_eq!(
+            next_check_ms(
+                SystemTime {
+                    unix_secs: HALF_A_MINUTE_TO_MIDNIGHT
+                },
+                Some(&tz!("Europe/Prague")),
+            ),
+            31_000,
+            "a full minute would show yesterday's names until 00:00:30"
+        );
+    }
+
+    #[wasm_test]
+    fn a_check_far_from_midnight_waits_a_minute() {
+        assert_eq!(
+            next_check_ms(SystemTime { unix_secs: NOON }, Some(&tz!("Europe/Prague"))),
+            60_000,
+            "a wait aimed hours ahead would miss midnight once NTP steps the clock"
+        );
+    }
+
+    #[wasm_test]
+    fn a_device_without_a_timezone_checks_past_utc_midnight() {
+        assert_eq!(
+            next_check_ms(
+                SystemTime {
+                    unix_secs: HALF_A_MINUTE_TO_UTC_MIDNIGHT
+                },
+                None,
+            ),
+            31_000,
+            "the day check reads today in UTC then, so it aims at UTC's midnight"
         );
     }
 }
