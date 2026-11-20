@@ -344,7 +344,10 @@ pub fn card(context: &Context, display: StateDisplay, action: &CardAction) -> Ca
             .filter(|_| availability == Some(Availability::Ready))
             .map(|hold_ms| fmt!("Hold {} s", hold_ms.get() / 1000)),
         disc: display.disc,
-        mark: (context.reach == Reach::Unavailable).then_some(Mark::Unavailable),
+        mark: match context.reach {
+            Reach::Unavailable => Some(Mark::Unavailable),
+            Reach::Ready | Reach::Reconnecting => display.mark,
+        },
         width: context.room.width,
         height: context.room.height,
         size: context.room.size,
@@ -449,6 +452,7 @@ mod tests {
                 color: None,
                 icon: Icon(&CHECK),
                 disc: Disc::Tinted,
+                mark: None,
             };
             card(&context, display, &action).hint
         };
@@ -465,6 +469,7 @@ mod tests {
             color: None,
             icon: Icon(&CHECK),
             disc: Disc::Tinted,
+            mark: None,
         };
         assert_eq!(
             card(&blocked, display, &CardAction::Blocked).hint,
@@ -495,6 +500,7 @@ mod tests {
             color: Some(Accent::Neutral),
             icon: Icon(&CHECK),
             disc: Disc::Tinted,
+            mark: None,
         };
         let card = card(&context, display, &CardAction::Blocked);
         assert_eq!(card.line, Some(Line::State(UNAVAILABLE_LINE.to_owned())));
@@ -502,7 +508,7 @@ mod tests {
     }
 
     #[wasm_test]
-    fn only_an_unavailable_entity_is_marked() {
+    fn an_unavailable_entity_is_marked_so_over_what_its_state_tells() {
         let (pending, tap) = (Pending::default(), Gesture::new(OnTap::Fires, None));
         let mark = |reach| {
             let display = StateDisplay {
@@ -510,6 +516,7 @@ mod tests {
                 color: None,
                 icon: Icon(&CHECK),
                 disc: Disc::Bare,
+                mark: Some(Mark::Unknown),
             };
             card(
                 &context(&pending, &tap, reach),
@@ -519,8 +526,8 @@ mod tests {
             .mark
         };
         assert_eq!(mark(Reach::Unavailable), Some(Mark::Unavailable));
-        assert_eq!(mark(Reach::Ready), None);
-        assert_eq!(mark(Reach::Reconnecting), None);
+        assert_eq!(mark(Reach::Ready), Some(Mark::Unknown));
+        assert_eq!(mark(Reach::Reconnecting), Some(Mark::Unknown));
     }
 
     fn line(gesture: &Gesture, reach: Reach, action: &CardAction) -> Option<Line> {
@@ -530,6 +537,7 @@ mod tests {
             color: None,
             icon: Icon(&CHECK),
             disc: Disc::Tinted,
+            mark: None,
         };
         card(&context(&pending, gesture, reach), display, action).line
     }

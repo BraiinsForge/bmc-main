@@ -156,12 +156,14 @@ impl Tile {
                 color: kind.color(),
                 icon: kind.icon(),
                 disc: Disc::Tinted,
+                mark: None,
             },
             State::Running => StateDisplay {
                 line: Some(Line::State("Running".to_owned())),
                 color: Some(Accent::Amber),
                 icon: Icon(&SCRIPT_TEXT_PLAY),
                 disc: Disc::Tinted,
+                mark: None,
             },
         };
         let firing = context.pending.asked(CARD_ACTION);

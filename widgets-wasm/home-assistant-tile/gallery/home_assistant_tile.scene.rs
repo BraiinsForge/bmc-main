@@ -57,7 +57,11 @@ const ACCENTS: [(Accent, &str); 9] = [
     (Accent::Red, "Red"),
 ];
 
-const MARKS: [(Option<Mark>, &str); 2] = [(None, "None"), (Some(Mark::Unavailable), "Unavailable")];
+const MARKS: [(Option<Mark>, &str); 3] = [
+    (None, "None"),
+    (Some(Mark::Unknown), "Unknown"),
+    (Some(Mark::Unavailable), "Unavailable"),
+];
 const PROGRESS: [(Option<f32>, &str); 4] = [
     (None, "None"),
     (Some(0.0), "Start"),

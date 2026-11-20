@@ -46,6 +46,7 @@ const MARK_GLYPH_SHARE: f32 = 0.7;
 /// The black rim that parts the mark from the circle it overlaps, as a share of the circle's diameter.
 const MARK_RIM_SHARE: f32 = 0.03;
 
+const HELP: Svg = include_svg!("assets/mdi/help.svg");
 const EXCLAMATION_THICK: Svg = include_svg!("assets/mdi/exclamation-thick.svg");
 
 /// Whether the icon sits on its tinted disc.
@@ -68,14 +69,17 @@ pub enum Feedback {
 /// What a small disc on the circle's top right corner tells of the state, where Tile has its badge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mark {
+    /// Home Assistant does not know the state: a black "?" on the icon's colour.
+    Unknown,
     /// Home Assistant cannot reach the entity: Tile's white "!" on orange.
     Unavailable,
 }
 
 impl Mark {
     /// On the corner of a circle `radius` around `center`.
-    fn draws(self, center: f32, radius: f32, rim: f32) -> [Draw; 3] {
+    fn draws(self, center: f32, radius: f32, rim: f32, icon_color: Color) -> [Draw; 3] {
         let (fill, Icon(glyph), ink) = match self {
+            Self::Unknown => (icon_color, Icon(&HELP), BLACK),
             Self::Unavailable => (Accent::Warning.color(), Icon(&EXCLAMATION_THICK), WHITE),
         };
         let corner = radius * FRAC_1_SQRT_2;
@@ -175,7 +179,7 @@ impl Badge {
                         height: side,
                         ..fill_insets()
                     },
-                    mark.draws(center, radius, rim),
+                    mark.draws(center, radius, rim, self.color),
                 ),
             ],
         )

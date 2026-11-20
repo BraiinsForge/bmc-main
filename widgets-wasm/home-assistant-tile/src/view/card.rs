@@ -60,6 +60,7 @@ pub struct StateDisplay {
     /// The frontend's icon for the domain in this state, such as `mdi:palette` for a scene.
     pub icon: Icon,
     pub disc: Disc,
+    pub mark: Option<Mark>,
 }
 
 /// The sizes the name and the lines under it are set in, and the rows they take.
