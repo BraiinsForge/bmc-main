@@ -40,13 +40,28 @@ mod wasm_glue {
     /// fact is kept on screen across failures.
     const LOADING_TEXT: &str = "Loading...";
 
-    struct RandomFacts {
-        /// Last successfully fetched fact, kept as the fallback on later failures.
-        fact: Option<String>,
+    struct FactSource {
         _poll: PollHandle,
+        on_fact: Notify<String>,
     }
 
-    impl RandomFacts {
+    impl FactSource {
+        /// `on_fact` gets the fact of each usable reply; a failed one sends nothing.
+        fn new(on_fact: Notify<String>) -> Part<Self> {
+            Part::new_cyclic(|me| Self {
+                _poll: PollHandle::register(
+                    me,
+                    Self::build_request,
+                    Self::on_fact_data,
+                    PollConfig {
+                        interval_ms: Some(POLL_INTERVAL_MS),
+                        ..Default::default()
+                    },
+                ),
+                on_fact,
+            })
+        }
+
         #[expect(clippy::unused_self, reason = "the SDK calls this as a method")]
         #[expect(
             clippy::unnecessary_wraps,
@@ -64,7 +79,7 @@ mod wasm_glue {
                 .filter(|text| !text.is_empty());
 
             if let Some(fact) = fact {
-                self.fact = Some(fact);
+                self.on_fact.send(fact);
             } else {
                 if response.ok() {
                     log_warn!("random-facts: response had no usable {FACTS_TEXT_PATH}");
@@ -76,7 +91,18 @@ mod wasm_glue {
                 // reply.
                 handle.retry();
             }
+        }
+    }
 
+    struct RandomFacts {
+        _source: Part<FactSource>,
+        /// The last good fact, kept on screen across failed fetches.
+        fact: Option<String>,
+    }
+
+    impl RandomFacts {
+        fn on_fact(&mut self, fact: String) {
+            self.fact = Some(fact);
             request_frame();
         }
     }
@@ -84,18 +110,9 @@ mod wasm_glue {
     #[widget]
     impl Widget for RandomFacts {
         fn init(me: &Building<Self>) -> Self {
-            let poll = PollHandle::register(
-                me,
-                Self::build_request,
-                Self::on_fact_data,
-                PollConfig {
-                    interval_ms: Some(POLL_INTERVAL_MS),
-                    ..Default::default()
-                },
-            );
             Self {
+                _source: FactSource::new(Notify::new(me, Self::on_fact)),
                 fact: None,
-                _poll: poll,
             }
         }
 
@@ -103,7 +120,6 @@ mod wasm_glue {
             let ws = widget_size();
 
             let fact = self.fact.as_deref().unwrap_or(LOADING_TEXT);
-
             let root = col(
                 props!(background: BLACK),
                 vec![header_draw(ws), fact_draw(ws, fact)],
