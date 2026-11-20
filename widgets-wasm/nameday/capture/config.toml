@@ -14,3 +14,20 @@ target = "bmc100:medium"
 [fixtures.bmc100-small]
 path = "fixtures/common.jsonl.gz"
 target = "bmc100:small"
+
+# Across midnight and several days, with fetches failing while offline.
+[fixtures.bmc100-full-day-changes]
+path = "fixtures/day-changes.jsonl.gz"
+target = "bmc100:full"
+
+[fixtures.bmc100-large-day-changes]
+path = "fixtures/day-changes.jsonl.gz"
+target = "bmc100:large"
+
+[fixtures.bmc100-medium-day-changes]
+path = "fixtures/day-changes.jsonl.gz"
+target = "bmc100:medium"
+
+[fixtures.bmc100-small-day-changes]
+path = "fixtures/day-changes.jsonl.gz"
+target = "bmc100:small"
