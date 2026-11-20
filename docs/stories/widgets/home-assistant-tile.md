@@ -29,9 +29,9 @@ switched): buttons, scenes and scripts.
 - A finger on the tile tints it and sinks the icon, like a pushed button. Lifting the finger fires the action; sliding
   it off, or swiping to another scene, fires nothing.
 - While the press is on its way, the line reads _Pressing…_ or _Activating…_, and another tap fires nothing.
-- A press that fails says so on the line for a few seconds: _Home Assistant refused_, _No answer_, _Connection lost_, or
-  _Not connected_ when it could not be sent. Home Assistant's own message, often longer than a tile's line, goes to the
-  device log.
+- A press that fails says so on the line for a few seconds: _Home Assistant refused_, _No answer_ or _Connection lost_.
+  One that could not be sent reads _Not connected_, or _Could not send_ on a fault of the tile's own. Home Assistant's
+  own message, often longer than a tile's line, goes to the device log.
 
 ### Run a script
 
