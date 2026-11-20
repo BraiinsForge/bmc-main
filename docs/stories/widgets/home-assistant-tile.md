@@ -2,8 +2,8 @@
 
 The Home Assistant Tile shows one entity from the user's Home Assistant and lets them operate it from the Deck, the way
 the Tile card does on a Home Assistant dashboard. The current version covers the entities that are pressed: buttons,
-scenes and scripts; those that are switched on and off: switches, input booleans, automations, sirens and remotes; and
-lights.
+scenes and scripts; those that are switched on and off: switches, input booleans, automations, sirens and remotes;
+lights; and those that are read: sensors and binary sensors.
 
 ## User stories
 
@@ -99,6 +99,34 @@ lights.
   nor for one coming on from off until Home Assistant reports how bright it is and, for a light that takes a colour
   temperature or a colour, which one it shows.
 
+### Read a sensor
+
+> As a user, I want to read a sensor's value from across the room, so that I know the temperature outside or whether the
+> front door is open without picking up my phone.
+
+- The value is the largest thing on the tile, under or beside the sensor's icon and name, and changes within about a
+  second of Home Assistant's.
+- A number has the decimals set for the sensor in Home Assistant, under _Display precision_ in its settings, or as many
+  as the sensor reports without one, and its unit spaced as Home Assistant spaces it: _21,5 °C_, _84%_, _1 235 W_. The
+  digits follow the device's number format. A precision changed in Home Assistant shows within 5 minutes.
+- Until Home Assistant has said which precision to use, a number reads _—_ rather than showing digits that change a
+  moment later.
+- A time reads how long ago it was, or how soon it comes: _5 minutes ago_, _in 4 minutes_. It is worded in the device
+  language and moves on by itself.
+- Any other value reads as Home Assistant reports it, such as `partly_cloudy`. Words too long for the tile shrink and
+  wrap rather than being cut.
+- A binary sensor reads Home Assistant's words for its kind: _Open_ or _Closed_ for a door, _Detected_ or _Clear_ for
+  smoke, _On_ or _Off_ for one of no known kind.
+- The icon is Home Assistant's for the sensor's kind and value: a thermometer, a battery that empties with its charge,
+  an arrow along the wind, a door that opens.
+- Colours follow Home Assistant's: a sensor wears its icon colour, and a battery green from 70 %, orange from 30 %, red
+  below. A binary sensor is amber while on, red for one that warns of danger, such as smoke, gas or a leak, and grey
+  while off.
+- On a 2x1 tile and larger, the line under the name tells when the value last changed, such as _3 minutes ago_. A 1x1
+  tile has no room for it.
+- A sensor without a value reads _—_, with its icon grey.
+- A sensor has no action: the tile takes no tap and no hold.
+
 ### Guard an action with a hold
 
 > As a user, I want an action that runs only when I hold the tile, so that a stray touch never opens the gate.
@@ -114,14 +142,17 @@ lights.
   go early reads _Released too early_. On a tile one row high, a state too long for both is cut short, never the hint.
 - Where neither a tap nor a hold is set, the tile reads _No action set_ and touches do nothing. A switch's or light's
   tile instead keeps showing its position, as a status that touches on the card do not change; a light's rows still act.
+  A sensor's tile has no action to set, and neither setting changes it.
 
 ### Know when the tile cannot act
 
 > As a user, I want the tile to tell me why it does not respond, so that I can fix it or wait.
 
-- While the tile loads, it shows the outline of what is coming: the entity type's icon in grey and _Loading…_.
+- While the tile loads, it shows the outline of what is coming, laid out as the tile will be: the entity type's icon in
+  grey and _Loading…_, and on a 2x1 tile and larger a sensor's _—_ where its value will be.
 - When Home Assistant drops out, the tile keeps the last state without its colour, reads _Reconnecting…_ and takes no
-  taps. It reconnects on its own.
+  taps. It reconnects on its own. A sensor on a 1x1 tile shows _Reconnecting…_ in place of its value, which has no other
+  room.
 - An entity Home Assistant reports as unavailable reads _Unavailable_, with an orange _!_ on the corner of its icon as
   in Home Assistant, and takes no taps.
 - When the tile cannot show the entity at all, a warning icon replaces the entity's, with what to fix: _No entity set_,
@@ -141,6 +172,10 @@ lights.
   while the controls fit under it.
 - A name or line too long for its row ends in an ellipsis, so neighbouring tiles keep one type size and their icons stay
   level.
+- A sensor's tile sets its value large: on a 1x1 tile a 64 px icon over the name and the value; on a 2x1 tile the same
+  icon, name and line on the left and the value, larger, on the right; on 2x2 and fullscreen tiles a 96 px icon over the
+  name, the line and the value. A time too long for one line on a 2x1 tile wraps onto two; on a 1x1 tile it is set small
+  enough for two.
 
 ## Parameters
 
@@ -175,6 +210,10 @@ To verify the tile, a test Home Assistant instance needs:
   lights: one that only switches; one that dims, whose `turn_on`, `turn_off` and `set_level` call a script that does not
   exist, so Home Assistant refuses them; and one that dims, reporting an `input_boolean` and an `input_number` it sets
   after a 3 s delay, for a slow device;
+- template sensors: a temperature in °C with a `unique_id` and a display precision of 1, a second temperature without a
+  `unique_id`, a battery in % that reports an `input_number`, a `timestamp` fixed a few minutes ahead with
+  `today_at('HH:MM')`, an `uptime`, and one whose state is a sentence;
+- template binary sensors of the `door` and `smoke` classes;
 - a non-administrator user with a long-lived access token.
 
 In the Deck web app, save two Home Assistant accounts: one with that token and one with a wrong token.
@@ -194,6 +233,11 @@ In the Deck web app, save two Home Assistant accounts: one with that token and o
   `unknown` in the developer tools reads _Unknown_ with a grey _?_, and a tap turns it on. With Home Assistant paused,
   taps pile up until one reads _Too many taps_. With neither a tap nor a hold set, the tile shows its position undimmed
   and touches flip nothing.
+- **Sensors:** each sensor and binary sensor reads its value, icon and colour as described above, and a change made in
+  Home Assistant shows on the Deck. A display precision changed in Home Assistant shows within 5 minutes, and at once on
+  saving the tile's settings. The temperature without a `unique_id` shows its value with the decimals it reports. The
+  battery, set to 84, 50 and 12, turns green, orange and red, and its icon empties. The timestamp counts down, passes
+  and goes on into the past, as _2 minutes ago_.
 - **Touch:** a second tap while the press is on its way fires nothing; a swipe that starts on the tile changes the
   scene, fires nothing and leaves no tint; each tap and hold combination behaves as described above. With a 1 s hold and
   _Tap action_ set to _Nothing_, a hold let go early and then held through at once reads _Pressing…_ in place of
@@ -205,7 +249,8 @@ In the Deck web app, save two Home Assistant accounts: one with that token and o
   The gallery's light capture shows the _Unknown_ state.
 - **Slow and refused lights:** on the slow light, + shows the new brightness faint until Home Assistant reports it; on
   the one Home Assistant refuses, a preset springs back reading _Home Assistant refused_.
-- **Sizes:** the tile at every size, with a long name, and a colour light with the rows each size fits.
+- **Sizes:** the tile at every size, with a long name, a colour light with the rows each size fits, and a sensor's tile
+  while it loads.
 - **Problems:** each message above, by unbinding the account, entering a malformed ID, an unsupported type and a missing
   entity, binding the wrong-token account, stopping Home Assistant before and after the tile starts, and disabling an
   entity's integration. _Home Assistant too old_, _Communication error_ and _Use an http:// address_ need an instance
@@ -215,14 +260,18 @@ In the Deck web app, save two Home Assistant accounts: one with that token and o
 ## Constraints
 
 - BMC100 only, at every widget size: 1x1, 2x1, 2x2 and fullscreen.
-- Buttons, input buttons, scenes, scripts, switches, input booleans, automations, sirens, remotes and lights only; other
-  entity types read _Type not supported yet_ until the tile supports them.
+- Buttons, input buttons, scenes, scripts, switches, input booleans, automations, sirens, remotes, lights, sensors and
+  binary sensors only; other entity types read _Type not supported yet_ until the tile supports them.
 - A switch whose state Home Assistant only assumes (`assumed_state`), such as a radio outlet, is flipped like any other:
   the tile cannot send _on_ to one it shows on.
 - A light's colour is set by its hue alone, at full saturation; its saturation, effects and favourite colours cannot be
   set from the tile yet.
+- A sensor's value from a list of options reads as Home Assistant stores it, such as `partly_cloudy`, not as its
+  dashboard translates it.
+- An uptime reads _4 days ago_ where Home Assistant shows _4 days_, and a time is not shrunk to fit as other words are:
+  both wait for the device to word them.
 - Home Assistant 2024.3 or newer, reached over plain `http://`; encrypted connections are not supported yet.
-- Each type is drawn with the tile's icon for that type rather than the entity's own.
+- Each entity is drawn with the icon Home Assistant gives its type, device class and state, not one set on the entity.
 - An entity Home Assistant reports as unavailable keeps its type's icon under the orange _!_, the same for every type,
   though Home Assistant gives an unavailable automation an icon of its own.
 - The tile's words are English.
