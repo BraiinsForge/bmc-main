@@ -241,7 +241,15 @@ mod wasm_glue {
         let answered = STATE.with_borrow_mut(|state| state.pending.answered(call, result));
         match answered {
             Some(Answered::AwaitingReport) => {
-                STATE.with_borrow_mut(|state| state.grace = timer::start(GRACE_MS, on_grace));
+                if let Some(grace) = timer::start(GRACE_MS, on_grace) {
+                    STATE.with_borrow_mut(|state| state.grace = Some(grace));
+                } else {
+                    // Waiting with no grace to end it would leave a device that ignores the call shown as asked.
+                    log_warn!(
+                        "home-assistant-tile: no timer to wait for a report; showing the reported state"
+                    );
+                    STATE.with_borrow_mut(|state| state.pending.give_up());
+                }
             }
             Some(Answered::Failed { slot, failure }) => {
                 let why = match failure {
