@@ -264,11 +264,11 @@ fn stepper(ctx: &mut SceneCtx, ui: &mut Ui) {
                 "Value" => Track::Value(value.to_owned()),
                 "Hue" => Track::Gradient(Gradient {
                     stops: hues.to_vec(),
-                    share,
+                    share: Some(share),
                 }),
                 _ => Track::Gradient(Gradient {
                     stops: TEMPERATURES.to_vec(),
-                    share,
+                    share: Some(share),
                 }),
             },
             width,

@@ -51,17 +51,24 @@ const CURSOR_SHADOW: DropShadow = DropShadow {
     color: Color::from_rgba(0, 0, 0, 51),
 };
 
-/// The track's draws, `width` by `height`: the gradient and the cursor at `share`,
+/// The track's draws, `width` by `height`: the gradient and the cursor at `share`, where there is one,
 /// its grip grey while Home Assistant has yet to confirm the colour.
 #[must_use]
-pub fn paint(stops: &[Color], share: f32, (width, height): (f32, f32), pending: bool) -> Vec<Draw> {
-    let grip = if pending {
-        PENDING_LABEL_COLOR
-    } else {
-        color_at(stops, share)
-    };
+pub fn paint(
+    stops: &[Color],
+    share: Option<f32>,
+    (width, height): (f32, f32),
+    pending: bool,
+) -> Vec<Draw> {
     let mut draws = pieces(stops, (0.0, 0.0), (width, height), CONTROL_RADIUS);
-    draws.extend(cursor(cursor_x(share, width), height, grip));
+    if let Some(share) = share {
+        let grip = if pending {
+            PENDING_LABEL_COLOR
+        } else {
+            color_at(stops, share)
+        };
+        draws.extend(cursor(cursor_x(share, width), height, grip));
+    }
     draws
 }
 
@@ -282,6 +289,15 @@ mod tests {
         assert_eq!(rgb(hues[0]), (255, 63, 63));
         assert_eq!(rgb(hues[4]), (63, 63, 255), "blue");
         assert_eq!(hues[6], hues[0]);
+    }
+
+    #[wasm_test]
+    fn a_track_without_a_value_draws_no_cursor() {
+        let size = (300.0, 64.0);
+        let track = pieces(&[RED, BLUE], (0.0, 0.0), size, CONTROL_RADIUS).len();
+        let drawn = |share| paint(&[RED, BLUE], share, size, false).len();
+        assert_eq!(drawn(None), track);
+        assert!(drawn(Some(0.5)) > track, "a value adds the cursor");
     }
 
     #[wasm_test]

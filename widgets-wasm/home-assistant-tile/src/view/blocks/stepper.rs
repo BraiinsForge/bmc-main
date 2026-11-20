@@ -73,8 +73,9 @@ pub struct Level {
 pub struct Gradient {
     /// Spread evenly from end to end.
     pub stops: Vec<Color>,
-    /// Where the cursor stands, from 0 to 1.
-    pub share: f32,
+    /// Where the cursor stands, from 0 to 1;
+    /// none without a value to show, such as a colour temperature while the light shows a colour.
+    pub share: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -328,7 +329,7 @@ mod tests {
     fn each_touch_reads_back_as_itself() {
         let gradient = stepper(Track::Gradient(Gradient {
             stops: vec![WHITE, BLACK],
-            share: 0.5,
+            share: Some(0.5),
         }));
         for stepper in [level(), gradient] {
             for touched in [Touched::Down, Touched::Up, Touched::Set(0.25)] {
