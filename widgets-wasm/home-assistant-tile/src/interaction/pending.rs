@@ -144,6 +144,16 @@ impl Request {
         }
     }
 
+    /// Also drops what was asked under `slots`, sent or not;
+    /// if this request cannot be sent, only what still waits for taps.
+    #[must_use]
+    pub fn superseding(self, slots: &'static [Slot]) -> Self {
+        Self {
+            supersedes: slots,
+            ..self
+        }
+    }
+
     #[cfg(test)]
     #[must_use]
     pub fn call(&self) -> &ServiceCall {
@@ -157,8 +167,8 @@ pub enum Submitted {
     Sent,
     /// The caller (re)starts its wait for the taps to stop, then calls [`Pending::send_waiting`].
     Waiting,
-    /// It could not be sent, so the slot shows an earlier call still on its way or awaiting its report,
-    /// or else what Home Assistant reports.
+    /// It could not be sent, so its slot and those it supersedes show an earlier call still on its way
+    /// or awaiting its report, or else what Home Assistant reports.
     Unsent(RequestError),
 }
 
@@ -228,9 +238,6 @@ impl Pending {
             settles,
             supersedes,
         } = request;
-        for superseded in supersedes {
-            self.entries.remove(superseded);
-        }
         let (stage, submitted) = match timing {
             Timing::AfterTaps => (Stage::Waiting(call), Submitted::Waiting),
             Timing::Now => match send(&call) {
@@ -240,17 +247,17 @@ impl Pending {
                 }
                 Err(error) => {
                     // A request still waiting for taps would go out after the user asked for something else.
-                    if self
-                        .entries
-                        .get(&slot)
-                        .is_some_and(|entry| matches!(entry.stage, Stage::Waiting(_)))
-                    {
-                        self.entries.remove(&slot);
-                    }
+                    self.entries.retain(|&asked, entry| {
+                        let replaced = asked == slot || supersedes.contains(&asked);
+                        !(replaced && matches!(entry.stage, Stage::Waiting(_)))
+                    });
                     return Submitted::Unsent(error);
                 }
             },
         };
+        for superseded in supersedes {
+            self.entries.remove(superseded);
+        }
         self.entries.insert(
             slot,
             Entry {
@@ -664,13 +671,7 @@ mod tests {
     fn a_request_drops_what_it_supersedes() {
         let mut pending = Pending::default();
         pending.submit(brightness(10.0, Timing::AfterTaps), unsendable);
-        pending.submit(
-            Request {
-                supersedes: &[BRIGHTNESS],
-                ..power(false)
-            },
-            as_call(1),
-        );
+        pending.submit(power(false).superseding(&[BRIGHTNESS]), as_call(1));
         assert_eq!(pending.number(BRIGHTNESS), None);
         let mut sent = 0;
         pending.send_waiting(|_| {
@@ -679,6 +680,26 @@ mod tests {
         });
         assert_eq!(sent, 0, "the brightness would turn it back on");
         assert_eq!(pending.on(POWER), Some(false));
+    }
+
+    #[wasm_test]
+    fn a_request_that_cannot_go_leaves_what_it_supersedes_on_its_way() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(80.0, Timing::Now), as_call(1));
+        pending.submit(power(false).superseding(&[BRIGHTNESS]), unsendable);
+        assert_eq!(
+            pending.number(BRIGHTNESS),
+            Some(80.0),
+            "its call still turns the light on"
+        );
+    }
+
+    #[wasm_test]
+    fn a_request_that_cannot_go_drops_what_it_supersedes_waiting_for_taps() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(10.0, Timing::AfterTaps), unsendable);
+        pending.submit(power(false).superseding(&[BRIGHTNESS]), unsendable);
+        assert_eq!(pending.number(BRIGHTNESS), None);
     }
 
     #[wasm_test]
