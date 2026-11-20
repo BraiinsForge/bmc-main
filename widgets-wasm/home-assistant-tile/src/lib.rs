@@ -41,7 +41,7 @@ mod wasm_glue {
 
     use crate::interaction::gesture::{Availability, Gesture, OnTap, Step, Touch};
     use crate::interaction::notice::{FAILURE_MS, Notice, RELEASED_EARLY_MS};
-    use crate::interaction::pending::{Answered, Pending, Request, Submitted};
+    use crate::interaction::pending::{Answered, Pending, Request, Slot, Submitted};
     use crate::manifest_params::{Params, TapAction};
     use crate::present::{
         self, CardAction, Context, Following, Presenter, Problem, Reach, Room, Showing, UNNAMED,
@@ -257,7 +257,7 @@ mod wasm_glue {
                 };
                 log_warn!(
                     "home-assistant-tile: {} failed: {}",
-                    slot.name(),
+                    slot.map_or("a call already settled or replaced", Slot::name),
                     why.as_str()
                 );
                 show_notice(present::failure_notice(failure).to_owned(), FAILURE_MS);

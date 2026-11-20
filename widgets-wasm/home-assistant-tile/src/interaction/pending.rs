@@ -156,13 +156,15 @@ pub enum Submitted {
     Unsent(RequestError),
 }
 
-/// What an answer to the latest call of a slot did; `F` is why a call failed.
+/// What an answer to a call did; `F` is why a call failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answered<F> {
     /// What Home Assistant reports is shown again.
     Done,
-    /// The call failed, so what Home Assistant reports is shown again.
-    Failed { slot: Slot, failure: F },
+    /// The call failed: its slot, if it still held one, shows what Home Assistant reports again.
+    /// No slot once a report settled the call, or a later request replaced it and stays shown;
+    /// still a failure to tell, as the frontend tells of every failed call.
+    Failed { slot: Option<Slot>, failure: F },
     /// The request waits for Home Assistant to report the entity;
     /// the caller gives up with [`Pending::give_up`] if no report comes in time.
     AwaitingReport,
@@ -185,6 +187,9 @@ struct Entry {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Pending {
     entries: HashMap<Slot, Entry>,
+    /// Every call sent from here and not yet answered, replaced or not.
+    /// No longer than the client's cap on calls in flight, as it answers each one, if only with a timeout.
+    unanswered: Vec<CallId>,
 }
 
 impl Pending {
@@ -209,7 +214,10 @@ impl Pending {
         let (stage, submitted) = match timing {
             Timing::AfterTaps => (Stage::Waiting(call), Submitted::Waiting),
             Timing::Now => match send(&call) {
-                Ok(id) => (Stage::Sent(id), Submitted::Sent),
+                Ok(id) => {
+                    self.unanswered.push(id);
+                    (Stage::Sent(id), Submitted::Sent)
+                }
                 Err(error) => {
                     // A request still waiting for taps would go out after the user asked for something else.
                     if self
@@ -240,12 +248,14 @@ impl Pending {
         mut send: impl FnMut(&ServiceCall) -> Result<CallId, RequestError>,
     ) -> Vec<RequestError> {
         let mut unsent = Vec::new();
+        let unanswered = &mut self.unanswered;
         self.entries.retain(|_, entry| {
             let Stage::Waiting(call) = &entry.stage else {
                 return true;
             };
             match send(call) {
                 Ok(id) => {
+                    unanswered.push(id);
                     entry.stage = Stage::Sent(id);
                     true
                 }
@@ -258,15 +268,28 @@ impl Pending {
         unsent
     }
 
-    /// Home Assistant answered `call` with `result`; none if nothing waits for it any more,
+    /// Home Assistant answered `call` with `result`.
+    /// A success is none once nothing waits for it,
     /// as a later request replaced or superseded it, or a report settled it.
+    /// An answer to a call not sent from here is none.
     pub fn answered<F>(&mut self, call: CallId, result: Result<(), F>) -> Option<Answered<F>> {
-        let (&slot, entry) = self
+        let sent_here = self.unanswered.iter().position(|&id| id == call)?;
+        self.unanswered.swap_remove(sent_here);
+        let Some((&slot, entry)) = self
             .entries
             .iter_mut()
-            .find(|(_, entry)| matches!(entry.stage, Stage::Sent(id) if id == call))?;
+            .find(|(_, entry)| matches!(entry.stage, Stage::Sent(id) if id == call))
+        else {
+            return result.err().map(|failure| Answered::Failed {
+                slot: None,
+                failure,
+            });
+        };
         let answered = match (result, entry.settles) {
-            (Err(failure), _) => Answered::Failed { slot, failure },
+            (Err(failure), _) => Answered::Failed {
+                slot: Some(slot),
+                failure,
+            },
             (Ok(()), Settles::OnReport) => {
                 entry.stage = Stage::AwaitingReport;
                 return Some(Answered::AwaitingReport);
@@ -387,12 +410,66 @@ mod tests {
     }
 
     #[wasm_test]
+    fn a_call_sent_once_the_taps_stop_is_answered_as_any_other() {
+        let mut pending = Pending::default();
+        pending.submit(brightness(80.0, Timing::AfterTaps), unsendable);
+        pending.send_waiting(as_call(1));
+        assert_eq!(pending.answered(id(1), SUCCEEDED), Some(Answered::Done));
+    }
+
+    #[wasm_test]
     fn an_answer_to_a_replaced_call_changes_nothing() {
         let mut pending = Pending::default();
         pending.submit(brightness(70.0, Timing::Now), as_call(1));
         pending.submit(brightness(80.0, Timing::AfterTaps), unsendable);
-        assert_eq!(pending.answered(id(1), FAILED), None);
+        assert_eq!(pending.answered(id(1), SUCCEEDED), None);
         assert_eq!(pending.number(BRIGHTNESS), Some(80.0));
+    }
+
+    #[wasm_test]
+    fn a_replaced_call_that_failed_is_told_and_changes_nothing() {
+        let mut pending = Pending::default();
+        pending.submit(power(true), as_call(1));
+        pending.submit(power(false), as_call(2));
+        assert_eq!(
+            pending.answered(id(1), FAILED),
+            Some(Answered::Failed {
+                slot: None,
+                failure: ()
+            })
+        );
+        assert_eq!(pending.on(POWER), Some(false));
+    }
+
+    #[wasm_test]
+    fn a_call_a_report_settled_is_told_when_it_fails() {
+        let mut pending = Pending::default();
+        pending.submit(power(true), as_call(1));
+        pending.reported();
+        assert_eq!(
+            pending.answered(id(1), FAILED),
+            Some(Answered::Failed {
+                slot: None,
+                failure: ()
+            })
+        );
+    }
+
+    #[wasm_test]
+    fn a_call_sent_from_elsewhere_is_neither_told_nor_shown() {
+        let mut pending = Pending::default();
+        pending.submit(power(true), as_call(2));
+        assert_eq!(pending.answered(id(1), FAILED), None);
+        assert_eq!(pending.on(POWER), Some(true));
+    }
+
+    #[wasm_test]
+    fn a_call_is_answered_only_once() {
+        let mut pending = Pending::default();
+        pending.submit(power(true), as_call(1));
+        pending.submit(power(false), as_call(2));
+        pending.answered(id(1), FAILED);
+        assert_eq!(pending.answered(id(1), FAILED), None);
     }
 
     #[wasm_test]
@@ -402,7 +479,7 @@ mod tests {
         assert_eq!(
             pending.answered(id(1), FAILED),
             Some(Answered::Failed {
-                slot: BRIGHTNESS,
+                slot: Some(BRIGHTNESS),
                 failure: ()
             })
         );
