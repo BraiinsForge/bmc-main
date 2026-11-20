@@ -43,6 +43,8 @@ const CURSOR_RADIUS: f32 = 4.0;
 const GRIP_WIDTH: f32 = 4.0;
 /// How far [`hues`] are saturated, 0 being white and 1 the pure colour.
 const HUE_SATURATION: f32 = 0.75;
+/// As many as Home Assistant samples a light's range at.
+const TEMPERATURE_STOPS: usize = 11;
 /// Home Assistant's `box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2)`, a CSS blur being twice the sigma.
 const CURSOR_SHADOW: DropShadow = DropShadow {
     dx: 0.0,
@@ -78,6 +80,54 @@ pub fn paint(
 pub fn hues() -> [Color; 7] {
     [0.0, 60.0, 120.0, 180.0, 240.0, 300.0, 360.0]
         .map(|hue| Color::from_hsv(hue, HUE_SATURATION, 1.0))
+}
+
+/// A light's colour temperatures from `warmest` to `coolest` kelvin, evenly apart, as Home Assistant draws them.
+#[must_use]
+pub fn temperatures(warmest: f32, coolest: f32) -> Vec<Color> {
+    #[expect(clippy::cast_precision_loss, reason = "a handful of stops")]
+    let step = (coolest - warmest) / (TEMPERATURE_STOPS - 1) as f32;
+    (0..TEMPERATURE_STOPS)
+        .map(|stop| {
+            #[expect(clippy::cast_precision_loss, reason = "a handful of stops")]
+            let kelvin = warmest + stop as f32 * step;
+            temperature_color(kelvin)
+        })
+        .collect()
+}
+
+/// The colour of light at `kelvin`, by Tanner Helland's fit, which the frontend's `temperature2rgb` uses.
+#[must_use]
+pub fn temperature_color(kelvin: f32) -> Color {
+    let hundreds = kelvin / 100.0;
+    let red = if hundreds <= 66.0 {
+        255.0
+    } else {
+        329.698_73 * (hundreds - 60.0).powf(-0.133_204_76)
+    };
+    let green = if hundreds <= 66.0 {
+        99.470_8 * hundreds.ln() - 161.119_57
+    } else {
+        288.122_17 * (hundreds - 60.0).powf(-0.075_514_85)
+    };
+    let blue = if hundreds >= 66.0 {
+        255.0
+    } else if hundreds <= 19.0 {
+        0.0
+    } else {
+        138.517_73 * (hundreds - 10.0).ln() - 305.044_8
+    };
+    Color::from_rgb(channel(red), channel(green), channel(blue))
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped to a channel first"
+)]
+#[must_use]
+pub fn channel(value: f32) -> u8 {
+    value.round().clamp(0.0, 255.0) as u8
 }
 
 /// Where the middle of the cursor at `share` stands across a track `width` wide.
@@ -289,6 +339,20 @@ mod tests {
         assert_eq!(rgb(hues[0]), (255, 63, 63));
         assert_eq!(rgb(hues[4]), (63, 63, 255), "blue");
         assert_eq!(hues[6], hues[0]);
+    }
+
+    #[wasm_test]
+    fn temperatures_run_from_warm_to_cool() {
+        let rgb = |color: Color| (color.red(), color.green(), color.blue());
+        let stops = temperatures(2000.0, 6500.0);
+        assert_eq!(stops.len(), TEMPERATURE_STOPS);
+        assert_eq!(rgb(stops[0]), (255, 137, 14), "2000 K");
+        assert_eq!(rgb(stops[10]), (255, 254, 250), "6500 K");
+        assert_eq!(
+            rgb(temperature_color(10_000.0)),
+            (202, 218, 255),
+            "above 6600 K, blue"
+        );
     }
 
     #[wasm_test]
