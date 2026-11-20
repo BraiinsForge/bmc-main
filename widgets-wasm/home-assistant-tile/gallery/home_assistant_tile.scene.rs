@@ -21,7 +21,7 @@
 //! The tile's building blocks, each on its own at the widths a tile gives it, in every state.
 
 use bmc_gallery::prelude::*;
-use home_assistant_tile::view::blocks::badge::{Badge, Feedback, Mark};
+use home_assistant_tile::view::blocks::badge::{Badge, Disc, Feedback, Mark};
 use home_assistant_tile::view::blocks::chips::{Chip, Chips, Role};
 use home_assistant_tile::view::blocks::control_button::{ControlButton, Face, Look};
 use home_assistant_tile::view::blocks::control_switch::ControlSwitch;
@@ -386,6 +386,8 @@ fn page_button(ctx: &mut SceneCtx, ui: &mut Ui) {
     );
 }
 
+const DISCS: [(Disc, &str); 2] = [(Disc::Tinted, "Tinted"), (Disc::Bare, "Bare")];
+
 #[scene]
 fn badge(ctx: &mut SceneCtx, ui: &mut Ui) {
     ctx.group("Badge");
@@ -393,10 +395,12 @@ fn badge(ctx: &mut SceneCtx, ui: &mut Ui) {
     let pressed = ctx.toggle("Pressed", false);
     let progress = select(ctx, "Hold progress", &PROGRESS);
     let mark = select(ctx, "Mark", &MARKS);
+    let disc = select(ctx, "Disc", &DISCS);
     ctx.wrapping_flow(
         ui,
         [(80, "80 px"), (128, "128 px")].map(|(diameter, label)| {
             let badge = Badge {
+                disc,
                 icon: Icon(&CHECK),
                 diameter: px(diameter),
                 color,

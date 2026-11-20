@@ -48,6 +48,13 @@ const MARK_RIM_SHARE: f32 = 0.03;
 
 const EXCLAMATION_THICK: Svg = include_svg!("assets/mdi/exclamation-thick.svg");
 
+/// Whether the icon sits on its tinted disc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disc {
+    Tinted,
+    Bare,
+}
+
 /// How the badge, and the card it heads, answer a finger on the card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Feedback {
@@ -91,6 +98,7 @@ pub struct Badge {
     pub feedback: Feedback,
     /// How far a hold has got, from 0 to 1.
     pub progress: Option<f32>,
+    pub disc: Disc,
     pub mark: Option<Mark>,
 }
 
@@ -114,8 +122,16 @@ impl Badge {
         };
         let radius = self.diameter / 2.0 * scale;
         let icon = 2.0 * radius * ICON_SHARE;
-        let mut draws = vec![
-            Draw::circle(center, center, radius, self.color.with_alpha(BACKGROUND)),
+        let mut draws = match self.disc {
+            Disc::Tinted => vec![Draw::circle(
+                center,
+                center,
+                radius,
+                self.color.with_alpha(BACKGROUND),
+            )],
+            Disc::Bare => Vec::new(),
+        };
+        draws.push(
             Draw::svg(
                 center - icon / 2.0,
                 center - icon / 2.0,
@@ -125,7 +141,7 @@ impl Badge {
                 self.color,
             )
             .with_anti_alias(),
-        ];
+        );
         if let Some(progress) = self.progress {
             let width = ring_width(self.diameter);
             draws.push(Draw::arc(
@@ -173,6 +189,7 @@ const fn ring_width(diameter: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::icons::CHECK;
     use bmc_wasm_sdk::wasm_test;
 
     #[wasm_test]
@@ -183,6 +200,30 @@ mod tests {
             assert!(diameter / 2.0 <= half, "{diameter}: resting circle");
             assert!(ring_outer <= half, "{diameter}: ring");
         }
+    }
+
+    #[wasm_test]
+    fn only_a_tinted_disc_draws_a_circle_behind_the_icon() {
+        let circles = |disc| {
+            let badge = Badge {
+                icon: Icon(&CHECK),
+                diameter: 80.0,
+                color: Accent::Amber.color(),
+                feedback: Feedback::Resting,
+                progress: None,
+                disc,
+                mark: None,
+            };
+            let Node::Canvas { draws, .. } = badge.view() else {
+                panic!("a resting badge without a mark is one canvas");
+            };
+            draws
+                .iter()
+                .filter(|draw| matches!(draw, Draw::Circle { .. }))
+                .count()
+        };
+        assert_eq!(circles(Disc::Tinted), 1);
+        assert_eq!(circles(Disc::Bare), 0);
     }
 
     #[wasm_test]

@@ -26,6 +26,7 @@ use home_assistant::domain::{button, input_button, scene, script};
 
 use super::{CardAction, Context, Presenter, card, card_action};
 use crate::interaction::pending::{Request, Slot};
+use crate::view::blocks::badge::Disc;
 use crate::view::card::{Card, Line, StateDisplay};
 use crate::view::style::{Accent, Icon};
 use crate::view::touches::Touches;
@@ -154,11 +155,13 @@ impl Tile {
                 line: Some(kind.line(last_used)),
                 color: kind.color(),
                 icon: kind.icon(),
+                disc: Disc::Tinted,
             },
             State::Running => StateDisplay {
                 line: Some(Line::State("Running".to_owned())),
                 color: Some(Accent::Amber),
                 icon: Icon(&SCRIPT_TEXT_PLAY),
+                disc: Disc::Tinted,
             },
         };
         let firing = context.pending.asked(CARD_ACTION);

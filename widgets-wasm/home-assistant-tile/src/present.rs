@@ -31,7 +31,7 @@ use home_assistant::{CallFailure, Entity, Presence, RequestError, Status, is_ent
 
 use crate::interaction::gesture::{Availability, Gesture};
 use crate::interaction::pending::{Pending, Request};
-use crate::view::blocks::badge::Mark;
+use crate::view::blocks::badge::{Disc, Mark};
 use crate::view::card::{Card, Line, StateDisplay};
 use crate::view::style::{Accent, Icon};
 use crate::view::touches::Touches;
@@ -221,6 +221,7 @@ fn placeholder(name: &str, line: Line, color: Option<Accent>, icon: Icon, room: 
         action: None,
         hold: None,
         hint: None,
+        disc: Disc::Tinted,
         mark: None,
         width: room.width,
         height: room.height,
@@ -342,6 +343,7 @@ pub fn card(context: &Context, display: StateDisplay, action: &CardAction) -> Ca
             .hold_only_ms()
             .filter(|_| availability == Some(Availability::Ready))
             .map(|hold_ms| fmt!("Hold {} s", hold_ms.get() / 1000)),
+        disc: display.disc,
         mark: (context.reach == Reach::Unavailable).then_some(Mark::Unavailable),
         width: context.room.width,
         height: context.room.height,
@@ -446,6 +448,7 @@ mod tests {
                 line: None,
                 color: None,
                 icon: Icon(&CHECK),
+                disc: Disc::Tinted,
             };
             card(&context, display, &action).hint
         };
@@ -461,6 +464,7 @@ mod tests {
             line: None,
             color: None,
             icon: Icon(&CHECK),
+            disc: Disc::Tinted,
         };
         assert_eq!(
             card(&blocked, display, &CardAction::Blocked).hint,
@@ -490,6 +494,7 @@ mod tests {
             line: Some(Line::State("Never pressed".to_owned())),
             color: Some(Accent::Neutral),
             icon: Icon(&CHECK),
+            disc: Disc::Tinted,
         };
         let card = card(&context, display, &CardAction::Blocked);
         assert_eq!(card.line, Some(Line::State(UNAVAILABLE_LINE.to_owned())));
@@ -504,6 +509,7 @@ mod tests {
                 line: None,
                 color: None,
                 icon: Icon(&CHECK),
+                disc: Disc::Bare,
             };
             card(
                 &context(&pending, &tap, reach),
@@ -523,6 +529,7 @@ mod tests {
             line: Some(Line::State("Never pressed".to_owned())),
             color: None,
             icon: Icon(&CHECK),
+            disc: Disc::Tinted,
         };
         card(&context(&pending, gesture, reach), display, action).line
     }
