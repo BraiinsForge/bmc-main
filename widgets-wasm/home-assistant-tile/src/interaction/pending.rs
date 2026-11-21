@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 
+use home_assistant::CallFailure;
 use home_assistant::CallId;
 use home_assistant::RequestError;
 use home_assistant::ServiceCall;
@@ -172,15 +173,18 @@ pub enum Submitted {
     Unsent(RequestError),
 }
 
-/// What an answer to a call did; `F` is why a call failed.
+/// What an answer to a call did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Answered<F> {
+pub enum Answered<'a> {
     /// What Home Assistant reports is shown again.
     Done,
     /// The call failed: its slot, if it still held one, shows what Home Assistant reports again.
     /// No slot once a report settled the call, or a later request replaced it and stays shown;
     /// still a failure to tell, as the frontend tells of every failed call.
-    Failed { slot: Option<Slot>, failure: F },
+    Failed {
+        slot: Option<Slot>,
+        failure: &'a CallFailure,
+    },
     /// The request waits for Home Assistant to report the entity;
     /// the caller gives up with [`Pending::give_up`] if no report comes in time.
     AwaitingReport,
@@ -300,7 +304,11 @@ impl Pending {
     /// A success is none once nothing waits for it,
     /// as a later request replaced or superseded it, or a report settled it.
     /// An answer to a call not sent from here is none.
-    pub fn answered<F>(&mut self, call: CallId, result: Result<(), F>) -> Option<Answered<F>> {
+    pub fn answered<'a>(
+        &mut self,
+        call: CallId,
+        result: Result<(), &'a CallFailure>,
+    ) -> Option<Answered<'a>> {
         let sent_here = self.unanswered.iter().position(|&id| id == call)?;
         self.unanswered.swap_remove(sent_here);
         let Some((&slot, entry)) = self
@@ -400,8 +408,8 @@ mod tests {
     use bmc_wasm_sdk::wasm_test;
 
     const BRIGHTNESS: Slot = Slot::new("brightness");
-    const SUCCEEDED: Result<(), ()> = Ok(());
-    const FAILED: Result<(), ()> = Err(());
+    const SUCCEEDED: Result<(), &CallFailure> = Ok(());
+    const FAILED: Result<(), &CallFailure> = Err(&CallFailure::TimedOut);
     const POWER: Slot = Slot::new("power");
     const MODE: Slot = Slot::new("mode");
 
@@ -524,7 +532,7 @@ mod tests {
             pending.answered(id(1), FAILED),
             Some(Answered::Failed {
                 slot: None,
-                failure: ()
+                failure: &CallFailure::TimedOut
             })
         );
         assert_eq!(pending.on(POWER), Some(false));
@@ -539,7 +547,7 @@ mod tests {
             pending.answered(id(1), FAILED),
             Some(Answered::Failed {
                 slot: None,
-                failure: ()
+                failure: &CallFailure::TimedOut
             })
         );
     }
@@ -569,7 +577,7 @@ mod tests {
             pending.answered(id(1), FAILED),
             Some(Answered::Failed {
                 slot: Some(BRIGHTNESS),
-                failure: ()
+                failure: &CallFailure::TimedOut
             })
         );
         assert_eq!(pending.number(BRIGHTNESS), None);
