@@ -20,7 +20,7 @@
 
 //! Scenes, whose state is the time they were last activated.
 
-use super::timestamp_state;
+use super::known_state;
 use crate::{Entity, ServiceCall};
 
 pub(super) const DOMAIN: &str = "scene";
@@ -34,5 +34,5 @@ pub fn turn_on() -> ServiceCall {
 /// When the scene was last activated, as Home Assistant's ISO 8601 timestamp.
 #[must_use]
 pub fn last_activated(scene: &Entity) -> Option<&str> {
-    timestamp_state(scene)
+    known_state(scene)
 }

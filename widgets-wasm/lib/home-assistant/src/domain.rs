@@ -113,9 +113,8 @@ pub fn on_off(entity: &Entity) -> Option<bool> {
     }
 }
 
-/// The state of an entity whose state is a timestamp, such as the time a button was last pressed;
-/// none before the first one, or while the entity cannot be reached.
-fn timestamp_state(entity: &Entity) -> Option<&str> {
+/// The entity's state; none before the first one, or while the entity cannot be reached.
+fn known_state(entity: &Entity) -> Option<&str> {
     entity
         .state
         .as_deref()
@@ -183,8 +182,8 @@ mod tests {
     }
 
     #[wasm_test]
-    fn a_timestamp_state_is_none_before_the_first_one_or_while_unreachable() {
-        let at = |state| timestamp_state(&Entity::reporting(state, vec![])).map(str::to_owned);
+    fn a_known_state_is_none_before_the_first_one_or_while_unreachable() {
+        let at = |state| known_state(&Entity::reporting(state, vec![])).map(str::to_owned);
         assert_eq!(
             at("2026-11-13T10:00:00+00:00").as_deref(),
             Some("2026-11-13T10:00:00+00:00")

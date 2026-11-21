@@ -20,7 +20,7 @@
 
 //! Helper buttons, defined in Home Assistant itself, whose state is the time of their last press.
 
-use super::timestamp_state;
+use super::known_state;
 use crate::{Entity, ServiceCall};
 
 pub(super) const DOMAIN: &str = "input_button";
@@ -34,5 +34,5 @@ pub fn press() -> ServiceCall {
 /// When the button was last pressed, as Home Assistant's ISO 8601 timestamp.
 #[must_use]
 pub fn last_pressed(button: &Entity) -> Option<&str> {
-    timestamp_state(button)
+    known_state(button)
 }
