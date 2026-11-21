@@ -12,8 +12,9 @@ math-3d = ["glam", "bmc-ui/math-3d"]
 # Enable `profile::span`/`report` (fuel-based section profiling).
 # Off by default so production widgets carry no profiling code.
 profiling = []
-# `system::set_current` on wasm, through the test host's import.
-# For dev-dependencies only: no shipped host provides it, so a widget calling it fails to load.
+# Gates the SDK items a widget's own tests use, listed in docs/devel/wasm-widgets/unit-testing.md.
+# For dev-dependencies only: `system::set_current` needs a test host import no shipped host provides,
+# so a widget calling it fails to load.
 test-support = []
 
 [dependencies]

@@ -58,7 +58,7 @@
 //! #[widget]
 //! impl Widget for Pairing {
 //!     fn init(me: &Building<Self>) -> Self {
-//!         let listener = HttpListener::listen(me, 0, Self::on_request); // port 0 = ephemeral
+//!         let listener = HttpListener::listen(me, 0, Self::on_request).ok(); // port 0 = ephemeral
 //!         if let Some(listener) = &listener {
 //!             log_info!("listening on port {}", listener.port());
 //!         }
@@ -76,16 +76,16 @@ use std::rc::Rc;
 
 use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
-#[cfg(target_arch = "wasm32")]
-use crate::widget::Receiver;
 #[cfg(any(target_arch = "wasm32", test))]
 use crate::widget::Target;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::{Receiver, RegisterError};
 
 /// Callback type: `fn(listener, request)`.
 pub type RequestCallback = fn(&HttpListener, &HttpRequest);
 
 /// A request as a method of the value it is delivered to.
-pub type RequestMethod<T> = fn(&mut T, &HttpListener, &HttpRequest);
+pub type ListenerMethod<T> = fn(&mut T, &HttpListener, &HttpRequest);
 
 type Handler = Rc<dyn Fn(&HttpListener, &HttpRequest)>;
 
@@ -114,17 +114,19 @@ impl HttpListener {
 impl HttpListener {
     /// Start listening; the requests run `method` on `to`.
     ///
-    /// Otherwise as [`http_listen`], and refused through a [`PartHandle`](crate::PartHandle)
-    /// whose part is dropped.
+    /// Otherwise as [`http_listen`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Requests after the part is dropped run nothing.
     #[must_use = "dropping the returned HttpListener closes it"]
-    pub fn listen<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn listen<T: 'static, R: Receiver<T>>(
+        to: &R,
         port: u16,
-        method: RequestMethod<T>,
-    ) -> Option<HttpListener> {
-        let target = to.__target()?;
-        listen_with(port, on_target(target, method))
+        method: ListenerMethod<T>,
+    ) -> R::Out<Result<HttpListener, RegisterError>> {
+        to.__register(|target| {
+            listen_with(port, on_target(target, method)).ok_or(RegisterError::new(()))
+        })
     }
 }
 
@@ -166,7 +168,7 @@ fn register(listener_id: HttpListenerId, handler: Handler) {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn on_target<T: 'static>(target: Target<T>, method: RequestMethod<T>) -> Handler {
+fn on_target<T: 'static>(target: Target<T>, method: ListenerMethod<T>) -> Handler {
     Rc::new(move |listener: &HttpListener, request: &HttpRequest| {
         target.deliver(|value| method(value, listener, request));
     })
@@ -360,7 +362,7 @@ mod tests {
     use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
     use super::{
-        HttpListener, HttpRequest, LISTENERS, RequestCallback, RequestMethod, on_target, register,
+        HttpListener, HttpRequest, LISTENERS, ListenerMethod, RequestCallback, on_target, register,
     };
     use crate::wasm_test;
     use crate::widget::Part;
@@ -484,7 +486,7 @@ mod tests {
         }
     }
 
-    fn listen_on(part: &Part<Server>, method: RequestMethod<Server>) -> HttpListener {
+    fn listen_on(part: &Part<Server>, method: ListenerMethod<Server>) -> HttpListener {
         let id = HttpListenerId::from_wire(2).expect("BUG: test ids are non-zero");
         register(id, on_target(part.target(), method));
         HttpListener(id)

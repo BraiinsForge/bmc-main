@@ -143,8 +143,9 @@ See [Memory](memory.md) for the 64 KiB stack budget, measured high-water marks, 
 
 The host gives each widget a small, fixed set of background resources, listed with their defaults in
 [`RuntimeResourceLimits`](../../../bmc-wasm-runtime/src/runtime_limits.rs). The tightest is image decoding: one decode
-in flight per widget. A request past a limit is refused, not queued: each `BitmapSlot::set_fit` and `FetchRequest::send`
-form, the method forms included, returns `None`, and each `set_fit_ref` form hands the body back.
+in flight per widget. A request past a limit is refused, not queued: a receiver form such as `set_fit_on` or `send_on`
+returns `Err(RegisterError)`, holding the body for `set_fit_ref_on`, or `Err(HandleError::Register)` through a
+`PartHandle`.
 
 Do not fan work out in parallel. Keep the waiting work in a queue inside the widget, and start the next decode from the
 callback that reports the previous one. The device also runs one decode at a time across all widgets, so parallel

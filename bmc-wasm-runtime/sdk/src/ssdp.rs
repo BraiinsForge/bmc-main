@@ -53,7 +53,7 @@
 //! impl Widget for Renderers {
 //!     fn init(me: &Building<Self>) -> Self {
 //!         let target = "urn:schemas-upnp-org:device:MediaRenderer:1";
-//!         let search = SsdpSearch::start(me, target, 5, Self::on_ssdp_event);
+//!         let search = SsdpSearch::start(me, target, 5, Self::on_ssdp_event).ok();
 //!         Self { search }
 //!     }
 //!
@@ -68,10 +68,10 @@ use std::rc::Rc;
 
 use bmc_wasm_protocol::SsdpSearchId;
 
-#[cfg(target_arch = "wasm32")]
-use crate::widget::Receiver;
 #[cfg(any(target_arch = "wasm32", test))]
 use crate::widget::Target;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::{Receiver, RegisterError};
 
 /// Callback type: `fn(search, event)`.
 pub type SearchCallback = fn(&SsdpSearch, &SsdpEvent<'_>);
@@ -96,18 +96,21 @@ impl SsdpSearch {
 impl SsdpSearch {
     /// Start a search; the events run `method` on `to`.
     ///
-    /// Otherwise as [`ssdp_search`], and refused through a [`PartHandle`](crate::PartHandle)
-    /// whose part is dropped.
+    /// Otherwise as [`ssdp_search`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Events after the part is dropped run nothing.
     #[must_use = "dropping the returned SsdpSearch stops it"]
-    pub fn start<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn start<T: 'static, R: Receiver<T>>(
+        to: &R,
         search_target: &str,
         timeout_secs: u32,
         method: SearchMethod<T>,
-    ) -> Option<SsdpSearch> {
-        let target = to.__target()?;
-        search_with(search_target, timeout_secs, on_target(target, method))
+    ) -> R::Out<Result<SsdpSearch, RegisterError>> {
+        to.__register(|target| {
+            search_with(search_target, timeout_secs, on_target(target, method))
+                .ok_or(RegisterError::new(()))
+        })
     }
 }
 

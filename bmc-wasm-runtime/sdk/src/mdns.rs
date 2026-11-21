@@ -54,7 +54,7 @@
 //! impl Widget for Speakers {
 //!     fn init(me: &Building<Self>) -> Self {
 //!         let services = ["_googlecast._tcp", "_touch-able._tcp"];
-//!         let browse = MdnsBrowse::start(me, &services, Self::on_mdns_event);
+//!         let browse = MdnsBrowse::start(me, &services, Self::on_mdns_event).ok();
 //!         Self { browse }
 //!     }
 //!
@@ -71,10 +71,10 @@ use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
 
 #[cfg(target_arch = "wasm32")]
 use crate::fmt;
-#[cfg(target_arch = "wasm32")]
-use crate::widget::Receiver;
 #[cfg(any(target_arch = "wasm32", test))]
 use crate::widget::Target;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::{Receiver, RegisterError};
 
 /// Callback type: `fn(browse, event)`.
 pub type BrowseCallback = fn(&MdnsBrowse, &MdnsEvent<'_>);
@@ -99,17 +99,19 @@ impl MdnsBrowse {
 impl MdnsBrowse {
     /// Browse for services; the events run `method` on `to`.
     ///
-    /// Otherwise as [`mdns_browse`], and refused through a [`PartHandle`](crate::PartHandle)
-    /// whose part is dropped.
+    /// Otherwise as [`mdns_browse`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Events after the part is dropped run nothing.
     #[must_use = "dropping the returned MdnsBrowse stops it"]
-    pub fn start<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn start<T: 'static, R: Receiver<T>>(
+        to: &R,
         service_types: &[&str],
         method: BrowseMethod<T>,
-    ) -> Option<MdnsBrowse> {
-        let target = to.__target()?;
-        browse_with(service_types, on_target(target, method))
+    ) -> R::Out<Result<MdnsBrowse, RegisterError>> {
+        to.__register(|target| {
+            browse_with(service_types, on_target(target, method)).ok_or(RegisterError::new(()))
+        })
     }
 }
 

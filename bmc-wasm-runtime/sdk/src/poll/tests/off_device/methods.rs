@@ -174,16 +174,19 @@ fn poller_and_handle() -> (Part<Poller>, PartHandle<Poller>) {
 }
 
 #[test]
-fn a_poll_through_a_handle_to_a_dropped_part_is_refused() {
+fn a_poll_through_a_handle_to_a_dropped_part_registers_nothing() {
     widget::enter();
     let (part, handle) = poller_and_handle();
     drop(part);
 
-    let refused = Handle::register(&handle, Poller::build, Poller::on_reply, CFG).is_none();
+    let dropped = matches!(
+        Handle::register(&handle, Poller::build, Poller::on_reply, CFG),
+        Err(widget::PartError::NotLive)
+    );
     widget::drain();
 
     assert!(
-        refused && backend::sends() == 0,
+        dropped && backend::sends() == 0,
         "nothing registered, nothing sent"
     );
 }
@@ -197,7 +200,7 @@ fn a_poll_through_a_handle_to_a_live_part_registers_and_sends() {
     widget::drain();
 
     assert_eq!(
-        (handle.is_some(), part.with(|value| value.builds)),
+        (handle.is_ok(), part.with(|value| value.builds)),
         (true, 1),
         "a live part's poll registers and builds on it"
     );

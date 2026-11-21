@@ -22,8 +22,8 @@ use core::cell::{Cell, RefCell};
 use std::thread::LocalKey;
 
 use super::{
-    Building, Me, Part, PartHandle, Receiver, Root, RootSlot, Target, Widget, defer, drain, export,
-    hook, install, leave, uninstall,
+    Building, HandleError, Me, Part, PartError, PartHandle, Receiver, RegisterError, Root,
+    RootSlot, Target, Widget, defer, drain, export, hook, install, leave, uninstall,
 };
 use crate::net::FetchResponse;
 use crate::poll::{Config as PollConfig, FetchSpec, Handle as PollHandle};
@@ -32,6 +32,10 @@ use crate::wasm_test;
 // Names the host's exports, which exist on wasm32 only.
 #[cfg(target_arch = "wasm32")]
 mod exports;
+
+// The forms it calls exist on wasm32 only.
+#[cfg(target_arch = "wasm32")]
+mod dead_handle;
 
 thread_local! {
     static ORDER: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
@@ -72,7 +76,8 @@ impl Sub {
     /// Reaches the widget from code that runs on a field of it.
     fn arm(&mut self, me: Me<Rooted>) -> Target<Rooted> {
         self.inner.with_mut(|counter| counter.n += 1);
-        me.__target().expect("BUG: the widget is installed")
+        me.__register(Ok::<_, RegisterError>)
+            .expect("BUG: the widget is installed")
     }
 }
 
@@ -281,7 +286,7 @@ fn a_callback_registered_through_the_widget_reaches_the_instance() {
 fn a_target_taken_through_the_widget_reaches_the_instance() {
     install::<Rooted>();
     let mut target = None;
-    hook::<Rooted>(|rooted| target = rooted.__target());
+    hook::<Rooted>(|rooted| target = rooted.__register(Ok::<_, RegisterError>).ok());
 
     target
         .expect("BUG: the widget is installed")
@@ -290,7 +295,7 @@ fn a_target_taken_through_the_widget_reaches_the_instance() {
     assert_eq!(
         count(),
         1,
-        "every method form but the poll's binds `self` through its target"
+        "every receiver form but the poll's binds `self` through its target"
     );
 }
 
@@ -501,7 +506,7 @@ impl Chained {
         if self.steps < last {
             let me = self
                 .me
-                .__target()
+                .__register(Ok::<_, RegisterError>)
                 .expect("BUG: a part delivering to itself is live");
             defer(move || {
                 me.deliver(|chained| chained.step(last));
@@ -528,7 +533,10 @@ fn a_callback_registers_its_next_one_on_its_own_part_through_its_handle() {
 fn a_handle_taken_while_building_registers_only_once_the_build_returned() {
     let mut refused_while_building = None;
     let part = Part::new_cyclic(|me| {
-        refused_while_building = Some(me.handle().__target().is_none());
+        refused_while_building = Some(matches!(
+            me.handle().__register(Ok::<_, RegisterError>),
+            Err(HandleError::Part(PartError::NotLive))
+        ));
         Chained::new(me)
     });
 
@@ -537,14 +545,16 @@ fn a_handle_taken_while_building_registers_only_once_the_build_returned() {
         Some(true),
         "no value exists to deliver into yet"
     );
-    assert!(part.with(|chained| chained.me.__target().is_some()));
+    assert!(part.with(|chained| chained.me.__register(Ok::<_, RegisterError>).is_ok()));
 }
 
 #[wasm_test]
 fn a_registration_while_building_delivers_once_the_value_is_built() {
     let mut registered = None;
     let part = Part::new_cyclic(|me| {
-        let target = me.__target().expect("BUG: building always registers");
+        let target = me
+            .__register(Ok::<_, RegisterError>)
+            .expect("BUG: building always registers");
         assert_eq!(target.deliver(|_| ()), None, "nothing to deliver into yet");
         registered = Some(target);
         Chained::new(me)
@@ -568,8 +578,79 @@ fn a_value_holding_its_own_handle_goes_with_its_part() {
         "the handle it holds is no cycle keeping it alive"
     );
     assert!(
-        handle.__target().is_none(),
-        "registering through the handle is refused"
+        matches!(
+            handle.__register(Ok::<_, RegisterError>),
+            Err(HandleError::Part(PartError::NotLive))
+        ),
+        "registering through the handle finds the part dropped"
+    );
+}
+
+#[wasm_test]
+fn a_dropped_part_refuses_without_asking_the_host() {
+    let part = Part::new_cyclic(Chained::new);
+    let handle = part.with(|chained| chained.me.clone());
+    drop(part);
+    let mut asked = false;
+
+    let refused = handle.__register(|_| {
+        asked = true;
+        Ok::<_, RegisterError>(())
+    });
+
+    assert_eq!(
+        (refused, asked),
+        (Err(HandleError::Part(PartError::NotLive)), false)
+    );
+}
+
+#[wasm_test]
+fn a_host_refusal_through_a_live_handle_hands_back_what_the_host_did() {
+    let part = Part::new_cyclic(Chained::new);
+    let handle = part.with(|chained| chained.me.clone());
+
+    assert_eq!(
+        handle.__register(|_| Err::<(), _>(RegisterError::new("body"))),
+        Err(HandleError::Register(RegisterError::new("body"))),
+        "a refusal, not a dropped part, with what the host handed back"
+    );
+}
+
+fn register_through_a_handle_and_a_part(
+    handle: &PartHandle<Chained>,
+    part: &Part<Chained>,
+) -> Result<(), HandleError> {
+    handle.__register(|_| Ok::<_, RegisterError>(()))?;
+    part.__register(|_| Err::<(), _>(RegisterError::new(())))?;
+    Ok(())
+}
+
+#[wasm_test]
+fn a_refusal_through_a_held_part_joins_the_error_of_a_handle() {
+    let part = Part::new_cyclic(Chained::new);
+    let handle = part.with(|chained| chained.me.clone());
+
+    assert_eq!(
+        register_through_a_handle_and_a_part(&handle, &part),
+        Err(HandleError::Register(RegisterError::new(()))),
+        "the part's `RegisterError` leaves through the `HandleError` the handle returns"
+    );
+}
+
+#[wasm_test]
+fn a_refusal_handing_back_nothing_prints_as_its_bare_name() {
+    assert_eq!(
+        format!("{:?}", RegisterError::new(())),
+        "RegisterError",
+        "an `.expect` on a refused timer should not print `handed_back: ()`"
+    );
+}
+
+#[wasm_test]
+fn a_refusal_handing_back_a_body_prints_it() {
+    assert_eq!(
+        format!("{:?}", RegisterError::new("body")),
+        r#"RegisterError("body")"#
     );
 }
 
@@ -582,10 +663,13 @@ fn a_registration_from_a_callback_that_dropped_its_part_delivers_nothing() {
     })));
     let handle = handle.expect("BUG: set by the build");
     let mut registered = None;
-    handle.__target().expect("BUG: stored above").deliver(|_| {
-        STORED.take();
-        registered = handle.__target();
-    });
+    handle
+        .__register(Ok::<_, RegisterError>)
+        .expect("BUG: stored above")
+        .deliver(|_| {
+            STORED.take();
+            registered = handle.__register(Ok::<_, RegisterError>).ok();
+        });
 
     assert_eq!(
         registered

@@ -65,7 +65,7 @@
 //! impl Widget for Cast {
 //!     fn init(me: &Building<Self>) -> Self {
 //!         let socket = Socket::tls_connect(me, "192.168.1.50", 8009, Self::on_socket_event);
-//!         Self { socket }
+//!         Self { socket: socket.ok() }
 //!     }
 //!
 //!     fn render(&mut self, _delta_ms: u32) {}
@@ -79,10 +79,10 @@ use std::rc::Rc;
 
 use bmc_wasm_protocol::SocketId;
 
-#[cfg(target_arch = "wasm32")]
-use crate::widget::Receiver;
 #[cfg(any(target_arch = "wasm32", test))]
 use crate::widget::Target;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::{Receiver, RegisterError};
 
 /// Callback type: `fn(socket, event)`.
 pub type Callback = fn(&Socket, &SocketEvent<'_>);
@@ -113,53 +113,60 @@ impl Socket {
 impl Socket {
     /// Connect over TLS; the events run `method` on `to`.
     ///
-    /// Otherwise as [`tls_connect`], and refused through a [`PartHandle`](crate::PartHandle)
-    /// whose part is dropped.
+    /// Otherwise as [`tls_connect`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Events after the part is dropped run nothing.
     #[must_use = "dropping the returned Socket closes it"]
-    pub fn tls_connect<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn tls_connect<T: 'static, R: Receiver<T>>(
+        to: &R,
         host: &str,
         port: u16,
         method: SocketMethod<T>,
-    ) -> Option<Socket> {
-        let target = to.__target()?;
-        let socket_id = Platform::tls_connect(host, port)?;
-        Some(connect_with(socket_id, on_target(target, method)))
+    ) -> R::Out<Result<Socket, RegisterError>> {
+        to.__register(|target| {
+            let socket_id = Platform::tls_connect(host, port).ok_or(RegisterError::new(()))?;
+            Ok(connect_with(socket_id, on_target(target, method)))
+        })
     }
 
     /// Connect over unverified TLS; the events run `method` on `to`.
     ///
-    /// Otherwise as [`tls_connect_insecure`], and refused
-    /// through a [`PartHandle`](crate::PartHandle) whose part is dropped.
+    /// Otherwise as [`tls_connect_insecure`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Events after the part is dropped run nothing.
     #[must_use = "dropping the returned Socket closes it"]
-    pub fn tls_connect_insecure<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn tls_connect_insecure<T: 'static, R: Receiver<T>>(
+        to: &R,
         host: &str,
         port: u16,
         method: SocketMethod<T>,
-    ) -> Option<Socket> {
-        let target = to.__target()?;
-        let socket_id = Platform::tls_connect_insecure(host, port)?;
-        Some(connect_with(socket_id, on_target(target, method)))
+    ) -> R::Out<Result<Socket, RegisterError>> {
+        to.__register(|target| {
+            let socket_id =
+                Platform::tls_connect_insecure(host, port).ok_or(RegisterError::new(()))?;
+            Ok(connect_with(socket_id, on_target(target, method)))
+        })
     }
 
     /// Connect over plain TCP; the events run `method` on `to`.
     ///
-    /// Otherwise as [`tcp_connect`], and refused through a [`PartHandle`](crate::PartHandle)
-    /// whose part is dropped.
+    /// Otherwise as [`tcp_connect`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Events after the part is dropped run nothing.
     #[must_use = "dropping the returned Socket closes it"]
-    pub fn tcp_connect<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn tcp_connect<T: 'static, R: Receiver<T>>(
+        to: &R,
         host: &str,
         port: u16,
         method: SocketMethod<T>,
-    ) -> Option<Socket> {
-        let target = to.__target()?;
-        let socket_id = Platform::tcp_connect(host, port)?;
-        Some(connect_with(socket_id, on_target(target, method)))
+    ) -> R::Out<Result<Socket, RegisterError>> {
+        to.__register(|target| {
+            let socket_id = Platform::tcp_connect(host, port).ok_or(RegisterError::new(()))?;
+            Ok(connect_with(socket_id, on_target(target, method)))
+        })
     }
 }
 

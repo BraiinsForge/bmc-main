@@ -1,12 +1,13 @@
 # WASM Widget Resource Handles
 
 Each SDK call in the table below starts something in the background and returns a handle to it. The handle is the only
-one for that resource: it cannot be copied, and dropping it ends the resource. A fetch or an image decode returns a
-plain id instead, and ends on its own.
+one for that resource: it cannot be copied, and dropping it ends the resource. A free `FetchRequest::send` or an image
+decode returns a plain id instead, and ends on its own.
 
 | Call                                                         | Handle             | Ends it        |
 | ------------------------------------------------------------ | ------------------ | -------------- |
 | `Timer::start`                                               | `Timer`            | `stop()`       |
+| `FetchRequest::send_on`, `send_after_on`                     | `Fetch`            | dropping it    |
 | `Socket::tls_connect`, `tls_connect_insecure`, `tcp_connect` | `Socket`           | `close()`      |
 | `Ws::connect`                                                | `Ws`               | `close()`      |
 | `MdnsBrowse::start`                                          | `MdnsBrowse`       | `stop()`       |
@@ -21,15 +22,16 @@ free-function form (`timer::start`, `socket::tls_connect`, `register_poll`, …)
 macro, and stays only so that a widget not yet ported still builds. See [Widget Struct](widget-struct.md) for the
 receivers.
 
-Each call but the poll registrations returns `None` when the host refuses the resource, such as one past the runtime
-limit. A socket `Ws::connect` hands back can still be refused after that, for a credential or a URL the host will not
-dial; it reports why at the next delivery as `WsEvent::HostClosed`. The host logs why when a runtime limit refuses it, a
-listener's port cannot be bound, or the mDNS daemon cannot register a service; input it cannot use, such as an empty
-list of service types, is refused without a log. A hermetic capture refuses `HttpListener::listen` and `mdns_register`;
-the other network calls get a handle that receives only the events in the capture's fixture, and none when the fixture
-has none. A widget's unit tests run hermetic with no fixture: `http_listen`, `HttpListener::listen` and `mdns_register`
-are refused, and the other calls get a handle that never receives an event. A call through the widget,
-`Timer::start(self, …)` say, panics instead, as a test installs no widget; see [Unit Testing](unit-testing.md).
+The host may refuse every call but the poll registrations, such as one past the runtime limit: a receiver form then
+returns `Err(RegisterError)`, or `Err(HandleError::Register)` through a `PartHandle`. A socket from `Ws::connect` can
+still be refused after that, for a credential or a URL the host will not dial; it reports why at the next delivery as
+`WsEvent::HostClosed`. The host logs why when a runtime limit refuses it, a listener's port cannot be bound, or the mDNS
+daemon cannot register a service; input it cannot use, such as an empty list of service types, is refused without a log.
+A hermetic capture refuses `HttpListener::listen` and `mdns_register`; the other network calls get a handle that
+receives only the events in the capture's fixture, and none when the fixture has none. A widget's unit tests run
+hermetic with no fixture: `http_listen`, `HttpListener::listen` and `mdns_register` are refused, and the other calls get
+a handle that never receives an event. A call through the widget, `Timer::start(self, …)` say, panics instead, as a test
+installs no widget; see [Unit Testing](unit-testing.md).
 
 ## Keep The Handle
 
@@ -55,7 +57,7 @@ impl Finder {
 #[widget]
 impl Widget for Finder {
     fn init(me: &Building<Self>) -> Self {
-        let browse = MdnsBrowse::start(me, &["_http._tcp"], Self::on_mdns_event);
+        let browse = MdnsBrowse::start(me, &["_http._tcp"], Self::on_mdns_event).ok();
         if browse.is_none() {
             log_warn!("mDNS browse rejected by host runtime limits");
         }
@@ -66,16 +68,16 @@ impl Widget for Finder {
 }
 ```
 
-Checking the result with `MdnsBrowse::start(...).is_none()` and keeping nothing compiles without a warning, and ends the
+Checking the result with `MdnsBrowse::start(...).is_err()` and keeping nothing compiles without a warning, and ends the
 browse as soon as `init` returns. So does `let _ = MdnsBrowse::start(...)`, which is what the compiler suggests for an
 unused result. The SDK offers no way to detach a handle and leave its resource running, so short of leaking the handle
 (`std::mem::forget`, `ManuallyDrop`, etc.), every background resource a widget starts stays one it can stop.
 
 ## End A Resource
 
-Call the method in the table, or drop the handle; both do the same. The method consumes the handle, so using it
-afterwards does not compile. An event for the resource already due in the same delivery pass is dropped, so its callback
-never runs after the resource ends.
+Call the method in the table, or drop the handle; both do the same. A `Fetch` has no method, so dropping it is the only
+way. The method consumes the handle, so using it afterwards does not compile. An event for the resource already due in
+the same delivery pass is dropped, so its callback never runs after the resource ends.
 
 ## Callbacks Borrow The Handle
 

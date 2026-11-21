@@ -139,6 +139,8 @@ impl Drop for Handle {
     }
 }
 
+impl widget::sealed::Unrefusable for Handle {}
+
 impl Handle {
     /// Register a poll whose `build` and `on_reply` run as methods of `to`.
     ///
@@ -147,8 +149,8 @@ impl Handle {
     /// asked for by then the last one wins. Drive the poll from `#[widget]`
     /// hooks or SDK callbacks only.
     ///
-    /// Returns the handle as it is, or an `Option` of it through a
-    /// [`PartHandle`](crate::PartHandle), which is refused once its part is dropped.
+    /// Through a [`PartHandle`](crate::PartHandle) it returns a `Result`,
+    /// as [`Outcome`](crate::Outcome) says.
     /// The poll builds no request after the part is dropped.
     ///
     /// # Panics

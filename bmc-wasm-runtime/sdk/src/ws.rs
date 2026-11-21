@@ -33,8 +33,7 @@
 //! and the stored handle reaches nothing, so clear or replace it there.
 //! When the host closes it, or refuses to open it, the callback gets
 //! [`WsEvent::HostClosed`] instead, which no peer can send.
-//! [`Ws::connect`] refuses, with `None`, only past the widget's socket limit
-//! or through a [`PartHandle`](crate::PartHandle) whose part is dropped;
+//! The host refuses [`Ws::connect`] only past the widget's WebSocket limit;
 //! a connection it hands back but the host will not open
 //! is reported through the callback, at the next delivery.
 //!
@@ -72,7 +71,7 @@
 //! impl Widget for HomeAssistant {
 //!     fn init(me: &Building<Self>) -> Self {
 //!         let ws = Ws::connect(me, "{{ credential.home.websocket_url }}", None, Self::on_event);
-//!         Self { ws }
+//!         Self { ws: ws.ok() }
 //!     }
 //!
 //!     fn render(&mut self, _delta_ms: u32) {}
@@ -87,10 +86,10 @@ use std::rc::Rc;
 use bmc_wasm_protocol::WebsocketId;
 pub use bmc_wasm_protocol::WsHostClose;
 
-#[cfg(target_arch = "wasm32")]
-use crate::widget::Receiver;
 #[cfg(any(target_arch = "wasm32", test))]
 use crate::widget::Target;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::{Receiver, RegisterError};
 
 /// The only handle to a WebSocket connection; dropping it closes the connection.
 #[derive(Debug, PartialEq, Eq)]
@@ -120,18 +119,20 @@ impl Ws {
 impl Ws {
     /// Open a connection whose events run `method` on `to`.
     ///
-    /// Otherwise as [`ws_connect`], and refused through a [`PartHandle`](crate::PartHandle)
-    /// whose part is dropped.
+    /// Otherwise as [`ws_connect`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Events after the part is dropped run nothing.
     #[must_use = "dropping the returned Ws closes it"]
-    pub fn connect<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn connect<T: 'static, R: Receiver<T>>(
+        to: &R,
         url: &str,
         headers: Option<&str>,
         method: WsMethod<T>,
-    ) -> Option<Ws> {
-        let target = to.__target()?;
-        connect_with(url, headers, on_target(target, method))
+    ) -> R::Out<Result<Ws, RegisterError>> {
+        to.__register(|target| {
+            connect_with(url, headers, on_target(target, method)).ok_or(RegisterError::new(()))
+        })
     }
 }
 

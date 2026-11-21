@@ -92,13 +92,25 @@ The receiver is whatever the calling code has at hand:
 | `&self.me`  | a part's value, through a `PartHandle` it keeps            | the part's value            |
 | `self.me()` | a method of the widget, to code that runs on a field of it | the widget                  |
 
+What a registration returns depends on its receiver:
+
+| Registration                                                     | Through `self`, `self.me()`, `me` or `&part` | Through a `PartHandle`      |
+| ---------------------------------------------------------------- | -------------------------------------------- | --------------------------- |
+| one the host may refuse, whose free function returns `Option<X>` | `Result<X, RegisterError>`                   | `Result<X, HandleError>`    |
+| `set_fit_ref_on`, whose free function returns `Result<X, E>`     | `Result<X, RegisterError<E>>`                | `Result<X, HandleError<E>>` |
+| `PollHandle::register` or `Notify::new`, never refused           | the handle `H` itself                        | `Result<H, PartError>`      |
+
 - The free `fetch` and `fetch_after` have no row: send a `FetchRequest` with `send_on` instead.
 - The method takes `&mut self`, then the arguments the callback has always had. A method of a type other than the
   receiver's does not compile, nor does a part passing `self`:
   `` `Session` cannot receive callbacks for `Session`'s methods ``.
-- Every form returns what its free function returns, with one addition: through a `PartHandle` whose part is dropped, it
-  is refused. So `PollHandle::register` returns the handle itself, except through a `PartHandle`, where it returns an
-  `Option`.
+- `into_inner` on a `RegisterError` hands back what the free function's error carries, such as the body.
+  `HandleError::Part` says the registration never reached the host, `HandleError::Register` that the host refused it.
+  `?` turns a `PartError`, or a `RegisterError` from another receiver, into a `HandleError`.
+- `PartError` is `#[non_exhaustive]`, so a `match` on it outside the SDK ends with a `_` arm. `HandleError` is not: a
+  registration either reached the host or did not.
+- For `send_on` and `send_after_on`, `X` is a `Fetch`, not the free `send`'s `FetchRequestId`: it owns the request, and
+  dropping it cancels the request.
 - A callback runs as one call into the widget, like a hook: on the one instance, with nothing else borrowing it, on the
   fuel budget of the host call that delivers it and under the import rules of the `on_*` hooks (the lifecycle guard
   matrix in the `bmc_wasm_sdk` crate docs).
@@ -122,7 +134,7 @@ impl Session {
     fn new() -> Part<Self> {
         Part::new_cyclic(|me| Self {
             hashrate: None,
-            sampler: Timer::start(me, 60_000, Self::sample),
+            sampler: Timer::start(me, 60_000, Self::sample).ok(),
         })
     }
 
@@ -153,31 +165,45 @@ A chain such as a fetch whose reply starts a decode needs the value to name its 
 ```rust
 struct Loader {
     me: PartHandle<Loader>,
+    fetch: Option<Fetch>,
 }
 
 impl Loader {
-    fn new() -> Part<Self> {
-        Part::new_cyclic(|me| Self { me: me.handle() })
+    fn new(url: &str) -> Part<Self> {
+        let mut loader = Part::new_cyclic(|me| Self { me: me.handle(), fetch: None });
+        loader.with_mut(|value| value.fetch(url));
+        loader
     }
 
     fn fetch(&mut self, url: &str) {
-        let _ = FetchRequest::get(url).send_on(&self.me, Self::on_fetched);
+        match FetchRequest::get(url).send_on(&self.me, Self::on_fetched) {
+            Ok(fetch) => self.fetch = Some(fetch),
+            Err(HandleError::Register(_)) => log_warn!("fetch refused, past the widget's limit"),
+            Err(HandleError::Part(_)) => {}
+        }
     }
 
     fn on_fetched(&mut self, response: &FetchResponse) {
         let fit = Fit::Within { w: 64, h: 64 };
-        let _ = set_bitmap_fit_on(&self.me, "art", response.body(), fit, b"", Self::on_decoded);
+        let decode = set_bitmap_fit_on(&self.me, "art", response.body(), fit, b"", Self::on_decoded);
+        if let Err(HandleError::Register(_)) = decode {
+            log_warn!("decode refused, one is already in flight");
+        }
     }
 
-    fn on_decoded(&mut self, _job: ImageJobId, _bitmap: Option<BitmapId>) {}
+    fn on_decoded(&mut self, _job: ImageJobId, _outcome: DecodeOutcome) {}
 }
 ```
 
-- The handle is weak: it never keeps the part alive. It counts as live only once the build has returned, so inside the
-  build register through `me`, not the handle.
-- Once the part is dropped, registering through the handle is refused: the form returns `None`, and
-  `slot.set_fit_ref_on` hands the body back. No refusal says why: the same `None`, or the body handed back, also comes
-  when the host itself refuses the request, such as a decode.
+- The handle is weak: it never keeps the part alive. It counts as live only once the build has returned: inside the
+  build, register through `me`, as anything through the stored handle fails with `PartError::NotLive`. `Loader::new`
+  starts its fetch once `new_cyclic` has returned.
+- `send_on` returns a `Fetch`, which cancels the request when dropped, so dropping the `Loader` cancels its fetch too.
+- A decode's `WhileDormant` says the decode ended while the widget slept, which a free callback never hears. It carries
+  no result; its doc says how to recover after `on_wake`.
+- While the handle is not live, a form through it fails with `PartError::NotLive` without asking the host, and
+  `slot.set_fit_ref_on` drops the body with nothing left to decode it for. When the host refuses, the form returns
+  `HandleError::Register`, carrying the `RegisterError` it returns through `self`, `me` or `&part`.
 - A callback that drops its own part keeps the value until it returns; a registration it makes after the drop is
   accepted and delivers nothing.
 - A part cannot reach the widget while its callback runs. It tells the widget through a `Notify`, and the widget reacts

@@ -8,10 +8,10 @@ while the widget renders.
 
 ## Start And Stop A Timer
 
-`Timer::start(to, period_ms, Self::method)` starts a timer whose ticks run that method on `to`, and returns a `Timer`
-handle, the only one for that timer: it cannot be copied, and dropping it stops the timer. The first tick arrives one
-period after the call, and every tick calls the method with a reference to the timer and the number of periods the tick
-covers.
+`Timer::start(to, period_ms, Self::method)` starts a timer whose ticks run that method on `to`, and returns `Ok` with a
+`Timer` handle, the only one for that timer: it cannot be copied, and dropping it stops the timer. The first tick
+arrives one period after the call, and every tick calls the method with a reference to the timer and the number of
+periods the tick covers.
 
 ```rust
 use bmc_wasm_sdk::timer::Timer;
@@ -37,7 +37,7 @@ impl Chart {
 #[widget]
 impl Widget for Chart {
     fn init(me: &Building<Self>) -> Self {
-        let sampler = Timer::start(me, 60_000, Self::sample_hashrate);
+        let sampler = Timer::start(me, 60_000, Self::sample_hashrate).ok();
         Self { latest_hashrate: None, samples: Vec::new(), sampler }
     }
 
@@ -48,8 +48,10 @@ impl Widget for Chart {
 The tick only records the sample. `request_frame()` is what puts it on the chart, since the host does not render after a
 tick by itself.
 
-`start` returns `None` when the host refuses the timer, and the host logs why. Keep the handle, and when there is none,
-make the widget show that the chart has no history instead of leaving it empty.
+`Timer::start` returns `Err(RegisterError)` when the host refuses the timer, and the host logs why. Through a
+`PartHandle` it returns `Err(HandleError::Register)` for that refusal, or `Err(HandleError::Part)` without asking the
+host while the part is not live. Keep the handle, and when there is none, make the widget show that the chart has no
+history instead of leaving it empty.
 
 `Timer::start(&part, period_ms, T::method)` starts a timer whose ticks run a method of the value in a `Part<T>` instead;
 see [Widget Struct](widget-struct.md) for every receiver. `timer::start(period_ms, callback)` takes a plain function,
@@ -88,10 +90,10 @@ tears the widget down, so keep the work done per tick small.
 
 ## Limits
 
-| Limit                     | Value                                                 | Past the limit                                       |
-| ------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
-| Shortest period           | 1000 ms by default (the host's `min_timer_period_ms`) | `start` returns `None`, `set_period` returns `false` |
-| Running timers per widget | 4 by default (the host's `max_timers`)                | `start` returns `None`                               |
+| Limit                     | Value                                                 | Past the limit                                   |
+| ------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
+| Shortest period           | 1000 ms by default (the host's `min_timer_period_ms`) | `start` is refused, `set_period` returns `false` |
+| Running timers per widget | 4 by default (the host's `max_timers`)                | `start` is refused                               |
 
 The host logs why it refused a `start`: a warning the first time per widget and reason, and at debug level after that. A
 stopped timer no longer counts against the limit.

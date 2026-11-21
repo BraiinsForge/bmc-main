@@ -38,9 +38,11 @@
 //! - missed periods are not replayed: after a stall, one tick arrives
 //!   carrying the number of periods it covers
 //!
-//! Each start form returns a [`Timer`]; dropping it stops the timer.
-//! A refused one returns `None` and the host logs why;
-//! one through a `PartHandle` also returns `None` once its part is dropped, without a log.
+//! A started timer comes back as a [`Timer`]; dropping it stops the timer.
+//! A refused [`Timer::start`] returns `RegisterError`
+//! (`HandleError::Register` through a `PartHandle`), and the host logs why;
+//! one through a `PartHandle` that is not live returns `HandleError::Part`, without a log.
+//! A refused free `start` returns `None`.
 //! [`Timer::set_period`] changes the period of a running timer.
 //!
 //! # Example
@@ -72,7 +74,7 @@
 //!     fn init(me: &Building<Self>) -> Self {
 //!         // A refused timer leaves `sampler` None: the host has logged why,
 //!         // and `render` shows a notice instead of an empty chart.
-//!         let sampler = Timer::start(me, 60_000, Self::sample_hashrate);
+//!         let sampler = Timer::start(me, 60_000, Self::sample_hashrate).ok();
 //!         Self { latest_hashrate: None, samples: Vec::new(), sampler }
 //!     }
 //!
@@ -89,7 +91,7 @@ use bmc_wasm_protocol::TimerId;
 
 use crate::widget::Target;
 #[cfg(target_arch = "wasm32")]
-use crate::widget::{self, Receiver};
+use crate::widget::{self, Receiver, RegisterError};
 
 #[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
@@ -143,16 +145,19 @@ fn on_target<T: 'static>(target: Target<T>, method: TimerMethod<T>) -> Handler {
 impl Timer {
     /// Start a timer whose ticks run `method` on `to`.
     ///
-    /// Otherwise as [`start`], and refused through a [`PartHandle`](crate::PartHandle)
-    /// whose part is dropped.
+    /// Otherwise as [`start`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Ticks after the part is dropped run nothing.
     #[must_use = "dropping the returned Timer stops it"]
-    pub fn start<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn start<T: 'static, R: Receiver<T>>(
+        to: &R,
         period_ms: u32,
         method: TimerMethod<T>,
-    ) -> Option<Timer> {
-        start_with(period_ms, on_target(to.__target()?, method))
+    ) -> R::Out<Result<Timer, RegisterError>> {
+        to.__register(|target| {
+            start_with(period_ms, on_target(target, method)).ok_or(RegisterError::new(()))
+        })
     }
 
     /// Run the timer at `period_ms`, its next tick one new period from now.

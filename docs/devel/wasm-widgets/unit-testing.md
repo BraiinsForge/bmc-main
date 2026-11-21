@@ -48,7 +48,8 @@ module then needs `use bmc_wasm_sdk::wasm_test;`:
 nix run .#ast-grep -- --filter no-plain-test-in-widgets --update-all
 ```
 
-A test that installs a system snapshot with `system::set_current` needs the SDK's `test-support` feature:
+A test that installs a system snapshot with `system::set_current`, or hands the code under test a refusal built with
+`RegisterError::for_test`, needs the SDK's `test-support` feature:
 
 ```toml
 [dev-dependencies]

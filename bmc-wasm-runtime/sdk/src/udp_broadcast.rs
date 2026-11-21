@@ -52,7 +52,7 @@
 //! impl Widget for Jellyfin {
 //!     fn init(me: &Building<Self>) -> Self {
 //!         let probe = "Who is JellyfinServer?";
-//!         let discovery = UdpBroadcast::start(me, 7359, probe, 5, Self::on_response);
+//!         let discovery = UdpBroadcast::start(me, 7359, probe, 5, Self::on_response).ok();
 //!         Self { discovery }
 //!     }
 //!
@@ -67,10 +67,10 @@ use std::rc::Rc;
 
 use bmc_wasm_protocol::UdpBroadcastId;
 
-#[cfg(target_arch = "wasm32")]
-use crate::widget::Receiver;
 #[cfg(any(target_arch = "wasm32", test))]
 use crate::widget::Target;
+#[cfg(target_arch = "wasm32")]
+use crate::widget::{Receiver, RegisterError};
 
 /// Callback type: `fn(broadcast, event)`.
 pub type BroadcastCallback = fn(&UdpBroadcast, &UdpBroadcastEvent<'_>);
@@ -95,24 +95,27 @@ impl UdpBroadcast {
 impl UdpBroadcast {
     /// Start a broadcast; the responses run `method` on `to`.
     ///
-    /// Otherwise as [`udp_broadcast`], and refused through a [`PartHandle`](crate::PartHandle)
-    /// whose part is dropped.
+    /// Otherwise as [`udp_broadcast`],
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// Responses after the part is dropped run nothing.
     #[must_use = "dropping the returned UdpBroadcast stops it"]
-    pub fn start<T: 'static>(
-        to: &impl Receiver<T>,
+    pub fn start<T: 'static, R: Receiver<T>>(
+        to: &R,
         port: u16,
         message: &str,
         timeout_secs: u32,
         method: BroadcastMethod<T>,
-    ) -> Option<UdpBroadcast> {
-        let target = to.__target()?;
-        broadcast_with(
-            u32::from(port),
-            message,
-            timeout_secs,
-            on_target(target, method),
-        )
+    ) -> R::Out<Result<UdpBroadcast, RegisterError>> {
+        to.__register(|target| {
+            broadcast_with(
+                u32::from(port),
+                message,
+                timeout_secs,
+                on_target(target, method),
+            )
+            .ok_or(RegisterError::new(()))
+        })
     }
 }
 

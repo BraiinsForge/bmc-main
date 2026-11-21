@@ -130,7 +130,7 @@ that authenticates on the socket, as Home Assistant does, takes the token in a m
 impl Widget for Home {
     fn init(me: &Building<Self>) -> Self {
         // `None` means past the socket limit.
-        let ws = Ws::connect(me, credentials::home::WEBSOCKET_URL, None, Self::on_event);
+        let ws = Ws::connect(me, credentials::home::WEBSOCKET_URL, None, Self::on_event).ok();
         Self { ws, /* … */ }
     }
     // …

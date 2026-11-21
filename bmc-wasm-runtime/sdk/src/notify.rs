@@ -57,7 +57,8 @@ pub struct Notify<V>(Rc<dyn Fn(V)>);
 impl<V: 'static> Notify<V> {
     /// Bind `method` on `to`.
     ///
-    /// Refused through a [`PartHandle`](crate::PartHandle) whose part is dropped.
+    /// Through a [`PartHandle`](crate::PartHandle) it returns a `Result`,
+    /// as [`Outcome`](crate::Outcome) says.
     #[must_use]
     pub fn new<T: 'static, R: Receiver<T>>(to: &R, method: NotifyMethod<T, V>) -> R::Out<Self> {
         to.__register(|target| {
@@ -89,6 +90,8 @@ impl<V: 'static> Notify<V> {
     }
 }
 
+impl<V> widget::sealed::Unrefusable for Notify<V> {}
+
 impl<V> core::fmt::Debug for Notify<V> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Notify").finish_non_exhaustive()
@@ -102,7 +105,7 @@ mod tests {
     use super::Notify;
     use crate::wasm_test;
     use crate::widget;
-    use crate::widget::Part;
+    use crate::widget::{Part, PartHandle, Receiver};
 
     thread_local! {
         static SEEN: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
@@ -213,17 +216,58 @@ mod tests {
         assert!(seen().is_empty());
     }
 
-    #[wasm_test]
-    fn a_notify_through_a_dropped_part_handle_is_refused() {
+    fn owner_and_handle() -> (Part<Owner>, PartHandle<Owner>) {
         let mut handle = None;
         let owner = Part::new_cyclic(|me| {
             handle = Some(me.handle());
             Owner::default()
         });
+        (owner, handle.expect("BUG: set by the build"))
+    }
+
+    #[wasm_test]
+    fn a_notify_through_a_dropped_part_handle_finds_it_dropped() {
+        let (owner, handle) = owner_and_handle();
         drop(owner);
 
-        let handle = handle.expect("BUG: set by the build");
-        assert!(Notify::new(&handle, Owner::on_change).is_none());
+        assert!(matches!(
+            Notify::new(&handle, Owner::on_change),
+            Err(widget::PartError::NotLive)
+        ));
+    }
+
+    fn notify_and_a_refusable_registration(
+        handle: &PartHandle<Owner>,
+    ) -> Result<Notify<usize>, widget::HandleError> {
+        let notify = Notify::new(handle, Owner::on_change)?;
+        handle.__register(|_| Ok::<_, widget::RegisterError>(()))?;
+        Ok(notify)
+    }
+
+    #[wasm_test]
+    fn a_dropped_notify_joins_the_error_of_registrations_the_host_may_refuse() {
+        let (owner, handle) = owner_and_handle();
+        drop(owner);
+
+        assert!(
+            matches!(
+                notify_and_a_refusable_registration(&handle),
+                Err(widget::HandleError::Part(widget::PartError::NotLive))
+            ),
+            "the `Notify`'s `PartError` leaves through the `HandleError` the other registration returns"
+        );
+    }
+
+    #[wasm_test]
+    fn a_notify_through_a_live_part_handle_is_delivered() {
+        let (owner, handle) = owner_and_handle();
+        let notify =
+            Notify::new(&handle, Owner::on_change).expect("BUG: a live handle binds the Notify");
+
+        notify.send(1);
+        widget::drain();
+
+        assert_eq!(owner.with(|owner| owner.seen.clone()), [1]);
     }
 
     #[wasm_test]

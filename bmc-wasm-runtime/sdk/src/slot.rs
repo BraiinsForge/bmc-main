@@ -55,7 +55,7 @@ use bmc_wasm_protocol::ImageJobId;
 
 use crate::host;
 use crate::net::FetchBodyRef;
-use crate::widget::{Receiver, Target};
+use crate::widget::{Receiver, RegisterError, Target};
 
 macro_rules! define_slot {
     (
@@ -153,17 +153,18 @@ impl BitmapSlot {
     /// [`set_fit`](Self::set_fit) whose result runs `method` on `to`,
     /// with the box and `cover` as a [`Fit`].
     ///
-    /// Refused through a [`PartHandle`](crate::PartHandle) whose part is dropped,
+    /// A refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle),
     /// and a part dropped before the decode finishes gets no result.
     #[must_use]
-    pub fn set_fit_on<T: 'static>(
+    pub fn set_fit_on<T: 'static, R: Receiver<T>>(
         &self,
-        to: &impl Receiver<T>,
+        to: &R,
         data: &[u8],
         fit: Fit,
         identity: &[u8],
         method: ImageReadyMethod<T>,
-    ) -> Option<ImageJobId> {
+    ) -> R::Out<Result<ImageJobId, RegisterError>> {
         set_bitmap_fit_on(to, self.name, data, fit, identity, method)
     }
 
@@ -188,21 +189,23 @@ impl BitmapSlot {
     /// [`set_fit_ref`](Self::set_fit_ref) whose result runs `method` on `to`,
     /// with the box and `cover` as a [`Fit`].
     ///
-    /// Refused through a [`PartHandle`](crate::PartHandle) whose part is dropped,
-    /// handing `body` back as a refused decode does,
-    /// and a part dropped before the decode finishes gets no result.
-    pub fn set_fit_ref_on<'a, T: 'static>(
+    /// A refusal hands the body back in [`RegisterError`], for [`into_inner`](RegisterError::into_inner) to take out,
+    /// inside [`HandleError::Register`](crate::HandleError::Register) through a [`PartHandle`](crate::PartHandle),
+    /// which drops `body` while the handle is not live;
+    /// a part dropped before the decode finishes gets no result.
+    #[must_use = "a refused decode hands the body back"]
+    pub fn set_fit_ref_on<'a, T: 'static, R: Receiver<T>>(
         &self,
-        to: &impl Receiver<T>,
+        to: &R,
         body: FetchBodyRef<'a>,
         fit: Fit,
         identity: &[u8],
         method: ImageReadyMethod<T>,
-    ) -> Result<ImageJobId, FetchBodyRef<'a>> {
-        let Some(target) = to.__target() else {
-            return Err(body);
-        };
-        self.set_fit_ref_with(body, fit, identity, on_target(target, method))
+    ) -> R::Out<Result<ImageJobId, RegisterError<FetchBodyRef<'a>>>> {
+        to.__register(|target| {
+            self.set_fit_ref_with(body, fit, identity, on_target(target, method))
+                .map_err(RegisterError::new)
+        })
     }
 
     fn set_fit_ref_with<'a>(
@@ -250,19 +253,22 @@ pub fn set_bitmap_fit(
 
 /// [`set_bitmap_fit`] whose result runs `method` on `to`, with the box and `cover` as a [`Fit`].
 ///
-/// Refused through a [`PartHandle`](crate::PartHandle) whose part is dropped,
+/// A refusal is [`RegisterError`] rather than `None`,
+/// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle),
 /// and a part dropped before the decode finishes gets no result.
 #[must_use]
-pub fn set_bitmap_fit_on<T: 'static>(
-    to: &impl Receiver<T>,
+pub fn set_bitmap_fit_on<T: 'static, R: Receiver<T>>(
+    to: &R,
     tag: &str,
     data: &[u8],
     fit: Fit,
     identity: &[u8],
     method: ImageReadyMethod<T>,
-) -> Option<ImageJobId> {
-    let handler = on_target(to.__target()?, method);
-    set_bitmap_fit_with(tag, data, fit, identity, handler)
+) -> R::Out<Result<ImageJobId, RegisterError>> {
+    to.__register(|target| {
+        set_bitmap_fit_with(tag, data, fit, identity, on_target(target, method))
+            .ok_or(RegisterError::new(()))
+    })
 }
 
 fn set_bitmap_fit_with(

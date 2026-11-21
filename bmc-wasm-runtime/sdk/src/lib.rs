@@ -451,7 +451,10 @@ pub use poll::{Config as PollConfig, FetchSpec, Handle as PollHandle, Method as 
 pub use slot::*;
 pub use tz::Tz;
 pub use ufmt;
-pub use widget::{Building, Me, Part, PartHandle, Receiver, Root, Widget};
+pub use widget::{
+    Building, HandleError, Me, Outcome, Part, PartError, PartHandle, Receiver, RegisterError, Root,
+    Widget,
+};
 #[cfg(target_arch = "wasm32")]
 pub use ws::ws_connect;
 pub use ws::{Ws, WsEvent, WsHostClose};

@@ -33,6 +33,7 @@
 //!
 //! struct Profile {
 //!     name: Option<String>,
+//!     fetch: Option<Fetch>,
 //! }
 //!
 //! impl Profile {
@@ -48,8 +49,11 @@
 //! impl Widget for Profile {
 //!     fn init(me: &Building<Self>) -> Self {
 //!         // A refused request leaves `name` None: the host has logged why.
-//!         let _ = FetchRequest::get("https://api.example.com/data").send_on(me, Self::on_data);
-//!         Self { name: None }
+//!         // Dropping the `Fetch` would cancel it.
+//!         let fetch = FetchRequest::get("https://api.example.com/data")
+//!             .send_on(me, Self::on_data)
+//!             .ok();
+//!         Self { name: None, fetch }
 //!     }
 //!
 //!     fn render(&mut self, _delta_ms: u32) { /* … */ }
@@ -67,7 +71,7 @@ use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
 use crate::json::JsonDoc;
 #[cfg(target_arch = "wasm32")]
-use crate::widget::{Receiver, Target};
+use crate::widget::{Receiver, RegisterError, Target};
 
 /// Default per-call cap on every fetch operation (DNS, connect, send, recv),
 /// applied to any [`FetchRequest`] that does not set its own [`timeout`].
@@ -226,6 +230,30 @@ fn on_target<T: 'static>(target: Target<T>, method: ResponseMethod<T>) -> Handle
     Rc::new(move |response: &FetchResponse| {
         target.deliver(|value| method(value, response));
     })
+}
+
+/// A fetch whose response runs a method, from [`FetchRequest::send_on`].
+///
+/// Dropping it before the response cancels the fetch,
+/// and the method does not run even when the request is already away.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug)]
+#[must_use = "dropping a `Fetch` cancels it"]
+pub struct Fetch(FetchRequestId);
+
+#[cfg(target_arch = "wasm32")]
+impl Fetch {
+    #[must_use]
+    pub const fn id(&self) -> FetchRequestId {
+        self.0
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for Fetch {
+    fn drop(&mut self) {
+        Platform::abandon(self.0);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,17 +425,22 @@ impl<'a> FetchRequest<'a> {
 
     /// Send the request; the response runs `method` on `to`.
     ///
-    /// Otherwise as [`send`](Self::send), and refused through a
-    /// [`PartHandle`](crate::PartHandle) whose part is dropped.
+    /// Otherwise as [`send`](Self::send),
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// A part dropped before the response gets none.
     #[must_use]
     #[cfg(target_arch = "wasm32")]
-    pub fn send_on<T: 'static>(
+    pub fn send_on<T: 'static, R: Receiver<T>>(
         self,
-        to: &impl Receiver<T>,
+        to: &R,
         method: ResponseMethod<T>,
-    ) -> Option<FetchRequestId> {
-        Platform::fetch(&self, on_target(to.__target()?, method))
+    ) -> R::Out<Result<Fetch, RegisterError>> {
+        to.__register(|target| {
+            Platform::fetch(&self, on_target(target, method))
+                .map(Fetch)
+                .ok_or(RegisterError::new(()))
+        })
     }
 
     /// Send the request after a delay (in milliseconds).
@@ -421,18 +454,23 @@ impl<'a> FetchRequest<'a> {
 
     /// Send the request after a delay; the response runs `method` on `to`.
     ///
-    /// Otherwise as [`send_after`](Self::send_after), and refused through a
-    /// [`PartHandle`](crate::PartHandle) whose part is dropped.
+    /// Otherwise as [`send_after`](Self::send_after),
+    /// but a refusal is [`RegisterError`] rather than `None`,
+    /// or [`HandleError`](crate::HandleError) through a [`PartHandle`](crate::PartHandle).
     /// A part dropped before the response gets none.
     #[must_use]
     #[cfg(target_arch = "wasm32")]
-    pub fn send_after_on<T: 'static>(
+    pub fn send_after_on<T: 'static, R: Receiver<T>>(
         self,
-        to: &impl Receiver<T>,
+        to: &R,
         delay_ms: u32,
         method: ResponseMethod<T>,
-    ) -> Option<FetchRequestId> {
-        Platform::fetch_after(delay_ms, &self, on_target(to.__target()?, method))
+    ) -> R::Out<Result<Fetch, RegisterError>> {
+        to.__register(|target| {
+            Platform::fetch_after(delay_ms, &self, on_target(target, method))
+                .map(Fetch)
+                .ok_or(RegisterError::new(()))
+        })
     }
 }
 
@@ -445,6 +483,8 @@ trait Fetcher {
         handler: Handler,
     ) -> Option<FetchRequestId>;
     fn cancel(request_id: FetchRequestId) -> bool;
+    /// Drop the response handler, and cancel the fetch if the handler had not run yet.
+    fn abandon(request_id: FetchRequestId);
     fn header(request_id: FetchRequestId, name: &str) -> Option<String>;
     fn media_type(request_id: FetchRequestId, part: MediaTypePart) -> Option<String>;
 }
@@ -606,6 +646,13 @@ mod wasm {
             stopped
         }
 
+        fn abandon(request_id: FetchRequestId) {
+            let pending = PENDING.with(|p| p.borrow_mut().remove(&request_id));
+            if pending.is_some() {
+                unsafe { host_fetch_cancel(request_id.to_wire()) };
+            }
+        }
+
         fn header(request_id: FetchRequestId, name: &str) -> Option<String> {
             read_host_string(|ptr, cap| unsafe {
                 host_fetch_header(
@@ -724,9 +771,12 @@ mod wasm {
         use bmc_wasm_protocol::FetchRequestId;
 
         use super::{__on_fetch_response, insert_pending};
-        use crate::net::{FetchResponse, ResponseBodyDelivery, on_target};
+        use crate::net::{Fetch, FetchRequest, FetchResponse, ResponseBodyDelivery, on_target};
         use crate::wasm_test;
         use crate::widget::Part;
+
+        /// The host's default limit of fetches in flight per widget.
+        const FETCH_LIMIT: usize = 16;
 
         thread_local! {
             static RESPONSES: Cell<usize> = const { Cell::new(0) };
@@ -776,6 +826,88 @@ mod wasm {
             crate::widget::as_host(|| __on_fetch_response(id.to_wire(), 200, 0, 0));
 
             assert_eq!(RESPONSES.get(), 0);
+        }
+
+        fn client_awaiting(wire_id: u32) -> (Part<Client>, Fetch) {
+            let part = Part::new(Client {
+                statuses: Vec::new(),
+            });
+            let id = FetchRequestId::from_wire(wire_id).expect("BUG: test ids are non-zero");
+            insert_pending(
+                id,
+                on_target(part.target(), Client::on_response),
+                ResponseBodyDelivery::Guest,
+            );
+            (part, Fetch(id))
+        }
+
+        #[wasm_test]
+        fn a_response_to_a_dropped_fetch_runs_no_method() {
+            let (part, fetch) = client_awaiting(3);
+            let id = fetch.id();
+
+            drop(fetch);
+            crate::widget::as_host(|| __on_fetch_response(id.to_wire(), 200, 0, 0));
+
+            assert_eq!(
+                part.with(|value| value.statuses.len()),
+                0,
+                "a host past cancelling still answers, with nobody left to hear it"
+            );
+        }
+
+        struct Owner {
+            fetch: Option<Fetch>,
+            responses: usize,
+        }
+
+        impl Owner {
+            fn on_response(&mut self, _response: &FetchResponse) {
+                self.responses += 1;
+                self.fetch = None;
+            }
+        }
+
+        #[wasm_test]
+        fn a_method_may_drop_the_fetch_it_answers() {
+            let mut part = Part::new(Owner {
+                fetch: None,
+                responses: 0,
+            });
+            let id = FetchRequestId::from_wire(5).expect("BUG: test ids are non-zero");
+            insert_pending(
+                id,
+                on_target(part.target(), Owner::on_response),
+                ResponseBodyDelivery::Guest,
+            );
+            part.with_mut(|value| value.fetch = Some(Fetch(id)));
+
+            crate::widget::as_host(|| __on_fetch_response(id.to_wire(), 200, 0, 0));
+
+            assert_eq!(part.with(|value| value.responses), 1);
+        }
+
+        #[wasm_test]
+        fn a_dropped_scheduled_fetch_frees_its_slot_for_the_next() {
+            let part = Part::new(Client {
+                statuses: Vec::new(),
+            });
+            let send = || {
+                FetchRequest::get("http://example.com/").send_after_on(
+                    &part,
+                    60_000,
+                    Client::on_response,
+                )
+            };
+            let held: Vec<_> = (0..FETCH_LIMIT).map(|_| send()).collect();
+            assert!(
+                held.iter().all(Result::is_ok) && send().is_err(),
+                "the host holds exactly FETCH_LIMIT fetches, or this proves nothing"
+            );
+
+            drop(held);
+
+            assert!(send().is_ok(), "dropping the fetches cancelled them");
         }
     }
 }

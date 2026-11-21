@@ -130,8 +130,10 @@ pub trait Root: Widget {
 /// - a [`PartHandle`] the part kept, which may outlive it.
 ///
 /// The widget, a [`Building`] and a [`Part`] are there by construction,
-/// so a registration through them that the host cannot refuse returns its handle as it is.
-/// Through a [`PartHandle`] it returns `None` once the part is dropped.
+/// so a registration through them fails only when the host refuses it, with [`RegisterError`].
+/// Through a [`PartHandle`] it returns [`HandleError`] instead,
+/// whose [`PartError`] says the handle is not live, so the host was never asked;
+/// a poll registration or a `Notify` through one fails only with that `PartError`. See [`Outcome`].
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot receive callbacks for `{T}`'s methods",
     label = "not a receiver of `{T}`",
@@ -139,33 +141,155 @@ pub trait Root: Widget {
             `me` while building, `&part`, or a `PartHandle` the part kept from `me.handle()`"
 )]
 pub trait Receiver<T>: sealed::Sealed {
-    /// What a registration the host cannot refuse returns:
-    /// the handle `H`, or `Option<H>` through a [`PartHandle`].
-    type Out<H>;
-
-    /// Where to deliver, or `None` once the part is dropped.
-    #[doc(hidden)]
-    fn __target(&self) -> Option<Target<T>>;
+    /// What a registration that returns `O` through the widget, a [`Building`] or a [`Part`]
+    /// returns through this one:
+    /// `O` itself, or [`Outcome::OrNotLive`] through a [`PartHandle`].
+    type Out<O: Outcome>;
 
     /// Register with `register` on the target, if it is still there.
     #[doc(hidden)]
-    fn __register<H>(&self, register: impl FnOnce(Target<T>) -> H) -> Self::Out<H>;
+    fn __register<O: Outcome>(&self, register: impl FnOnce(Target<T>) -> O) -> Self::Out<O>;
 }
 
-mod sealed {
+pub(crate) mod sealed {
     pub trait Sealed {}
+
+    pub trait SealedOutcome {}
+
+    /// A registration the host cannot refuse,
+    /// whose only failure through a `PartHandle` is a part that is not live.
+    #[diagnostic::on_unimplemented(
+        message = "`{Self}` is not what an SDK registration returns",
+        note = "a registration returns a `Result` with a `RegisterError`, a `PollHandle` or a `Notify`"
+    )]
+    pub trait Unrefusable {}
+}
+
+/// A registration that did not happen: the host refused it on the spot.
+///
+/// The host logs why when a limit refuses it,
+/// but refuses input it cannot use, such as an empty list, without a log.
+/// One past a limit may succeed later;
+/// a fetch the host took but will never send ends in its callback,
+/// with [`FetchOutcome::Refused`](crate::FetchOutcome::Refused).
+#[derive(Clone, PartialEq, Eq)]
+pub struct RegisterError<E = ()> {
+    handed_back: E,
+}
+
+impl<E> RegisterError<E> {
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) const fn new(handed_back: E) -> Self {
+        Self { handed_back }
+    }
+
+    /// A refusal for a widget's own tests to hand the code they test,
+    /// behind the SDK's `test-support` feature.
+    #[cfg(feature = "test-support")]
+    pub fn for_test(handed_back: E) -> Self {
+        Self { handed_back }
+    }
+
+    /// What the refused form hands back, such as the body of a refused decode.
+    pub fn into_inner(self) -> E {
+        self.handed_back
+    }
+}
+
+impl<E: core::fmt::Debug> core::fmt::Debug for RegisterError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if size_of::<E>() == 0 {
+            f.write_str("RegisterError")
+        } else {
+            f.debug_tuple("RegisterError")
+                .field(&self.handed_back)
+                .finish()
+        }
+    }
+}
+
+/// Why a [`PartHandle`] could not register at all: the host was never asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PartError {
+    /// The handle's part is dropped or still being built.
+    /// Inside the build, register through the [`Building`] instead.
+    NotLive,
+}
+
+/// Why a registration through a [`PartHandle`] did not happen:
+/// it either never reached the host or the host refused it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandleError<E = ()> {
+    /// The handle could not register, so the host was never asked.
+    Part(PartError),
+    /// The host refused, as it would through any other receiver.
+    Register(RegisterError<E>),
+}
+
+impl<E> From<PartError> for HandleError<E> {
+    fn from(error: PartError) -> Self {
+        Self::Part(error)
+    }
+}
+
+impl<E> From<RegisterError<E>> for HandleError<E> {
+    fn from(error: RegisterError<E>) -> Self {
+        Self::Register(error)
+    }
+}
+
+/// What a registration returns, and what it turns into through a [`PartHandle`]:
+///
+/// | Through any other receiver | Through a `PartHandle` |
+/// |---|---|
+/// | `Result<X, RegisterError<E>>` | `Result<X, HandleError<E>>` |
+/// | a [`PollHandle`](crate::PollHandle) or a [`Notify`](crate::Notify), which the host cannot refuse | `Result<_, PartError>` |
+pub trait Outcome: sealed::SealedOutcome + Sized {
+    /// This outcome through a [`PartHandle`].
+    type OrNotLive;
+
+    #[doc(hidden)]
+    fn __live(self) -> Self::OrNotLive;
+
+    #[doc(hidden)]
+    fn __not_live() -> Self::OrNotLive;
+}
+
+impl<X, E> sealed::SealedOutcome for Result<X, RegisterError<E>> {}
+
+impl<X, E> Outcome for Result<X, RegisterError<E>> {
+    type OrNotLive = Result<X, HandleError<E>>;
+
+    fn __live(self) -> Self::OrNotLive {
+        self.map_err(HandleError::Register)
+    }
+
+    fn __not_live() -> Self::OrNotLive {
+        Err(HandleError::Part(PartError::NotLive))
+    }
+}
+
+impl<H: sealed::Unrefusable> sealed::SealedOutcome for H {}
+
+impl<H: sealed::Unrefusable> Outcome for H {
+    type OrNotLive = Result<H, PartError>;
+
+    fn __live(self) -> Self::OrNotLive {
+        Ok(self)
+    }
+
+    fn __not_live() -> Self::OrNotLive {
+        Err(PartError::NotLive)
+    }
 }
 
 impl<W: Root> sealed::Sealed for W {}
 
 impl<W: Root> Receiver<W> for W {
-    type Out<H> = H;
+    type Out<O: Outcome> = O;
 
-    fn __target(&self) -> Option<Target<W>> {
-        Some(root())
-    }
-
-    fn __register<H>(&self, register: impl FnOnce(Target<W>) -> H) -> H {
+    fn __register<O: Outcome>(&self, register: impl FnOnce(Target<W>) -> O) -> O {
         register(root())
     }
 }
@@ -190,13 +314,9 @@ impl<W> core::fmt::Debug for Me<W> {
 impl<W: Root> sealed::Sealed for Me<W> {}
 
 impl<W: Root> Receiver<W> for Me<W> {
-    type Out<H> = H;
+    type Out<O: Outcome> = O;
 
-    fn __target(&self) -> Option<Target<W>> {
-        Some(root())
-    }
-
-    fn __register<H>(&self, register: impl FnOnce(Target<W>) -> H) -> H {
+    fn __register<O: Outcome>(&self, register: impl FnOnce(Target<W>) -> O) -> O {
         register(root())
     }
 }
@@ -211,7 +331,8 @@ impl<T> Building<T> {
     /// A handle to the value being built, to keep and register through later.
     ///
     /// It counts as live only once the build has returned,
-    /// so registering through it from inside the build is refused.
+    /// so registering through it from inside the build fails with [`PartError::NotLive`],
+    /// inside a [`HandleError`] where the host may refuse the registration.
     #[must_use]
     pub fn handle(&self) -> PartHandle<T> {
         PartHandle(self.0.clone())
@@ -227,13 +348,9 @@ impl<T> core::fmt::Debug for Building<T> {
 impl<T> sealed::Sealed for Building<T> {}
 
 impl<T> Receiver<T> for Building<T> {
-    type Out<H> = H;
+    type Out<O: Outcome> = O;
 
-    fn __target(&self) -> Option<Target<T>> {
-        Some(self.0.clone())
-    }
-
-    fn __register<H>(&self, register: impl FnOnce(Target<T>) -> H) -> H {
+    fn __register<O: Outcome>(&self, register: impl FnOnce(Target<T>) -> O) -> O {
         register(self.0.clone())
     }
 }
@@ -309,8 +426,9 @@ impl<T: 'static> Part<T> {
 /// A value cannot reach its own part from its callbacks,
 /// but it can keep this from [`Building::handle`] and pass it as the receiver.
 /// The handle never keeps the part alive: once the part is dropped,
-/// registering through it is refused, and a callback registered
-/// through it before delivers nothing.
+/// registering through it fails with [`PartError::NotLive`],
+/// inside a [`HandleError`] where the host may refuse the registration,
+/// and a callback registered through it before delivers nothing.
 /// A callback that drops its own part still registers until it returns,
 /// and that registration delivers nothing.
 pub struct PartHandle<T>(Target<T>);
@@ -318,14 +436,14 @@ pub struct PartHandle<T>(Target<T>);
 impl<T> sealed::Sealed for PartHandle<T> {}
 
 impl<T> Receiver<T> for PartHandle<T> {
-    type Out<H> = Option<H>;
+    type Out<O: Outcome> = O::OrNotLive;
 
-    fn __target(&self) -> Option<Target<T>> {
-        self.0.is_live().then(|| self.0.clone())
-    }
-
-    fn __register<H>(&self, register: impl FnOnce(Target<T>) -> H) -> Option<H> {
-        self.__target().map(register)
+    fn __register<O: Outcome>(&self, register: impl FnOnce(Target<T>) -> O) -> O::OrNotLive {
+        if self.0.is_live() {
+            register(self.0.clone()).__live()
+        } else {
+            O::__not_live()
+        }
     }
 }
 
@@ -344,13 +462,9 @@ impl<T> core::fmt::Debug for PartHandle<T> {
 impl<T: 'static> sealed::Sealed for Part<T> {}
 
 impl<T: 'static> Receiver<T> for Part<T> {
-    type Out<H> = H;
+    type Out<O: Outcome> = O;
 
-    fn __target(&self) -> Option<Target<T>> {
-        Some(self.target())
-    }
-
-    fn __register<H>(&self, register: impl FnOnce(Target<T>) -> H) -> H {
+    fn __register<O: Outcome>(&self, register: impl FnOnce(Target<T>) -> O) -> O {
         register(self.target())
     }
 }
