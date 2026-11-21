@@ -41,7 +41,7 @@ mod wasm_glue {
 
     use crate::interaction::gesture::{Availability, Gesture, OnTap, Step, Touch};
     use crate::interaction::notice::{FAILURE_MS, Notice, RELEASED_EARLY_MS};
-    use crate::interaction::pending::{Answered, Pending, Request, Submitted};
+    use crate::interaction::pending::{Answered, Pending, Request, Slot, Submitted};
     use crate::manifest_params::{Params, TapAction};
     use crate::present::{
         self, CardAction, Context, Following, Presenter, Problem, Reach, Room, Showing, UNNAMED,
@@ -300,7 +300,7 @@ mod wasm_glue {
                 };
                 state
                     .pending
-                    .send_waiting(|call| send(client.as_ref(), &entity_id, call))
+                    .send_waiting(|slot, call| send(client.as_ref(), &entity_id, slot, call))
             })
         });
         if let Some(&error) = unsent.first() {
@@ -320,11 +320,9 @@ mod wasm_glue {
                 let entity_id = state.followed.as_ref()?.entity_id.clone();
                 // A notice outranks the state line, so one about an earlier request would hide this one's.
                 state.notice.clear();
-                Some(
-                    state
-                        .pending
-                        .submit(request, |call| send(client.as_ref(), &entity_id, call)),
-                )
+                Some(state.pending.submit(request, |slot, call| {
+                    send(client.as_ref(), &entity_id, slot, call)
+                }))
             })
         });
         match submitted {
@@ -344,6 +342,7 @@ mod wasm_glue {
     fn send(
         client: Option<&Client>,
         entity_id: &str,
+        slot: Slot,
         call: &ServiceCall,
     ) -> Result<CallId, RequestError> {
         let sent = client
@@ -351,7 +350,8 @@ mod wasm_glue {
             .and_then(|client| client.call(entity_id, call));
         if let Err(error) = sent {
             log_warn!(
-                "home-assistant-tile: {}.{} could not be sent: {}",
+                "home-assistant-tile: {} ({}.{}) could not be sent: {}",
+                slot.name(),
                 call.domain,
                 call.service,
                 error.name()

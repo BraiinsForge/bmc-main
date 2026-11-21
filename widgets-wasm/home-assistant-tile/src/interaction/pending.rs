@@ -232,7 +232,7 @@ impl Pending {
     pub fn submit(
         &mut self,
         request: Request,
-        send: impl FnOnce(&ServiceCall) -> Result<CallId, RequestError>,
+        send: impl FnOnce(Slot, &ServiceCall) -> Result<CallId, RequestError>,
     ) -> Submitted {
         let Request {
             slot,
@@ -244,7 +244,7 @@ impl Pending {
         } = request;
         let (stage, submitted) = match timing {
             Timing::AfterTaps => (Stage::Waiting(call), Submitted::Waiting),
-            Timing::Now => match send(&call) {
+            Timing::Now => match send(slot, &call) {
                 Ok(id) => {
                     self.unanswered.push((id, slot));
                     (Stage::sent(id), Submitted::Sent)
@@ -277,7 +277,7 @@ impl Pending {
     /// The taps have stopped: sends what waited for them. Returns why each call that could not go did not.
     pub fn send_waiting(
         &mut self,
-        mut send: impl FnMut(&ServiceCall) -> Result<CallId, RequestError>,
+        mut send: impl FnMut(Slot, &ServiceCall) -> Result<CallId, RequestError>,
     ) -> Vec<RequestError> {
         let mut unsent = Vec::new();
         let unanswered = &mut self.unanswered;
@@ -285,7 +285,7 @@ impl Pending {
             let Stage::Waiting(call) = &entry.stage else {
                 return true;
             };
-            match send(call) {
+            match send(slot, call) {
                 Ok(id) => {
                     unanswered.push((id, slot));
                     entry.stage = Stage::sent(id);
@@ -422,11 +422,11 @@ mod tests {
     }
 
     /// Sends as call `id`.
-    fn as_call(id: usize) -> impl FnMut(&ServiceCall) -> Result<CallId, RequestError> {
-        move |_| Ok(CallId::from_raw(id))
+    fn as_call(id: usize) -> impl FnMut(Slot, &ServiceCall) -> Result<CallId, RequestError> {
+        move |_, _| Ok(CallId::from_raw(id))
     }
 
-    fn unsendable(_: &ServiceCall) -> Result<CallId, RequestError> {
+    fn unsendable(_: Slot, _: &ServiceCall) -> Result<CallId, RequestError> {
         Err(RequestError::NotConnected)
     }
 
@@ -491,7 +491,7 @@ mod tests {
             Submitted::Waiting
         );
         let mut sent = 0;
-        let unsent = pending.send_waiting(|_| {
+        let unsent = pending.send_waiting(|_, _| {
             sent += 1;
             Ok(id(1))
         });
@@ -678,7 +678,7 @@ mod tests {
         pending.submit(power(false).superseding(&[BRIGHTNESS]), as_call(1));
         assert_eq!(pending.number(BRIGHTNESS), None);
         let mut sent = 0;
-        pending.send_waiting(|_| {
+        pending.send_waiting(|_, _| {
             sent += 1;
             Ok(id(2))
         });
