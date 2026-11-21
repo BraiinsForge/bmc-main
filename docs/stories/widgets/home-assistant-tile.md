@@ -30,8 +30,9 @@ scenes and scripts, and those that are switched on and off: switches, input bool
   it off, or swiping to another scene, fires nothing.
 - While the press is on its way, the line reads _Pressing…_ or _Activating…_, and another tap fires nothing.
 - A press that fails says so on the line for a few seconds: _Home Assistant refused_, _No answer_ or _Connection lost_.
-  One that could not be sent reads _Not connected_, or _Could not send_ on a fault of the tile's own. Home Assistant's
-  own message, often longer than a tile's line, goes to the device log.
+  One that could not be sent reads _Not connected_, _Too many taps_ while too many calls are still on their way, or
+  _Could not send_ on a fault of the tile's own. Home Assistant's own message, often longer than a tile's line, goes to
+  the device log.
 
 ### Run a script
 
