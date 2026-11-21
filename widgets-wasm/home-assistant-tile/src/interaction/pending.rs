@@ -178,11 +178,11 @@ pub enum Submitted {
 pub enum Answered<'a> {
     /// What Home Assistant reports is shown again.
     Done,
-    /// The call failed: its slot, if it still held one, shows what Home Assistant reports again.
-    /// No slot once a report settled the call, or a later request replaced it and stays shown;
-    /// still a failure to tell, as the frontend tells of every failed call.
+    /// The call sent for `slot` failed: the slot shows what Home Assistant reports again,
+    /// unless a later request replaced the call.
+    /// Told whatever the slot shows, as the frontend tells of every failed call.
     Failed {
-        slot: Option<Slot>,
+        slot: Slot,
         failure: &'a CallFailure,
     },
     /// The request waits for Home Assistant to report the entity;
@@ -221,9 +221,9 @@ struct Entry {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Pending {
     entries: HashMap<Slot, Entry>,
-    /// Every call sent from here and not yet answered, replaced or not.
+    /// Every call sent from here and not yet answered, replaced or not, with the slot it was sent for.
     /// No longer than the client's cap on calls in flight, as it answers each one, if only with a timeout.
-    unanswered: Vec<CallId>,
+    unanswered: Vec<(CallId, Slot)>,
 }
 
 impl Pending {
@@ -246,7 +246,7 @@ impl Pending {
             Timing::AfterTaps => (Stage::Waiting(call), Submitted::Waiting),
             Timing::Now => match send(&call) {
                 Ok(id) => {
-                    self.unanswered.push(id);
+                    self.unanswered.push((id, slot));
                     (Stage::sent(id), Submitted::Sent)
                 }
                 Err(error) => {
@@ -281,13 +281,13 @@ impl Pending {
     ) -> Vec<RequestError> {
         let mut unsent = Vec::new();
         let unanswered = &mut self.unanswered;
-        self.entries.retain(|_, entry| {
+        self.entries.retain(|&slot, entry| {
             let Stage::Waiting(call) = &entry.stage else {
                 return true;
             };
             match send(call) {
                 Ok(id) => {
-                    unanswered.push(id);
+                    unanswered.push((id, slot));
                     entry.stage = Stage::sent(id);
                     true
                 }
@@ -309,24 +309,20 @@ impl Pending {
         call: CallId,
         result: Result<(), &'a CallFailure>,
     ) -> Option<Answered<'a>> {
-        let sent_here = self.unanswered.iter().position(|&id| id == call)?;
-        self.unanswered.swap_remove(sent_here);
-        let Some((&slot, entry)) = self
+        let sent_here = self.unanswered.iter().position(|&(id, _)| id == call)?;
+        let (_, slot) = self.unanswered.swap_remove(sent_here);
+        let Some(entry) = self
             .entries
-            .iter_mut()
-            .find(|(_, entry)| matches!(entry.stage, Stage::Sent { id, .. } if id == call))
+            .get_mut(&slot)
+            .filter(|entry| matches!(entry.stage, Stage::Sent { id, .. } if id == call))
         else {
-            return result.err().map(|failure| Answered::Failed {
-                slot: None,
-                failure,
-            });
+            return result
+                .err()
+                .map(|failure| Answered::Failed { slot, failure });
         };
         let reported = matches!(entry.stage, Stage::Sent { reported: true, .. });
         let answered = match (result, entry.settles, reported) {
-            (Err(failure), _, _) => Answered::Failed {
-                slot: Some(slot),
-                failure,
-            },
+            (Err(failure), _, _) => Answered::Failed { slot, failure },
             (Ok(()), Settles::OnReport, _) | (Ok(()), Settles::OnAnswerAndReport, false) => {
                 entry.stage = Stage::AwaitingReport;
                 return Some(Answered::AwaitingReport);
@@ -531,7 +527,7 @@ mod tests {
         assert_eq!(
             pending.answered(id(1), FAILED),
             Some(Answered::Failed {
-                slot: None,
+                slot: POWER,
                 failure: &CallFailure::TimedOut
             })
         );
@@ -546,7 +542,7 @@ mod tests {
         assert_eq!(
             pending.answered(id(1), FAILED),
             Some(Answered::Failed {
-                slot: None,
+                slot: POWER,
                 failure: &CallFailure::TimedOut
             })
         );
@@ -576,7 +572,7 @@ mod tests {
         assert_eq!(
             pending.answered(id(1), FAILED),
             Some(Answered::Failed {
-                slot: Some(BRIGHTNESS),
+                slot: BRIGHTNESS,
                 failure: &CallFailure::TimedOut
             })
         );
