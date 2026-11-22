@@ -23,13 +23,13 @@
 use bmc_wasm_sdk::*;
 
 use crate::render::{fact_draw, header_draw};
-use crate::source::FactSource;
+use crate::source::{FactSource, Facts};
 
 /// Shown only until the first fact arrives.
 const LOADING_TEXT: &str = "Loading...";
 
 struct RandomFacts {
-    _source: Part<FactSource>,
+    _source: Facts,
     /// The last good fact, kept on screen across failed fetches.
     fact: Option<String>,
 }

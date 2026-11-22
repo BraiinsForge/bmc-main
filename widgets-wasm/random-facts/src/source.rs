@@ -28,6 +28,8 @@ const FACTS_TEXT_PATH: &str = "/data/text";
 /// Steady-state cadence: one fact every 15 minutes per instance.
 const POLL_INTERVAL_MS: u32 = 900_000;
 
+pub(super) type Facts = Part<FactSource>;
+
 pub(super) struct FactSource {
     _poll: PollHandle,
     on_fact: Notify<String>,
