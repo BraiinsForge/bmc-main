@@ -96,7 +96,8 @@ lights.
 - For 3 s after each change made on the rows, the Deck's LED strip shows the light's colour, as bright as the light but
   never darker than a tenth, so the user sees what they set before Home Assistant confirms it. A tap on the card leaves
   the strip alone, as the light itself shows the change. The tile shows nothing on the strip for a light that is off,
-  nor for one just turned on until Home Assistant reports its brightness.
+  nor for one coming on from off until Home Assistant reports how bright it is and, for a light that takes a colour
+  temperature or a colour, which one it shows.
 
 ### Guard an action with a hold
 

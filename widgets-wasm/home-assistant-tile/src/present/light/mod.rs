@@ -266,7 +266,10 @@ impl Tile {
             can_act: context.can_act(),
             position,
             dimmer,
-            led: lit_brightness.map(|brightness| led_color(color, brightness)),
+            led: match (lit_brightness, color.or_else(|| plain_white(state))) {
+                (Some(brightness), Some(color)) => Some(led_color(color, brightness)),
+                (None, _) | (_, None) => None,
+            },
         }
     }
 
@@ -494,9 +497,28 @@ fn light_color(state: &State, pending: &Pending) -> Option<Color> {
     }
 }
 
+/// A warm white for a light whose white has no stated temperature:
+/// one that takes neither a colour temperature nor a colour,
+/// or one Home Assistant reports lit in a plain white.
+/// Any other light comes back in a look the tile learns only from Home Assistant's report.
+fn plain_white(state: &State) -> Option<Color> {
+    let takes_neither = matches!(
+        state.dimming,
+        Some(Dimming {
+            warmth: None,
+            colour: false
+        })
+    );
+    let lit_in_plain_white = state.look == Look::Plain;
+    if takes_neither || lit_in_plain_white {
+        Some(gradient::temperature_color(PLAIN_KELVIN.as_kelvin()))
+    } else {
+        None
+    }
+}
+
 /// The strip's colour: the light's, as bright as the light.
-fn led_color(color: Option<Color>, brightness: Brightness) -> Color {
-    let color = color.unwrap_or_else(|| gradient::temperature_color(PLAIN_KELVIN.as_kelvin()));
+fn led_color(color: Color, brightness: Brightness) -> Color {
     color.brightness(brightness.share().max(LED_FLOOR))
 }
 

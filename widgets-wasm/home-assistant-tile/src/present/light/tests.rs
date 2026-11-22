@@ -564,6 +564,46 @@ fn the_strip_waits_for_a_light_turned_on_to_report_how_it_looks() {
     );
 }
 
+/// `state` with the 50 % preset asked for.
+fn at_half(state: &State) -> Tile {
+    let mut pending = Pending::default();
+    pending.submit(set_brightness(percent(50), Timing::Now), |_, _| {
+        Ok(CallId::from_raw(1))
+    });
+    Tile::new(
+        state,
+        &context(&pending, &Gesture::new(OnTap::Fires, None), FULL),
+    )
+}
+
+#[wasm_test]
+fn the_strip_waits_for_a_colour_light_turned_on_by_its_brightness_to_report_its_colour() {
+    assert_eq!(
+        at_half(&state(false, None)).led(),
+        None,
+        "a brightness alone restores the colour the light had, which Home Assistant has yet to report"
+    );
+    assert_eq!(
+        at_half(&showing(full(240.0), 50)).led(),
+        Some(Color::from_rgb(0, 0, 255).brightness(0.5))
+    );
+}
+
+#[wasm_test]
+fn a_dimmer_turned_on_by_its_brightness_is_previewed_as_a_warm_white_bulb_at_once() {
+    let dimmer = State {
+        dimming: Some(Dimming {
+            warmth: None,
+            colour: false,
+        }),
+        ..state(false, None)
+    };
+    assert_eq!(
+        at_half(&dimmer).led(),
+        Some(gradient::temperature_color(PLAIN_KELVIN.as_kelvin()).brightness(0.5))
+    );
+}
+
 #[wasm_test]
 fn a_dim_light_is_previewed_no_dimmer_than_the_floor() {
     assert_eq!(
@@ -577,14 +617,27 @@ fn a_dim_light_is_previewed_no_dimmer_than_the_floor() {
 }
 
 #[wasm_test]
-fn a_light_that_tells_no_colour_is_previewed_as_a_warm_white_bulb() {
+fn a_colour_light_lit_in_a_plain_white_is_previewed_as_a_warm_white_bulb() {
     let plain = State {
-        look: Look::Unknown,
+        look: Look::Plain,
         ..state(true, Some(100))
     };
     assert_eq!(
         tile(&plain).led(),
         Some(gradient::temperature_color(PLAIN_KELVIN.as_kelvin()))
+    );
+}
+
+#[wasm_test]
+fn the_strip_waits_for_a_colour_light_lit_in_no_known_look_to_report_one() {
+    let untold = State {
+        look: Look::Unknown,
+        ..state(true, Some(80))
+    };
+    assert_eq!(
+        at_half(&untold).led(),
+        None,
+        "a light in the unknown colour mode may be lit in any colour"
     );
 }
 
