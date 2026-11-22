@@ -58,9 +58,10 @@ weight. Renders at all four widget sizes, in BMM101's own frame, and on the roun
 ### [Home Assistant Tile Widget](home-assistant-tile.md)
 
 One Home Assistant entity on the Deck, operated as the Tile card does on a Home Assistant dashboard. This first release
-presses buttons, activates scenes, starts and stops scripts, and turns switches, input booleans, automations, sirens and
-remotes on and off, with an optional hold to guard an action. It tells when the entity was last used, whether a script
-is still running or a switch is on, and why the tile cannot act. Bound to a saved Home Assistant account. Renders at all
+presses buttons, activates scenes, starts and stops scripts, turns switches, input booleans, automations, sirens and
+remotes on and off, and switches and dims lights, setting their colour temperature and hue and previewing them on the
+LED strip, with an optional hold to guard an action. It tells when the entity was last used, whether a script is still
+running or a switch or light is on, and why the tile cannot act. Bound to a saved Home Assistant account. Renders at all
 four widget sizes on BMC100.
 
 ### [ISS Position Widget](iss-position.md)
