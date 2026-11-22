@@ -25,6 +25,7 @@ use crate::interaction::pending::Pending;
 use crate::present::Reach;
 use crate::view::card::Line;
 use bmc_wasm_sdk::wasm_test;
+use home_assistant::domain::light::HueSaturation;
 use home_assistant::{CallId, RequestError, ServiceCall};
 
 const SMALL: (u32, u32) = SIZES[0].0;
@@ -36,18 +37,33 @@ fn context<'a>(pending: &'a Pending, gesture: &'a Gesture, size: (u32, u32)) -> 
     fixtures::context(pending, gesture, "Kitchen", (None, Reach::Ready), size)
 }
 
+fn kelvin(kelvin: f32) -> ColorTemperature {
+    ColorTemperature::from_kelvin(kelvin)
+}
+
+/// A light that takes both a colour temperature and a colour, showing its warmest white while on,
+/// as Home Assistant reports no look while it is off.
 fn state(on: bool, brightness: Option<u8>) -> State {
     State {
-        on: Some(on),
-        brightness,
-        dims: true,
-        warmth: Some(Kelvins {
-            warmest: 2000.0,
-            coolest: 6000.0,
+        position: Position::of(Some(on)),
+        brightness: brightness.map(Brightness::from_percent),
+        dimming: Some(Dimming {
+            warmth: Some(KelvinRange::new(kelvin(2000.0), kelvin(6000.0))),
+            colour: true,
         }),
-        kelvin: Some(2000.0),
-        colours: true,
-        colour: Some(full(0.0)),
+        look: if on {
+            Look::White(kelvin(2000.0))
+        } else {
+            Look::Unknown
+        },
+    }
+}
+
+/// The light of [`state`] showing `colour` instead.
+fn showing(colour: HueSaturation, brightness: u8) -> State {
+    State {
+        look: Look::Colour(colour),
+        ..state(true, Some(brightness))
     }
 }
 
@@ -60,13 +76,14 @@ fn full(hue: f64) -> HueSaturation {
 
 fn switching(on: bool) -> State {
     State {
-        dims: false,
-        warmth: None,
-        kelvin: None,
-        colours: false,
-        colour: None,
+        dimming: None,
+        look: Look::Unknown,
         ..state(on, None)
     }
+}
+
+fn percent(percent: u8) -> Brightness {
+    Brightness::from_percent(percent)
 }
 
 fn tile(state: &State) -> Tile {
@@ -106,7 +123,7 @@ fn the_card_toggles_the_light() {
 #[wasm_test]
 fn turning_it_off_drops_what_still_waits_to_be_sent() {
     let mut pending = Pending::default();
-    pending.submit(set_brightness(70, Timing::AfterTaps), |_, _| {
+    pending.submit(set_brightness(percent(70), Timing::AfterTaps), |_, _| {
         Err(RequestError::NotConnected)
     });
     pending.submit(turn(false), |_, _| Ok(CallId::from_raw(1)));
@@ -141,7 +158,7 @@ fn a_step_lands_on_the_next_ten_once_the_taps_stop() {
         let on = tile(&state(true, Some(from)));
         assert_eq!(
             tap(&on, on.brightness(), touched),
-            Some(set_brightness(to, Timing::AfterTaps)),
+            Some(set_brightness(percent(to), Timing::AfterTaps)),
             "{from} {touched:?}"
         );
     }
@@ -170,11 +187,11 @@ fn a_tap_on_the_bar_sets_the_brightness_at_once_and_never_turns_it_off() {
     let off = tile(&state(false, None));
     assert_eq!(
         tap(&off, off.brightness(), Touched::Set(0.374)),
-        Some(set_brightness(37, Timing::Now))
+        Some(set_brightness(percent(37), Timing::Now))
     );
     assert_eq!(
         tap(&off, off.brightness(), Touched::Set(0.0)),
-        Some(set_brightness(1, Timing::Now))
+        Some(set_brightness(percent(1), Timing::Now))
     );
 }
 
@@ -185,19 +202,19 @@ fn a_preset_sets_its_brightness_at_once_and_the_matching_one_is_selected() {
     assert_eq!(presets.selected, Some(1));
     assert_eq!(
         on.touched(&presets.tap(2)),
-        Some(set_brightness(75, Timing::Now))
+        Some(set_brightness(percent(75), Timing::Now))
     );
 }
 
 #[wasm_test]
 fn a_brightness_asked_for_shows_the_light_on_until_confirmed() {
     let mut pending = Pending::default();
-    pending.submit(set_brightness(80, Timing::AfterTaps), |_, _| {
+    pending.submit(set_brightness(percent(80), Timing::AfterTaps), |_, _| {
         Err(RequestError::NotConnected)
     });
     let gesture = Gesture::new(OnTap::Fires, None);
     let tile = Tile::new(&state(false, None), &context(&pending, &gesture, FULL));
-    assert_eq!(tile.percent(), Some(80));
+    assert_eq!(tile.lit_brightness(), Some(percent(80)));
     assert_eq!(tile.brightness().map(|stepper| stepper.pending), Some(true));
     assert_eq!(tile.card.line, Some(Line::State("On".to_owned())));
 }
@@ -206,8 +223,13 @@ fn a_brightness_asked_for_shows_the_light_on_until_confirmed() {
 fn a_value_picked_outright_is_not_drawn_faint() {
     let gesture = Gesture::new(OnTap::Fires, None);
     let picked = [
-        set_brightness(37, Timing::Now),
-        Request::number(WARMTH, 4250.0, light::turn_on_at_kelvin(4250), Timing::Now),
+        set_brightness(percent(37), Timing::Now),
+        Request::number(
+            WARMTH,
+            4250.0,
+            light::turn_on_at_kelvin(kelvin(4250.0)),
+            Timing::Now,
+        ),
         Request::number(HUE, 90.0, light::turn_on_at_hue(90.0, 100.0), Timing::Now),
     ];
     for request in picked {
@@ -238,7 +260,7 @@ fn a_toggle_on_its_way_shows_at_once() {
 fn a_setting_asked_for_during_a_turn_off_shows_the_light_on() {
     let on = tile(&state(true, Some(60)));
     let settings = [
-        set_brightness(75, Timing::Now),
+        set_brightness(percent(75), Timing::Now),
         tap(&on, on.warmth(), Touched::Set(0.5)).expect("BUG: the warmth takes a tap"),
         tap(&on, on.hue(), Touched::Set(0.5)).expect("BUG: the hue takes a tap"),
     ];
@@ -329,32 +351,23 @@ fn a_card_with_less_room_drops_the_last_rows() {
 #[wasm_test]
 fn a_tap_on_the_temperatures_picks_the_kelvin_under_the_finger() {
     let on = tile(&state(true, Some(60)));
-    let warmth = |kelvin: u32, timing| {
-        #[expect(clippy::cast_precision_loss, reason = "a few thousand kelvin")]
-        Request::number(
-            WARMTH,
-            kelvin as f32,
-            light::turn_on_at_kelvin(kelvin),
-            timing,
-        )
-        .superseding(&[HUE, POWER])
+    let warmth = |to: f32, timing| {
+        Request::number(WARMTH, to, light::turn_on_at_kelvin(kelvin(to)), timing)
+            .superseding(&[HUE, POWER])
     };
     assert_eq!(
         tap(&on, on.warmth(), Touched::Set(0.5)),
-        Some(warmth(4000, Timing::Now))
+        Some(warmth(4000.0, Timing::Now))
     );
     assert_eq!(
         tap(&on, on.warmth(), Touched::Up),
-        Some(warmth(2400, Timing::AfterTaps)),
+        Some(warmth(2400.0, Timing::AfterTaps)),
         "a tenth of the range cooler"
     );
-    let coloured = tile(&State {
-        kelvin: None,
-        ..state(true, Some(60))
-    });
+    let coloured = tile(&showing(full(0.0), 60));
     assert_eq!(
         tap(&coloured, coloured.warmth(), Touched::Up),
-        Some(warmth(4400, Timing::AfterTaps)),
+        Some(warmth(4400.0, Timing::AfterTaps)),
         "a light showing no colour temperature steps from the middle of its range"
     );
 }
@@ -382,10 +395,7 @@ fn a_colour_temperature_drops_a_hue_still_to_be_sent_and_the_other_way_round() {
 
 #[wasm_test]
 fn a_light_showing_a_colour_has_no_cursor_on_its_temperatures() {
-    let coloured = tile(&State {
-        kelvin: None,
-        ..state(true, Some(60))
-    });
+    let coloured = tile(&showing(full(0.0), 60));
     let Some(Stepper {
         track: Track::Gradient(gradient),
         ..
@@ -410,8 +420,7 @@ fn a_tap_on_the_hues_sends_that_hue_fully_saturated() {
 
 fn showing_hue(hue: Option<f64>) -> Tile {
     tile(&State {
-        kelvin: None,
-        colour: hue.map(full),
+        look: hue.map_or(Look::Unknown, |hue| Look::Colour(full(hue))),
         ..state(true, Some(60))
     })
 }
@@ -452,25 +461,20 @@ fn the_hue_ends_have_nothing_to_step_past() {
 
 #[wasm_test]
 fn the_icon_wears_the_lights_colour_whatever_its_brightness() {
-    let green = |brightness| State {
-        kelvin: None,
-        colour: Some(full(120.0)),
-        ..state(true, Some(brightness))
-    };
+    let green = |brightness| showing(full(120.0), brightness);
     let lit = Some(Accent::Light(Color::from_rgb(0, 255, 0)));
     assert_eq!(tile(&green(100)).card.color, lit);
     assert_eq!(tile(&green(5)).card.color, lit);
 }
 
 fn pale_pink() -> State {
-    State {
-        kelvin: None,
-        colour: Some(HueSaturation {
+    showing(
+        HueSaturation {
             hue: 0.0,
             saturation: 20.0,
-        }),
-        ..state(true, Some(100))
-    }
+        },
+        100,
+    )
 }
 
 #[wasm_test]
@@ -518,12 +522,10 @@ fn the_strip_shows_the_colour_temperature_while_the_light_shows_one() {
 
 #[wasm_test]
 fn the_strip_shows_the_hue_while_the_light_shows_a_colour() {
-    let coloured = State {
-        kelvin: None,
-        colour: Some(full(120.0)),
-        ..state(true, Some(100))
-    };
-    assert_eq!(tile(&coloured).led(), Some(Color::from_rgb(0, 255, 0)));
+    assert_eq!(
+        tile(&showing(full(120.0), 100)).led(),
+        Some(Color::from_rgb(0, 255, 0))
+    );
 }
 
 #[wasm_test]
@@ -541,7 +543,7 @@ fn the_strip_shows_what_was_asked_for_before_home_assistant_confirms_it() {
         Request::number(HUE, 240.0, light::turn_on_at_hue(240.0, 100.0), Timing::Now),
         |_, _| Ok(CallId::from_raw(1)),
     );
-    pending.submit(set_brightness(50, Timing::Now), |_, _| {
+    pending.submit(set_brightness(percent(50), Timing::Now), |_, _| {
         Ok(CallId::from_raw(2))
     });
     let gesture = Gesture::new(OnTap::Fires, None);
@@ -554,12 +556,7 @@ fn the_strip_waits_for_a_light_turned_on_to_report_how_it_looks() {
     let mut pending = Pending::default();
     pending.submit(turn(true), |_, _| Ok(CallId::from_raw(1)));
     let gesture = Gesture::new(OnTap::Fires, None);
-    let off = State {
-        kelvin: None,
-        colour: None,
-        ..state(false, None)
-    };
-    let tile = Tile::new(&off, &context(&pending, &gesture, FULL));
+    let tile = Tile::new(&state(false, None), &context(&pending, &gesture, FULL));
     assert_eq!(
         tile.led(),
         None,
@@ -569,23 +566,25 @@ fn the_strip_waits_for_a_light_turned_on_to_report_how_it_looks() {
 
 #[wasm_test]
 fn a_dim_light_is_previewed_no_dimmer_than_the_floor() {
-    let dimmest = tile(&state(true, Some(1)));
     assert_eq!(
-        dimmest.led(),
+        tile(&state(true, Some(1))).led(),
         Some(gradient::temperature_color(2000.0).brightness(LED_FLOOR))
+    );
+    assert_eq!(
+        tile(&showing(full(120.0), 1)).led(),
+        Some(Color::from_rgb(0, 255, 0).brightness(LED_FLOOR))
     );
 }
 
 #[wasm_test]
 fn a_light_that_tells_no_colour_is_previewed_as_a_warm_white_bulb() {
     let plain = State {
-        kelvin: None,
-        colour: None,
+        look: Look::Unknown,
         ..state(true, Some(100))
     };
     assert_eq!(
         tile(&plain).led(),
-        Some(gradient::temperature_color(PLAIN_KELVIN))
+        Some(gradient::temperature_color(PLAIN_KELVIN.as_kelvin()))
     );
 }
 
@@ -597,7 +596,7 @@ fn the_bulb_is_struck_through_while_the_light_is_off() {
 
 fn unknown() -> State {
     State {
-        on: None,
+        position: Position::Unknown,
         ..state(false, None)
     }
 }
@@ -609,6 +608,18 @@ fn a_light_in_no_known_position_says_so_rather_than_off() {
         (tile.card.line, tile.card.mark),
         (Some(Line::State("Unknown".to_owned())), Some(Mark::Unknown))
     );
+}
+
+#[wasm_test]
+fn the_brightness_bar_of_a_light_in_no_known_position_says_so_rather_than_off() {
+    let Some(Stepper {
+        track: Track::Level { value, .. },
+        ..
+    }) = tile(&unknown()).brightness()
+    else {
+        panic!("BUG: a light that dims shows its brightness");
+    };
+    assert_eq!(value, "Unknown");
 }
 
 #[wasm_test]
@@ -646,9 +657,39 @@ fn the_light_reads_its_modes_and_values_from_the_entity() {
         light::ATTRIBUTES,
     );
     let read = State::read(&entity);
-    assert_eq!(read.on, Some(true));
-    assert!(read.dims, "a colour temperature light dims");
-    assert!(!read.colours, "a colour temperature is no colour");
-    assert_eq!(read.brightness, Some(60));
-    assert_eq!(read.warmth, Some(Kelvins::default()));
+    assert_eq!(read.position, Position::On);
+    assert_eq!(
+        read.dimming,
+        Some(Dimming {
+            warmth: Some(light::DEFAULT_KELVIN_RANGE),
+            colour: false,
+        }),
+        "a colour temperature light dims, and a colour temperature is no colour"
+    );
+    assert_eq!(read.brightness, Some(percent(60)));
+}
+
+#[wasm_test]
+fn a_range_reported_coolest_first_still_runs_warm_to_cool() {
+    let backwards = State {
+        dimming: Some(Dimming {
+            warmth: Some(KelvinRange::new(kelvin(6500.0), kelvin(2000.0))),
+            colour: false,
+        }),
+        look: Look::White(kelvin(3000.0)),
+        ..state(true, Some(60))
+    };
+    let Some(Stepper {
+        down,
+        up,
+        track: Track::Gradient(gradient),
+        ..
+    }) = tile(&backwards).warmth()
+    else {
+        panic!("BUG: the light takes a colour temperature");
+    };
+    assert_eq!(
+        (down, up, gradient.stops.first().copied()),
+        (true, true, Some(gradient::temperature_color(2000.0)))
+    );
 }

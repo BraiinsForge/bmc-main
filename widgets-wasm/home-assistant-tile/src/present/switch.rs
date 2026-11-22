@@ -27,7 +27,7 @@ use home_assistant::domain::switch::DeviceClass;
 use home_assistant::domain::{automation, input_boolean, on_off, remote, siren, switch};
 use home_assistant::{Entity, ServiceCall};
 
-use super::{CardAction, Context, Presenter, card, card_action};
+use super::{CardAction, Context, Position, Presenter, card, card_action};
 use crate::interaction::pending::{Request, Slot};
 use crate::view::blocks::badge::{Disc, Mark};
 use crate::view::card::{Card, Line, StateDisplay};
@@ -118,32 +118,6 @@ impl Kind {
             Position::Off | Position::Unknown => true,
         };
         Request::flip(POWER, on, self.turn(on))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Position {
-    On,
-    Off,
-    /// Home Assistant does not know it, such as for a switch it has not heard from since it started.
-    Unknown,
-}
-
-impl Position {
-    fn of(on: Option<bool>) -> Self {
-        match on {
-            Some(true) => Self::On,
-            Some(false) => Self::Off,
-            None => Self::Unknown,
-        }
-    }
-
-    fn text(self) -> &'static str {
-        match self {
-            Self::On => "On",
-            Self::Off => "Off",
-            Self::Unknown => "Unknown",
-        }
     }
 }
 

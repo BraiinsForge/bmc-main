@@ -22,12 +22,14 @@
 
 use bmc_gallery::prelude::*;
 use home_assistant::CallId;
-use home_assistant::domain::light::HueSaturation;
+use home_assistant::domain::light::{
+    Brightness, ColorTemperature, DEFAULT_KELVIN_RANGE, Dimming, HueSaturation, Look,
+};
 use home_assistant_tile::fixtures;
 use home_assistant_tile::interaction::gesture::{Gesture, OnTap};
 use home_assistant_tile::interaction::pending::{Pending, Request, Timing};
-use home_assistant_tile::present::light::{BRIGHTNESS, Kelvins, State, Tile};
-use home_assistant_tile::present::{Presenter, Reach};
+use home_assistant_tile::present::light::{BRIGHTNESS, State, Tile};
+use home_assistant_tile::present::{Position, Presenter, Reach};
 use home_assistant_tile::view::card;
 use home_assistant_tile::view::touches::Touches;
 
@@ -40,8 +42,11 @@ const KINDS: [((bool, bool, bool), &str); 4] = [
     ((true, false, false), "Dimmer"),
     ((false, false, false), "Switch"),
 ];
-const POSITIONS: [(Option<bool>, &str); 3] =
-    [(Some(true), "On"), (Some(false), "Off"), (None, "Unknown")];
+const POSITIONS: [(Position, &str); 3] = [
+    (Position::On, "On"),
+    (Position::Off, "Off"),
+    (Position::Unknown, "Unknown"),
+];
 const BRIGHTNESSES: [(Option<u8>, &str); 4] = [
     (Some(60), "60%"),
     (Some(5), "5%"),
@@ -69,7 +74,7 @@ fn light(ctx: &mut SceneCtx, ui: &mut Ui) {
     ctx.group("Light");
     let (dims, warmth, colours) = select(ctx, "Kind", &KINDS);
     let position = select(ctx, "Position", &POSITIONS);
-    let on = position == Some(true);
+    let on = position == Position::On;
     let brightness = select(ctx, "Brightness", &BRIGHTNESSES);
     let showing_colour = ctx.toggle("Showing a colour", false);
     let pale = ctx.toggle("Pale colour", false);
@@ -81,17 +86,26 @@ fn light(ctx: &mut SceneCtx, ui: &mut Ui) {
     let size_labels = fixtures::SIZES.map(|(_, label)| label);
     let size = fixtures::SIZES[ctx.select("Size", &size_labels, fixtures::DEFAULT_SIZE)].0;
 
-    let state = State {
-        on: position,
-        brightness: brightness.filter(|_| on && dims),
-        dims,
-        warmth: warmth.then(Kelvins::default),
-        kelvin: (warmth && !showing_colour).then_some(2700.0),
-        colours,
-        colour: (colours && showing_colour).then_some(HueSaturation {
+    let look = if colours && showing_colour {
+        Look::Colour(HueSaturation {
             hue: 210.0,
             saturation: if pale { 30.0 } else { 100.0 },
+        })
+    } else if warmth && !showing_colour {
+        Look::White(ColorTemperature::from_kelvin(2700.0))
+    } else {
+        Look::Unknown
+    };
+    let state = State {
+        position,
+        brightness: brightness
+            .filter(|_| on && dims)
+            .map(Brightness::from_percent),
+        dimming: dims.then_some(Dimming {
+            warmth: warmth.then_some(DEFAULT_KELVIN_RANGE),
+            colour: colours,
         }),
+        look,
     };
     let mut pending = Pending::default();
     if asked {
@@ -99,7 +113,7 @@ fn light(ctx: &mut SceneCtx, ui: &mut Ui) {
             Request::number(
                 BRIGHTNESS,
                 80.0,
-                home_assistant::domain::light::turn_on_at_percent(80),
+                home_assistant::domain::light::turn_on_at_percent(Brightness::from_percent(80)),
                 Timing::AfterTaps,
             ),
             |_, _| Ok(CallId::from_raw(1)),

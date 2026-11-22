@@ -23,11 +23,13 @@
 
 use bmc_wasm_sdk::*;
 use home_assistant::Entity;
-use home_assistant::domain::light::{self, HueSaturation};
+use home_assistant::domain::light::{
+    self, Brightness, ColorTemperature, Dimming, KelvinRange, Look,
+};
 use home_assistant::domain::on_off;
 use home_assistant::format::with_unit;
 
-use super::{CardAction, Context, Presenter, card, card_action};
+use super::{CardAction, Context, Position, Presenter, card, card_action};
 use crate::interaction::pending::{Pending, Request, Slot, Timing};
 use crate::view::blocks::badge::{Disc, Mark};
 use crate::view::blocks::chips::{Chip, Chips, Role};
@@ -45,7 +47,12 @@ const PRESETS: &str = "presets";
 
 /// − and + move to the next multiple of this, and − from it or below turns the light off.
 const STEP: u8 = 10;
-const PERCENTS: [u8; 4] = [25, 50, 75, 100];
+const PERCENTS: [Brightness; 4] = [
+    Brightness::from_percent(25),
+    Brightness::from_percent(50),
+    Brightness::from_percent(75),
+    Brightness::FULL,
+];
 /// A step of colour temperature, as a share of the light's range.
 const WARMTH_STEP: f32 = 0.1;
 const HUE_STEP: f32 = 30.0;
@@ -54,11 +61,8 @@ const FULL_CIRCLE: f32 = 360.0;
 const SATURATION: f64 = 100.0;
 /// A brightness a light that is on does not report.
 const UNKNOWN: &str = "\u{2013}";
-const UNKNOWN_POSITION: &str = "Unknown";
-const ON: &str = "On";
-const OFF: &str = "Off";
 /// The strip's colour for a light that tells neither a colour temperature nor a colour: a warm white bulb.
-const PLAIN_KELVIN: f32 = 2700.0;
+const PLAIN_KELVIN: ColorTemperature = ColorTemperature::from_kelvin(2700.0);
 /// The dimmest share of full the strip previews a light at; dimmer reads as off.
 const LED_FLOOR: f32 = 0.1;
 /// The frontend's `state-badge`: an icon colour paler than this is a white, drawn at [`WHITE_VALUE`] of 255…
@@ -74,76 +78,32 @@ pub(super) fn icon() -> Icon {
     Icon(&LIGHTBULB)
 }
 
-/// The colour temperatures a light takes, in kelvin.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Kelvins {
-    pub warmest: f32,
-    pub coolest: f32,
-}
-
-impl From<light::KelvinRange> for Kelvins {
-    fn from(range: light::KelvinRange) -> Self {
-        Self {
-            warmest: narrow(range.warmest),
-            coolest: narrow(range.coolest),
-        }
-    }
-}
-
-impl Default for Kelvins {
-    fn default() -> Self {
-        light::DEFAULT_KELVIN_RANGE.into()
-    }
-}
-
-impl Kelvins {
-    fn share_of(self, kelvin: f32) -> f32 {
-        let span = self.coolest - self.warmest;
-        if span > 0.0 {
-            ((kelvin - self.warmest) / span).clamp(0.0, 1.0)
-        } else {
-            0.5
-        }
-    }
-
-    fn at(self, share: f32) -> f32 {
-        (self.warmest + share.clamp(0.0, 1.0) * (self.coolest - self.warmest)).round()
-    }
-}
-
 /// What the tile reads of a light.
 #[derive(Debug, Clone, PartialEq)]
 pub struct State {
-    /// None while Home Assistant knows no position for it.
-    pub on: Option<bool>,
-    /// In percent, from 1 to 100; Home Assistant reports none while the light is off.
-    pub brightness: Option<u8>,
-    pub dims: bool,
-    /// Its range, where it takes a colour temperature.
-    pub warmth: Option<Kelvins>,
-    pub kelvin: Option<f32>,
-    pub colours: bool,
-    pub colour: Option<HueSaturation>,
+    pub position: Position,
+    /// Home Assistant reports none while the light is off.
+    pub brightness: Option<Brightness>,
+    /// None for a light that only switches.
+    pub dimming: Option<Dimming>,
+    pub look: Look,
 }
 
 impl State {
     #[must_use]
     pub fn read(entity: &Entity) -> Self {
         Self {
-            on: on_off(entity),
-            brightness: light::brightness_percent(entity),
-            dims: light::dims(entity),
-            warmth: light::kelvin_range(entity).map(Kelvins::from),
-            kelvin: light::kelvin(entity).map(narrow),
-            colours: light::takes_colour(entity),
-            colour: light::colour(entity),
+            position: Position::of(on_off(entity)),
+            brightness: light::brightness(entity),
+            dimming: light::dimming(entity),
+            look: light::look(entity),
         }
     }
 }
 
 #[expect(
     clippy::cast_possible_truncation,
-    reason = "a colour temperature, a hue or a saturation, a few thousand at most"
+    reason = "a hue or a saturation, 360 at most"
 )]
 fn narrow(number: f64) -> f32 {
     number as f32
@@ -153,17 +113,18 @@ fn narrow(number: f64) -> f32 {
 /// else what Home Assistant reports.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Shown<T> {
-    value: T,
+    /// None while Home Assistant reports none, such as for a light that is off.
+    value: Option<T>,
     /// Drawn faint: a value from a run of − and + taps until Home Assistant confirms it.
     /// One the finger picked outright is not, so a tap on the track or a preset does not flicker.
     faint: bool,
 }
 
 impl<T> Shown<T> {
-    fn over(reported: T, wanted: Option<T>, by_taps: bool) -> Self {
+    fn over(reported: Option<T>, wanted: Option<T>, by_taps: bool) -> Self {
         match wanted {
             Some(value) => Self {
-                value,
+                value: Some(value),
                 faint: by_taps,
             },
             None => Self {
@@ -172,6 +133,51 @@ impl<T> Shown<T> {
             },
         }
     }
+}
+
+/// The values on the rows of a light that dims.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Dimmer {
+    brightness: Shown<Brightness>,
+    /// Where it takes a colour temperature.
+    warmth: Option<Warmth>,
+    /// In degrees, where it takes a colour.
+    hue: Option<Shown<f32>>,
+}
+
+impl Dimmer {
+    fn new(state: &State, dimming: Dimming, pending: &Pending) -> Self {
+        let (kelvin, hue) = match state.look {
+            Look::White(kelvin) => (Some(kelvin), None),
+            Look::Colour(colour) => (None, Some(narrow(colour.hue))),
+            Look::Plain | Look::Unknown => (None, None),
+        };
+        Self {
+            brightness: Shown::over(
+                state.brightness,
+                pending.number(BRIGHTNESS).map(brightness_of),
+                pending.asked_by_taps(BRIGHTNESS),
+            ),
+            warmth: dimming.warmth.map(|range| Warmth {
+                range,
+                shown: Shown::over(
+                    kelvin,
+                    pending.number(WARMTH).map(ColorTemperature::from_kelvin),
+                    pending.asked_by_taps(WARMTH),
+                ),
+            }),
+            hue: dimming
+                .colour
+                .then(|| Shown::over(hue, pending.number(HUE), pending.asked_by_taps(HUE))),
+        }
+    }
+}
+
+/// The colour temperature on a bar from the light's warmest to its coolest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Warmth {
+    range: KelvinRange,
+    shown: Shown<ColorTemperature>,
 }
 
 /// A row of blocks under the heading, in the order a card with less room drops them from the end.
@@ -191,11 +197,8 @@ pub struct Tile {
     rows: Vec<Row>,
     width: f32,
     can_act: bool,
-    on: bool,
-    /// Only for a light that dims.
-    brightness: Option<Shown<Option<u8>>>,
-    warmth: Option<(Kelvins, Shown<Option<f32>>)>,
-    hue: Option<Shown<Option<f32>>>,
+    position: Position,
+    dimmer: Option<Dimmer>,
     led: Option<Color>,
 }
 
@@ -204,31 +207,31 @@ impl Tile {
     #[must_use]
     pub fn new(state: &State, context: &Context) -> Self {
         let pending = context.pending;
-        let wanted_brightness = pending.number(BRIGHTNESS).map(whole_percent);
         let turning_on = [BRIGHTNESS, WARMTH, HUE]
             .into_iter()
             .any(|slot| pending.asked(slot));
         let position = pending
             .on(POWER)
             .or(turning_on.then_some(true))
-            .or(state.on);
-        let on = position == Some(true);
-        let brightness = state.dims.then(|| {
-            Shown::over(
-                state.brightness,
-                wanted_brightness.map(Some),
-                pending.asked_by_taps(BRIGHTNESS),
-            )
-        });
-        let percent = brightness.and_then(|shown| shown.value).filter(|_| on);
+            .map_or(state.position, |on| Position::of(Some(on)));
+        let on = position == Position::On;
+        let dimmer = state
+            .dimming
+            .map(|dimming| Dimmer::new(state, dimming, pending));
+        let lit_brightness = dimmer
+            .and_then(|dimmer| dimmer.brightness.value)
+            .filter(|_| on);
 
         let room = context.room;
         let fits = card_view::rows((room.width, room.height), room.size);
         let candidates = [
-            (Row::Brightness, state.dims),
-            (Row::Warmth, state.warmth.is_some()),
-            (Row::Hue, state.colours),
-            (Row::Presets, state.dims),
+            (Row::Brightness, dimmer.is_some()),
+            (
+                Row::Warmth,
+                dimmer.is_some_and(|dimmer| dimmer.warmth.is_some()),
+            ),
+            (Row::Hue, dimmer.is_some_and(|dimmer| dimmer.hue.is_some())),
+            (Row::Presets, dimmer.is_some()),
         ];
         let rows: Vec<Row> = candidates
             .into_iter()
@@ -247,13 +250,13 @@ impl Tile {
         let display = StateDisplay {
             line: Some(Line::State(line(
                 position,
-                percent.filter(|_| !rows.contains(&Row::Brightness)),
+                lit_brightness.filter(|_| !rows.contains(&Row::Brightness)),
             ))),
             color: on
                 .then(|| color.map_or(Accent::Amber, |color| Accent::Light(icon_color(color)))),
             icon: Icon(if on { &LIGHTBULB } else { &LIGHTBULB_OFF }),
             disc: if on { Disc::Tinted } else { Disc::Bare },
-            mark: position.is_none().then_some(Mark::Unknown),
+            mark: (position == Position::Unknown).then_some(Mark::Unknown),
         };
         Self {
             card: card(context, display, &card_action),
@@ -261,32 +264,19 @@ impl Tile {
             rows,
             width: fits.width,
             can_act: context.can_act(),
-            on,
-            brightness,
-            warmth: state.warmth.map(|range| {
-                (
-                    range,
-                    Shown::over(
-                        state.kelvin,
-                        pending.number(WARMTH).map(Some),
-                        pending.asked_by_taps(WARMTH),
-                    ),
-                )
-            }),
-            hue: state.colours.then(|| {
-                Shown::over(
-                    state.colour.map(|colour| narrow(colour.hue)),
-                    pending.number(HUE).map(Some),
-                    pending.asked_by_taps(HUE),
-                )
-            }),
-            led: percent.map(|percent| led_color(color, percent)),
+            position,
+            dimmer,
+            led: lit_brightness.map(|brightness| led_color(color, brightness)),
         }
     }
 
+    fn is_on(&self) -> bool {
+        self.position == Position::On
+    }
+
     /// The brightness while on, as far as it is known.
-    fn percent(&self) -> Option<u8> {
-        self.brightness?.value.filter(|_| self.on)
+    fn lit_brightness(&self) -> Option<Brightness> {
+        self.dimmer?.brightness.value.filter(|_| self.is_on())
     }
 
     fn shows(&self, row: Row) -> bool {
@@ -294,22 +284,27 @@ impl Tile {
     }
 
     fn brightness(&self) -> Option<Stepper> {
-        let brightness = self.brightness.filter(|_| self.shows(Row::Brightness))?;
-        let percent = self.percent();
+        let shown = self
+            .dimmer
+            .filter(|_| self.shows(Row::Brightness))?
+            .brightness;
+        let brightness = self.lit_brightness();
+        let on = self.is_on();
         Some(Stepper {
             key: BRIGHTNESS.name().to_owned(),
             ends: Ends::Signs,
-            down: self.can_act && percent.is_some(),
-            up: self.can_act && (!self.on || percent.is_some_and(|percent| percent < 100)),
-            pending: brightness.faint && percent.is_some(),
+            down: self.can_act && brightness.is_some(),
+            up: self.can_act
+                && (!on || brightness.is_some_and(|brightness| brightness < Brightness::FULL)),
+            pending: shown.faint && brightness.is_some(),
             track: Track::Level {
-                value: match (self.on, percent) {
-                    (false, _) => OFF.to_owned(),
-                    (true, Some(percent)) => percent_text(percent),
+                value: match (on, brightness) {
+                    (false, _) => self.position.text().to_owned(),
+                    (true, Some(brightness)) => percent_text(brightness),
                     (true, None) => UNKNOWN.to_owned(),
                 },
                 level: Level {
-                    share: percent.map_or(0.0, |percent| f32::from(percent) / 100.0),
+                    share: brightness.map_or(0.0, Brightness::share),
                     color: Accent::Amber.color(),
                 },
             },
@@ -321,7 +316,7 @@ impl Tile {
         if !self.shows(Row::Presets) {
             return None;
         }
-        let percent = self.percent();
+        let brightness = self.lit_brightness();
         Some(Chips {
             key: PRESETS.to_owned(),
             chips: PERCENTS
@@ -332,30 +327,35 @@ impl Tile {
                     enabled: self.can_act,
                 })
                 .to_vec(),
-            selected: PERCENTS.iter().position(|preset| Some(*preset) == percent),
+            selected: PERCENTS
+                .iter()
+                .position(|preset| Some(*preset) == brightness),
             role: Role::Options,
             width: self.width,
         })
     }
 
     fn warmth(&self) -> Option<Stepper> {
-        let (range, kelvin) = self.warmth.filter(|_| self.shows(Row::Warmth))?;
+        let Warmth { range, shown } = self.dimmer?.warmth.filter(|_| self.shows(Row::Warmth))?;
         Some(Stepper {
             key: WARMTH.name().to_owned(),
             ends: Ends::Signs,
-            down: self.can_act && kelvin.value.is_none_or(|kelvin| kelvin > range.warmest),
-            up: self.can_act && kelvin.value.is_none_or(|kelvin| kelvin < range.coolest),
-            pending: kelvin.faint,
+            down: self.can_act && shown.value.is_none_or(|kelvin| kelvin > range.warmest()),
+            up: self.can_act && shown.value.is_none_or(|kelvin| kelvin < range.coolest()),
+            pending: shown.faint,
             track: Track::Gradient(Gradient {
-                stops: gradient::temperatures(range.warmest, range.coolest),
-                share: kelvin.value.map(|kelvin| range.share_of(kelvin)),
+                stops: gradient::temperatures(
+                    range.warmest().as_kelvin(),
+                    range.coolest().as_kelvin(),
+                ),
+                share: shown.value.map(|kelvin| range.share_of(kelvin)),
             }),
             width: self.width,
         })
     }
 
     fn hue(&self) -> Option<Stepper> {
-        let hue = self.hue.filter(|_| self.shows(Row::Hue))?;
+        let hue = self.dimmer?.hue.filter(|_| self.shows(Row::Hue))?;
         Some(Stepper {
             key: HUE.name().to_owned(),
             ends: Ends::Signs,
@@ -373,19 +373,20 @@ impl Tile {
     /// A dimmer's rules: + turns a light that is off on at the brightness it had,
     /// − from 10 % or below turns it off, and a tap on the bar never does.
     fn brightness_after(&self, touched: Touched) -> Option<Request> {
-        match (touched, self.on, self.percent()) {
-            (Touched::Set(share), _, _) => {
-                Some(set_brightness(percent_of(share).max(1), Timing::Now))
-            }
+        match (touched, self.is_on(), self.lit_brightness()) {
+            (Touched::Set(share), _, _) => Some(set_brightness(
+                Brightness::from_percent(percent_of(share)),
+                Timing::Now,
+            )),
             (Touched::Up, false, _) => Some(turn(true)),
-            (Touched::Up, true, Some(percent)) => Some(set_brightness(
-                ((percent / STEP + 1) * STEP).min(100),
+            (Touched::Up, true, Some(brightness)) => Some(set_brightness(
+                Brightness::from_percent((brightness.as_percent() / STEP + 1) * STEP),
                 Timing::AfterTaps,
             )),
-            (Touched::Down, true, Some(percent)) => {
-                let next = percent.saturating_sub(1) / STEP * STEP;
+            (Touched::Down, true, Some(brightness)) => {
+                let next = brightness.as_percent().saturating_sub(1) / STEP * STEP;
                 Some(if next >= STEP {
-                    set_brightness(next, Timing::AfterTaps)
+                    set_brightness(Brightness::from_percent(next), Timing::AfterTaps)
                 } else {
                     turn(false)
                 })
@@ -397,25 +398,19 @@ impl Tile {
     /// A light that shows no colour temperature steps from the middle of its range.
     /// It drops a hue still asked for, as a light shows one or the other.
     fn warmth_after(&self, touched: Touched) -> Option<Request> {
-        let (range, kelvin) = self.warmth?;
-        let current = kelvin.value.map_or(0.5, |kelvin| range.share_of(kelvin));
+        let Warmth { range, shown } = self.dimmer?.warmth?;
+        let current = shown.value.map_or(0.5, |kelvin| range.share_of(kelvin));
         let (share, timing) = match touched {
             Touched::Set(share) => (share, Timing::Now),
             Touched::Up => (current + WARMTH_STEP, Timing::AfterTaps),
             Touched::Down => (current - WARMTH_STEP, Timing::AfterTaps),
         };
         let kelvin = range.at(share);
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a colour temperature of a few thousand kelvin, rounded"
-        )]
-        let whole_kelvin = kelvin as u32;
         Some(
             Request::number(
                 WARMTH,
-                kelvin,
-                light::turn_on_at_kelvin(whole_kelvin),
+                kelvin.as_kelvin(),
+                light::turn_on_at_kelvin(kelvin),
                 timing,
             )
             .superseding(&[HUE, POWER]),
@@ -425,7 +420,7 @@ impl Tile {
     /// A light that shows no hue steps from the middle of the circle.
     /// It drops a colour temperature still asked for, as a light shows one or the other.
     fn hue_after(&self, touched: Touched) -> Option<Request> {
-        let current = self.hue?.value.unwrap_or(FULL_CIRCLE / 2.0);
+        let current = self.dimmer?.hue?.value.unwrap_or(FULL_CIRCLE / 2.0);
         let (hue, timing) = match touched {
             Touched::Set(share) => (share * FULL_CIRCLE, Timing::Now),
             Touched::Up => (current + HUE_STEP, Timing::AfterTaps),
@@ -491,18 +486,18 @@ fn light_color(state: &State, pending: &Pending) -> Option<Color> {
     match (pending.number(HUE), pending.number(WARMTH)) {
         (Some(hue), _) => Some(hue_color(hue, narrow(SATURATION))),
         (None, Some(kelvin)) => Some(gradient::temperature_color(kelvin)),
-        (None, None) => match (state.kelvin, state.colour) {
-            (Some(kelvin), _) => Some(gradient::temperature_color(kelvin)),
-            (None, Some(colour)) => Some(hue_color(narrow(colour.hue), narrow(colour.saturation))),
-            (None, None) => None,
+        (None, None) => match state.look {
+            Look::White(kelvin) => Some(gradient::temperature_color(kelvin.as_kelvin())),
+            Look::Colour(colour) => Some(hue_color(narrow(colour.hue), narrow(colour.saturation))),
+            Look::Plain | Look::Unknown => None,
         },
     }
 }
 
 /// The strip's colour: the light's, as bright as the light.
-fn led_color(color: Option<Color>, percent: u8) -> Color {
-    let color = color.unwrap_or_else(|| gradient::temperature_color(PLAIN_KELVIN));
-    color.brightness((f32::from(percent) / 100.0).max(LED_FLOOR))
+fn led_color(color: Option<Color>, brightness: Brightness) -> Color {
+    let color = color.unwrap_or_else(|| gradient::temperature_color(PLAIN_KELVIN.as_kelvin()));
+    color.brightness(brightness.share().max(LED_FLOOR))
 }
 
 /// The icon's colour for a light's own: the frontend's `state-badge` saturates a pale colour
@@ -534,21 +529,19 @@ fn hue_color(hue: f32, saturation: f32) -> Color {
 
 /// The line under the name: as the frontend's tile tells a light, its brightness while on,
 /// unless its bar already shows it.
-fn line(position: Option<bool>, percent: Option<u8>) -> String {
-    match (position, percent) {
-        (None, _) => UNKNOWN_POSITION.to_owned(),
-        (Some(false), _) => OFF.to_owned(),
-        (Some(true), Some(percent)) => percent_text(percent),
-        (Some(true), None) => ON.to_owned(),
+fn line(position: Position, brightness: Option<Brightness>) -> String {
+    match (position, brightness) {
+        (Position::On, Some(brightness)) => percent_text(brightness),
+        (position, _) => position.text().to_owned(),
     }
 }
 
-/// The light turned on at `percent`.
-fn set_brightness(percent: u8, timing: Timing) -> Request {
+/// The light turned on at `brightness`.
+fn set_brightness(brightness: Brightness, timing: Timing) -> Request {
     Request::number(
         BRIGHTNESS,
-        f32::from(percent),
-        light::turn_on_at_percent(percent),
+        f32::from(brightness.as_percent()),
+        light::turn_on_at_percent(brightness),
         timing,
     )
     .superseding(&[POWER])
@@ -574,11 +567,13 @@ fn percent_of(share: f32) -> u8 {
     percent
 }
 
-fn whole_percent(number: f32) -> u8 {
-    percent_of(number / 100.0)
+/// A brightness asked for, as the pending request holds it.
+fn brightness_of(number: f32) -> Brightness {
+    Brightness::from_percent(percent_of(number / 100.0))
 }
 
-fn percent_text(percent: u8) -> String {
+fn percent_text(brightness: Brightness) -> String {
+    let percent = brightness.as_percent();
     with_unit(fmt!("{percent}"), Some("%"))
 }
 

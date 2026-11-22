@@ -46,63 +46,167 @@ const COLOUR_MODES: [&str; 5] = ["hs", "xy", "rgb", "rgbw", "rgbww"];
 /// With [`COLOUR_MODES`], the frontend's `lightSupportsBrightness`.
 const DIMMING_MODES: [&str; 3] = ["brightness", "color_temp", "white"];
 const COLOR_TEMP_MODE: &str = "color_temp";
+const PLAIN_MODES: [&str; 3] = ["onoff", "brightness", "white"];
 
-/// The colour temperatures a light takes, in kelvin.
+/// A light's colour temperature, which Home Assistant tells in kelvin.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct ColorTemperature(f32);
+
+impl ColorTemperature {
+    #[must_use]
+    pub const fn from_kelvin(kelvin: f32) -> Self {
+        Self(kelvin)
+    }
+
+    #[must_use]
+    pub const fn as_kelvin(self) -> f32 {
+        self.0
+    }
+
+    fn read(kelvin: f64) -> Self {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a colour temperature of a few thousand kelvin"
+        )]
+        Self(kelvin as f32)
+    }
+}
+
+/// A brightness in whole percent, from 1 to 100: a light that is on is never at 0 %.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Brightness(u8);
+
+impl Brightness {
+    pub const FULL: Self = Self(100);
+
+    /// `percent` clamped to 1–100.
+    #[must_use]
+    pub const fn from_percent(percent: u8) -> Self {
+        Self(if percent < 1 {
+            1
+        } else if percent > 100 {
+            100
+        } else {
+            percent
+        })
+    }
+
+    #[must_use]
+    pub const fn as_percent(self) -> u8 {
+        self.0
+    }
+
+    /// As a share of full, from 0.01 to 1.
+    #[must_use]
+    pub fn share(self) -> f32 {
+        f32::from(self.0) / 100.0
+    }
+}
+
+/// The colour temperatures a light takes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KelvinRange {
-    pub warmest: f64,
-    pub coolest: f64,
+    warmest: ColorTemperature,
+    coolest: ColorTemperature,
 }
 
 /// The range Home Assistant assumes for a light that reports none.
 pub const DEFAULT_KELVIN_RANGE: KelvinRange = KelvinRange {
-    warmest: 2000.0,
-    coolest: 6535.0,
+    warmest: ColorTemperature(2000.0),
+    coolest: ColorTemperature(6535.0),
 };
 
-#[must_use]
-pub fn dims(light: &Entity) -> bool {
-    takes_colour(light) || supports_any(light, &DIMMING_MODES)
+impl KelvinRange {
+    /// The range between `one` and `other`, whichever way round an integration reports them.
+    #[must_use]
+    pub fn new(one: ColorTemperature, other: ColorTemperature) -> Self {
+        if one <= other {
+            Self {
+                warmest: one,
+                coolest: other,
+            }
+        } else {
+            Self {
+                warmest: other,
+                coolest: one,
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn warmest(self) -> ColorTemperature {
+        self.warmest
+    }
+
+    #[must_use]
+    pub const fn coolest(self) -> ColorTemperature {
+        self.coolest
+    }
+
+    /// How far `temperature` lies from the warmest (0) to the coolest (1);
+    /// the middle for a light that takes one temperature only.
+    #[must_use]
+    pub fn share_of(self, temperature: ColorTemperature) -> f32 {
+        let span = self.coolest.0 - self.warmest.0;
+        if span > 0.0 {
+            ((temperature.0 - self.warmest.0) / span).clamp(0.0, 1.0)
+        } else {
+            0.5
+        }
+    }
+
+    /// The colour temperature `share` of the way from the warmest to the coolest, in whole kelvin.
+    #[must_use]
+    pub fn at(self, share: f32) -> ColorTemperature {
+        let span = self.coolest.0 - self.warmest.0;
+        ColorTemperature((self.warmest.0 + share.clamp(0.0, 1.0) * span).round())
+    }
 }
 
-#[must_use]
-pub fn takes_colour(light: &Entity) -> bool {
-    supports_any(light, &COLOUR_MODES)
+/// What a light takes beyond on and off.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dimming {
+    /// Its range, where it takes a colour temperature.
+    pub warmth: Option<KelvinRange>,
+    pub colour: bool,
 }
 
-/// Its brightness in percent, as the frontend rounds it, though never below 1 %;
-/// Home Assistant reports none while the light is off.
+/// None for a light that only switches.
 #[must_use]
-pub fn brightness_percent(light: &Entity) -> Option<u8> {
+pub fn dimming(light: &Entity) -> Option<Dimming> {
+    let colour = supports_any(light, &COLOUR_MODES);
+    let dims = colour || supports_any(light, &DIMMING_MODES);
+    dims.then(|| Dimming {
+        warmth: kelvin_range(light),
+        colour,
+    })
+}
+
+/// Its brightness as the frontend rounds it; Home Assistant reports none while the light is off.
+#[must_use]
+pub fn brightness(light: &Entity) -> Option<Brightness> {
     let brightness = light.number(BRIGHTNESS)?;
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "clamped to 1..=100 first"
+        reason = "clamped to 0..=100 first"
     )]
     let percent = (brightness * 100.0 / BRIGHTNESS_MAX)
         .round()
-        .clamp(1.0, 100.0) as u8;
-    Some(percent)
+        .clamp(0.0, 100.0) as u8;
+    Some(Brightness::from_percent(percent))
 }
 
-/// The colour temperatures it takes, where it takes one.
-#[must_use]
-pub fn kelvin_range(light: &Entity) -> Option<KelvinRange> {
-    supports_any(light, &[COLOR_TEMP_MODE]).then(|| KelvinRange {
-        warmest: light
-            .number(MIN_COLOR_TEMP_KELVIN)
-            .unwrap_or(DEFAULT_KELVIN_RANGE.warmest),
-        coolest: light
-            .number(MAX_COLOR_TEMP_KELVIN)
-            .unwrap_or(DEFAULT_KELVIN_RANGE.coolest),
+fn kelvin_range(light: &Entity) -> Option<KelvinRange> {
+    let reported = |name, default: ColorTemperature| {
+        light.number(name).map_or(default, ColorTemperature::read)
+    };
+    supports_any(light, &[COLOR_TEMP_MODE]).then(|| {
+        KelvinRange::new(
+            reported(MIN_COLOR_TEMP_KELVIN, DEFAULT_KELVIN_RANGE.warmest),
+            reported(MAX_COLOR_TEMP_KELVIN, DEFAULT_KELVIN_RANGE.coolest),
+        )
     })
-}
-
-/// Its colour temperature; none while it is off, or while it shows a colour instead.
-#[must_use]
-pub fn kelvin(light: &Entity) -> Option<f64> {
-    light.number(COLOR_TEMP_KELVIN)
 }
 
 /// A colour as Home Assistant's `hs_color` tells it.
@@ -114,17 +218,33 @@ pub struct HueSaturation {
     pub saturation: f64,
 }
 
-/// Its colour; none while it is off or shows a colour temperature,
-/// as Home Assistant then reports the colour it works out from the kelvin.
+/// What a light shows: Home Assistant reports a colour temperature or a colour, never both.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Look {
+    /// Off, in the `unknown` colour mode, or in a colour mode reported without its value.
+    Unknown,
+    /// A white of no stated temperature: a light that only switches or dims, or one in the `white` mode.
+    Plain,
+    White(ColorTemperature),
+    Colour(HueSaturation),
+}
+
+/// What it shows, by its colour mode: in the colour temperature mode,
+/// Home Assistant also reports the colour it works out from the kelvin.
 #[must_use]
-pub fn colour(light: &Entity) -> Option<HueSaturation> {
-    let mode = light.text(COLOR_MODE)?;
-    if !COLOUR_MODES.contains(&mode) {
-        return None;
-    }
-    match *light.numbers(HS_COLOR)? {
-        [hue, saturation] => Some(HueSaturation { hue, saturation }),
-        _ => None,
+pub fn look(light: &Entity) -> Look {
+    match light.text(COLOR_MODE) {
+        Some(COLOR_TEMP_MODE) => light
+            .number(COLOR_TEMP_KELVIN)
+            .map_or(Look::Unknown, |kelvin| {
+                Look::White(ColorTemperature::read(kelvin))
+            }),
+        Some(mode) if COLOUR_MODES.contains(&mode) => match light.numbers(HS_COLOR) {
+            Some(&[hue, saturation]) => Look::Colour(HueSaturation { hue, saturation }),
+            Some(_) | None => Look::Unknown,
+        },
+        Some(mode) if PLAIN_MODES.contains(&mode) => Look::Plain,
+        Some(_) | None => Look::Unknown,
     }
 }
 
@@ -146,13 +266,19 @@ pub fn turn_off() -> ServiceCall {
 }
 
 #[must_use]
-pub fn turn_on_at_percent(percent: u8) -> ServiceCall {
-    turn_on_with(ServiceData::new().integer(BRIGHTNESS_PCT, i64::from(percent)))
+pub fn turn_on_at_percent(brightness: Brightness) -> ServiceCall {
+    turn_on_with(ServiceData::new().integer(BRIGHTNESS_PCT, i64::from(brightness.0)))
 }
 
+/// At `temperature` rounded to whole kelvin, as Home Assistant takes it.
 #[must_use]
-pub fn turn_on_at_kelvin(kelvin: u32) -> ServiceCall {
-    turn_on_with(ServiceData::new().integer(COLOR_TEMP_KELVIN, i64::from(kelvin)))
+pub fn turn_on_at_kelvin(temperature: ColorTemperature) -> ServiceCall {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a colour temperature of a few thousand kelvin"
+    )]
+    let kelvin = temperature.0.round() as i64;
+    turn_on_with(ServiceData::new().integer(COLOR_TEMP_KELVIN, kelvin))
 }
 
 /// `hue` in degrees and `saturation` in percent.
@@ -182,38 +308,50 @@ mod tests {
         )])
     }
 
+    fn kelvin(kelvin: f32) -> ColorTemperature {
+        ColorTemperature::from_kelvin(kelvin)
+    }
+
     #[wasm_test]
     fn only_a_light_with_a_colour_mode_beyond_on_and_off_dims() {
-        assert!(dims(&modes(&["brightness"])));
-        assert!(dims(&modes(&["onoff", "color_temp"])));
-        assert!(dims(&modes(&["xy"])));
-        assert!(!dims(&modes(&["onoff"])));
-        assert!(!dims(&light(vec![])), "a light without the attribute");
+        assert!(dimming(&modes(&["brightness"])).is_some());
+        assert!(dimming(&modes(&["onoff", "color_temp"])).is_some());
+        assert!(dimming(&modes(&["xy"])).is_some());
+        assert_eq!(dimming(&modes(&["onoff"])), None);
+        assert_eq!(
+            dimming(&light(vec![])),
+            None,
+            "a light without the attribute"
+        );
     }
 
     #[wasm_test]
     fn only_a_colour_mode_takes_a_colour() {
-        assert!(takes_colour(&modes(&["color_temp", "rgbww"])));
-        assert!(!takes_colour(&modes(&[
-            "brightness",
-            "color_temp",
-            "white"
-        ])));
+        let colour = |supported: &[&str]| dimming(&modes(supported)).map(|dimming| dimming.colour);
+        assert_eq!(colour(&["color_temp", "rgbww"]), Some(true));
+        assert_eq!(colour(&["brightness", "color_temp", "white"]), Some(false));
     }
 
     #[wasm_test]
     fn brightness_reads_in_percent_as_the_frontend_rounds_it() {
         let at = |brightness| {
-            brightness_percent(&light(vec![(
+            super::brightness(&light(vec![(
                 BRIGHTNESS,
                 AttributeValue::Number(brightness),
             )]))
+            .map(Brightness::as_percent)
         };
         assert_eq!(at(255.0), Some(100));
         assert_eq!(at(153.0), Some(60));
         assert_eq!(at(130.0), Some(51), "50.98 % rounds up");
         assert_eq!(at(1.0), Some(1), "a light that is on never reads 0 %");
-        assert_eq!(brightness_percent(&light(vec![])), None);
+        assert_eq!(super::brightness(&light(vec![])), None);
+    }
+
+    #[wasm_test]
+    fn a_brightness_stays_within_1_and_100_percent() {
+        assert_eq!(Brightness::from_percent(0), Brightness::from_percent(1));
+        assert_eq!(Brightness::from_percent(255), Brightness::FULL);
     }
 
     #[wasm_test]
@@ -228,10 +366,7 @@ mod tests {
         ]);
         assert_eq!(
             kelvin_range(&light),
-            Some(KelvinRange {
-                warmest: 2202.0,
-                coolest: 6535.0
-            })
+            Some(KelvinRange::new(kelvin(2202.0), kelvin(6535.0)))
         );
     }
 
@@ -244,44 +379,95 @@ mod tests {
         assert_eq!(kelvin_range(&modes(&["hs"])), None);
     }
 
-    fn showing(mode: &str, hs: Vec<f64>) -> Entity {
-        light(vec![
-            (COLOR_MODE, AttributeValue::Text(mode.to_owned())),
-            (HS_COLOR, AttributeValue::Numbers(hs)),
-        ])
+    #[wasm_test]
+    fn a_range_reported_coolest_first_runs_from_its_warmest() {
+        let range = KelvinRange::new(kelvin(6500.0), kelvin(2000.0));
+        assert_eq!(
+            (range.warmest(), range.coolest()),
+            (kelvin(2000.0), kelvin(6500.0))
+        );
+    }
+
+    #[wasm_test]
+    fn a_share_of_the_range_is_a_whole_kelvin_and_back() {
+        let range = KelvinRange::new(kelvin(2000.0), kelvin(6000.0));
+        assert_eq!(range.at(0.37), kelvin(3480.0));
+        assert!((range.share_of(kelvin(3000.0)) - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[wasm_test]
+    fn a_light_of_one_temperature_sits_in_the_middle() {
+        let range = KelvinRange::new(kelvin(2700.0), kelvin(2700.0));
+        assert!((range.share_of(kelvin(2700.0)) - 0.5).abs() < f32::EPSILON);
+    }
+
+    fn showing(mode: &str, attributes: Vec<(&str, AttributeValue)>) -> Entity {
+        let mut all = vec![(COLOR_MODE, AttributeValue::Text(mode.to_owned()))];
+        all.extend(attributes);
+        light(all)
     }
 
     #[wasm_test]
     fn a_colour_is_the_hue_and_the_saturation_it_reports() {
+        let hs = (HS_COLOR, AttributeValue::Numbers(vec![12.5, 80.0]));
         assert_eq!(
-            colour(&showing("hs", vec![12.5, 80.0])),
-            Some(HueSaturation {
+            look(&showing("hs", vec![hs])),
+            Look::Colour(HueSaturation {
                 hue: 12.5,
                 saturation: 80.0
             })
         );
-        assert_eq!(colour(&light(vec![])), None);
     }
 
     #[wasm_test]
-    fn a_light_showing_a_colour_temperature_has_no_colour() {
-        assert_eq!(colour(&showing(COLOR_TEMP_MODE, vec![27.0, 19.0])), None);
+    fn a_light_showing_a_colour_temperature_shows_a_white_not_its_colour() {
+        let attributes = vec![
+            (COLOR_TEMP_KELVIN, AttributeValue::Number(2700.0)),
+            (HS_COLOR, AttributeValue::Numbers(vec![27.0, 19.0])),
+        ];
+        assert_eq!(
+            look(&showing(COLOR_TEMP_MODE, attributes)),
+            Look::White(kelvin(2700.0))
+        );
+    }
+
+    #[wasm_test]
+    fn a_light_that_switches_dims_or_shows_its_white_channel_shows_a_plain_white() {
+        for mode in ["onoff", "brightness", "white"] {
+            assert_eq!(look(&showing(mode, vec![])), Look::Plain, "{mode}");
+        }
+    }
+
+    #[wasm_test]
+    fn a_light_that_is_off_or_tells_no_value_for_its_mode_shows_no_known_look() {
+        assert_eq!(look(&light(vec![])), Look::Unknown, "off: no colour mode");
+        assert_eq!(look(&showing("unknown", vec![])), Look::Unknown);
+        assert_eq!(
+            look(&showing("hs", vec![])),
+            Look::Unknown,
+            "hs without hs_color"
+        );
+        assert_eq!(
+            look(&showing(COLOR_TEMP_MODE, vec![])),
+            Look::Unknown,
+            "color_temp without color_temp_kelvin"
+        );
     }
 
     #[wasm_test]
     fn each_setting_turns_the_light_on_with_its_own_data() {
         assert_eq!(
-            turn_on_at_percent(40).data,
+            turn_on_at_percent(Brightness::from_percent(40)).data,
             ServiceData::new().integer("brightness_pct", 40)
         );
         assert_eq!(
-            turn_on_at_kelvin(2700).data,
+            turn_on_at_kelvin(kelvin(2700.4)).data,
             ServiceData::new().integer("color_temp_kelvin", 2700)
         );
         assert_eq!(
             turn_on_at_hue(90.0, 100.0).data,
             ServiceData::new().decimals("hs_color", &[90.0, 100.0], 0)
         );
-        assert_eq!(turn_on_at_kelvin(2700).service, "turn_on");
+        assert_eq!(turn_on_at_kelvin(kelvin(2700.0)).service, "turn_on");
     }
 }

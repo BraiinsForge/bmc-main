@@ -261,6 +261,33 @@ impl Reach {
     }
 }
 
+/// Where an entity that is on or off stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Position {
+    On,
+    Off,
+    /// Home Assistant does not know it, such as for an entity it has not heard from since it started.
+    Unknown,
+}
+
+impl Position {
+    fn of(on: Option<bool>) -> Self {
+        match on {
+            Some(true) => Self::On,
+            Some(false) => Self::Off,
+            None => Self::Unknown,
+        }
+    }
+
+    fn text(self) -> &'static str {
+        match self {
+            Self::On => "On",
+            Self::Off => "Off",
+            Self::Unknown => "Unknown",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Room {
     pub width: f32,
