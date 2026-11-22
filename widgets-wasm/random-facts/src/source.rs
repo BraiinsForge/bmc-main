@@ -62,11 +62,7 @@ impl FactSource {
     }
 
     fn on_fact_data(&mut self, handle: &PollHandle, response: &FetchResponse) {
-        let fact = response
-            .ok()
-            .then(|| response.json().str(FACTS_TEXT_PATH))
-            .flatten()
-            .filter(|text| !text.is_empty());
+        let fact = response.ok().then(|| fact_in(&response.json())).flatten();
 
         if let Some(fact) = fact {
             self.on_fact.send(fact);
@@ -81,5 +77,48 @@ impl FactSource {
             // reply.
             handle.retry();
         }
+    }
+}
+
+/// The fact a reply carries, or `None` when it has no usable text.
+fn fact_in(json: &JsonDoc) -> Option<String> {
+    json.str(FACTS_TEXT_PATH).filter(|text| !text.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_wasm_sdk::{JsonDoc, wasm_test};
+
+    use super::fact_in;
+
+    #[wasm_test]
+    fn a_reply_carries_its_fact() {
+        assert_eq!(
+            fact_in(&JsonDoc::parse(
+                br#"{"data":{"text":"Honey never spoils."}}"#
+            ))
+            .as_deref(),
+            Some("Honey never spoils.")
+        );
+    }
+
+    #[wasm_test]
+    fn an_empty_fact_is_no_fact() {
+        assert_eq!(
+            fact_in(&JsonDoc::parse(br#"{"data":{"text":""}}"#)),
+            None,
+            "an empty fact would blank the card that shows the last good one"
+        );
+    }
+
+    #[wasm_test]
+    fn a_reply_without_the_text_is_no_fact() {
+        assert_eq!(
+            fact_in(&JsonDoc::parse(
+                br#"{"data":{"fact":"Honey never spoils."}}"#
+            )),
+            None,
+            "a renamed field reads as a failed reply, which retries soon"
+        );
     }
 }
