@@ -194,6 +194,12 @@ fn build_and_retry(handle: &Handle) -> Option<FetchSpec> {
     Some(FetchSpec::get("http://x/data"))
 }
 
+#[expect(clippy::unnecessary_wraps, reason = "a Build")]
+fn build_and_retry_after(handle: &Handle) -> Option<FetchSpec> {
+    handle.retry_after(CFG.retry_ms);
+    Some(FetchSpec::get("http://x/data"))
+}
+
 #[test]
 #[should_panic(expected = "build asked a poll for a request")]
 fn a_build_that_invalidates_its_own_poll_is_a_bug() {
@@ -234,10 +240,15 @@ fn a_build_that_registers_a_poll_is_a_bug() {
 }
 
 #[test]
-fn a_build_may_retry_its_poll() {
+#[should_panic(expected = "build retried a poll")]
+fn a_build_that_retries_its_poll_is_a_bug() {
     let _handle = registered(build_and_retry, count_reply);
+}
 
-    assert_eq!(backend::sends(), 1);
+#[test]
+#[should_panic(expected = "build retried a poll")]
+fn a_build_that_retries_its_poll_later_is_a_bug() {
+    let _handle = registered(build_and_retry_after, count_reply);
 }
 
 fn build_nothing(_handle: &Handle) -> Option<FetchSpec> {

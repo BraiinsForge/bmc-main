@@ -173,9 +173,10 @@ impl Handle {
 /// Builds the poll's next request, or `None` to skip it.
 ///
 /// It may read the handle, disable or end the poll, and call what asks for no request,
-/// such as `retry` or `set_interval`.
+/// such as `set_interval`.
 /// Asking any poll for a request panics: `invalidate`, `enable_after`, `set_enabled(true)`
 /// or registering a poll would build again before this request goes out.
+/// So does `retry` or `retry_after`, which mark the reply being delivered, and a build has none.
 pub type Build = fn(&Handle) -> Option<FetchSpec>;
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -416,6 +417,15 @@ impl Registry {
         );
     }
 
+    /// Refuse a retry from inside a `build`: it marks the reply being delivered,
+    /// so with none, it would fail the next reply, whatever that reply carries.
+    fn refuse_retry_while_building(&self) {
+        assert!(
+            self.activity == Activity::Idle,
+            "BUG: a poll's build retried a poll, and a build has no reply to retry"
+        );
+    }
+
     /// Ask for the poll's next request after `delay_ms`;
     /// `None` when the poll is gone, disabled or has a request live.
     fn kick(&mut self, index: usize, delay_ms: Option<u32>) -> Option<Kick> {
@@ -545,6 +555,7 @@ impl Registry {
     /// holds where the last good reply left it, and the next attempt waits
     /// `retry_ms` rather than the poll interval.
     pub(crate) fn request_retry(&mut self, index: usize) {
+        self.refuse_retry_while_building();
         if let Some(poll) = poll_mut(&mut self.polls, index) {
             poll.force_retry = Some(poll.config.retry_ms);
         }
@@ -553,6 +564,7 @@ impl Registry {
     /// Like `request_retry`, but the next attempt waits `delay_ms` rather than
     /// `retry_ms`, letting a reply handler apply its own backoff.
     pub(crate) fn request_retry_after(&mut self, index: usize, delay_ms: u32) {
+        self.refuse_retry_while_building();
         if let Some(poll) = poll_mut(&mut self.polls, index) {
             poll.force_retry = Some(delay_ms);
         }

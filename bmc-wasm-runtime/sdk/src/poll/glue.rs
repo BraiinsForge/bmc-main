@@ -217,12 +217,20 @@ impl Handle {
     ///
     /// The poll then reads as failing and keeps the anchor it had,
     /// and the next attempt waits `retry_ms` rather than the interval.
+    ///
+    /// # Panics
+    ///
+    /// From inside any poll's `build`, which has no reply to retry.
     pub fn retry(&self) {
         REGISTRY.with_borrow_mut(|registry| registry.request_retry(self.0));
     }
 
     /// Like [`retry`](Self::retry), including counting as no refresh,
     /// but the next attempt waits `delay_ms` instead of `retry_ms`.
+    ///
+    /// # Panics
+    ///
+    /// From inside any poll's `build`, which has no reply to retry.
     pub fn retry_after(&self, delay_ms: u32) {
         REGISTRY.with_borrow_mut(|registry| registry.request_retry_after(self.0, delay_ms));
     }
