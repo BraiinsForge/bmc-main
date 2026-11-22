@@ -107,6 +107,35 @@ fn is_same_local_date(then: &TimeWithTimezone, now: SystemTime, now_tz: Option<&
         == (local_then.year, local_then.month, local_then.day)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DayCheck {
+    /// The day of the names last sent has passed.
+    NewDay,
+    /// No request could be built yet, for want of a timezone.
+    Unasked,
+    /// The names last sent are today's, or today's request is in flight.
+    Current,
+}
+
+/// What the day check finds at `now`, from what the last request asked for
+/// and the day of the names last sent.
+fn day_check(
+    requested_for: Option<&TimeWithTimezone>,
+    served_for: Option<&TimeWithTimezone>,
+    now: SystemTime,
+    now_tz: Option<&Tz>,
+) -> DayCheck {
+    // Decided from what was sent, not asked for: a retry built after midnight
+    // asks for today while the widget still shows yesterday's names.
+    if served_for.is_some_and(|served| !is_same_local_date(served, now, now_tz)) {
+        DayCheck::NewDay
+    } else if requested_for.is_none() {
+        DayCheck::Unasked
+    } else {
+        DayCheck::Current
+    }
+}
+
 impl NamedaySource {
     /// `on_names` gets the names of each reply for today;
     /// a failed or empty reply, or one for another day, sends nothing.
@@ -143,18 +172,19 @@ impl NamedaySource {
     /// Tell the widget and refetch once the day of the names last sent has passed,
     /// and ask again while no request could be built, for want of a timezone.
     pub(super) fn check_day(&mut self) {
-        // Decided from what was sent, not asked for: a retry built after midnight
-        // asks for today while the widget still shows yesterday's names.
-        if self
-            .served_for
-            .as_ref()
-            .is_some_and(|served| !is_today(served))
-        {
-            self.served_for = None;
-            self.poll.invalidate();
-            self.on_day_change.send(());
-        } else if self.requested_for.is_none() {
-            self.poll.invalidate();
+        match day_check(
+            self.requested_for.as_ref(),
+            self.served_for.as_ref(),
+            SystemTime::now(),
+            current_tz().as_ref(),
+        ) {
+            DayCheck::NewDay => {
+                self.served_for = None;
+                self.poll.invalidate();
+                self.on_day_change.send(());
+            }
+            DayCheck::Unasked => self.poll.invalidate(),
+            DayCheck::Current => {}
         }
     }
 
@@ -247,7 +277,9 @@ fn names_per_country(json: &JsonDoc) -> Option<[Option<String>; Country::ALL.len
 mod tests {
     use bmc_wasm_sdk::{JsonDoc, SystemTime, tz, wasm_test};
 
-    use super::{TimeWithTimezone, is_same_local_date, names_per_country, next_check_ms};
+    use super::{
+        DayCheck, TimeWithTimezone, day_check, is_same_local_date, names_per_country, next_check_ms,
+    };
     use crate::manifest_params::Country;
 
     /// 18 June 2026, 12:00 in Prague.
@@ -348,6 +380,81 @@ mod tests {
                 Some(&tz!("Asia/Tokyo")),
             ),
             "moved to Tokyo, the device is already on the 19th, so Prague's 18th is past"
+        );
+    }
+
+    fn checked_in_prague(requested: Option<i64>, served: Option<i64>, now: i64) -> DayCheck {
+        day_check(
+            requested.map(asked_in_prague).as_ref(),
+            served.map(asked_in_prague).as_ref(),
+            SystemTime { unix_secs: now },
+            Some(&tz!("Europe/Prague")),
+        )
+    }
+
+    #[wasm_test]
+    fn names_served_yesterday_start_a_new_day_though_today_was_asked_for() {
+        assert_eq!(
+            checked_in_prague(
+                Some(MINUTE_PAST_MIDNIGHT),
+                Some(MINUTE_TO_MIDNIGHT),
+                MINUTE_PAST_MIDNIGHT
+            ),
+            DayCheck::NewDay,
+            "a retry built after midnight asks for today while yesterday's names are still shown"
+        );
+    }
+
+    #[wasm_test]
+    fn a_source_that_could_not_ask_asks_again() {
+        assert_eq!(
+            checked_in_prague(None, None, NOON),
+            DayCheck::Unasked,
+            "without a timezone at the first build nothing else ever starts the fetch"
+        );
+    }
+
+    #[wasm_test]
+    fn a_request_still_in_flight_is_left_alone() {
+        assert_eq!(
+            checked_in_prague(Some(NOON), None, MINUTE_TO_MIDNIGHT),
+            DayCheck::Current,
+            "invalidating every minute would replace a pending request before its reply lands"
+        );
+    }
+
+    #[wasm_test]
+    fn names_served_today_need_nothing() {
+        assert_eq!(
+            checked_in_prague(Some(NOON), Some(NOON), MINUTE_TO_MIDNIGHT),
+            DayCheck::Current,
+            "a miss would refetch today's names every minute"
+        );
+    }
+
+    #[wasm_test]
+    fn names_served_yesterday_start_a_new_day_though_none_could_be_asked_for() {
+        assert_eq!(
+            checked_in_prague(None, Some(MINUTE_TO_MIDNIGHT), MINUTE_PAST_MIDNIGHT),
+            DayCheck::NewDay,
+            "asking again alone would leave yesterday's names shown as today's"
+        );
+    }
+
+    #[wasm_test]
+    fn names_served_before_a_move_east_start_a_new_day() {
+        let served = asked_in_prague(HALF_PAST_ELEVEN);
+        assert_eq!(
+            day_check(
+                Some(&served),
+                Some(&served),
+                SystemTime {
+                    unix_secs: HALF_PAST_ELEVEN
+                },
+                Some(&tz!("Asia/Tokyo")),
+            ),
+            DayCheck::NewDay,
+            "moved to Tokyo, the device is on the 19th while the names are Prague's 18th"
         );
     }
 
