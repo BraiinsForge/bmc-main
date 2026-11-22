@@ -187,44 +187,24 @@ impl NamedaySource {
 
     fn on_nameday_data(&mut self, handle: &PollHandle, response: &FetchResponse) {
         if response.ok() {
-            // Parse the response once and pull out the names for every supported
-            // country, so switching country later needs no new fetch. A country
-            // the response omits is stored as `None` rather than failing the whole
-            // parse, so one missing field never discards the others.
-            let json = response.json();
-
-            let mut names_per_country: [Option<String>; Country::ALL.len()] = Default::default();
-            let mut data_found = false;
-
-            for country in Country::ALL {
-                let json_path_to_names = fmt!("/data/{}", country.as_manifest_value());
-
-                // Treat missing, empty, and the API's "n/a" sentinel alike: no
-                // nameday for this country today.
-                match json.str(&json_path_to_names) {
-                    Some(names) if !names.is_empty() && names != "n/a" => {
-                        names_per_country[*country as usize] = Some(names);
-                        data_found = true;
-                    }
-                    _ => {}
-                }
-            }
-
-            match self.requested_for.clone().filter(is_today) {
-                None => {
+            match (
+                self.requested_for.clone().filter(is_today),
+                names_per_country(&response.json()),
+            ) {
+                (None, _) => {
                     // Data were fetched for incorrect date. This happens when NTP sync occurs
                     // after scheduling the fetch before the fetch successfully completes
                     // (it fails on TLS cert validation before time is synced).
                     handle.retry();
                 }
-                Some(requested_for) if data_found => {
+                (Some(requested_for), Some(names_per_country)) => {
                     self.served_for = Some(requested_for.clone());
                     self.on_names.send(NamedayData {
                         names_per_country,
                         fetched_at: requested_for,
                     });
                 }
-                Some(_) => {
+                (Some(_), None) => {
                     // No country parsed at all => `/data` is absent or the schema
                     // changed; the response is genuinely unusable, so retry soon.
                     if let Some(response_text) = response.text() {
@@ -246,11 +226,29 @@ impl NamedaySource {
     }
 }
 
+/// The names a reply carries for every supported country, so switching country needs no new fetch,
+/// or `None` when it names none, as when `/data` is absent or its schema changed.
+/// A country the reply omits is `None` without failing the parse, so it never discards the others.
+fn names_per_country(json: &JsonDoc) -> Option<[Option<String>; Country::ALL.len()]> {
+    let mut per_country: [Option<String>; Country::ALL.len()] = Default::default();
+    for country in Country::ALL {
+        // Missing, empty and the API's "n/a" alike mean no nameday there today.
+        per_country[*country as usize] = json
+            .str(&fmt!("/data/{}", country.as_manifest_value()))
+            .filter(|names| !names.is_empty() && names != "n/a");
+    }
+    per_country
+        .iter()
+        .any(Option::is_some)
+        .then_some(per_country)
+}
+
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_sdk::{SystemTime, tz, wasm_test};
+    use bmc_wasm_sdk::{JsonDoc, SystemTime, tz, wasm_test};
 
-    use super::{TimeWithTimezone, is_same_local_date, next_check_ms};
+    use super::{TimeWithTimezone, is_same_local_date, names_per_country, next_check_ms};
+    use crate::manifest_params::Country;
 
     /// 18 June 2026, 12:00 in Prague.
     const NOON: i64 = 1_781_776_800;
@@ -387,6 +385,53 @@ mod tests {
             ),
             31_000,
             "the day check reads today in UTC then, so it aims at UTC's midnight"
+        );
+    }
+
+    #[wasm_test]
+    fn a_country_the_reply_omits_keeps_the_others() {
+        let names = names_per_country(&JsonDoc::parse(br#"{"data":{"cz":"Milan"}}"#))
+            .expect("one country named is a usable reply");
+
+        assert_eq!(
+            (
+                names[Country::Cz as usize].as_deref(),
+                names[Country::Sk as usize].as_deref()
+            ),
+            (Some("Milan"), None),
+            "Slovakia missing from the reply must not discard the Czech names"
+        );
+    }
+
+    #[wasm_test]
+    fn the_api_sentinel_reads_as_no_nameday() {
+        let names = names_per_country(&JsonDoc::parse(br#"{"data":{"cz":"Milan","sk":"n/a"}}"#))
+            .expect("one country named is a usable reply");
+
+        assert_eq!(
+            names[Country::Sk as usize],
+            None,
+            "\"n/a\" would otherwise show as a name"
+        );
+    }
+
+    #[wasm_test]
+    fn an_empty_name_reads_as_no_nameday() {
+        let names = names_per_country(&JsonDoc::parse(br#"{"data":{"cz":"Milan","sk":""}}"#))
+            .expect("one country named is a usable reply");
+
+        assert_eq!(
+            names[Country::Sk as usize],
+            None,
+            "an empty name would otherwise show a blank line"
+        );
+    }
+
+    #[wasm_test]
+    fn a_reply_naming_no_country_is_unusable() {
+        assert!(
+            names_per_country(&JsonDoc::parse(br#"{"names":{"cz":"Milan"}}"#)).is_none(),
+            "a changed schema has to retry soon rather than serve a day of blanks"
         );
     }
 }
