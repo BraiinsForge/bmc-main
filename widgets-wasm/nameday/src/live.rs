@@ -24,14 +24,14 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params;
 use crate::render::{self, country_draw, date_draw};
-use crate::source::{NamedayData, NamedaySource, is_today};
+use crate::source::{NamedayData, NamedaySource, Names, is_today};
 
 const LOADING_TEXT: &str = "Loading...";
 const NOT_APPLICABLE_TEXT: &str = "N/A";
 const NOT_AVAILABLE_TEXT: &str = "--";
 
 struct Nameday {
-    source: Part<NamedaySource>,
+    source: Names,
     /// The last accepted day's names, kept on screen across failed fetches.
     names: Option<NamedayData>,
 }

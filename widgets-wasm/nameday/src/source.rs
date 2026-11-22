@@ -59,6 +59,8 @@ impl NamedayData {
     }
 }
 
+pub(super) type Names = Part<NamedaySource>;
+
 pub(super) struct NamedaySource {
     poll: PollHandle,
     /// What the last request built asked for, so its reply can be checked against today;
