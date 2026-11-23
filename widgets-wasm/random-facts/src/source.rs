@@ -31,7 +31,7 @@ const POLL_INTERVAL_MS: u32 = 900_000;
 pub(super) type Facts = Part<FactSource>;
 
 pub(super) struct FactSource {
-    _poll: PollHandle,
+    _poll: Poll,
     on_fact: Notify<String>,
 }
 
@@ -39,7 +39,7 @@ impl FactSource {
     /// `on_fact` gets the fact of each usable reply; a failed one sends nothing.
     pub(super) fn new(on_fact: Notify<String>) -> Part<Self> {
         Part::new_cyclic(|me| Self {
-            _poll: PollHandle::register(
+            _poll: Poll::register(
                 me,
                 Self::build_request,
                 Self::on_fact_data,
@@ -57,15 +57,16 @@ impl FactSource {
         clippy::unnecessary_wraps,
         reason = "the SDK Build callback returns Option"
     )]
-    fn build_request(&mut self, _handle: &PollHandle) -> Option<FetchSpec> {
+    fn build_request(&mut self, _handle: &Poll) -> Option<FetchSpec> {
         Some(FetchSpec::get(FACTS_API_URL))
     }
 
-    fn on_fact_data(&mut self, handle: &PollHandle, response: &FetchResponse) {
+    fn on_fact_data(&mut self, _handle: &Poll, response: &FetchResponse) -> Verdict {
         let fact = response.ok().then(|| fact_in(&response.json())).flatten();
 
         if let Some(fact) = fact {
             self.on_fact.send(fact);
+            Verdict::Accept
         } else {
             if response.ok() {
                 log_warn!("random-facts: response had no usable {FACTS_TEXT_PATH}");
@@ -75,7 +76,7 @@ impl FactSource {
 
             // Fast retry; forces `retry_ms` even on an HTTP-ok-but-unusable
             // reply.
-            handle.retry();
+            Verdict::Retry
         }
     }
 }

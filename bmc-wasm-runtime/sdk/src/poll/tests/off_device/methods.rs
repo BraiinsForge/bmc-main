@@ -24,10 +24,12 @@
 
 use super::*;
 
+const REJECTED_RETRY_MS: u32 = 7_000;
+
 struct Poller {
     builds: usize,
     replies: usize,
-    handle: Option<Handle>,
+    handle: Option<Poll>,
 }
 
 impl Poller {
@@ -40,18 +42,28 @@ impl Poller {
     }
 
     #[expect(clippy::unnecessary_wraps, reason = "a Build method")]
-    fn build(&mut self, _handle: &Handle) -> Option<FetchSpec> {
+    fn build(&mut self, _handle: &Poll) -> Option<FetchSpec> {
         self.builds += 1;
         Some(FetchSpec::get("http://x/data"))
     }
 
-    fn on_reply(&mut self, _handle: &Handle, _response: &FetchResponse) {
+    fn on_reply(&mut self, _handle: &Poll, _response: &FetchResponse) -> Verdict {
         self.replies += 1;
+        Verdict::Accept
     }
 
-    fn on_reply_enable_after_nine_seconds(&mut self, handle: &Handle, response: &FetchResponse) {
-        self.on_reply(handle, response);
+    fn on_reply_enable_after_nine_seconds(
+        &mut self,
+        handle: &Poll,
+        response: &FetchResponse,
+    ) -> Verdict {
         enable_after_nine_seconds(handle, response);
+        self.on_reply(handle, response)
+    }
+
+    fn on_reply_and_reject(&mut self, handle: &Poll, response: &FetchResponse) -> Verdict {
+        self.on_reply(handle, response);
+        Verdict::RetryAfter(REJECTED_RETRY_MS)
     }
 
     fn refresh(&mut self) {
@@ -62,7 +74,7 @@ impl Poller {
         assert_eq!(self.builds, 1, "build waits for the method to return");
     }
 
-    fn stored(&self) -> &Handle {
+    fn stored(&self) -> &Poll {
         self.handle
             .as_ref()
             .expect("BUG: the test stores the handle first")
@@ -97,7 +109,7 @@ impl Poller {
 fn poller() -> Part<Poller> {
     widget::enter();
     let mut part = Poller::new();
-    let handle = Handle::register(&part, Poller::build, Poller::on_reply, CFG);
+    let handle = Poll::register(&part, Poller::build, Poller::on_reply, CFG);
     part.with_mut(|value| value.handle = Some(handle));
     widget::drain();
     part
@@ -116,7 +128,7 @@ fn a_parts_poll_builds_and_replies_as_its_methods() {
 fn a_method_poll_sends_once_the_export_ended() {
     widget::enter();
     let part = Poller::new();
-    let _handle = Handle::register(&part, Poller::build, Poller::on_reply, CFG);
+    let _handle = Poll::register(&part, Poller::build, Poller::on_reply, CFG);
     let before = backend::sends();
 
     widget::drain();
@@ -129,7 +141,7 @@ fn a_method_poll_sends_once_the_export_ended() {
 fn a_method_poll_driven_outside_an_export_is_a_bug() {
     let part = Poller::new();
 
-    let _handle = Handle::register(&part, Poller::build, Poller::on_reply, CFG);
+    let _handle = Poll::register(&part, Poller::build, Poller::on_reply, CFG);
 }
 
 #[test]
@@ -187,15 +199,50 @@ fn an_enable_after_behind_an_enable_in_one_method_keeps_the_debounce() {
 }
 
 #[test]
-fn a_dropped_part_leaves_its_poll_dormant() {
+fn a_poll_whose_part_is_gone_before_it_builds_ends() {
     let part = poller();
-    let handle = Handle::register(&part, Poller::build, Poller::on_reply, CFG);
+    let handle = Poll::register(&part, Poller::build, Poller::on_reply, CFG);
     drop(part);
 
     widget::drain();
 
-    assert_eq!(backend::sends(), 1);
-    assert!(is_registered(handle.index()));
+    assert_eq!(backend::sends(), 1, "only the first poller's poll sent");
+    assert!(
+        !is_registered(handle.index()) && !handle.enabled(),
+        "a poll kept outside its gone part reads as ended, not as healthy and idle"
+    );
+
+    let next = Poller::new();
+    let _next_handle = Poll::register(&next, Poller::build, Poller::on_reply, CFG);
+    widget::drain();
+    assert_eq!(
+        backend::sends(),
+        2,
+        "an ended poll leaves the next one free to build"
+    );
+}
+
+#[test]
+fn a_poll_whose_part_is_gone_by_its_reply_ends_without_counting_it() {
+    // Without an interval nothing builds again, so only the reply can end the poll.
+    let one_shot = Config {
+        interval_ms: None,
+        ..CFG
+    };
+    widget::enter();
+    let part = Poller::new();
+    let handle = Poll::register(&part, Poller::build, Poller::on_reply, one_shot);
+    widget::drain();
+    drop(part);
+
+    reply_to_first_fetch();
+
+    assert_eq!(
+        (backend::sends(), handle.last_success_age()),
+        (1, None),
+        "the reply nobody read is no refresh, and no next fetch goes out"
+    );
+    assert!(!is_registered(handle.index()) && !handle.enabled());
 }
 
 /// A part and a handle it could keep to itself, to register through later.
@@ -219,7 +266,7 @@ fn a_poll_through_a_handle_to_a_dropped_part_registers_nothing() {
     drop(part);
 
     let dropped = matches!(
-        Handle::register(&handle, Poller::build, Poller::on_reply, CFG),
+        Poll::register(&handle, Poller::build, Poller::on_reply, CFG),
         Err(widget::PartError::NotLive)
     );
     widget::drain();
@@ -235,7 +282,7 @@ fn a_poll_through_a_handle_to_a_live_part_registers_and_sends() {
     widget::enter();
     let (part, handle) = poller_and_handle();
 
-    let handle = Handle::register(&handle, Poller::build, Poller::on_reply, CFG);
+    let handle = Poll::register(&handle, Poller::build, Poller::on_reply, CFG);
     widget::drain();
 
     assert_eq!(
@@ -251,7 +298,7 @@ fn a_poll_registered_while_its_part_is_built_builds_on_the_built_part() {
     let part = Part::new_cyclic(|me| Poller {
         builds: 0,
         replies: 0,
-        handle: Some(Handle::register(me, Poller::build, Poller::on_reply, CFG)),
+        handle: Some(Poll::register(me, Poller::build, Poller::on_reply, CFG)),
     });
 
     widget::drain();
@@ -264,12 +311,12 @@ fn a_poll_registered_while_its_part_is_built_builds_on_the_built_part() {
 }
 
 struct Quitter {
-    handle: Option<Handle>,
+    handle: Option<Poll>,
 }
 
 impl Quitter {
     #[expect(clippy::unnecessary_wraps, reason = "a Build method")]
-    fn build_and_end(&mut self, _handle: &Handle) -> Option<FetchSpec> {
+    fn build_and_end(&mut self, _handle: &Poll) -> Option<FetchSpec> {
         self.handle = None;
         Some(FetchSpec::get("http://x/data"))
     }
@@ -278,7 +325,9 @@ impl Quitter {
         clippy::unused_self,
         reason = "the poll ends in build, so no reply arrives"
     )]
-    fn on_reply(&mut self, _handle: &Handle, _response: &FetchResponse) {}
+    fn on_reply(&mut self, _handle: &Poll, _response: &FetchResponse) -> Verdict {
+        Verdict::Accept
+    }
 }
 
 #[test]
@@ -286,7 +335,7 @@ fn a_build_that_ends_its_poll_sends_nothing() {
     widget::enter();
     let mut part = Part::new(Quitter { handle: None });
 
-    let handle = Handle::register(&part, Quitter::build_and_end, Quitter::on_reply, CFG);
+    let handle = Poll::register(&part, Quitter::build_and_end, Quitter::on_reply, CFG);
     part.with_mut(|value| value.handle = Some(handle));
 
     widget::drain();
@@ -298,7 +347,7 @@ fn a_build_that_ends_its_poll_sends_nothing() {
 fn a_method_reply_handlers_enable_after_decides_the_next_fetch() {
     widget::enter();
     let mut part = Poller::new();
-    let handle = Handle::register(
+    let handle = Poll::register(
         &part,
         Poller::build,
         Poller::on_reply_enable_after_nine_seconds,
@@ -310,6 +359,40 @@ fn a_method_reply_handlers_enable_after_decides_the_next_fetch() {
     reply_to_first_fetch();
 
     assert_eq!((backend::sends(), backend::last_delay()), (2, Some(9_000)));
+}
+
+/// A part whose reply method rejects every reply, with its first reply delivered.
+fn poller_rejecting_its_first_reply() -> Part<Poller> {
+    widget::enter();
+    let mut part = Poller::new();
+    let handle = Poll::register(&part, Poller::build, Poller::on_reply_and_reject, CFG);
+    part.with_mut(|value| value.handle = Some(handle));
+    widget::drain();
+
+    reply_to_first_fetch();
+    part
+}
+
+#[test]
+fn a_rejected_reply_is_retried_after_the_delay_the_verdict_names() {
+    let _part = poller_rejecting_its_first_reply();
+
+    assert_eq!(
+        backend::last_delay(),
+        Some(REJECTED_RETRY_MS),
+        "a rejected reply is retried after the method's delay, not the full interval"
+    );
+}
+
+#[test]
+fn a_rejected_reply_is_no_refresh() {
+    let part = poller_rejecting_its_first_reply();
+
+    assert_eq!(
+        part.with(|poller| poller.stored().last_success_time()),
+        None,
+        "a reply its method rejected must not make the poll read as fresh"
+    );
 }
 
 #[test]
@@ -331,7 +414,7 @@ struct Leaver;
 impl Leaver {
     #[expect(clippy::unused_self, reason = "a Build method")]
     #[expect(clippy::unnecessary_wraps, reason = "a Build method")]
-    fn build_and_drop_the_part(&mut self, _handle: &Handle) -> Option<FetchSpec> {
+    fn build_and_drop_the_part(&mut self, _handle: &Poll) -> Option<FetchSpec> {
         HELD.take();
         Some(FetchSpec::get("http://x/data"))
     }
@@ -340,14 +423,28 @@ impl Leaver {
         clippy::unused_self,
         reason = "the part goes in build, so no reply arrives"
     )]
-    fn on_reply(&mut self, _handle: &Handle, _response: &FetchResponse) {}
+    fn on_reply(&mut self, _handle: &Poll, _response: &FetchResponse) -> Verdict {
+        Verdict::Accept
+    }
+
+    #[expect(clippy::unused_self, reason = "a Build method")]
+    #[expect(clippy::unnecessary_wraps, reason = "a Build method")]
+    fn build(&mut self, _handle: &Poll) -> Option<FetchSpec> {
+        Some(FetchSpec::get("http://x/data"))
+    }
+
+    #[expect(clippy::unused_self, reason = "a Reply method")]
+    fn reply_and_drop_the_part(&mut self, _handle: &Poll, _response: &FetchResponse) -> Verdict {
+        HELD.take();
+        Verdict::Accept
+    }
 }
 
 #[test]
 fn a_build_that_drops_its_part_sends_nothing() {
     widget::enter();
     let part = Part::new(Leaver);
-    let _handle = Handle::register(
+    let _handle = Poll::register(
         &part,
         Leaver::build_and_drop_the_part,
         Leaver::on_reply,
@@ -360,12 +457,40 @@ fn a_build_that_drops_its_part_sends_nothing() {
     assert_eq!(backend::sends(), 0);
 }
 
+#[test]
+fn a_reply_that_drops_its_part_ends_the_poll_without_counting_it() {
+    // Without an interval nothing builds again, so only the reply can end the poll.
+    let one_shot = Config {
+        interval_ms: None,
+        ..CFG
+    };
+    widget::enter();
+    let part = Part::new(Leaver);
+    let handle = Poll::register(
+        &part,
+        Leaver::build,
+        Leaver::reply_and_drop_the_part,
+        one_shot,
+    );
+    HELD.set(Some(part));
+    widget::drain();
+
+    reply_to_first_fetch();
+
+    assert_eq!(
+        handle.last_success_age(),
+        None,
+        "a reply that ended its part is no refresh"
+    );
+    assert!(!is_registered(handle.index()) && !handle.enabled());
+}
+
 struct Pauser;
 
 impl Pauser {
     #[expect(clippy::unused_self, reason = "a Build method")]
     #[expect(clippy::unnecessary_wraps, reason = "a Build method")]
-    fn build_and_disable(&mut self, handle: &Handle) -> Option<FetchSpec> {
+    fn build_and_disable(&mut self, handle: &Poll) -> Option<FetchSpec> {
         handle.set_enabled(false);
         Some(FetchSpec::get("http://x/data"))
     }
@@ -374,14 +499,16 @@ impl Pauser {
         clippy::unused_self,
         reason = "the poll is disabled in build, so no reply arrives"
     )]
-    fn on_reply(&mut self, _handle: &Handle, _response: &FetchResponse) {}
+    fn on_reply(&mut self, _handle: &Poll, _response: &FetchResponse) -> Verdict {
+        Verdict::Accept
+    }
 }
 
 #[test]
 fn a_build_that_disables_its_poll_sends_nothing() {
     widget::enter();
     let part = Part::new(Pauser);
-    let _handle = Handle::register(&part, Pauser::build_and_disable, Pauser::on_reply, CFG);
+    let _handle = Poll::register(&part, Pauser::build_and_disable, Pauser::on_reply, CFG);
 
     widget::drain();
 
@@ -392,14 +519,16 @@ struct Refresher;
 
 impl Refresher {
     #[expect(clippy::unused_self, reason = "a Build method")]
-    fn build_and_refresh(&mut self, handle: &Handle) -> Option<FetchSpec> {
+    fn build_and_refresh(&mut self, handle: &Poll) -> Option<FetchSpec> {
         count_build();
         handle.invalidate();
         None
     }
 
     #[expect(clippy::unused_self, reason = "the build panics, so no reply arrives")]
-    fn on_reply(&mut self, _handle: &Handle, _response: &FetchResponse) {}
+    fn on_reply(&mut self, _handle: &Poll, _response: &FetchResponse) -> Verdict {
+        Verdict::Accept
+    }
 }
 
 #[test]
@@ -407,7 +536,7 @@ impl Refresher {
 fn a_method_build_that_invalidates_its_own_poll_is_a_bug() {
     widget::enter();
     let part = Part::new(Refresher);
-    let _handle = Handle::register(
+    let _handle = Poll::register(
         &part,
         Refresher::build_and_refresh,
         Refresher::on_reply,
@@ -419,12 +548,12 @@ fn a_method_build_that_invalidates_its_own_poll_is_a_bug() {
 
 /// Two polls whose builds ask each other for a request.
 struct Pair {
-    first: Option<Handle>,
-    second: Option<Handle>,
+    first: Option<Poll>,
+    second: Option<Poll>,
 }
 
 impl Pair {
-    fn build_first(&mut self, _handle: &Handle) -> Option<FetchSpec> {
+    fn build_first(&mut self, _handle: &Poll) -> Option<FetchSpec> {
         count_build();
         if let Some(second) = &self.second {
             second.invalidate();
@@ -432,7 +561,7 @@ impl Pair {
         None
     }
 
-    fn build_second(&mut self, _handle: &Handle) -> Option<FetchSpec> {
+    fn build_second(&mut self, _handle: &Poll) -> Option<FetchSpec> {
         count_build();
         if let Some(first) = &self.first {
             first.invalidate();
@@ -441,7 +570,9 @@ impl Pair {
     }
 
     #[expect(clippy::unused_self, reason = "the builds panic, so no reply arrives")]
-    fn on_reply(&mut self, _handle: &Handle, _response: &FetchResponse) {}
+    fn on_reply(&mut self, _handle: &Poll, _response: &FetchResponse) -> Verdict {
+        Verdict::Accept
+    }
 }
 
 #[test]
@@ -452,8 +583,8 @@ fn method_builds_that_invalidate_each_other_are_a_bug() {
         first: None,
         second: None,
     });
-    let first = Handle::register(&part, Pair::build_first, Pair::on_reply, CFG);
-    let second = Handle::register(&part, Pair::build_second, Pair::on_reply, CFG);
+    let first = Poll::register(&part, Pair::build_first, Pair::on_reply, CFG);
+    let second = Poll::register(&part, Pair::build_second, Pair::on_reply, CFG);
     part.with_mut(|value| {
         value.first = Some(first);
         value.second = Some(second);
@@ -463,7 +594,7 @@ fn method_builds_that_invalidate_each_other_are_a_bug() {
 }
 
 struct Teller {
-    handle: Option<Handle>,
+    handle: Option<Poll>,
     told: crate::Notify<()>,
 }
 
@@ -473,17 +604,18 @@ impl Teller {
         clippy::unused_self,
         reason = "a Build method"
     )]
-    fn build(&mut self, _handle: &Handle) -> Option<FetchSpec> {
+    fn build(&mut self, _handle: &Poll) -> Option<FetchSpec> {
         Some(FetchSpec::get("http://x/data"))
     }
 
-    fn on_reply(&mut self, _handle: &Handle, _response: &FetchResponse) {
+    fn on_reply(&mut self, _handle: &Poll, _response: &FetchResponse) -> Verdict {
         self.told.send(());
+        Verdict::Accept
     }
 }
 
 /// Runs `f` on the handle of the seated teller.
-fn teller_handle<R>(seated: Option<&Part<Teller>>, f: impl FnOnce(&Handle) -> R) -> R {
+fn teller_handle<R>(seated: Option<&Part<Teller>>, f: impl FnOnce(&Poll) -> R) -> R {
     let teller = seated.expect("BUG: the test seats the teller first");
     teller.with(|teller| {
         f(teller
@@ -505,7 +637,7 @@ fn told_of_the_first_reply<W: 'static>(
         handle: None,
         told: crate::Notify::new(&receiver, on_told),
     });
-    let handle = Handle::register(&teller, Teller::build, Teller::on_reply, CFG);
+    let handle = Poll::register(&teller, Teller::build, Teller::on_reply, CFG);
     teller.with_mut(|teller| teller.handle = Some(handle));
     receiver.with_mut(|widget| seat(widget, teller));
     widget::drain();
@@ -545,52 +677,31 @@ fn a_part_told_of_a_reply_reads_the_poll_with_that_reply_banked() {
     );
 }
 
-/// Rejects every reply its teller tells it of.
+/// Marks stale every reply its teller tells it of, as on a late decode failure.
 #[derive(Default)]
 struct Rejecter {
     teller: Option<Part<Teller>>,
 }
 
 impl Rejecter {
-    const RETRY_MS: u32 = 7_000;
-
     fn on_told(&mut self, (): ()) {
-        teller_handle(self.teller.as_ref(), |handle| {
-            handle.retry_after(Self::RETRY_MS);
-        });
+        teller_handle(self.teller.as_ref(), Poll::mark_stale);
     }
 }
 
-/// A poll whose first reply the widget rejects once its teller has told it.
-fn reply_rejected_on_notify() -> Part<Rejecter> {
-    told_of_the_first_reply(
+#[test]
+fn a_part_told_of_a_reply_can_still_reject_it() {
+    let rejecter = told_of_the_first_reply(
         Rejecter::default(),
         Rejecter::on_told,
         |rejecter, teller| {
             rejecter.teller = Some(teller);
         },
-    )
-}
-
-#[test]
-fn a_retry_from_a_notified_widget_decides_the_next_fetch() {
-    let _rejecter = reply_rejected_on_notify();
-
-    assert_eq!(
-        backend::last_delay(),
-        Some(Rejecter::RETRY_MS),
-        "a rejected reply is retried after the widget's delay, not the full interval"
     );
-}
-
-#[test]
-fn a_retry_from_a_notified_widget_counts_the_reply_as_no_refresh() {
-    let rejecter = reply_rejected_on_notify();
 
     assert_eq!(
-        rejecter
-            .with(|rejecter| teller_handle(rejecter.teller.as_ref(), Handle::last_success_time)),
+        rejecter.with(|rejecter| teller_handle(rejecter.teller.as_ref(), Poll::last_success_time)),
         None,
-        "a reply the widget rejected must not make the poll read as fresh"
+        "a reply the told widget marked stale must not make the poll read as fresh"
     );
 }

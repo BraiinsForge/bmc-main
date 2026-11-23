@@ -8,7 +8,7 @@ deeper on individual topics. What a widget must not and should not do is in [Bou
 
 A widget is a struct implementing `Widget`, with `#[widget]` on the impl block. Its state lives in fields, and its hooks
 and SDK callbacks are its methods: `Timer::start(self, period_ms, Self::tick)`,
-`PollHandle::register(me, Self::build, Self::on_reply, config)` in `init`. See [Widget Struct](widget-struct.md).
+`Poll::register(me, Self::build, Self::on_reply, config)` in `init`. See [Widget Struct](widget-struct.md).
 
 Give a sub-object its own `Part<T>` when its callbacks touch only its own state, such as a list row that polls its own
 price or a loader that chains a fetch into a decode. When the widget should react to the part, the part tells it through

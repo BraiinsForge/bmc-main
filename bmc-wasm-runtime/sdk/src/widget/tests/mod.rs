@@ -26,7 +26,7 @@ use super::{
     RootSlot, Target, Widget, defer, drain, export, hook, install, leave, uninstall,
 };
 use crate::net::FetchResponse;
-use crate::poll::{Config as PollConfig, FetchSpec, Handle as PollHandle};
+use crate::poll::{Config as PollConfig, FetchSpec, Poll, Verdict};
 use crate::wasm_test;
 
 // Names the host's exports, which exist on wasm32 only.
@@ -208,11 +208,11 @@ fn an_instance_held_past_its_exports_is_a_bug() {
 /// A root whose `init` registers a method poll; its first `build` runs once `init` returned.
 struct PollsFromInit {
     builds: usize,
-    _poll: PollHandle,
+    _poll: Poll,
 }
 
 impl PollsFromInit {
-    fn build(&mut self, _poll: &PollHandle) -> Option<FetchSpec> {
+    fn build(&mut self, _poll: &Poll) -> Option<FetchSpec> {
         self.builds += 1;
         None
     }
@@ -221,14 +221,16 @@ impl PollsFromInit {
         clippy::unused_self,
         reason = "build sends nothing, so no reply arrives"
     )]
-    fn on_reply(&mut self, _poll: &PollHandle, _response: &FetchResponse) {}
+    fn on_reply(&mut self, _poll: &Poll, _response: &FetchResponse) -> Verdict {
+        Verdict::Accept
+    }
 }
 
 impl Widget for PollsFromInit {
     fn init(me: &Building<Self>) -> Self {
         Self {
             builds: 0,
-            _poll: PollHandle::register(me, Self::build, Self::on_reply, PollConfig::default()),
+            _poll: Poll::register(me, Self::build, Self::on_reply, PollConfig::default()),
         }
     }
 
@@ -263,7 +265,7 @@ fn a_callback_registered_through_the_widget_reaches_the_instance() {
     install::<PollsFromInit>();
     let mut kept = None;
     hook::<PollsFromInit>(|widget| {
-        kept = Some(PollHandle::register(
+        kept = Some(Poll::register(
             widget,
             PollsFromInit::build,
             PollsFromInit::on_reply,
@@ -321,10 +323,10 @@ impl Root for BuiltByHand {
 #[wasm_test]
 #[should_panic(expected = "before the SDK installed it")]
 fn a_widget_built_by_hand_cannot_register_its_methods() {
-    let _ = PollHandle::register(
+    let _ = Poll::register(
         &BuiltByHand,
-        |_: &mut BuiltByHand, _: &PollHandle| None,
-        |_: &mut BuiltByHand, _: &PollHandle, _: &FetchResponse| {},
+        |_: &mut BuiltByHand, _: &Poll| None,
+        |_: &mut BuiltByHand, _: &Poll, _: &FetchResponse| Verdict::Accept,
         PollConfig::default(),
     );
 }

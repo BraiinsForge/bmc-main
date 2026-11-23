@@ -21,22 +21,26 @@
 //! The poll registry behind the SDK's [`Handle`], and the forms that register one.
 
 use std::cell::RefCell;
+use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 
 use crate::net::FetchResponse;
 use crate::widget::{self, Receiver, Target};
 
 use super::backend::{HostBackend, now_secs};
-use super::{Build, BuildTiming, Config, FetchSpec, Handle, Kick, Registry, ReplyAction};
+use super::{
+    Bound, Build, BuildTiming, Config, FetchSpec, Free, Handle, Kick, Poll, Registry, ReplyAction,
+    TargetGone, Verdict,
+};
 
 /// Receives each reply with the borrowed handle of the poll it belongs to.
 pub type OnReply = fn(&Handle, &FetchResponse);
 
 /// A poll's `build` as a method of the value it is delivered to.
-pub type BuildMethod<T> = fn(&mut T, &Handle) -> Option<FetchSpec>;
+pub type BuildMethod<T> = fn(&mut T, &Poll) -> Option<FetchSpec>;
 
-/// A poll's reply as a method of the value it is delivered to.
-pub type ReplyMethod<T> = fn(&mut T, &Handle, &FetchResponse);
+/// A poll's reply as a method of the value it is delivered to, which says how the reply counts.
+pub type ReplyMethod<T> = fn(&mut T, &Poll, &FetchResponse) -> Verdict;
 
 thread_local! {
     pub(super) static REGISTRY: RefCell<Registry> = RefCell::new(Registry::default());
@@ -59,8 +63,13 @@ fn perform(kick: Kick) {
     let Some(build) = REGISTRY.with_borrow_mut(|registry| registry.prepare(&kick)) else {
         return;
     };
-    // Borrowed for the build only; dropping it would end the poll.
-    let spec = build(&ManuallyDrop::new(Handle(kick.index)));
+    let Ok(spec) = build(kick.index) else {
+        REGISTRY.with_borrow_mut(|registry| {
+            registry.finish(&kick, None, &mut HostBackend);
+            registry.release(kick.index, &mut HostBackend);
+        });
+        return;
+    };
     REGISTRY.with_borrow_mut(|registry| registry.finish(&kick, spec.as_ref(), &mut HostBackend));
 }
 
@@ -70,16 +79,19 @@ pub(super) fn trampoline(response: &FetchResponse) {
         ReplyAction::Ignore | ReplyAction::Stopped => {}
         ReplyAction::Reissued(kick) => schedule(Some(kick)),
         ReplyAction::Deliver(index, on_reply) => {
-            // Borrowed for the reply only; dropping it would end the poll.
-            on_reply(&ManuallyDrop::new(Handle(index)), response);
+            let Ok(verdict) = on_reply(index, response) else {
+                REGISTRY.with_borrow_mut(|registry| registry.release(index, &mut HostBackend));
+                return;
+            };
             let now = now_secs();
-            let delay =
-                REGISTRY.with_borrow_mut(|registry| registry.bank_reply(index, response.ok(), now));
+            let delay = REGISTRY.with_borrow_mut(|registry| {
+                registry.bank_reply(index, response.ok(), verdict, now)
+            });
             // Banked first, so a `Notify` the handler sent sees this reply's freshness;
             // what the handler asked for (`enable_after`, `invalidate`) goes out first,
             // and the interval's kick then leaves it be.
             widget::drain();
-            schedule(REGISTRY.with_borrow_mut(|registry| registry.kick_after(index, delay, now)));
+            schedule(REGISTRY.with_borrow_mut(|registry| registry.kick_after(index, delay)));
         }
     }
 }
@@ -95,19 +107,28 @@ pub(super) fn trampoline(response: &FetchResponse) {
 /// where the new poll would build before that build's request goes out.
 #[must_use = "dropping the returned Handle ends the poll"]
 pub fn register(build: Build, on_reply: OnReply, config: Config) -> Handle {
-    register_with(build, on_reply, BuildTiming::Now, config)
+    register_with(
+        move |index| Ok(build(&Handle::borrowed(index))),
+        move |index, response| {
+            on_reply(&Handle::borrowed(index), response);
+            // A rejection reaches the registry through the handle's `retry`.
+            Ok(Verdict::Accept)
+        },
+        BuildTiming::Now,
+        config,
+    )
 }
 
-fn register_with(
-    build: impl Fn(&Handle) -> Option<FetchSpec> + 'static,
-    on_reply: impl Fn(&Handle, &FetchResponse) + 'static,
+fn register_with<K>(
+    build: impl Fn(usize) -> Result<Option<FetchSpec>, TargetGone> + 'static,
+    on_reply: impl Fn(usize, &FetchResponse) -> Result<Verdict, TargetGone> + 'static,
     build_timing: BuildTiming,
     config: Config,
-) -> Handle {
+) -> Handle<K> {
     let index = REGISTRY
         .with_borrow_mut(|registry| registry.register(build, on_reply, build_timing, config));
     schedule(REGISTRY.with_borrow_mut(|registry| registry.start(index)));
-    Handle(index)
+    Handle(index, PhantomData)
 }
 
 fn register_on_target<T: 'static>(
@@ -115,55 +136,68 @@ fn register_on_target<T: 'static>(
     build: BuildMethod<T>,
     on_reply: ReplyMethod<T>,
     config: Config,
-) -> Handle {
+) -> Poll {
     let reply_target = target.clone();
+    // A method that dropped its own part ends the poll too.
     register_with(
-        // A build that dropped its own part sends nothing.
-        move |handle| {
+        move |index| {
             target
-                .deliver(|value| build(value, handle))
-                .flatten()
+                .deliver(|value| build(value, &Poll::borrowed(index)))
                 .filter(|_| target.is_live())
+                .ok_or(TargetGone)
         },
-        move |handle, response| {
-            reply_target.deliver(|value| on_reply(value, handle, response));
+        move |index, response| {
+            reply_target
+                .deliver(|value| on_reply(value, &Poll::borrowed(index), response))
+                .filter(|_| reply_target.is_live())
+                .ok_or(TargetGone)
         },
         BuildTiming::AtExportEnd,
         config,
     )
 }
 
-impl Drop for Handle {
+impl<K> Drop for Handle<K> {
     fn drop(&mut self) {
         REGISTRY.with_borrow_mut(|registry| registry.release(self.0, &mut HostBackend));
     }
 }
 
-impl widget::sealed::Unrefusable for Handle {}
+impl widget::sealed::Unrefusable for Poll {}
 
-impl Handle {
+impl Handle<Bound> {
     /// Register a poll whose `build` and `on_reply` run as methods of `to`.
     ///
     /// Otherwise as [`register`], except that `build` runs once the method
     /// or callback that asked for the request has returned, and of the requests
-    /// asked for by then the last one wins. Drive the poll from `#[widget]`
-    /// hooks or SDK callbacks only.
+    /// asked for by then the last one wins, though neither `enable_after`
+    /// nor `set_enabled(true)` replaces one on an enabled poll.
+    /// Drive the poll from `#[widget]` hooks or SDK callbacks only.
+    /// `on_reply` rejects a reply by returning [`Verdict::Retry`] or [`Verdict::RetryAfter`].
     ///
     /// Through a [`PartHandle`](crate::PartHandle) it returns a `Result`,
     /// as [`Outcome`](crate::Outcome) says.
-    /// The poll builds no request after the part is dropped.
+    /// Once the part is dropped, the poll ends the next time it would build or deliver a reply,
+    /// as if stopped.
     ///
     /// # Panics
     ///
     /// As [`invalidate`](Self::invalidate).
-    #[must_use = "dropping the returned Handle ends the poll"]
+    #[must_use = "dropping the returned Poll ends the poll"]
     pub fn register<T: 'static, R: Receiver<T>>(
         to: &R,
         build: BuildMethod<T>,
         on_reply: ReplyMethod<T>,
         config: Config,
-    ) -> R::Out<Handle> {
+    ) -> R::Out<Poll> {
         to.__register(|target| register_on_target(target, build, on_reply, config))
+    }
+}
+
+impl<K> Handle<K> {
+    /// The handle a callback borrows; dropping it would end the poll.
+    pub(super) fn borrowed(index: usize) -> ManuallyDrop<Self> {
+        ManuallyDrop::new(Self(index, PhantomData))
     }
 
     /// End the poll: cancel its live fetch, and drop a reply already on its way.
@@ -217,31 +251,12 @@ impl Handle {
         );
     }
 
-    /// Treat the reply being delivered as unusable, for a body
-    /// this handler, or a widget it notified, cannot use despite the 2xx.
-    ///
-    /// The poll then reads as failing and keeps the anchor it had,
-    /// and the next attempt waits `retry_ms` rather than the interval.
-    ///
-    /// # Panics
-    ///
-    /// From inside any poll's `build`, which has no reply to retry.
-    pub fn retry(&self) {
-        REGISTRY.with_borrow_mut(|registry| registry.request_retry(self.0));
-    }
-
-    /// Like [`retry`](Self::retry), including counting as no refresh,
-    /// but the next attempt waits `delay_ms` instead of `retry_ms`.
-    ///
-    /// # Panics
-    ///
-    /// From inside any poll's `build`, which has no reply to retry.
-    pub fn retry_after(&self, delay_ms: u32) {
-        REGISTRY.with_borrow_mut(|registry| registry.request_retry_after(self.0, delay_ms));
-    }
-
     /// Count the last ok reply as failed after all (e.g. a late decode failure),
     /// even if failed replies banked since; with none left to undo, count a plain failure.
+    ///
+    /// A reply handler rejects the reply it is handling with its [`Verdict`],
+    /// or `retry` in the free form, instead:
+    /// that reply banks only once the handler returns, so this would undo the one before it.
     pub fn mark_stale(&self) {
         let now = now_secs();
         REGISTRY.with_borrow_mut(|registry| registry.mark_stale(self.0, now));
@@ -292,5 +307,30 @@ impl Handle {
                 .last_success_secs(self.0)
                 .map(|unix_secs| crate::host::SystemTime { unix_secs })
         })
+    }
+}
+
+impl Handle<Free> {
+    /// Treat the reply being delivered as unusable, for a body this handler cannot use despite the 2xx.
+    ///
+    /// The poll then reads as failing and keeps the anchor it had,
+    /// and the next attempt waits `retry_ms` rather than the interval.
+    /// Called outside the reply handler, it marks the next reply the poll counts.
+    ///
+    /// # Panics
+    ///
+    /// From inside any poll's `build`, which has no reply to retry.
+    pub fn retry(&self) {
+        REGISTRY.with_borrow_mut(|registry| registry.request_retry(self.0));
+    }
+
+    /// Like [`retry`](Self::retry), including counting as no refresh,
+    /// but the next attempt waits `delay_ms` instead of `retry_ms`.
+    ///
+    /// # Panics
+    ///
+    /// From inside any poll's `build`, which has no reply to retry.
+    pub fn retry_after(&self, delay_ms: u32) {
+        REGISTRY.with_borrow_mut(|registry| registry.request_retry_after(self.0, delay_ms));
     }
 }

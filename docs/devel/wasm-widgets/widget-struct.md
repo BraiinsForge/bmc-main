@@ -15,27 +15,28 @@ use bmc_wasm_sdk::*;
 
 struct RandomFact {
     fact: Option<String>,
-    _poll: PollHandle,
+    _poll: Poll,
 }
 
 impl RandomFact {
-    fn build_request(&mut self, _poll: &PollHandle) -> Option<FetchSpec> {
+    fn build_request(&mut self, _poll: &Poll) -> Option<FetchSpec> {
         Some(FetchSpec::get(FACTS_API_URL))
     }
 
-    fn on_fact_data(&mut self, poll: &PollHandle, response: &FetchResponse) {
-        match response.ok().then(|| response.json().str("/data/text")).flatten() {
-            Some(fact) => self.fact = Some(fact),
-            None => poll.retry(),
-        }
+    fn on_fact_data(&mut self, _poll: &Poll, response: &FetchResponse) -> Verdict {
+        let Some(fact) = response.ok().then(|| response.json().str("/data/text")).flatten() else {
+            return Verdict::Retry;
+        };
+        self.fact = Some(fact);
         request_frame();
+        Verdict::Accept
     }
 }
 
 #[widget]
 impl Widget for RandomFact {
     fn init(me: &Building<Self>) -> Self {
-        let poll = PollHandle::register(me, Self::build_request, Self::on_fact_data, PollConfig::default());
+        let poll = Poll::register(me, Self::build_request, Self::on_fact_data, PollConfig::default());
         Self { fact: None, _poll: poll }
     }
 
@@ -57,10 +58,10 @@ What runs when, for this widget:
 2. `init` returns, the SDK stores the instance, and before the host gets control back `build_request` runs on it and the
    request goes out.
 3. In a later host call the reply arrives, and `on_fact_data` runs on the instance.
-4. A `poll.retry()` there only queues the next request. `on_fact_data` returns, then `build_request` runs and the
-   request goes to the host, to be sent after `retry_ms`; only then does the export end and the host get control back.
-   An `invalidate()` from a hook such as `on_params_update` runs the same way: the hook returns, `build_request` runs,
-   the export ends.
+4. A `Verdict::Retry` returned there only queues the next request. Once `on_fact_data` has returned, `build_request`
+   runs and the request goes to the host, to be sent after `retry_ms`; only then does the export end and the host get
+   control back. An `invalidate()` from a hook such as `on_params_update` runs the same way: the hook returns,
+   `build_request` runs, the export ends.
 5. `unload` drops the instance, and with it `_poll`, which ends the poll.
 
 ## Callbacks Are Methods
@@ -71,7 +72,7 @@ the receiver's type.
 | Free function (obsolete)      | Receiver first                                               |
 | ----------------------------- | ------------------------------------------------------------ |
 | `timer::start`                | `Timer::start`                                               |
-| `register_poll`               | `PollHandle::register`                                       |
+| `register_poll`               | `Poll::register`                                             |
 | `request.send`, `send_after`  | `request.send_on`, `send_after_on`                           |
 | `slot.set_fit`, `set_fit_ref` | `slot.set_fit_on`, `set_fit_ref_on`                          |
 | `set_bitmap_fit`              | `set_bitmap_fit_on`                                          |
@@ -98,11 +99,12 @@ What a registration returns depends on its receiver:
 | ---------------------------------------------------------------- | -------------------------------------------- | --------------------------- |
 | one the host may refuse, whose free function returns `Option<X>` | `Result<X, RegisterError>`                   | `Result<X, HandleError>`    |
 | `set_fit_ref_on`, whose free function returns `Result<X, E>`     | `Result<X, RegisterError<E>>`                | `Result<X, HandleError<E>>` |
-| `PollHandle::register` or `Notify::new`, never refused           | the handle `H` itself                        | `Result<H, PartError>`      |
+| `Poll::register` or `Notify::new`, never refused                 | the handle `H` itself                        | `Result<H, PartError>`      |
 
 - The free `fetch` and `fetch_after` have no row: send a `FetchRequest` with `send_on` instead.
-- The method takes `&mut self`, then the arguments the callback has always had. A method of a type other than the
-  receiver's does not compile, nor does a part passing `self`:
+- The method takes `&mut self`, then the arguments the callback has always had. A poll's methods take a `&Poll` in place
+  of the `&PollHandle`, and its reply method returns a `Verdict`. A decode's method takes a `DecodeOutcome` in place of
+  the `Option<BitmapId>`. A method of a type other than the receiver's does not compile, nor does a part passing `self`:
   `` `Session` cannot receive callbacks for `Session`'s methods ``.
 - `into_inner` on a `RegisterError` hands back what the free function's error carries, such as the body.
   `HandleError::Part` says the registration never reached the host, `HandleError::Register` that the host refused it.
@@ -218,26 +220,28 @@ through it. A part that fetches for this one widget sends what it fetched, and t
 
 ```rust
 struct FactSource {
-    _poll: PollHandle,
+    _poll: Poll,
     on_fact: Notify<String>,
 }
 
 impl FactSource {
     fn new(on_fact: Notify<String>) -> Part<Self> {
         Part::new_cyclic(|me| Self {
-            _poll: PollHandle::register(me, Self::build_request, Self::on_reply, PollConfig::default()),
+            _poll: Poll::register(me, Self::build_request, Self::on_reply, PollConfig::default()),
             on_fact,
         })
     }
 
-    fn build_request(&mut self, _poll: &PollHandle) -> Option<FetchSpec> {
+    fn build_request(&mut self, _poll: &Poll) -> Option<FetchSpec> {
         Some(FetchSpec::get(FACTS_API_URL))
     }
 
-    fn on_reply(&mut self, _poll: &PollHandle, response: &FetchResponse) {
-        if let Some(fact) = response.ok().then(|| response.json().str("/data/text")).flatten() {
-            self.on_fact.send(fact);
-        }
+    fn on_reply(&mut self, _poll: &Poll, response: &FetchResponse) -> Verdict {
+        let Some(fact) = response.ok().then(|| response.json().str("/data/text")).flatten() else {
+            return Verdict::Retry;
+        };
+        self.on_fact.send(fact);
+        Verdict::Accept
     }
 }
 
@@ -274,9 +278,9 @@ impl FactCard {
   state several readers share, such as a feed behind many list rows. The widget reads it when it renders.
 - Name the `Notify` and the widget's method for what happened, such as `on_fact` or `on_day_change`; `on_update` is for
   a part whose state changed as a whole.
-- A widget told of a reply it cannot use may call `retry()` or `retry_after()` on the part's poll from the method the
-  `Notify` runs, if the part exposes its `PollHandle` and sends from its reply handler. The reply then counts as no
-  refresh, as if the part's own handler had rejected it.
+- A widget told of a reply it cannot use may call `mark_stale()` on the part's poll from the method the `Notify` runs,
+  if the part exposes its `Poll`. The reply then counts as no refresh after all, but the next fetch keeps its schedule:
+  only the part's reply method retries sooner, by returning `Verdict::Retry`.
 - A send is delivered once the part's callback has returned, never inside it. The widget can then look into the part
   that sent; called at once, it would find it still borrowed.
 - Every send is delivered, in order. One whose receiver is gone by then runs nothing.
@@ -295,10 +299,10 @@ impl FactCard {
 
 - A method callback runs from the top of a host-called export, never from inside an SDK call the widget made, so a
   method never has its own instance delivered to under it.
-- SDK work that has to call back, such as a poll building its request after `enable_after` or `retry`, waits until the
-  method that called `enable_after` or `retry` returns, then runs before the host gets control back, on that export's
-  fuel budget. Of several requests a poll got by then, the last one wins, and `PollHandle::enabled()` in the same method
-  reflects the request, not a `build` that has not run.
+- SDK work that has to call back, such as a poll building its request after `enable_after` or `invalidate`, waits until
+  the method that called it returns, then runs before the host gets control back, on that export's fuel budget. Of
+  several requests a poll got by then, the last one wins, though neither `enable_after` nor `set_enabled(true)` replaces
+  one on an enabled poll, and `Poll::enabled()` in the same method reflects the request, not a `build` that has not run.
 - A method-callback poll therefore needs an SDK export around it: drive it from `#[widget]` hooks or SDK callbacks. From
   a hand-written export nothing would run the queued `build`, so the SDK refuses with a `BUG:` panic. A poll registered
   with the free `register_poll` builds at once, as before.

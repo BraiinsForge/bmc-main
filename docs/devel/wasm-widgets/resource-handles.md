@@ -15,7 +15,7 @@ decode returns a plain id instead, and ends on its own.
 | `SsdpSearch::start`                                          | `SsdpSearch`       | `stop()`       |
 | `UdpBroadcast::start`                                        | `UdpBroadcast`     | `stop()`       |
 | `HttpListener::listen`                                       | `HttpListener`     | `close()`      |
-| `PollHandle::register`                                       | `PollHandle`       | `stop()`       |
+| `Poll::register`                                             | `Poll`             | `stop()`       |
 
 Each call but `mdns_register` takes a receiver first, the widget or a part, and one of its methods as the callback; its
 free-function form (`timer::start`, `socket::tls_connect`, `register_poll`, …) takes a plain function, as does the `ws!`
@@ -112,19 +112,50 @@ stored handles.
 
 ## Poll Handles
 
-`PollHandle::stop()` ends a poll, and so does dropping the handle. Either one cancels the poll's live fetch, a reply
-already on its way is discarded, and the reply handler never runs again. `set_enabled(false)` only pauses a poll.
+`Poll::stop()` ends a poll, and so does dropping the handle: the live fetch is cancelled, a reply already on its way is
+discarded, and the reply handler never runs again. `set_enabled(false)` only pauses a poll.
 
-A poll registered with `PollHandle::register` builds once the method or callback that asked for the fetch has returned,
-before the export ends, and of the fetches asked for by then the last one wins. A reply handler that calls
-`enable_after` or `retry` on its handle therefore never sees `build` run under it. `enable_after` replaces a fetch in
-flight, and when the host will not cancel that fetch, the delay counts from its reply rather than from the call. A poll
-registered with the free `register_poll` builds at once. In both forms `build` may read its handle, may disable the
-poll, and may end it by dropping the stored handle, in which case nothing is sent. It must not ask any poll for a
-request (`invalidate`, `enable_after`, `set_enabled(true)`, or registering one): that would run a `build` again before
-this one's request goes out, so the SDK panics instead. It panics too when `build` calls `retry` or `retry_after`: they
-mark the reply being delivered, and a build has none.
+### When `build` Runs
 
-`PollHandle::index` numbers polls in registration order, and an ended poll's index is never given to another poll, so
-widget state keyed by it stays unambiguous. Each ended poll keeps an empty slot for the widget's lifetime, so a widget
-that registers new polls over and over grows without bound.
+- A poll registered with `Poll::register` builds once the method or callback that asked has returned, before the export
+  ends, and of the requests asked for by then the last one wins, though neither `enable_after` nor `set_enabled(true)`
+  replaces one on an enabled poll (see [One Fetch Per Poll](#one-fetch-per-poll)). A reply method that calls
+  `enable_after` or returns `Verdict::Retry` therefore never has `build` run under it.
+- A poll registered with the free `register_poll` builds at once.
+- `build` runs when a request is asked for, not when it goes out: after a reply, the next request is built at once and
+  the host sends it an interval later, so whatever `build` reads from the clock is that old by then.
+
+### What `build` May Do
+
+- Read its handle or disable the poll.
+- End the poll by dropping the stored handle: nothing is sent.
+- Return `None`: nothing is sent until a request is asked for again.
+- It must not ask any poll for a request (`invalidate`, `enable_after`, `set_enabled(true)`, or registering one), as
+  that would run another `build` before this one's request goes out. Nor may it call `retry` or `retry_after` on a
+  `PollHandle`, which mark the reply being delivered, and a build has none. The SDK panics on either.
+
+### One Fetch Per Poll
+
+A poll never has more than one fetch, so each poll holds at most one of the widget's fetch slots (16 by default),
+however often it is asked for a request. `invalidate` replaces the live fetch rather than send beside it: one still
+waiting in the host is cancelled, and one already sent is dropped when its reply arrives. The new request waits for that
+reply, and the debounce counts from it rather than from the call. On an enabled poll `enable_after` never replaces a
+fetch: one the poll already has keeps its timing, whether sent or still waiting for its `build`, and only a poll with
+none fetches after the delay. On a disabled poll whose request the host would not cancel, the delay counts from that
+request's reply.
+
+### Rejecting A Reply
+
+| Case                                                                 | Call                                                 | Effect                                                                                                                       |
+| -------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| A method's reply is unusable, such as an unparsable 2xx              | return `Verdict::Retry` or `Verdict::RetryAfter(ms)` | No refresh; the next fetch waits `retry_ms`, or `ms`, instead of the interval                                                |
+| A counted reply turns out bad, such as an image that fails to decode | `mark_stale()`                                       | The latest good reply counts as no refresh; the next good one clears it. Nothing is fetched early: add `invalidate` for that |
+| A plain-function handler's reply is unusable                         | `retry()` or `retry_after(ms)` on its `PollHandle`   | Marks the next reply the poll counts                                                                                         |
+
+A `Poll` has no `retry`, as a retry from anywhere other than the reply would reject whichever reply came next.
+
+### Indices
+
+`Poll::index` numbers polls in registration order, and an ended poll's index is never given to another poll, so widget
+state keyed by it stays unambiguous. Each ended poll keeps an empty slot for the widget's lifetime, so a widget that
+registers new polls over and over grows without bound.

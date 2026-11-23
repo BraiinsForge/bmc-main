@@ -20,17 +20,18 @@
 
 //! Fetches the SDK repeats on a widget's behalf.
 //!
-//! [`Handle::register`], `PollHandle::register` at the crate root,
-//! starts a poll whose build and replies run methods on its receiver,
-//! and returns the only [`Handle`] to it.
+//! [`Poll::register`] starts a poll whose build and replies run methods on its receiver,
+//! and returns the only [`Poll`] handle to it.
 //! The SDK sends the poll's request, hands each reply to its reply method
-//! with the borrowed handle, and sends the next request on the [`Config`] cadence.
+//! with the borrowed handle, counts the reply as the method's [`Verdict`] says,
+//! and sends the next request on the [`Config`] cadence.
 //! Dropping the handle, or calling `Handle::stop`, ends the poll and cancels its live fetch.
 //! The free `register`, re-exported as `register_poll`, takes plain functions,
 //! and stays only so that a widget not yet ported still builds.
 
 #[cfg(any(target_arch = "wasm32", test))]
 use std::collections::HashMap;
+use std::marker::PhantomData;
 #[cfg(any(target_arch = "wasm32", test))]
 use std::rc::Rc;
 use std::time::Duration;
@@ -157,12 +158,28 @@ impl Default for Config {
 
 /// The only handle to a registered poll; dropping it ends the poll.
 ///
+/// `K` is the form the poll was registered in: [`Free`] for plain functions and [`Bound`] for methods.
+///
 /// Once the poll has ended, as on a reply handler's argument after the handler stopped the stored handle,
 /// its methods do nothing: `enabled` reads `false`, and neither `is_stale` nor `is_offline` holds.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Handle(usize);
+pub struct Handle<K = Free>(usize, PhantomData<K>);
 
-impl Handle {
+/// Marks the [`Handle`] of a poll registered with plain functions.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Free {}
+
+/// Marks the [`Handle`] of a poll whose callbacks are methods.
+///
+/// Its reply method rejects a reply by returning a [`Verdict`], so the handle has no `retry`:
+/// called from anywhere else, it would reject whichever reply the poll banks next.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Bound {}
+
+/// The handle of a poll whose build and reply run as methods, from [`Poll::register`].
+pub type Poll = Handle<Bound>;
+
+impl<K> Handle<K> {
     /// The poll's position in registration order; an ended poll's index is never reused.
     #[must_use]
     pub fn index(&self) -> usize {
@@ -170,7 +187,10 @@ impl Handle {
     }
 }
 
-/// Builds the poll's next request, or `None` to skip it.
+/// Builds the poll's next request, or `None` to send none until the poll is asked for one again.
+///
+/// It runs when the request is asked for, not when it goes out:
+/// after a reply, the next request is built at once and the host sends it an interval later.
 ///
 /// It may read the handle, disable or end the poll, and call what asks for no request,
 /// such as `set_interval`.
@@ -179,11 +199,31 @@ impl Handle {
 /// So does `retry` or `retry_after`, which mark the reply being delivered, and a build has none.
 pub type Build = fn(&Handle) -> Option<FetchSpec>;
 
-#[cfg(any(target_arch = "wasm32", test))]
-type BuildFn = Rc<dyn Fn(&Handle) -> Option<FetchSpec>>;
+/// How a reply method counts the reply it was handed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// As its HTTP status says: a 2xx is a refresh, anything else a failure.
+    Accept,
+    /// Unusable despite a 2xx, such as a body that does not parse.
+    /// The reply is no refresh: the poll reads as failing and keeps the anchor it had,
+    /// and the next attempt waits `retry_ms` rather than the interval.
+    Retry,
+    /// As `Retry`, but the next attempt waits this many milliseconds.
+    RetryAfter(u32),
+}
 
+/// The value a method poll is registered on is gone, so the poll ends.
 #[cfg(any(target_arch = "wasm32", test))]
-type OnReplyFn = Rc<dyn Fn(&Handle, &FetchResponse)>;
+#[derive(Debug)]
+pub(crate) struct TargetGone;
+
+/// A poll's `build`, given the poll's index.
+#[cfg(any(target_arch = "wasm32", test))]
+type BuildFn = Rc<dyn Fn(usize) -> Result<Option<FetchSpec>, TargetGone>>;
+
+/// A poll's reply handler, given the poll's index.
+#[cfg(any(target_arch = "wasm32", test))]
+type OnReplyFn = Rc<dyn Fn(usize, &FetchResponse) -> Result<Verdict, TargetGone>>;
 
 /// When a kick may run the poll's `build`.
 #[cfg(any(target_arch = "wasm32", test))]
@@ -259,7 +299,7 @@ struct Undo {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-struct Poll {
+struct Entry {
     build: BuildFn,
     on_reply: OnReplyFn,
     build_timing: BuildTiming,
@@ -276,7 +316,7 @@ struct Poll {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-impl Poll {
+impl Entry {
     /// Count the last ok reply as a failure after all, once, even with failed replies banked since;
     /// with none left to undo, count a failure at `now_secs`.
     fn undo_success(&mut self, now_secs: i64) {
@@ -308,7 +348,7 @@ pub(crate) struct Kick {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn request_kick(poll: &mut Poll, index: usize, delay_ms: Option<u32>) -> Kick {
+fn request_kick(poll: &mut Entry, index: usize, delay_ms: Option<u32>) -> Kick {
     poll.revision += 1;
     poll.flight = Flight::Queued;
     Kick {
@@ -322,7 +362,7 @@ fn request_kick(poll: &mut Poll, index: usize, delay_ms: Option<u32>) -> Kick {
 /// Enable a disabled poll with its next request after `delay_ms`;
 /// a request kept across the disable is superseded, as enabling promises a fresh `build`.
 #[cfg(any(target_arch = "wasm32", test))]
-fn reenable(poll: &mut Poll, index: usize, delay_ms: u32) -> Option<Kick> {
+fn reenable(poll: &mut Entry, index: usize, delay_ms: u32) -> Option<Kick> {
     match poll.flight {
         Flight::Disabled => Some(request_kick(poll, index, Some(delay_ms))),
         Flight::Stopping(id) => {
@@ -354,27 +394,35 @@ enum Activity {
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Default)]
 pub(crate) struct Registry {
-    polls: Vec<Option<Poll>>,
+    polls: Vec<Option<Entry>>,
     routes: HashMap<FetchRequestId, usize>,
     activity: Activity,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn poll_mut(polls: &mut [Option<Poll>], index: usize) -> Option<&mut Poll> {
+fn poll_mut(polls: &mut [Option<Entry>], index: usize) -> Option<&mut Entry> {
     polls.get_mut(index)?.as_mut()
+}
+
+/// The poll `kick` is for, unless the kick went stale:
+/// the poll ended, was disabled, or asked for a newer kick.
+#[cfg(any(target_arch = "wasm32", test))]
+fn current<'a>(polls: &'a mut [Option<Entry>], kick: &Kick) -> Option<&'a mut Entry> {
+    poll_mut(polls, kick.index)
+        .filter(|poll| poll.flight == Flight::Queued && poll.revision == kick.revision)
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
 impl Registry {
     pub(crate) fn register(
         &mut self,
-        build: impl Fn(&Handle) -> Option<FetchSpec> + 'static,
-        on_reply: impl Fn(&Handle, &FetchResponse) + 'static,
+        build: impl Fn(usize) -> Result<Option<FetchSpec>, TargetGone> + 'static,
+        on_reply: impl Fn(usize, &FetchResponse) -> Result<Verdict, TargetGone> + 'static,
         build_timing: BuildTiming,
         config: Config,
     ) -> usize {
         let index = self.polls.len();
-        self.polls.push(Some(Poll {
+        self.polls.push(Some(Entry {
             build: Rc::new(build),
             on_reply: Rc::new(on_reply),
             build_timing,
@@ -411,7 +459,7 @@ impl Registry {
         }
     }
 
-    fn poll(&self, index: usize) -> Option<&Poll> {
+    fn poll(&self, index: usize) -> Option<&Entry> {
         self.polls.get(index)?.as_ref()
     }
 
@@ -443,18 +491,11 @@ impl Registry {
         Some(request_kick(poll, index, delay_ms))
     }
 
-    /// The poll `kick` is for, unless the kick went stale:
-    /// the poll ended, was disabled, or asked for a newer kick.
-    fn current(&self, kick: &Kick) -> Option<&Poll> {
-        let poll = self.poll(kick.index)?;
-        (poll.flight == Flight::Queued && poll.revision == kick.revision).then_some(poll)
-    }
-
     /// The `build` to run for `kick`, or `None` for a stale kick.
     ///
     /// Until [`finish`](Self::finish), asking any poll for a request panics.
     pub(crate) fn prepare(&mut self, kick: &Kick) -> Option<BuildFn> {
-        let build = Rc::clone(&self.current(kick)?.build);
+        let build = Rc::clone(&current(&mut self.polls, kick)?.build);
         self.activity = Activity::Building;
         Some(build)
     }
@@ -467,10 +508,9 @@ impl Registry {
         backend: &mut dyn FetchBackend,
     ) {
         self.activity = Activity::Idle;
-        if self.current(kick).is_none() {
+        let Some(poll) = current(&mut self.polls, kick) else {
             return;
-        }
-        let poll = poll_mut(&mut self.polls, kick.index).expect("BUG: current found the poll");
+        };
         poll.flight = Flight::Idle;
         let Some(spec) = spec else {
             return;
@@ -484,9 +524,7 @@ impl Registry {
             Some(id) => Some(id),
             None => backend.send(spec, Some(retry_ms)),
         };
-        if let Some(id) = id
-            && let Some(poll) = poll_mut(&mut self.polls, kick.index)
-        {
+        if let Some(id) = id {
             poll.flight = Flight::Live(id);
             self.routes.insert(id, kick.index);
         }
@@ -582,7 +620,7 @@ impl Registry {
         }
     }
 
-    /// The last ok reply proved bad (a late decode failure); see `Poll::undo_success`.
+    /// The last ok reply proved bad (a late decode failure); see `Entry::undo_success`.
     pub(crate) fn mark_stale(&mut self, index: usize, now_secs: i64) {
         if let Some(poll) = poll_mut(&mut self.polls, index) {
             poll.undo_success(now_secs);
@@ -608,11 +646,22 @@ impl Registry {
         }
     }
 
-    /// Record the delivered reply as a refresh or a failure,
-    /// and return how long the next attempt waits; `None` for no next attempt.
-    pub(crate) fn bank_reply(&mut self, index: usize, ok: bool, now_secs: i64) -> Option<u32> {
+    /// Record the delivered reply as a refresh or a failure, as the handler's `verdict`
+    /// or its `retry` says, and return how long the next attempt waits; `None` for no next attempt.
+    pub(crate) fn bank_reply(
+        &mut self,
+        index: usize,
+        ok: bool,
+        verdict: Verdict,
+        now_secs: i64,
+    ) -> Option<u32> {
         let poll = poll_mut(&mut self.polls, index)?;
-        let forced = std::mem::take(&mut poll.force_retry);
+        let asked = std::mem::take(&mut poll.force_retry);
+        let forced = match verdict {
+            Verdict::Accept => asked,
+            Verdict::Retry => Some(poll.config.retry_ms),
+            Verdict::RetryAfter(delay_ms) => Some(delay_ms),
+        };
         // A forced retry means the handler rejected this reply, so it is no
         // refresh however the HTTP call went.
         if ok && forced.is_none() {
@@ -632,29 +681,13 @@ impl Registry {
         }
     }
 
-    /// Ask for the attempt after a banked reply, unless a request went out meanwhile.
-    ///
-    /// A retry asked for since the banking, by a widget the reply's handler notified,
-    /// rejects the reply after all: a refresh it banked is undone, and the retry's delay wins.
+    /// Ask for the attempt after a banked reply, unless one was asked for meanwhile.
     pub(crate) fn kick_after(
         &mut self,
         index: usize,
         banked_delay_ms: Option<u32>,
-        now_secs: i64,
     ) -> Option<Kick> {
-        let poll = poll_mut(&mut self.polls, index)?;
-        let delay_ms = match poll.force_retry.take() {
-            Some(forced) => {
-                // Only an ok reply banked a success to undo;
-                // after a failed one, the undo record is an earlier reply's.
-                if poll.health == Health::Ok {
-                    poll.undo_success(now_secs);
-                }
-                forced
-            }
-            None => banked_delay_ms?,
-        };
-        self.kick(index, Some(delay_ms))
+        self.kick(index, Some(banked_delay_ms?))
     }
 
     /// Enable the poll and ask for a request, or disable it and cancel the live one in place.

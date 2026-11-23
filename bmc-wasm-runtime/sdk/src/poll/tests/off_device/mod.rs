@@ -121,8 +121,7 @@ fn build_using_the_handle(handle: &Handle) -> Option<FetchSpec> {
     Some(FetchSpec::get("http://x/data"))
 }
 
-fn enable_after_nine_seconds(handle: &Handle, _response: &FetchResponse) {
-    handle.set_enabled(false);
+fn enable_after_nine_seconds<K>(handle: &Handle<K>, _response: &FetchResponse) {
     handle.enable_after(9_000);
 }
 

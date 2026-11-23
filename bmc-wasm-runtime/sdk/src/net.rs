@@ -278,7 +278,7 @@ pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) -> Option<Fet
 
 /// Fetch a URL with GET after a delay (in milliseconds).
 /// A request repeated on a cadence is a poll instead,
-/// registered with [`PollHandle::register`](crate::PollHandle::register).
+/// registered with [`Poll::register`](crate::Poll::register).
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
 #[must_use]

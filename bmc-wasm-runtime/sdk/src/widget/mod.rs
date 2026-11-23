@@ -38,17 +38,17 @@
 //! which is harmless: the host never calls into a trapped instance again.
 //!
 //! ```ignore
-//! use bmc_wasm_sdk::{Building, PollConfig, PollHandle, Widget, widget};
+//! use bmc_wasm_sdk::{Building, PollConfig, Poll, Widget, widget};
 //!
 //! struct RandomFact {
 //!     fact: Option<String>,
-//!     _poll: PollHandle,
+//!     _poll: Poll,
 //! }
 //!
 //! #[widget]
 //! impl Widget for RandomFact {
 //!     fn init(me: &Building<Self>) -> Self {
-//!         let poll = PollHandle::register(me, Self::build_request, Self::on_reply, PollConfig::default());
+//!         let poll = Poll::register(me, Self::build_request, Self::on_reply, PollConfig::default());
 //!         Self { fact: None, _poll: poll }
 //!     }
 //!
@@ -160,7 +160,7 @@ pub(crate) mod sealed {
     /// whose only failure through a `PartHandle` is a part that is not live.
     #[diagnostic::on_unimplemented(
         message = "`{Self}` is not what an SDK registration returns",
-        note = "a registration returns a `Result` with a `RegisterError`, a `PollHandle` or a `Notify`"
+        note = "a registration returns a `Result` with a `RegisterError`, a `Poll` or a `Notify`"
     )]
     pub trait Unrefusable {}
 }
@@ -244,7 +244,7 @@ impl<E> From<RegisterError<E>> for HandleError<E> {
 /// | Through any other receiver | Through a `PartHandle` |
 /// |---|---|
 /// | `Result<X, RegisterError<E>>` | `Result<X, HandleError<E>>` |
-/// | a [`PollHandle`](crate::PollHandle) or a [`Notify`](crate::Notify), which the host cannot refuse | `Result<_, PartError>` |
+/// | a [`Poll`](crate::Poll) or a [`Notify`](crate::Notify), which the host cannot refuse | `Result<_, PartError>` |
 pub trait Outcome: sealed::SealedOutcome + Sized {
     /// This outcome through a [`PartHandle`].
     type OrNotLive;

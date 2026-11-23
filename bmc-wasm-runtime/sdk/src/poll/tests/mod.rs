@@ -18,8 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::mem::ManuallyDrop;
-
 use super::*;
 use crate::wasm_test;
 
@@ -88,7 +86,7 @@ fn perform(reg: &mut Registry, be: &mut FakeBackend, kick: Option<Kick>) {
     let Some(build) = reg.prepare(&kick) else {
         return;
     };
-    let spec = build(&ManuallyDrop::new(Handle(kick.index)));
+    let spec = build(kick.index).expect("BUG: a test poll's build has no part to lose");
     reg.finish(&kick, spec.as_ref(), be);
 }
 
@@ -113,8 +111,19 @@ fn set_enabled_after(reg: &mut Registry, be: &mut FakeBackend, h: usize, delay_m
 }
 
 fn reschedule(reg: &mut Registry, be: &mut FakeBackend, h: usize, ok: bool, now_secs: i64) {
-    let delay = reg.bank_reply(h, ok, now_secs);
-    let kick = reg.kick_after(h, delay, now_secs);
+    reschedule_judged(reg, be, h, ok, Verdict::Accept, now_secs);
+}
+
+fn reschedule_judged(
+    reg: &mut Registry,
+    be: &mut FakeBackend,
+    h: usize,
+    ok: bool,
+    verdict: Verdict,
+    now_secs: i64,
+) {
+    let delay = reg.bank_reply(h, ok, verdict, now_secs);
+    let kick = reg.kick_after(h, delay);
     perform(reg, be, kick);
 }
 
@@ -128,8 +137,8 @@ fn begin_reply(reg: &mut Registry, be: &mut FakeBackend, id: FetchRequestId) -> 
 
 fn register_in(reg: &mut Registry, build: Build, config: Config) -> usize {
     reg.register(
-        build,
-        |_: &Handle, _: &FetchResponse| {},
+        move |index| Ok(build(&Handle::borrowed(index))),
+        |_, _: &FetchResponse| Ok(Verdict::Accept),
         BuildTiming::Now,
         config,
     )
@@ -152,6 +161,21 @@ fn deliver_at(
 
 fn deliver(reg: &mut Registry, be: &mut FakeBackend, id: u32, ok: bool) -> ReplyAction {
     deliver_at(reg, be, id, ok, 0)
+}
+
+/// Delivers reply `id` as a 2xx at `now_secs` that its handler judged as `verdict`.
+fn deliver_judged(
+    reg: &mut Registry,
+    be: &mut FakeBackend,
+    id: u32,
+    verdict: Verdict,
+    now_secs: i64,
+) {
+    let id = FetchRequestId::from_wire(id).expect("BUG: test id is nonzero");
+    let ReplyAction::Deliver(h, _) = begin_reply(reg, be, id) else {
+        panic!("BUG: the test delivers the live request's reply");
+    };
+    reschedule_judged(reg, be, h, true, verdict, now_secs);
 }
 
 const CFG: Config = Config {
@@ -361,6 +385,34 @@ fn retry_after_reschedules_with_the_requested_delay_despite_ok() {
     reschedule(&mut reg, &mut be, h, true, 0);
     assert_eq!(be.sends.len(), 2);
     assert_eq!(be.sends[1].1, Some(42_000));
+}
+
+#[wasm_test]
+fn a_reply_judged_retry_is_retried_after_retry_ms() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    deliver_judged(&mut reg, &mut be, 1, Verdict::Retry, 0);
+    assert_eq!(
+        be.sends.last().map(|send| send.1),
+        Some(Some(CFG.retry_ms)),
+        "a 2xx its handler rejected is retried soon, not after the interval"
+    );
+}
+
+#[wasm_test]
+fn a_reply_judged_retry_after_waits_the_delay_it_names() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    deliver_judged(&mut reg, &mut be, 1, Verdict::RetryAfter(42_000), 0);
+    assert_eq!(
+        be.sends.last().map(|send| send.1),
+        Some(Some(42_000)),
+        "the handler's own backoff wins over retry_ms and the interval"
+    );
 }
 
 #[wasm_test]

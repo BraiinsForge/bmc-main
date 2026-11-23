@@ -110,6 +110,26 @@ fn mark_stale_reverts_the_corrupt_reply_to_the_last_good_anchor() {
 }
 
 #[wasm_test]
+fn a_good_reply_after_mark_stale_is_fresh_again() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    deliver_at(&mut reg, &mut be, 1, true, 0);
+    deliver_at(&mut reg, &mut be, 2, true, 100);
+    reg.mark_stale(h, 100);
+
+    deliver_at(&mut reg, &mut be, 3, true, 105);
+
+    assert_eq!(
+        reg.last_success_secs(h),
+        Some(105),
+        "a reply marked stale stays so only until the next good one"
+    );
+    assert!(!reg.is_stale(h, 105));
+}
+
+#[wasm_test]
 fn restore_anchor_seeds_only_before_the_first_success() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
@@ -356,74 +376,34 @@ fn retries_inside_the_grace_do_not_restart_it() {
     );
 }
 
-/// Delivers reply `id` as a 2xx at `now_secs` that a widget told of it rejects:
-/// the widget asks for a retry once `handler` has run and the reply is banked.
-fn deliver_rejected_by_widget(
-    reg: &mut Registry,
-    be: &mut FakeBackend,
-    id: u32,
-    now_secs: i64,
-    handler: impl FnOnce(&mut Registry, usize),
-) {
-    let id = FetchRequestId::from_wire(id).expect("BUG: test id is nonzero");
-    let ReplyAction::Deliver(h, _) = begin_reply(reg, be, id) else {
-        panic!("BUG: the test delivers the live request's reply");
-    };
-    handler(reg, h);
-    let delay = reg.bank_reply(h, true, now_secs);
-    reg.request_retry_after(h, 7_000);
-    let kick = reg.kick_after(h, delay, now_secs);
-    perform(reg, be, kick);
-}
-
 #[wasm_test]
-fn a_reply_a_told_widget_rejects_does_not_restart_the_grace() {
-    let mut reg = Registry::default();
-    let mut be = FakeBackend::new();
-    let h = register_in(&mut reg, build_url, CFG); // 7.5 s grace
-    start(&mut reg, &mut be, h);
-    deliver_at(&mut reg, &mut be, 1, false, 0);
-    deliver_rejected_by_widget(&mut reg, &mut be, 2, 5, |_, _| {});
-
-    assert!(
-        reg.is_offline(h, 8),
-        "a widget's rejection continues the streak, as the handler's own does"
-    );
-}
-
-#[wasm_test]
-fn a_reply_the_handler_and_a_told_widget_both_reject_keeps_the_last_good_anchor() {
+fn a_reply_judged_retry_is_no_refresh() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
     let h = register_in(&mut reg, build_url, CFG);
     start(&mut reg, &mut be, h);
     deliver_at(&mut reg, &mut be, 1, true, 0);
-    deliver_at(&mut reg, &mut be, 2, true, 10);
-    deliver_rejected_by_widget(&mut reg, &mut be, 3, 20, Registry::request_retry);
+    deliver_judged(&mut reg, &mut be, 2, Verdict::Retry, 100);
 
     assert_eq!(
         reg.last_success_secs(h),
-        Some(10),
-        "a reply that banked no success has none for the widget's rejection to undo"
+        Some(0),
+        "a 2xx its handler rejected keeps the previous anchor"
     );
 }
 
 #[wasm_test]
-fn the_reply_after_a_widget_rejection_counts_again() {
+fn the_reply_after_one_judged_retry_counts_again() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
     let h = register_in(&mut reg, build_url, CFG);
     start(&mut reg, &mut be, h);
-    deliver_rejected_by_widget(&mut reg, &mut be, 1, 0, |_, _| {});
+    deliver_judged(&mut reg, &mut be, 1, Verdict::Retry, 0);
     deliver_at(&mut reg, &mut be, 2, true, 10);
 
     assert_eq!(
         reg.last_success_secs(h),
         Some(10),
-        "a widget's retry rejects only the reply it was told of"
-    );
-    assert!(
-        !reg.is_stale(h, 1_000_000),
-        "the next good reply ends the failure the rejection started"
+        "a verdict judges only the reply it was returned for"
     );
 }

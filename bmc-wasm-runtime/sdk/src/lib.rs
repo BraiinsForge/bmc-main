@@ -446,7 +446,9 @@ pub use network::NetworkInfo;
 pub use notify::Notify;
 #[cfg(any(target_arch = "wasm32", test))]
 pub use poll::register as register_poll;
-pub use poll::{Config as PollConfig, FetchSpec, Handle as PollHandle, Method as FetchMethod};
+pub use poll::{Config as PollConfig, FetchSpec, Method as FetchMethod, Poll, Verdict};
+/// The handle of a poll registered with plain functions, through `register_poll`.
+pub type PollHandle = poll::Handle<poll::Free>;
 #[cfg(target_arch = "wasm32")]
 pub use slot::*;
 pub use tz::Tz;

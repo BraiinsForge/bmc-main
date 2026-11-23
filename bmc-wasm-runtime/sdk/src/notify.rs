@@ -29,10 +29,12 @@
 //! }
 //!
 //! impl FactSource {
-//!     fn on_reply(&mut self, _poll: &PollHandle, response: &FetchResponse) {
-//!         if let Some(fact) = parse(response) {
-//!             self.on_fact.send(fact);
-//!         }
+//!     fn on_reply(&mut self, _poll: &Poll, response: &FetchResponse) -> Verdict {
+//!         let Some(fact) = parse(response) else {
+//!             return Verdict::Retry;
+//!         };
+//!         self.on_fact.send(fact);
+//!         Verdict::Accept
 //!     }
 //! }
 //!

@@ -62,7 +62,7 @@ impl NamedayData {
 pub(super) type Names = Part<NamedaySource>;
 
 pub(super) struct NamedaySource {
-    poll: PollHandle,
+    poll: Poll,
     /// What the last request built asked for, so its reply can be checked against today;
     /// `None` until a build succeeds and after one fails, so the day check asks again.
     requested_for: Option<TimeWithTimezone>,
@@ -142,7 +142,7 @@ impl NamedaySource {
     /// `on_day_change` is sent once the day of the names last sent has passed.
     pub(super) fn new(on_names: Notify<NamedayData>, on_day_change: Notify<()>) -> Part<Self> {
         Part::new_cyclic(|me| Self {
-            poll: PollHandle::register(
+            poll: Poll::register(
                 me,
                 Self::build_request,
                 Self::on_nameday_data,
@@ -201,7 +201,7 @@ impl NamedaySource {
         }
     }
 
-    fn build_request(&mut self, _handle: &PollHandle) -> Option<FetchSpec> {
+    fn build_request(&mut self, _handle: &Poll) -> Option<FetchSpec> {
         self.requested_for = None;
         let tz = current_tz()?;
         let time = SystemTime::now();
@@ -215,7 +215,7 @@ impl NamedaySource {
         Some(FetchSpec::get(request_url))
     }
 
-    fn on_nameday_data(&mut self, handle: &PollHandle, response: &FetchResponse) {
+    fn on_nameday_data(&mut self, _handle: &Poll, response: &FetchResponse) -> Verdict {
         if response.ok() {
             match (
                 self.requested_for.clone().filter(is_today),
@@ -225,7 +225,7 @@ impl NamedaySource {
                     // Data were fetched for incorrect date. This happens when NTP sync occurs
                     // after scheduling the fetch before the fetch successfully completes
                     // (it fails on TLS cert validation before time is synced).
-                    handle.retry();
+                    Verdict::Retry
                 }
                 (Some(requested_for), Some(names_per_country)) => {
                     self.served_for = Some(requested_for.clone());
@@ -233,6 +233,7 @@ impl NamedaySource {
                         names_per_country,
                         fetched_at: requested_for,
                     });
+                    Verdict::Accept
                 }
                 (Some(_), None) => {
                     // No country parsed at all => `/data` is absent or the schema
@@ -246,12 +247,13 @@ impl NamedaySource {
 
                     // If response is OK but parsing failed, poll engine will NOT reschedule
                     // new fetch automatically => we need to reschedule explicitly.
-                    handle.retry();
+                    Verdict::Retry
                 }
             }
         } else {
             // If response is not OK, poll engine will reschedule new fetch automatically.
             log_warn!("nameday: fetch failed (status {})", response.status);
+            Verdict::Accept
         }
     }
 }
