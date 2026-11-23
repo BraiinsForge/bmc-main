@@ -2109,6 +2109,7 @@ mod tests {
     };
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
+    use indoc::formatdoc;
     use std::time::Duration;
     mod params_migration;
 
@@ -2234,12 +2235,27 @@ mod tests {
         shutdown_delay: Duration,
     ) -> String {
         let ready = ready
-            .map(|path| format!("touch {}\n", path.display()))
+            .map(|path| format!("touch {}", path.display()))
             .unwrap_or_default();
-        format!(
-            "#!/bin/sh\nchild=\ncleanup() {{\n  if [ -n \"$child\" ]; then\n    kill \"$child\" 2>/dev/null\n    wait \"$child\"\n  fi\n  sleep {}\n  exit 0\n}}\ntrap cleanup TERM\nsleep 30 &\nchild=$!\n{ready}wait \"$child\"\n",
-            shutdown_delay.as_secs_f64(),
-        )
+        let shutdown_delay = shutdown_delay.as_secs_f64();
+        // busybox ash, the nix sandbox's /bin/sh, forks without blocking signals:
+        // a child that has not yet cleared the inherited trap swallows a SIGTERM.
+        // The trap reads `$!` itself, as a TERM can run it before a copy is assigned.
+        formatdoc! {r#"
+            #!/bin/sh
+            cleanup() {{
+              if [ -n "$!" ]; then
+                kill -KILL "$!" 2>/dev/null
+                wait "$!"
+              fi
+              sleep {shutdown_delay}
+              exit 0
+            }}
+            trap cleanup TERM
+            sleep 30 &
+            {ready}
+            wait "$!"
+        "#}
     }
 
     async fn wait_for_widget_calls(
