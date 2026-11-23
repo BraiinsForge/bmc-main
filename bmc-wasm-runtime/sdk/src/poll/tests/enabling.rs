@@ -202,7 +202,133 @@ fn an_invalidate_after_the_enable_after_rebuilds_at_the_debounce() {
 }
 
 #[wasm_test]
-fn an_enable_after_following_an_invalidate_keeps_its_back_off() {
+fn an_enable_after_leaves_a_running_poll_on_its_interval() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    deliver(&mut reg, &mut be, 1, true);
+
+    set_enabled_after(&mut reg, &mut be, h, 60_000);
+
+    assert_eq!(
+        (be.sends.len(), be.cancels.len(), be.sends[1].1),
+        (2, 0, CFG.interval_ms),
+        "an enabled poll's next fetch keeps the interval it was sent with"
+    );
+    assert!(
+        matches!(
+            deliver(&mut reg, &mut be, 2, true),
+            ReplyAction::Deliver(..)
+        ),
+        "the fetch is still the poll's own, so its reply is delivered"
+    );
+}
+
+#[wasm_test]
+fn an_enable_after_rearms_a_poll_without_an_interval() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(
+        &mut reg,
+        build_url,
+        Config {
+            interval_ms: None,
+            ..CFG
+        },
+    );
+    start(&mut reg, &mut be, h);
+    deliver(&mut reg, &mut be, 1, true);
+
+    set_enabled_after(&mut reg, &mut be, h, 9_000);
+
+    assert_eq!(
+        (be.sends.len(), be.sends.last().map(|send| send.1)),
+        (2, Some(Some(9_000))),
+        "with nothing asked for after its reply, the poll fetches after the delay"
+    );
+}
+
+#[wasm_test]
+fn an_enable_after_fetches_after_a_build_that_made_nothing() {
+    TOGGLE.with(|t| t.set(false));
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_toggle, CFG);
+    start(&mut reg, &mut be, h);
+    TOGGLE.with(|t| t.set(true));
+
+    set_enabled_after(&mut reg, &mut be, h, 9_000);
+
+    assert_eq!(
+        (be.sends.len(), be.sends.last().map(|send| send.1)),
+        (1, Some(Some(9_000))),
+        "a build that made nothing leaves the poll with no fetch, not one still asked for"
+    );
+}
+
+#[wasm_test]
+fn an_enable_after_fetches_after_a_send_the_host_refused_twice() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    be.reject_next_sends = 2;
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+
+    set_enabled_after(&mut reg, &mut be, h, 9_000);
+
+    assert_eq!(
+        be.sends.last().map(|send| send.1),
+        Some(Some(9_000)),
+        "a refused request leaves the poll with no fetch, not one still asked for"
+    );
+}
+
+#[wasm_test]
+fn an_enable_after_behind_a_queued_refresh_keeps_its_debounce() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    let refresh = reg.invalidate(h, &mut be);
+
+    let later = reg.set_enabled_after(h, 60_000);
+    perform(&mut reg, &mut be, refresh);
+    perform(&mut reg, &mut be, later);
+
+    assert_eq!(
+        (be.sends.len(), be.sends.last().map(|send| send.1)),
+        (2, Some(Some(CFG.debounce_ms))),
+        "a refresh asked for but not yet built is the poll's fetch, as one already sent is"
+    );
+}
+
+#[wasm_test]
+fn an_enable_after_following_an_invalidate_keeps_its_debounce() {
+    let mut reg = Registry::default();
+    let mut be = FakeBackend::new();
+    let h = register_in(&mut reg, build_url, CFG);
+    start(&mut reg, &mut be, h);
+    invalidate(&mut reg, &mut be, h);
+
+    set_enabled_after(&mut reg, &mut be, h, 60_000);
+
+    assert_eq!(
+        (be.sends.len(), be.sends.last().map(|send| send.1)),
+        (2, Some(Some(CFG.debounce_ms))),
+        "the refresh invalidate asked for is the poll's fetch, so enable_after leaves it"
+    );
+    assert!(
+        matches!(
+            deliver(&mut reg, &mut be, 2, true),
+            ReplyAction::Deliver(..)
+        ),
+        "the refresh is not superseded, so its reply is delivered"
+    );
+}
+
+#[wasm_test]
+fn an_enable_after_following_an_invalidate_the_host_refused_keeps_its_debounce() {
     let mut reg = Registry::default();
     let mut be = FakeBackend::new();
     be.cancel_result = false;
@@ -215,7 +341,7 @@ fn an_enable_after_following_an_invalidate_keeps_its_back_off() {
 
     assert_eq!(
         be.sends[1].1,
-        Some(60_000),
-        "the back-off asked for last wins over the debounce before it"
+        Some(CFG.debounce_ms),
+        "the refresh waiting on the old reply keeps the debounce invalidate asked for"
     );
 }

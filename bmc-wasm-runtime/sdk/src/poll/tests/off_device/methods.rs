@@ -81,6 +81,16 @@ impl Poller {
         self.stored().set_enabled(true);
         self.stored().enable_after(9_000);
     }
+
+    fn resume_later_then_refresh(&mut self) {
+        self.stored().enable_after(9_000);
+        self.stored().invalidate();
+    }
+
+    fn refresh_then_resume_later(&mut self) {
+        self.stored().invalidate();
+        self.stored().enable_after(9_000);
+    }
 }
 
 /// A part with its poll started, inside an export as the SDK requires.
@@ -137,13 +147,42 @@ fn of_two_requests_one_method_asks_for_the_last_wins() {
     let part = poller();
     part.target().deliver(Poller::pause);
 
+    part.target().deliver(Poller::resume_later_then_refresh);
+    widget::drain();
+
+    assert_eq!(
+        (backend::sends(), backend::last_delay()),
+        (2, Some(CFG.debounce_ms)),
+        "the later invalidate replaces the kick enable_after asked for before it"
+    );
+}
+
+#[test]
+fn an_enable_after_behind_a_refresh_in_one_method_keeps_the_debounce() {
+    let part = poller();
+
+    part.target().deliver(Poller::refresh_then_resume_later);
+    widget::drain();
+
+    assert_eq!(
+        (backend::sends(), backend::last_delay()),
+        (2, Some(CFG.debounce_ms)),
+        "the queued refresh is the poll's fetch, as on a free poll whose refresh already went out"
+    );
+}
+
+#[test]
+fn an_enable_after_behind_an_enable_in_one_method_keeps_the_debounce() {
+    let part = poller();
+    part.target().deliver(Poller::pause);
+
     part.target().deliver(Poller::resume_then_resume_later);
     widget::drain();
 
     assert_eq!(
         (backend::sends(), backend::last_delay()),
-        (2, Some(9_000)),
-        "the later enable_after replaces the debounced kick asked for before it"
+        (2, Some(CFG.debounce_ms)),
+        "the poll is enabled by then, so enable_after leaves the kick set_enabled asked for"
     );
 }
 

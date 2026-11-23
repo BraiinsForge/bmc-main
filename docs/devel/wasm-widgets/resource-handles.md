@@ -117,12 +117,13 @@ already on its way is discarded, and the reply handler never runs again. `set_en
 
 A poll registered with `PollHandle::register` builds once the method or callback that asked for the fetch has returned,
 before the export ends, and of the fetches asked for by then the last one wins. A reply handler that calls
-`enable_after` or `retry` on its handle therefore never sees `build` run under it. A poll registered with the free
-`register_poll` builds at once. In both forms `build` may read its handle, may disable the poll, and may end it by
-dropping the stored handle, in which case nothing is sent. It must not ask any poll for a request (`invalidate`,
-`enable_after`, `set_enabled(true)`, or registering one): that would run a `build` again before this one's request goes
-out, so the SDK panics instead. It panics too when `build` calls `retry` or `retry_after`: they mark the reply being
-delivered, and a build has none.
+`enable_after` or `retry` on its handle therefore never sees `build` run under it. `enable_after` replaces a fetch in
+flight, and when the host will not cancel that fetch, the delay counts from its reply rather than from the call. A poll
+registered with the free `register_poll` builds at once. In both forms `build` may read its handle, may disable the
+poll, and may end it by dropping the stored handle, in which case nothing is sent. It must not ask any poll for a
+request (`invalidate`, `enable_after`, `set_enabled(true)`, or registering one): that would run a `build` again before
+this one's request goes out, so the SDK panics instead. It panics too when `build` calls `retry` or `retry_after`: they
+mark the reply being delivered, and a build has none.
 
 `PollHandle::index` numbers polls in registration order, and an ended poll's index is never given to another poll, so
 widget state keyed by it stays unambiguous. Each ended poll keeps an empty slot for the widget's lifetime, so a widget

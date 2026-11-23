@@ -76,8 +76,8 @@ pub(super) fn trampoline(response: &FetchResponse) {
             let delay =
                 REGISTRY.with_borrow_mut(|registry| registry.bank_reply(index, response.ok(), now));
             // Banked first, so a `Notify` the handler sent sees this reply's freshness;
-            // what the handler asked for (`enable_after`, `invalidate`) goes out
-            // before the kick looks for a live request.
+            // what the handler asked for (`enable_after`, `invalidate`) goes out first,
+            // and the interval's kick then leaves it be.
             widget::drain();
             schedule(REGISTRY.with_borrow_mut(|registry| registry.kick_after(index, delay, now)));
         }
@@ -185,6 +185,11 @@ impl Handle {
     }
 
     /// Enable with the next fetch after `delay_ms` instead of the debounce.
+    ///
+    /// On an enabled poll, a fetch already asked for keeps its timing;
+    /// [`invalidate`](Self::invalidate) is what replaces it.
+    /// On a disabled poll whose request the host would not cancel,
+    /// the delay counts from that request's reply.
     ///
     /// # Panics
     ///

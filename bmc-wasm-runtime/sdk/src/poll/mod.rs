@@ -205,16 +205,20 @@ pub trait FetchBackend {
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flight {
-    /// Enabled, nothing in flight: the next kick sends.
+    /// Enabled, nothing in flight and nothing asked for: the next kick sends.
     Idle,
+    /// Enabled, a request asked for whose `build` has not finished.
+    Queued,
     /// Enabled, a request in flight: its reply is delivered.
     Live(FetchRequestId),
-    /// Enabled, with a request the host would not cancel for an `invalidate` or a re-enable.
-    /// Its reply is dropped; the request is built again after the delay the latest call asked for.
+    /// Enabled, with a request already sent when the poll was invalidated or enabled,
+    /// which the host cannot cancel.
+    /// Its reply is dropped; the request is built again once the delay asked for
+    /// has passed since that reply.
     Superseded { id: FetchRequestId, delay_ms: u32 },
     /// Disabled, nothing in flight.
     Disabled,
-    /// Disabled, with a request the host would not cancel: its reply is dropped.
+    /// Disabled, with a request already sent, which the host cannot cancel: its reply is dropped.
     Stopping(FetchRequestId),
 }
 
@@ -222,18 +226,6 @@ enum Flight {
 impl Flight {
     fn is_enabled(self) -> bool {
         !matches!(self, Flight::Disabled | Flight::Stopping(_))
-    }
-
-    /// A request kept across a disable is superseded,
-    /// as enabling promises a fresh `build`.
-    fn enable(self, delay_ms: u32) -> Self {
-        match self {
-            Flight::Disabled => Flight::Idle,
-            Flight::Stopping(id) | Flight::Superseded { id, .. } => {
-                Flight::Superseded { id, delay_ms }
-            }
-            Flight::Idle | Flight::Live(_) => self,
-        }
     }
 }
 
@@ -318,11 +310,26 @@ pub(crate) struct Kick {
 #[cfg(any(target_arch = "wasm32", test))]
 fn request_kick(poll: &mut Poll, index: usize, delay_ms: Option<u32>) -> Kick {
     poll.revision += 1;
+    poll.flight = Flight::Queued;
     Kick {
         index,
         delay_ms,
         build_timing: poll.build_timing,
         revision: poll.revision,
+    }
+}
+
+/// Enable a disabled poll with its next request after `delay_ms`;
+/// a request kept across the disable is superseded, as enabling promises a fresh `build`.
+#[cfg(any(target_arch = "wasm32", test))]
+fn reenable(poll: &mut Poll, index: usize, delay_ms: u32) -> Option<Kick> {
+    match poll.flight {
+        Flight::Disabled => Some(request_kick(poll, index, Some(delay_ms))),
+        Flight::Stopping(id) => {
+            poll.flight = Flight::Superseded { id, delay_ms };
+            None
+        }
+        Flight::Idle | Flight::Queued | Flight::Live(_) | Flight::Superseded { .. } => None,
     }
 }
 
@@ -400,7 +407,7 @@ impl Registry {
             Flight::Superseded { id, .. } | Flight::Stopping(id) => {
                 self.routes.remove(&id);
             }
-            Flight::Idle | Flight::Disabled => {}
+            Flight::Idle | Flight::Queued | Flight::Disabled => {}
         }
     }
 
@@ -427,7 +434,7 @@ impl Registry {
     }
 
     /// Ask for the poll's next request after `delay_ms`;
-    /// `None` when the poll is gone, disabled or has a request live.
+    /// `None` when the poll is gone, disabled, or has a request asked for or live.
     fn kick(&mut self, index: usize, delay_ms: Option<u32>) -> Option<Kick> {
         let poll = poll_mut(&mut self.polls, index)?;
         if poll.flight != Flight::Idle {
@@ -440,7 +447,7 @@ impl Registry {
     /// the poll ended, was disabled, or asked for a newer kick.
     fn current(&self, kick: &Kick) -> Option<&Poll> {
         let poll = self.poll(kick.index)?;
-        (poll.flight == Flight::Idle && poll.revision == kick.revision).then_some(poll)
+        (poll.flight == Flight::Queued && poll.revision == kick.revision).then_some(poll)
     }
 
     /// The `build` to run for `kick`, or `None` for a stale kick.
@@ -460,7 +467,12 @@ impl Registry {
         backend: &mut dyn FetchBackend,
     ) {
         self.activity = Activity::Idle;
-        let (Some(spec), Some(poll)) = (spec, self.current(kick)) else {
+        if self.current(kick).is_none() {
+            return;
+        }
+        let poll = poll_mut(&mut self.polls, kick.index).expect("BUG: current found the poll");
+        poll.flight = Flight::Idle;
+        let Some(spec) = spec else {
             return;
         };
         let retry_ms = poll.config.retry_ms;
@@ -485,8 +497,8 @@ impl Registry {
         self.kick(index, None)
     }
 
-    /// Ask for a fresh request: cancel the live one in place, or, if the host
-    /// would not cancel it, re-issue once its reply arrives.
+    /// Ask for a fresh request: cancel the live one in place,
+    /// or, if it was already sent and the host cannot cancel it, re-issue once its reply arrives.
     pub(crate) fn invalidate(
         &mut self,
         index: usize,
@@ -496,7 +508,7 @@ impl Registry {
         let poll = poll_mut(&mut self.polls, index)?;
         let debounce = poll.config.debounce_ms;
         match poll.flight {
-            Flight::Idle => {}
+            Flight::Idle | Flight::Queued => {}
             Flight::Live(id) => {
                 if !backend.cancel(id) {
                     poll.flight = Flight::Superseded {
@@ -517,7 +529,7 @@ impl Registry {
             }
             Flight::Disabled | Flight::Stopping(_) => return None,
         }
-        self.kick(index, Some(debounce))
+        Some(request_kick(poll, index, Some(debounce)))
     }
 
     pub(crate) fn begin_reply(&mut self, id: FetchRequestId) -> ReplyAction {
@@ -533,7 +545,6 @@ impl Registry {
                 ReplyAction::Deliver(index, Rc::clone(&poll.on_reply))
             }
             Flight::Superseded { id: live, delay_ms } if live == id => {
-                poll.flight = Flight::Idle;
                 ReplyAction::Reissued(request_kick(poll, index, Some(delay_ms)))
             }
             Flight::Stopping(live) if live == id => {
@@ -541,6 +552,7 @@ impl Registry {
                 ReplyAction::Stopped
             }
             Flight::Idle
+            | Flight::Queued
             | Flight::Live(_)
             | Flight::Superseded { .. }
             | Flight::Disabled
@@ -657,15 +669,11 @@ impl Registry {
         }
         let poll = poll_mut(&mut self.polls, index)?;
         if enabled {
-            if poll.flight.is_enabled() {
-                return None;
-            }
             let debounce = poll.config.debounce_ms;
-            poll.flight = poll.flight.enable(debounce);
-            return self.kick(index, Some(debounce));
+            return reenable(poll, index, debounce);
         }
         match poll.flight {
-            Flight::Idle => poll.flight = Flight::Disabled,
+            Flight::Idle | Flight::Queued => poll.flight = Flight::Disabled,
             Flight::Live(id) => {
                 if backend.cancel(id) {
                     poll.flight = Flight::Disabled;
@@ -681,11 +689,11 @@ impl Registry {
     }
 
     /// Enable and schedule the next fetch after `delay_ms` (no immediate kick).
+    /// On an enabled poll, a fetch already asked for keeps its timing.
     pub(crate) fn set_enabled_after(&mut self, index: usize, delay_ms: u32) -> Option<Kick> {
         self.refuse_while_building();
         let poll = poll_mut(&mut self.polls, index)?;
-        poll.flight = poll.flight.enable(delay_ms);
-        self.kick(index, Some(delay_ms))
+        reenable(poll, index, delay_ms).or_else(|| self.kick(index, Some(delay_ms)))
     }
 
     /// Retarget the poll cadence and `is_stale` threshold; reschedule to apply.
