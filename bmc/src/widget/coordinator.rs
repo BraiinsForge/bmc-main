@@ -2230,6 +2230,8 @@ mod tests {
         Arc::new(RwLock::new(config))
     }
 
+    const MISSING_INTERPRETER_WIDGET: &str = "#!/definitely/missing/interpreter\n";
+
     fn slow_termination_widget(
         ready: Option<&std::path::Path>,
         shutdown_delay: Duration,
@@ -2290,7 +2292,11 @@ mod tests {
         let (temp, coordinator, compositor, scene) =
             coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let marker = temp.path().join("started");
-        let body = format!("#!/bin/sh\ntouch {}\nexec sleep 30\n", marker.display());
+        let body = formatdoc! {"
+            #!/bin/sh
+            touch {marker}
+            exec sleep 30
+        ", marker = marker.display()};
         crate::test_support::write_executable(&temp.path().join("widget-package/widget"), &body);
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
@@ -2728,7 +2734,7 @@ mod tests {
     #[tokio::test]
     async fn package_reload_replaces_a_pending_restart_with_the_current_build() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/definitely/missing/interpreter\n")).await;
+            coordinator_with_widget(Some(MISSING_INTERPRETER_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
             .spawn_configured_scene_widgets(&config, scene.id)
@@ -2784,7 +2790,7 @@ mod tests {
     #[tokio::test]
     async fn only_applied_changed_credentials_retry_an_actual_pending_widget() {
         let (temp, coordinator, _compositor, scene) =
-            coordinator_with_widget(Some("#!/definitely/missing/interpreter\n")).await;
+            coordinator_with_widget(Some(MISSING_INTERPRETER_WIDGET)).await;
         let widget = scene
             .widgets
             .values()
@@ -3805,10 +3811,11 @@ mod tests {
         let executions = temp.path().join("executions");
         crate::test_support::write_executable(
             &temp.path().join("widget-package/widget"),
-            &format!(
-                "#!/bin/sh\nprintf 'started\\n' >> {}\nexit 0\n",
-                executions.display()
-            ),
+            &formatdoc! {r"
+                #!/bin/sh
+                printf 'started\n' >> {executions}
+                exit 0
+            ", executions = executions.display()},
         );
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
@@ -3894,7 +3901,7 @@ mod tests {
     #[tokio::test]
     async fn occupied_preflight_does_not_unregister_the_healthy_record() {
         let (temp, coordinator, compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nwhile :; do sleep 30; done\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
 
         coordinator
@@ -3917,7 +3924,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_after_coordinator_stop_starts_only_after_reap() {
         let (temp, coordinator, _compositor, scene) =
-            coordinator_with_widget(Some("#!/bin/sh\nwhile :; do sleep 30; done\n")).await;
+            coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
             .spawn_configured_scene_widgets(&config, scene.id)
@@ -3995,13 +4002,10 @@ mod tests {
             .await;
         assert!(compositor.widget_calls().is_empty());
 
-        std::fs::write(
-            temp.path().join("widget-package/manifest.json"),
-            format!(
-                r#"{{"uid":"{restored_uid}","version":"1.0.0","name":"restored","description":"restored","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}}]}}"#
-            ),
-        )
-        .expect("BUG: replace manifest");
+        write_manifest(
+            &temp.path().join("widget-package"),
+            &widget_manifest(restored_uid, semver::Version::new(1, 0, 0), 1280, 480),
+        );
         coordinator.reload_changed_widgets(&config).await;
 
         assert_widget_call_kinds(
