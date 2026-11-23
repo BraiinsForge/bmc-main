@@ -32,7 +32,7 @@ const NOT_AVAILABLE_TEXT: &str = "--";
 
 struct Nameday {
     source: Names,
-    /// The last accepted day's names, kept on screen across failed fetches.
+    /// The last accepted day's names, shown only on that day.
     names: Option<NamedayData>,
 }
 
@@ -42,7 +42,7 @@ impl Nameday {
         request_frame();
     }
 
-    /// Shown names from a past day now get the stale pill.
+    /// Names from a past day now read as loading.
     #[expect(clippy::unused_self, reason = "the SDK calls this as a method")]
     fn on_day_change(&mut self, (): ()) {
         request_frame();
@@ -65,9 +65,14 @@ impl Widget for Nameday {
         let ws = widget_size();
         let params = manifest_params::Params::current();
         let mut root_children: Vec<Node> = vec![country_draw(ws, params.country)];
-        let mut stale_anchor: Option<SystemTime> = None;
+        // A past day's names are wrong, not stale. Checked per frame,
+        // so a frame drawn before the day check fires hides them too.
+        let names = self
+            .names
+            .as_ref()
+            .filter(|names| is_today(&names.fetched_at));
 
-        let names_string: &str = match self.names.as_ref() {
+        let names_string: &str = match names {
             Some(names) => names
                 .names_for(params.country)
                 .unwrap_or(NOT_APPLICABLE_TEXT),
@@ -77,7 +82,7 @@ impl Widget for Nameday {
         root_children.push(render::names_draw(ws, names_string));
 
         if params.show_date {
-            match self.names.as_ref() {
+            match names {
                 Some(names) => {
                     let date_string = format_date(
                         names.fetched_at.time,
@@ -88,11 +93,6 @@ impl Widget for Nameday {
                     );
 
                     root_children.push(date_draw(ws, &date_string));
-
-                    // Names for a past day are stale; flag with the shared pill.
-                    if !is_today(&names.fetched_at) {
-                        stale_anchor = Some(names.fetched_at.time);
-                    }
                 }
                 None => {
                     root_children.push(date_draw(ws, NOT_AVAILABLE_TEXT));
@@ -100,11 +100,7 @@ impl Widget for Nameday {
             }
         }
 
-        let mut root = col(props!(background: BLACK), root_children);
-        if let Some(anchor) = stale_anchor {
-            root = with_stale_overlay(root, anchor, widget_viewport().shape);
-        }
-
+        let root = col(props!(background: BLACK), root_children);
         let _ = render_ui(ws.width, ws.height, root);
     }
 

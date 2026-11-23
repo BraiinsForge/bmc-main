@@ -20,6 +20,8 @@ it.
 - The names refresh automatically at local midnight, so the face always reflects the current day.
 - While the names are still loading — including when no value has been received yet because fetches keep failing — the
   headline reads `Loading...`; failed fetches retry on their own without user action.
+- Just past local midnight the previous day's names leave the screen, with the date shown or hidden: the widget reads
+  `Loading...` until today's arrive.
 - When the day's data has loaded but the selected country has no nameday today, the headline reads `N/A`.
 
 ### Choose the country
@@ -31,7 +33,7 @@ it.
   Italy, Lithuania, Latvia, Poland, Sweden, Slovakia, and the United States.
 - The header flag and label update to match the selected country, and the names shown are those celebrated for that
   country today.
-- Changing the country immediately requests fresh names for the new selection.
+- Changing the country shows the new selection's names at once: one fetch brings the day's names for every country.
 
 ### Show or hide the date
 
@@ -63,6 +65,6 @@ it.
 - Nameday data comes from the public nameday API at `nameday.abalin.net`. The widget requests the names for the current
   local day and month, refreshes at the next local midnight, and retries failed or unparseable fetches roughly every 10
   seconds.
-- The widget shows `Loading...` until the first successful fetch, `N/A` when the selected country has no nameday today,
-  and `--` when the date is unavailable.
+- The widget shows `Loading...` until the day's names arrive, `N/A` when the selected country has no nameday today, and
+  `--` when the date is unavailable.
 - The widget renders on rectangular viewports from 317x238 up to 1280x480.
