@@ -2291,8 +2291,7 @@ mod tests {
             coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let marker = temp.path().join("started");
         let body = format!("#!/bin/sh\ntouch {}\nexec sleep 30\n", marker.display());
-        std::fs::write(temp.path().join("widget-package/widget"), body)
-            .expect("BUG: update test widget");
+        crate::test_support::write_executable(&temp.path().join("widget-package/widget"), &body);
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         compositor.hold_widget_receipts();
@@ -2951,11 +2950,10 @@ mod tests {
         let (temp, coordinator, compositor, mut scene) =
             coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let ready = temp.path().join("preview-ready");
-        std::fs::write(
-            temp.path().join("widget-package/widget"),
-            slow_termination_widget(Some(&ready), Duration::from_millis(200)),
-        )
-        .expect("BUG: replace preview fixture");
+        crate::test_support::write_executable(
+            &temp.path().join("widget-package/widget"),
+            &slow_termination_widget(Some(&ready), Duration::from_millis(200)),
+        );
         scene.enabled = false;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
@@ -3726,11 +3724,10 @@ mod tests {
         let (temp, coordinator, compositor, scene) =
             coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let ready = temp.path().join("ready");
-        std::fs::write(
-            temp.path().join("widget-package/widget"),
-            slow_termination_widget(Some(&ready), Duration::from_millis(100)),
-        )
-        .expect("BUG: write slow widget");
+        crate::test_support::write_executable(
+            &temp.path().join("widget-package/widget"),
+            &slow_termination_widget(Some(&ready), Duration::from_millis(100)),
+        );
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         coordinator
@@ -3806,14 +3803,13 @@ mod tests {
         let (temp, coordinator, compositor, scene) =
             coordinator_with_widget(Some("#!/bin/sh\nexit 0\n")).await;
         let executions = temp.path().join("executions");
-        std::fs::write(
-            temp.path().join("widget-package/widget"),
-            format!(
+        crate::test_support::write_executable(
+            &temp.path().join("widget-package/widget"),
+            &format!(
                 "#!/bin/sh\nprintf 'started\\n' >> {}\nexit 0\n",
                 executions.display()
             ),
-        )
-        .expect("BUG: respawn fixture must be writable");
+        );
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
             .spawn_configured_scene_widgets(&config, scene.id)
@@ -3869,8 +3865,10 @@ mod tests {
                 ..
             }]
         ));
-        std::fs::write(temp.path().join("widget-package/widget"), SLEEPING_WIDGET)
-            .expect("BUG: replace widget executable");
+        crate::test_support::write_executable(
+            &temp.path().join("widget-package/widget"),
+            SLEEPING_WIDGET,
+        );
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         while !matches!(
             coordinator
@@ -4031,11 +4029,10 @@ mod tests {
         let (temp, coordinator, compositor, scene) =
             coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let ready = temp.path().join("ready");
-        std::fs::write(
-            temp.path().join("widget-package/widget"),
-            slow_termination_widget(Some(&ready), Duration::from_secs(1)),
-        )
-        .expect("BUG: replace widget executable");
+        crate::test_support::write_executable(
+            &temp.path().join("widget-package/widget"),
+            &slow_termination_widget(Some(&ready), Duration::from_secs(1)),
+        );
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
             .spawn_configured_scene_widgets(&config, scene.id)
@@ -4084,11 +4081,10 @@ mod tests {
         let (temp, coordinator, compositor, scene) =
             coordinator_with_widget(Some(SLEEPING_WIDGET)).await;
         let ready = temp.path().join("replacement-ready");
-        std::fs::write(
-            temp.path().join("widget-package/widget"),
-            slow_termination_widget(Some(&ready), Duration::from_secs(1)),
-        )
-        .expect("BUG: replace widget executable");
+        crate::test_support::write_executable(
+            &temp.path().join("widget-package/widget"),
+            &slow_termination_widget(Some(&ready), Duration::from_secs(1)),
+        );
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         coordinator
