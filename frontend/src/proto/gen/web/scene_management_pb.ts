@@ -894,6 +894,11 @@ export const WidgetCategorySchema: GenEnum<WidgetCategory> = /*@__PURE__*/
  *   - call `UpdateWidget` with the full params map
  *   - call `GetScene`
  *
+ * move widget:
+ * - combined:
+ *   - call `UpdateWidget` with the new position and no params
+ *   - call `GetScene`
+ *
  * remove widget:
  * - combined & fullscreen:
  *   - call `RemoveWidget`

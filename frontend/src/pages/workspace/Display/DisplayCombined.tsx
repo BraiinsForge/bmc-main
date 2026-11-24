@@ -363,7 +363,6 @@ class View extends Component<Props, State> {
                         id: targetWidgetState.id,
                         size: targetWidgetState.size,
                         position: targetWidgetState.position,
-                        params: targetWidgetState.config?.params,
                     },
                     options,
                 ),
