@@ -407,7 +407,7 @@ let
 in
 {
   pkg = packageWithTests;
-  version = "0.1.0";
+  version = "0.2.0";
   category = "core";
   description = "Core system package (bmc-openwrt + activation/hooks)";
   upgrade_strategy = null;
