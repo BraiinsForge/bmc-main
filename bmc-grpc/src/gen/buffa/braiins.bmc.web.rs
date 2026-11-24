@@ -14946,6 +14946,10 @@ pub struct UpdateWidgetRequest {
     pub position: ::buffa::MessageField<WidgetPosition, ::buffa::Inline<WidgetPosition>>,
     /// Field 4: `size`
     pub size: ::buffa::EnumValue<WidgetSize>,
+    /// Absent keeps the stored params,
+    /// so a placement-only update need not resend ones a newer manifest refuses.
+    /// Present, it replaces them whole.
+    ///
     /// Field 5: `params`
     pub params: ::buffa::MessageField<FieldValues, ::buffa::Inline<FieldValues>>,
     /// Absent keeps the stored bindings, so a caller that rebuilds this request
@@ -48540,6 +48544,10 @@ pub mod __buffa {
             >,
             /// Field 4: `size`
             pub size: ::buffa::EnumValue<super::super::WidgetSize>,
+            /// Absent keeps the stored params,
+            /// so a placement-only update need not resend ones a newer manifest refuses.
+            /// Present, it replaces them whole.
+            ///
             /// Field 5: `params`
             pub params: ::buffa::MessageFieldView<
                 super::super::__buffa::view::FieldValuesView<'a>,
@@ -48954,6 +48962,10 @@ pub mod __buffa {
             pub fn size(&self) -> ::buffa::EnumValue<super::super::WidgetSize> {
                 self.0.reborrow().size
             }
+            /// Absent keeps the stored params,
+            /// so a placement-only update need not resend ones a newer manifest refuses.
+            /// Present, it replaces them whole.
+            ///
             /// Field 5: `params`
             #[must_use]
             pub fn params(

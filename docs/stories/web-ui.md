@@ -77,8 +77,8 @@ firmware rebuild.
 - Text the manifest bounds with `min_length` / `max_length` is refused outside those lengths, counted in characters,
   with an error naming the bound it misses.
 - No per-widget form components exist in the frontend; a new parameter kind added once benefits every widget.
-- `UpdateWidget` is a full-map update (not a patch): clients send the complete params object, and the backend validates
-  required/missing keys, unknown keys, and per-type constraints (type/range/enum/timezone).
+- Saving settings sends `UpdateWidget` the complete params object, a full-map update rather than a patch, and the
+  backend validates required/missing keys, unknown keys, and per-type constraints (type/range/enum/timezone).
 - Changing a parameter applies live to the running widget — the widget process keeps running and re-binds its state in
   place. Changes that affect the widget's size still respawn it (the only way to deliver a new geometry during the
   widget's initial configure batch). Position-only changes do not respawn.

@@ -130,6 +130,9 @@ message UpdateWidgetRequest {
   string scene_id = 2;
   WidgetPosition position = 3;
   WidgetSize size = 4;
+  // Absent keeps the stored params,
+  // so a placement-only update need not resend ones a newer manifest refuses.
+  // Present, it replaces them whole.
   FieldValues params = 5;
   // Absent keeps the stored bindings, so a caller that rebuilds this request
   // from a cached widget cannot unbind an account it never knew about.
@@ -317,7 +320,7 @@ service SceneManagementService {
   rpc PreviewScene(google.protobuf.StringValue) returns (stream google.protobuf.Empty);
   // Add widget to a scene from a manifest. Returns ID of the new widget.
   rpc AddWidget(AddWidgetRequest) returns (google.protobuf.StringValue);
-  // Update widget params by ID. Full update of the params map, not patch.
+  // Update widget by ID. Params, when sent, replace the stored map whole, not as a patch.
   rpc UpdateWidget(UpdateWidgetRequest) returns (google.protobuf.Empty);
   // Remove widget by ID.
   rpc RemoveWidget(RemoveWidgetRequest) returns (google.protobuf.Empty);
