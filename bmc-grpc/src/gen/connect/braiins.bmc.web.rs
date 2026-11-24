@@ -11681,6 +11681,11 @@ pub const SCENE_MANAGEMENT_SERVICE_GET_WIDGET_MANIFEST_SPEC: ::connectrpc::Spec 
 ///   - call `UpdateWidget` with the full params map
 ///   - call `GetScene`
 ///
+/// move widget:
+/// - combined:
+///   - call `UpdateWidget` with the new position and no params
+///   - call `GetScene`
+///
 /// remove widget:
 /// - combined & fullscreen:
 ///   - call `RemoveWidget`

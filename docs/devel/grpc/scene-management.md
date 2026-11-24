@@ -93,7 +93,7 @@ Primary sources:
 
 ## Frontend Guidance
 
-- Send the complete params map in `UpdateWidget` when saving settings.
+- Send the complete params map in `UpdateWidget` when saving settings; leave `params` out of a move.
 - Keep local validation aligned with manifest schema, but still treat server validation errors as authoritative.
 - Treat preview stream as a leased resource (single owner).
 - Read the current device-wide budget from `running_widget_count` and `max_running_widget_count`.
