@@ -57,9 +57,14 @@ Root SSH access is available by default. Log in as `root` using the password con
 
 ### Set up the repository
 
-After cloning the repository, initialize Git LFS and enter the development shell:
+Devices run the packages of the current release, which are built from its `bmcpkgs/stable-YY.MM` branch, currently
+`bmcpkgs/stable-26.10`. `master` already carries the next release, so a widget developed there can depend on host
+features that devices do not have yet. Develop widgets on the current release branch.
+
+After cloning the repository, check out that branch, initialize Git LFS and enter the development shell:
 
 ```shell
+git checkout bmcpkgs/stable-26.10
 git lfs install
 git lfs pull
 nix develop
