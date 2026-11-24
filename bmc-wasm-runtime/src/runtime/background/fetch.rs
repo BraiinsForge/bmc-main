@@ -24,6 +24,9 @@ use std::time::Duration;
 
 use bmc_wasm_protocol::FetchOutcome;
 use ureq::Agent;
+use ureq::tls::{Certificate, RootCerts, TlsConfig};
+
+use super::tls_roots;
 
 /// Cap on a fetch response body — ureq's own default,
 /// pinned so an upgrade cannot move it under us.
@@ -45,10 +48,25 @@ impl Default for FetchAgent {
         Self(
             Agent::config_builder()
                 .http_status_as_error(false)
+                .tls_config(TlsConfig::builder().root_certs(root_certs()).build())
                 .build()
                 .into(),
         )
     }
+}
+
+/// Mozilla's roots, plus the operator's extra CA certificates when there are any.
+fn root_certs() -> RootCerts {
+    let extra = tls_roots::extra_ca_certs();
+    if extra.is_empty() {
+        return RootCerts::WebPki;
+    }
+    let certs: Vec<Certificate<'static>> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .chain(extra)
+        .map(|cert| Certificate::from_der(cert.as_ref()))
+        .collect();
+    RootCerts::new_with_certs(&certs)
 }
 
 /// Whether a request may follow redirects.

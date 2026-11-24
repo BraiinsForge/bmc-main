@@ -59,6 +59,7 @@ thiserror.workspace = true
 tungstenite.workspace = true
 ureq.workspace = true
 url.workspace = true
+webpki-root-certs.workspace = true
 webpki-roots.workspace = true
 
 # Audio playback
