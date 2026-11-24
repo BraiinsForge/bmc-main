@@ -2925,7 +2925,8 @@ dependencies = [
 [[package]]
 name = "egui_autocomplete"
 version = "13.0.0"
-source = "git+https://github.com/yvind/egui_autocomplete.git?rev=01153df7c1915bb1196d0d97acf44a2783890016#01153df7c1915bb1196d0d97acf44a2783890016"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d66336ac99d596e599a60b247d41bb9b4a95d8be9282cfa441c753280d692ff"
 dependencies = [
  "egui",
  "fuzzy-matcher",
