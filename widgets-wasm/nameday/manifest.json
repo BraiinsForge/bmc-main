@@ -1,7 +1,7 @@
 {
   "$schema": "../../bmc-widget-manifest/manifest.schema.json",
   "uid": "5062553f-31eb-497c-b513-bb82f41a2809",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "Nameday",
   "description": "Display today's nameday for the selected country.",
   "author": {
