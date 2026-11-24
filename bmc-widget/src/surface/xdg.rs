@@ -31,7 +31,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use crate::egl::DmaBufInfo;
 
 use super::common::{
-    BufferSlotMap, PollOutcome, ReleasedBufferSet, blocking_dispatch_impl,
+    BufferDamage, BufferSlotMap, PollOutcome, ReleasedBufferSet, blocking_dispatch_impl,
     create_buffer_from_dmabuf, drain_released_buffer_slots, impl_common_dispatch,
     invalidate_cached_wl_buffer_slots, invalidate_cached_wl_buffers, poll_dispatch,
     record_released_buffer, submit_buffer_to_surface,
@@ -250,7 +250,14 @@ impl XdgSurfaceClient {
     ) -> Result<()> {
         let qh = self.queue.handle();
         let surface = self.state.surface.as_ref().context("surface not created")?;
-        submit_buffer_to_surface(surface, &qh, buffer, info, request_frame);
+        submit_buffer_to_surface(
+            surface,
+            &qh,
+            buffer,
+            info,
+            request_frame,
+            BufferDamage::Whole,
+        );
         Ok(())
     }
 

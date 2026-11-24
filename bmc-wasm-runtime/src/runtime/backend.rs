@@ -1533,6 +1533,7 @@ impl WasmWidgetRuntime {
         // SAFETY: same as `render_cached_tree`.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
         tree::render_stopped_widget_banner(&state.host_intl, background.scrim(), renderer);
+        state.last_repaint = FrameRepaint::Full;
     }
 
     /// Set the wall-clock time and monotonic clock for the next render.
@@ -2094,6 +2095,18 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn layout_outlines(&self) -> Option<&std::sync::Arc<[bmc_render::tree::LayoutOutline]>> {
         self.store.data().layout_outlines.as_ref()
+    }
+
+    /// Where the buffer the last frame painted differs from the one painted before it,
+    /// `None` when the whole buffer has to count: only a damage repaint left the rest as it was,
+    /// and the last two walks moved what differs.
+    #[must_use]
+    pub fn committed_damage(&self) -> Option<Vec<bmc_render::interaction::Rect>> {
+        let state = self.store.data();
+        match state.last_repaint {
+            FrameRepaint::Damage { .. } => Some(state.layered.damage().last_two_walks()),
+            FrameRepaint::NoTree | FrameRepaint::Full => None,
+        }
     }
 
     /// What the last frame's walk reported moving, which the next two frames repaint;
@@ -3190,6 +3203,33 @@ mod tests {
         assert!(runtime.last_dynamic_rects().is_none());
     }
 
+    /// The dead banner paints outside any walk's damage,
+    /// so a frame carrying it must not hand the host the walk's regions.
+    #[test]
+    fn the_dead_banner_over_a_damage_repaint_reports_a_full_one() {
+        let mut runtime = minimal_runtime();
+        let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(480.0, 480.0);
+        runtime.with_renderer(renderer_ptr(&mut renderer), |runtime| {
+            let state = runtime.store.data_mut();
+            state.last_repaint = bmc_render::repaint::FrameRepaint::Damage {
+                blitted: vec![Rect::new(0.0, 0.0, 1.0, 1.0)],
+            };
+            WasmWidgetRuntime::draw_dead_overlay(
+                state,
+                super::DeadOverlayBackground::PreserveFrame,
+            );
+        });
+
+        assert!(
+            matches!(
+                runtime.last_repaint(),
+                bmc_render::repaint::FrameRepaint::Full
+            ),
+            "got {:?}",
+            runtime.last_repaint()
+        );
+    }
+
     /// The host exports the buffer anyway, so it holds nothing the damage history describes.
     #[test]
     fn a_frame_painting_no_tree_owes_every_buffer() {
@@ -3347,8 +3387,9 @@ mod tests {
     }
 
     /// A replay that blits its layer back under the damage reports those regions.
-    #[test]
-    fn a_replay_blitting_under_damage_reports_the_regions_it_blitted() {
+    /// A runtime whose last frame replayed a static panel over a preserved target,
+    /// with `moved` as what both earlier walks moved.
+    fn runtime_after_a_damage_replay(moved: Rect) -> WasmWidgetRuntime {
         let mut runtime = minimal_runtime();
         let mut renderer = bmc_render::renderer::test_support::ShapingRecorder::new(100.0, 100.0)
             .with_static_layers();
@@ -3373,7 +3414,6 @@ mod tests {
             crate::TargetContents::Cleared
         ));
 
-        let moved = Rect::new(10.0, 10.0, 10.0, 10.0);
         let state = runtime.store.data_mut();
         *state.layered.damage_mut() = bmc_render::repaint::DamageHistory::settled(&[moved]);
         assert!(runtime.replay_cached_tree_for_test(
@@ -3381,6 +3421,12 @@ mod tests {
             16,
             crate::TargetContents::Preserved
         ));
+        runtime
+    }
+
+    #[test]
+    fn a_replay_blitting_under_damage_reports_the_regions_it_blitted() {
+        let runtime = runtime_after_a_damage_replay(Rect::new(10.0, 10.0, 10.0, 10.0));
 
         let bmc_render::repaint::FrameRepaint::Damage { blitted } = runtime.last_repaint() else {
             panic!(
@@ -3395,6 +3441,24 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(10.0, 10.0, 10.0, 10.0)]
         );
+    }
+
+    /// The panel moves nothing, so the last walk alone would report no change,
+    /// though the walk before it moved `moved` away from what the previous buffer shows.
+    #[test]
+    fn a_damage_replay_commits_what_the_last_two_walks_moved() {
+        let moved = Rect::new(10.0, 10.0, 10.0, 10.0);
+        let runtime = runtime_after_a_damage_replay(moved);
+
+        assert_eq!(runtime.committed_damage(), Some(vec![moved]));
+    }
+
+    #[test]
+    fn a_full_repaint_commits_the_whole_buffer() {
+        let mut runtime = minimal_runtime();
+        runtime.store.data_mut().last_repaint = bmc_render::repaint::FrameRepaint::Full;
+
+        assert_eq!(runtime.committed_damage(), None);
     }
 
     /// What one damage-tracked frame showed: how it repainted, what moved,

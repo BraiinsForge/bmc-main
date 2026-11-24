@@ -36,7 +36,7 @@ use bmc_wasm_host::render_target::{
 };
 use bmc_wasm_host::slot::{SlotSurface, WidgetSlot};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
-use bmc_widget::surface::{PollOutcome, ReleasedBuffer, WidgetEvent, WidgetSurface};
+use bmc_widget::surface::{BufferDamage, PollOutcome, ReleasedBuffer, WidgetEvent, WidgetSurface};
 use bmc_widget_protocol::{ActionPayload, CredentialSecrets, SettingUpdate};
 
 #[derive(Default)]
@@ -150,6 +150,7 @@ impl SlotSurface for StubSurface {
         _info: &bmc_widget::egl::DmaBufInfo,
         _buffer: &wayland_client::protocol::wl_buffer::WlBuffer,
         _request_frame: bool,
+        _damage: BufferDamage<'_>,
     ) -> anyhow::Result<()> {
         unimplemented!("stub: submit_buffer_with_wl_buffer unused in these tests")
     }

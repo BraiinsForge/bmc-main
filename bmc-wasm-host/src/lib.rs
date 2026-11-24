@@ -20,6 +20,7 @@
 
 //! `bmc-wasm-host` library surface, re-exported for integration tests.
 
+pub mod buffer_damage;
 pub mod cache_gc;
 pub(crate) mod control;
 pub mod host;

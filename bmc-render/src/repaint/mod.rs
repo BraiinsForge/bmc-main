@@ -248,6 +248,17 @@ impl DamageHistory {
         &self.recent[0]
     }
 
+    /// What the last two walks moved, merged:
+    /// where the buffer the last walk painted differs from the one painted before it.
+    #[must_use]
+    pub fn last_two_walks(&self) -> Vec<Rect> {
+        self.recent
+            .iter()
+            .flatten()
+            .copied()
+            .coalesce_within(DAMAGE_MERGE_TOLERANCE)
+    }
+
     fn painted_in_full(&mut self) {
         self.stale_buffers = self.stale_buffers.saturating_sub(1);
     }

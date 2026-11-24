@@ -38,7 +38,8 @@ use bmc_wasm_runtime::{
 use bmc_wasm_thin_protocol::{WIDGET_CACHE_BUCKET_MAX_BYTES, WIDGET_CACHE_DIR};
 
 use bmc_widget::surface::{
-    DeckWidgetSurfaceClient, InitialState, ReleasedBuffer, WidgetEvent, WidgetSurface,
+    BufferDamage, DamageRegion, DeckWidgetSurfaceClient, InitialState, ReleasedBuffer, WidgetEvent,
+    WidgetSurface,
 };
 use bmc_widget_protocol::{
     ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope, NextAlarm as WireNextAlarm,
@@ -199,6 +200,7 @@ pub trait SlotSurface: WidgetSurface + LifecycleSurface {
         info: &bmc_widget::egl::DmaBufInfo,
         buffer: &wayland_client::protocol::wl_buffer::WlBuffer,
         request_frame: bool,
+        damage: BufferDamage<'_>,
     ) -> Result<()>;
     fn flush(&self) -> Result<()>;
     fn drain_released_buffers(&mut self) -> Vec<ReleasedBuffer>;
@@ -222,8 +224,15 @@ impl SlotSurface for DeckWidgetSurfaceClient {
         info: &bmc_widget::egl::DmaBufInfo,
         buffer: &wayland_client::protocol::wl_buffer::WlBuffer,
         request_frame: bool,
+        damage: BufferDamage<'_>,
     ) -> Result<()> {
-        DeckWidgetSurfaceClient::submit_buffer_with_wl_buffer(self, info, buffer, request_frame)
+        DeckWidgetSurfaceClient::submit_buffer_with_wl_buffer(
+            self,
+            info,
+            buffer,
+            request_frame,
+            damage,
+        )
     }
 
     fn flush(&self) -> Result<()> {
@@ -1029,7 +1038,12 @@ impl<S: SlotSurface> WidgetSlot<S> {
         let wants_immediate = self.frame_callback_enabled()
             && self.runtime.wants_next_frame()
             && self.runtime.next_frame_delay().is_none();
-        self.submit_exported_buffer(&dmabuf, slot_idx, wants_immediate)?;
+        let damage = crate::buffer_damage::repainted_regions(
+            self.runtime.committed_damage().as_deref(),
+            target_width,
+            target_height,
+        );
+        self.submit_exported_buffer(&dmabuf, slot_idx, wants_immediate, damage.as_deref())?;
         HostRenderProfiling::log_frame(
             &self.wasm_basename,
             self.frame_count + 1,
@@ -1064,6 +1078,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
         dmabuf: &bmc_widget::egl::DmaBufInfo,
         slot_idx: usize,
         wants_immediate: bool,
+        damage: Option<&[DamageRegion]>,
     ) -> Result<()> {
         let target = self
             .render_target
@@ -1076,8 +1091,9 @@ impl<S: SlotSurface> WidgetSlot<S> {
         let wl_buffer = egl_target
             .wl_buffer_for_slot(&mut self.surface, dmabuf, slot_idx)
             .map_err(anyhow::Error::msg)?;
+        let damage = damage.map_or(BufferDamage::Whole, BufferDamage::Regions);
         self.surface
-            .submit_buffer_with_wl_buffer(dmabuf, &wl_buffer, wants_immediate)?;
+            .submit_buffer_with_wl_buffer(dmabuf, &wl_buffer, wants_immediate, damage)?;
         HostRenderProfiling::log_phase(&self.wasm_basename, "wayland_attach_commit", phase_start);
 
         let phase_start = HostRenderProfiling::start_phase();

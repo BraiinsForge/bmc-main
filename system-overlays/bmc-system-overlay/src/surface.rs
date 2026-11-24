@@ -58,9 +58,9 @@ use crate::overlay::{AlarmEvent, InputRegion, LayerConfig, RestartDeclined, Scre
 use ::deck_settings_v1::client::deck_settings_v1::{self, Capability, DeckSettingsV1};
 use bmc_widget::egl::DmaBufInfo;
 use bmc_widget::surface::{
-    BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, create_buffer_from_dmabuf,
-    drain_released_buffers, poll_dispatch, record_released_buffer, submit_buffer_to_surface,
-    unregister_wl_buffer_slot,
+    BufferDamage, BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet,
+    create_buffer_from_dmabuf, drain_released_buffers, poll_dispatch, record_released_buffer,
+    submit_buffer_to_surface, unregister_wl_buffer_slot,
 };
 use deck_screen_edge_v1::client::deck_auto_hide_screen_edge_v1::{self, DeckAutoHideScreenEdgeV1};
 use deck_screen_edge_v1::client::deck_screen_edge_manager_v1::{self, DeckScreenEdgeManagerV1};
@@ -556,7 +556,7 @@ impl LayerSurfaceClient {
         );
         let qh = self.queue.handle();
         let surface = self.state.surface.as_ref().context("surface not created")?;
-        submit_buffer_to_surface(surface, &qh, buffer, info, false);
+        submit_buffer_to_surface(surface, &qh, buffer, info, false, BufferDamage::Whole);
         Ok(())
     }
 

@@ -207,6 +207,23 @@ pub fn drain_released_buffers(
     released
 }
 
+/// What differs in a buffer from the one committed before it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BufferDamage<'a> {
+    Whole,
+    /// Regions in buffer pixels, whose rows run in memory order.
+    Regions(&'a [DamageRegion]),
+}
+
+/// A rectangle in buffer pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DamageRegion {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 /// Attach buffer, damage, optionally request frame callback, and commit.
 ///
 /// Shared implementation for buffer submission on both surface client types.
@@ -217,11 +234,21 @@ pub fn submit_buffer_to_surface<S>(
     buffer: &wl_buffer::WlBuffer,
     info: &DmaBufInfo,
     request_frame: bool,
+    damage: BufferDamage<'_>,
 ) where
     S: Dispatch<wl_callback::WlCallback, ()> + 'static,
 {
     surface.attach(Some(buffer), 0, 0);
-    surface.damage_buffer(0, 0, info.width as i32, info.height as i32);
+    match damage {
+        BufferDamage::Whole => {
+            surface.damage_buffer(0, 0, info.width as i32, info.height as i32);
+        }
+        BufferDamage::Regions(regions) => {
+            for region in regions {
+                surface.damage_buffer(region.x, region.y, region.width, region.height);
+            }
+        }
+    }
 
     if request_frame {
         surface.frame(qh, ());

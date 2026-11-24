@@ -207,6 +207,35 @@ fn a_walk_reports_a_damage_repaint_only_for_a_blit_under_its_damage() {
 }
 
 #[test]
+fn the_last_two_walks_are_what_differs_from_the_buffer_painted_before() {
+    let (before, moved) = (
+        Rect::new(0.0, 0.0, 10.0, 10.0),
+        Rect::new(50.0, 0.0, 10.0, 10.0),
+    );
+    let mut history = DamageHistory::settled(&[Rect::new(200.0, 0.0, 10.0, 10.0)]);
+    history.walked(
+        LayerCommit::Reused,
+        false,
+        StaticLayer::Blitted,
+        &[before],
+        Vec::new(),
+    );
+    history.walked(
+        LayerCommit::Reused,
+        false,
+        StaticLayer::Blitted,
+        &[moved],
+        Vec::new(),
+    );
+
+    let changed = history.last_two_walks();
+    assert!(
+        changed.len() == 2 && changed.contains(&before) && changed.contains(&moved),
+        "the walk two frames back, which the scissor covered, no longer counts: {changed:?}"
+    );
+}
+
+#[test]
 fn overlapping_damage_from_two_walks_merges_into_one_rect() {
     // What the clock produces: a hand's rect from each walk, a couple of
     // pixels apart, plus a separate region elsewhere on the surface.

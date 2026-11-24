@@ -45,10 +45,11 @@ use crate::egl::DmaBufInfo;
 use crate::protocol::{from_protocol, to_protocol};
 
 use super::common::{
-    BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, blocking_dispatch_impl,
-    create_buffer_from_dmabuf, drain_released_buffer_slots, drain_released_buffers,
-    impl_common_dispatch, invalidate_cached_wl_buffer_slots, invalidate_cached_wl_buffers,
-    poll_dispatch, record_released_buffer, submit_buffer_to_surface, unregister_wl_buffer_slot,
+    BufferDamage, BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet,
+    blocking_dispatch_impl, create_buffer_from_dmabuf, drain_released_buffer_slots,
+    drain_released_buffers, impl_common_dispatch, invalidate_cached_wl_buffer_slots,
+    invalidate_cached_wl_buffers, poll_dispatch, record_released_buffer, submit_buffer_to_surface,
+    unregister_wl_buffer_slot,
 };
 use super::{WidgetEvent, WidgetSurface};
 
@@ -570,7 +571,7 @@ impl DeckWidgetSurfaceClient {
         let buffer = self.cached_buffers[slot]
             .as_ref()
             .expect("BUG: cached buffer should exist after creation above");
-        self.submit_wl_buffer(buffer, info, request_frame)
+        self.submit_wl_buffer(buffer, info, request_frame, BufferDamage::Whole)
     }
 
     /// Attach buffer, damage, optionally request frame callback, and commit.
@@ -579,10 +580,11 @@ impl DeckWidgetSurfaceClient {
         buffer: &wl_buffer::WlBuffer,
         info: &DmaBufInfo,
         request_frame: bool,
+        damage: BufferDamage<'_>,
     ) -> Result<()> {
         let qh = self.queue.handle();
         let surface = self.state.surface.as_ref().context("surface not created")?;
-        submit_buffer_to_surface(surface, &qh, buffer, info, request_frame);
+        submit_buffer_to_surface(surface, &qh, buffer, info, request_frame, damage);
         Ok(())
     }
 
@@ -615,8 +617,9 @@ impl DeckWidgetSurfaceClient {
         info: &DmaBufInfo,
         buffer: &wl_buffer::WlBuffer,
         request_frame: bool,
+        damage: BufferDamage<'_>,
     ) -> Result<()> {
-        self.submit_wl_buffer(buffer, info, request_frame)
+        self.submit_wl_buffer(buffer, info, request_frame, damage)
     }
 
     pub fn flush(&self) -> Result<()> {
