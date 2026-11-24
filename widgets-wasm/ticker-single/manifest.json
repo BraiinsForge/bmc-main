@@ -1,7 +1,7 @@
 {
   "$schema": "../../bmc-widget-manifest/manifest.schema.json",
   "uid": "69ed377c-701b-4cdb-b4b6-0308cfe56b64",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "Ticker - Single",
   "description": "Visualize stock, asset, and crypto prices on a sparkline or candlestick chart",
   "config_help": "Enter a stock symbol, index, or pair.\n\n**Currency pairs:** write pairs as `BASE-QUOTE`; `-` separates the base and quote currencies.\n\n- `EUR-USD` (Euro to US Dollar)\n- `USD-CZK` (US Dollar to Czech Koruna)\n- `EUR-CZK` (Euro to Czech Koruna)\n- `USD-JPY` (US Dollar to Japanese Yen)\n- `BTC-USD` (Bitcoin to US Dollar)\n\n**Indexes:** prefix index symbols with `^`.\n\n- `^GSPC` (S&P 500)\n- `^DJI` (Dow Jones Industrial Average)\n- `^IXIC` (Nasdaq Composite)\n- `^RUT` (Russell 2000)\n- `^VIX` (CBOE Volatility Index)\n\n**Stocks:** prices use the stock market's base currency.\n\n- `AAPL` (Apple)\n- `MSFT` (Microsoft)\n- `NVDA` (Nvidia)\n- `TSLA` (Tesla)\n- `AMZN` (Amazon)\n\n**Gold:**\n\n- `XAU-USD` (Gold to US Dollar)\n\nAvailability varies by instrument; other symbol forms may not be supported.",
