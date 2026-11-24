@@ -117,8 +117,8 @@ lazy `bmc_intl_message::Message` in a crate with no formatter, the ICU traps the
 
 ### [Scene Management gRPC](grpc/scene-management.md)
 
-Frontend-facing API contract for scene and widget management. Covers `SceneManagementService` RPCs, full-update
-semantics of `UpdateWidget`, preview-stream exclusivity and lifecycle behavior, and server-side validation/precondition
+Frontend-facing API contract for scene and widget management. Covers `SceneManagementService` RPCs, how `UpdateWidget`
+keeps or replaces params, preview-stream exclusivity and lifecycle behavior, and server-side validation/precondition
 rules that callers must handle.
 
 ### [Widget Hardware Actions](widget-hardware-actions.md)

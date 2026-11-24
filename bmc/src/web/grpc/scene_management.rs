@@ -476,8 +476,9 @@ struct ParsedUpdateWidgetShape {
     proto_position: web::WidgetPosition,
     position: scene::WidgetPosition,
     placement: scene::WidgetPlacement,
+    /// `None` keeps the stored params as they are, unchecked against the manifest.
     params: Option<web::FieldValues>,
-    /// Unlike `params`, `None` here keeps the stored bindings rather than clearing them.
+    /// `None` keeps the stored bindings rather than clearing them.
     credential_bindings: Option<web::CredentialBindings>,
 }
 
@@ -711,13 +712,13 @@ impl SceneManagementService {
             return Err(widget_lacks_size(intl, existing.widget_type_id));
         }
 
-        let typed_params = validate_widget_params(
-            intl,
-            &info.manifest,
-            &parsed.params.unwrap_or_default(),
-            ValidateMode::Update,
-        )
-        .map_err(|violations| bad_request_status(intl, violations))?;
+        let typed_params = match parsed.params {
+            None => existing.params.clone(),
+            Some(params) => {
+                validate_widget_params(intl, &info.manifest, &params, ValidateMode::Update)
+                    .map_err(|violations| bad_request_status(intl, violations))?
+            }
+        };
         let typed_bindings = match parsed.credential_bindings {
             None => existing.credential_bindings.clone(),
             Some(requested) => {
@@ -2345,6 +2346,7 @@ mod tests {
         super::validate_credential_bindings(&english(), manifest, bindings, accounts)
     }
 
+    mod moved_params;
     mod params_version;
     mod refused_add;
     mod refused_update;

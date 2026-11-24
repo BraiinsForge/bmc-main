@@ -11964,7 +11964,7 @@ pub trait SceneManagementService: Send + Sync + 'static {
             > + Send + use<'a, Self>,
         >,
     > + Send;
-    /// Update widget params by ID. Full update of the params map, not patch.
+    /// Update widget by ID. Params, when sent, replace the stored map whole, not as a patch.
     ///
     /// `'a` lets the response body borrow from `&self` (e.g. server-resident state).
     ///

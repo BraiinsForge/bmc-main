@@ -418,6 +418,10 @@ export type UpdateWidgetRequest = Message<"braiins.bmc.web.UpdateWidgetRequest">
   size: WidgetSize;
 
   /**
+   * Absent keeps the stored params,
+   * so a placement-only update need not resend ones a newer manifest refuses.
+   * Present, it replaces them whole.
+   *
    * @generated from field: braiins.bmc.web.FieldValues params = 5;
    */
   params?: FieldValues | undefined;
@@ -1004,7 +1008,7 @@ export const SceneManagementService: GenService<{
     output: typeof StringValueSchema;
   },
   /**
-   * Update widget params by ID. Full update of the params map, not patch.
+   * Update widget by ID. Params, when sent, replace the stored map whole, not as a patch.
    *
    * @generated from rpc braiins.bmc.web.SceneManagementService.UpdateWidget
    */

@@ -22,10 +22,11 @@ Primary sources:
 
 ## Contract Notes
 
-### `UpdateWidget` is full-update, not patch
+### `UpdateWidget` params: absent keeps, present replaces
 
-- `UpdateWidget` replaces the widget params map as a whole.
-- Missing keys are accepted on add (defaults applied), but rejected on update for required fields.
+- Absent `params` keep the stored map as it is, with its version stamp, unchecked against the manifest.
+- Present `params` replace the stored map as a whole; it is not a patch.
+- Missing keys take their defaults on add. On update, present `params` must name every declared key, optional ones too.
 - Unknown keys are rejected.
 - Param type and value constraints are validated against manifest:
   - type checks
@@ -92,7 +93,7 @@ Primary sources:
 
 ## Frontend Guidance
 
-- Always send complete params in `UpdateWidget`.
+- Send the complete params map in `UpdateWidget` when saving settings.
 - Keep local validation aligned with manifest schema, but still treat server validation errors as authoritative.
 - Treat preview stream as a leased resource (single owner).
 - Read the current device-wide budget from `running_widget_count` and `max_running_widget_count`.
