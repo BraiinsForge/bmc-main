@@ -95,6 +95,10 @@ impl ComposeProbe {
         Self::Normal
     }
 
+    pub(super) fn is_normal(self) -> bool {
+        self == Self::Normal
+    }
+
     /// The buffers to import this frame out of the `dirty` ones.
     pub(super) fn imports(
         self,

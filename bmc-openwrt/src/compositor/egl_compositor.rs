@@ -829,6 +829,7 @@ impl EglCompositor {
                             &dirty,
                             capture_frames,
                             capture_active,
+                            app_state.compositor.output_damage(),
                         )
                         .unwrap_or_else(|e| {
                             tracing::error!("Render error: {}", e);

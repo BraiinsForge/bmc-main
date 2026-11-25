@@ -213,6 +213,15 @@ pub enum PanelTransfer {
 /// Mesa's etnaviv debug flags, which the compositor sets for itself and keeps from its clients.
 pub const ETNA_MESA_DEBUG_ENV: &str = "ETNA_MESA_DEBUG";
 
+/// How much of the output each compositor frame redraws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameRedraw {
+    Whole,
+    /// Only what changed since the frame the back buffer holds, which assumes the back buffer
+    /// holds the frame flipped two before; a panel that skips flips breaks that.
+    Changed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibleArea {
     pub x: u32,
@@ -296,6 +305,7 @@ pub struct DisplayProfile {
     pub pixel_format: DisplayPixelFormat,
     pub color_adjustment: Option<ColorAdjustment>,
     pub panel_transfer: PanelTransfer,
+    pub frame_redraw: FrameRedraw,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -467,6 +477,7 @@ impl HardwareProfile {
                     // The LTDC scans the whole frame out to the video-mode DSI panel every refresh,
                     // and its plane has no FB_DAMAGE_CLIPS, so partial transfers would save nothing.
                     panel_transfer: PanelTransfer::FullFrame,
+                    frame_redraw: FrameRedraw::Changed,
                 },
                 slot_grid: Some(SlotGrid {
                     columns: 4,
@@ -500,6 +511,7 @@ impl HardwareProfile {
                     pixel_format: DisplayPixelFormat::Bgr565,
                     color_adjustment: Some(BMM101_COLOR_ADJUSTMENT),
                     panel_transfer: PanelTransfer::ChangedRegions,
+                    frame_redraw: FrameRedraw::Whole,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -526,6 +538,7 @@ impl HardwareProfile {
                     pixel_format: DisplayPixelFormat::Bgr565,
                     color_adjustment: Some(BMM101_COLOR_ADJUSTMENT),
                     panel_transfer: PanelTransfer::ChangedRegions,
+                    frame_redraw: FrameRedraw::Whole,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -553,6 +566,7 @@ impl HardwareProfile {
                     color_adjustment: None,
                     // Nobody has measured whether partial transfers pay off on this panel.
                     panel_transfer: PanelTransfer::FullFrame,
+                    frame_redraw: FrameRedraw::Changed,
                 },
                 slot_grid: None,
                 led_strip: None,

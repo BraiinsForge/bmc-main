@@ -22,6 +22,7 @@
 
 mod branding;
 mod probe;
+mod redraw;
 
 pub use branding::Branding;
 
@@ -31,7 +32,9 @@ use anyhow::{Context, Result};
 use bmc::compositor::ScenePlaceholder;
 use bmc::scene::WidgetPosition;
 use bmc_gpu_render_lock::GpuRenderLock;
-use bmc_platform::{DisplayPixelFormat, DisplayProfile, DisplayTransform, PanelTransfer};
+use bmc_platform::{
+    DisplayPixelFormat, DisplayProfile, DisplayTransform, FrameRedraw, PanelTransfer,
+};
 use smithay::{
     backend::allocator::Fourcc,
     backend::renderer::{
@@ -49,6 +52,7 @@ use smithay::{
     },
 };
 
+use super::output_damage::OutputDamage;
 use super::render::{
     BufferPool, DrmOutput, EglContext, Flip, FrameDiffer, ScanoutFormat, ScanoutSwizzler, Transfer,
     flip_and_advance, next_transfer,
@@ -57,6 +61,12 @@ use super::scene_cycling::TransitionFrame;
 use super::widget_tracker::WidgetTracker;
 use branding::{BrandingOverlay, LogoCaption, LogoScene};
 use probe::Probe;
+#[cfg(feature = "profiling")]
+use redraw::covered_px;
+use redraw::{
+    FrameExtras, FrameLayout, LastFrame, Redraw, damage_within, intersect_all, plan_frame,
+    widget_change,
+};
 
 const BACKGROUND_COLOR: Color32F = Color32F::new(0.0, 0.0, 0.0, 1.0);
 const SEPARATOR_COLOR: Color32F = Color32F::new(0.15, 0.15, 0.15, 1.0);
@@ -207,6 +217,7 @@ fn draw_rect_on_frame(
     output_h: i32,
     transform: DisplayTransform,
     color: Color32F,
+    redraw: &Redraw,
 ) {
     let dst = place_widget(
         logical.loc.x,
@@ -217,7 +228,11 @@ fn draw_rect_on_frame(
         output_h,
         transform,
     );
-    if let Err(e) = frame.draw_solid(dst, &[texture_damage_rect(dst)], color) {
+    let damage = damage_within(dst, redraw);
+    if damage.is_empty() {
+        return;
+    }
+    if let Err(e) = frame.draw_solid(dst, &damage, color) {
         tracing::warn!("Failed to draw separator rect {:?}: {:?}", dst, e);
     }
 }
@@ -246,6 +261,7 @@ fn draw_separator_grids(
     output: &DrmOutput,
     transform: DisplayTransform,
     grids: &[CombinedSceneGrid],
+    redraw: &Redraw,
 ) {
     if grids.is_empty() {
         return;
@@ -275,6 +291,7 @@ fn draw_separator_grids(
                 output_h,
                 transform,
                 color,
+                redraw,
             );
         }
         for row in 1..rows {
@@ -286,6 +303,7 @@ fn draw_separator_grids(
                 output_h,
                 transform,
                 color,
+                redraw,
             );
         }
     }
@@ -426,6 +444,15 @@ fn blit_texture_on_frame(
     }
 }
 
+/// A widget drawn this frame.
+struct RenderableItem {
+    buffer_id: ObjectId,
+    instance_id: bmc::compositor::InstanceId,
+    dst: Rectangle<i32, Physical>,
+    alpha: f32,
+    row_order: RowOrder,
+}
+
 pub struct SceneRenderer {
     egl: EglContext,
     output: DrmOutput,
@@ -442,6 +469,9 @@ pub struct SceneRenderer {
     /// `None` keeps the plain cleared background.
     branding_overlay: Option<BrandingOverlay>,
     probe: Probe,
+    frame_redraw: FrameRedraw,
+    /// The last flipped frame, `None` when it was structural or its render failed before the flip.
+    last_frame: Option<LastFrame>,
     /// Cached pixels from the last inline capture readback.
     /// Served to capture clients between renders (avoids re-rendering
     /// just to observe the same frame).
@@ -469,6 +499,10 @@ pub struct SceneRenderer {
     flip_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
     render_every: ii_stopwatch::Every,
+    #[cfg(feature = "profiling")]
+    partial_frames: usize,
+    #[cfg(feature = "profiling")]
+    partial_redrawn_px: u64,
 }
 
 struct CaptureCache {
@@ -504,6 +538,7 @@ impl SceneRenderer {
             pixel_format,
             color_adjustment,
             panel_transfer,
+            frame_redraw,
             ..
         } = *display;
         let (width, height) = (output.width(), output.height());
@@ -562,6 +597,8 @@ impl SceneRenderer {
             texture_cache: HashMap::new(),
             branding_overlay: branding.map(BrandingOverlay::new),
             probe: Probe::from_env(),
+            frame_redraw,
+            last_frame: None,
             capture_cache: CaptureCache::empty(),
             gpu_render_lock,
             scanout_transform,
@@ -584,6 +621,10 @@ impl SceneRenderer {
             flip_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
             render_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
+            #[cfg(feature = "profiling")]
+            partial_frames: 0,
+            #[cfg(feature = "profiling")]
+            partial_redrawn_px: 0,
         })
     }
 
@@ -713,6 +754,7 @@ impl SceneRenderer {
         dirty: &[ObjectId],
         capture_frames: Vec<image_copy_capture::Frame>,
         capture_active: bool,
+        damage: &OutputDamage,
     ) -> Result<(bool, Vec<image_copy_capture::Frame>, bool)> {
         // Flip-pending gating happens in the caller (egl_compositor) so that
         // dirty_buffers aren't consumed when the render would be skipped.
@@ -726,6 +768,7 @@ impl SceneRenderer {
             .render_started(transition_frame.is_some() || widgets.drag_offset().is_some());
         let probe = self.probe.mode;
         let dirty = probe.imports(dirty, |id| self.texture_cache.contains_key(id));
+        let last_frame = self.last_frame.take();
         let _gpu_render_lock = self.gpu_render_lock.lock("compositor_render_scene")?;
         // This lock serializes completed GPU jobs across the compositor and
         // WASM host contexts. Hold it until all GL work submitted from this
@@ -813,7 +856,7 @@ impl SceneRenderer {
 
         let output_rect = Rectangle::from_size(output_size);
 
-        let mut renderable_items = Vec::new();
+        let mut renderable_items: Vec<RenderableItem> = Vec::new();
 
         ii_stopwatch::stopwatch_start!(self.compose_w);
         for (buffer_id, placement, x_offset, alpha, row_order) in &to_render {
@@ -843,13 +886,13 @@ impl SceneRenderer {
                 self.scanout_transform,
             );
 
-            renderable_items.push((
-                buffer_id.clone(),
-                placement.instance_id.clone(),
+            renderable_items.push(RenderableItem {
+                buffer_id: buffer_id.clone(),
+                instance_id: placement.instance_id.clone(),
                 dst,
-                *alpha,
-                *row_order,
-            ));
+                alpha: *alpha,
+                row_order: *row_order,
+            });
         }
 
         // Only opaque widgets hide the stale back buffer beneath them, so
@@ -857,9 +900,32 @@ impl SceneRenderer {
         // clear must reach under them or the previous frame ghosts through.
         let drawn_regions: Vec<_> = renderable_items
             .iter()
-            .filter(|(_, _, _, alpha, _)| *alpha >= 1.0)
-            .map(|(_, _, dst, _, _)| *dst)
+            .filter(|item| item.alpha >= 1.0)
+            .map(|item| item.dst)
             .collect();
+
+        let extras = FrameExtras {
+            transition: transition_frame.is_some(),
+            drag: widgets.drag_offset().is_some(),
+            layers: !layers.is_empty(),
+            logo: !logo_scenes.is_empty(),
+            probe: !probe.is_normal(),
+        };
+        let (redraw, next_frame) = plan_frame(
+            self.frame_redraw,
+            extras,
+            damage,
+            last_frame,
+            || FrameLayout::of(&renderable_items, &combined_scene_grids),
+            || {
+                widget_change(
+                    |buffer_id| self.texture_cache.get(buffer_id).map(Texture::size),
+                    self.scanout_transform,
+                    damage,
+                    &renderable_items,
+                )
+            },
+        );
 
         // Clear regions not covered by any opaque widget before drawing widgets.
         // Clearing after widget draws can overpaint widget content on the
@@ -868,6 +934,10 @@ impl SceneRenderer {
             uncovered_output_regions(output_rect, drawn_regions)
         });
 
+        let clear_regions = match &redraw {
+            Redraw::Only(redraw) => intersect_all(&clear_regions, redraw),
+            Redraw::Everything => clear_regions,
+        };
         if !clear_regions.is_empty() {
             frame
                 .clear(BACKGROUND_COLOR, &clear_regions)
@@ -898,9 +968,17 @@ impl SceneRenderer {
             &self.output,
             self.scanout_transform,
             &combined_scene_grids,
+            &redraw,
         );
 
-        for (buffer_id, instance_id, dst, alpha, row_order) in &renderable_items {
+        for RenderableItem {
+            buffer_id,
+            instance_id,
+            dst,
+            alpha,
+            row_order,
+        } in &renderable_items
+        {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
                 tracing::warn!("No cached texture for buffer {:?}", buffer_id);
                 continue;
@@ -910,14 +988,17 @@ impl SceneRenderer {
                 (0.0, 0.0),
                 (f64::from(tex_size.w), f64::from(tex_size.h)),
             );
-            let damage = texture_damage_rect(*dst);
+            let damage = damage_within(*dst, &redraw);
+            if damage.is_empty() {
+                continue;
+            }
             let transform =
                 probe.widget_transform(row_order.scanout_transform(self.scanout_transform));
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
                 *dst,
-                &[damage],
+                &damage,
                 &[],
                 transform,
                 *alpha,
@@ -1027,8 +1108,9 @@ impl SceneRenderer {
                 }
             },
         )?;
+        let skipped = matches!(flip, Flip::Skipped);
         #[cfg(feature = "profiling")]
-        if matches!(flip, Flip::Skipped) {
+        if skipped {
             self.unchanged_frames += 1;
         }
         if let Flip::ClipsRefused(e) = flip {
@@ -1038,12 +1120,28 @@ impl SceneRenderer {
             );
             self.frame_differ = None;
         }
+        #[cfg(feature = "profiling")]
+        if let Redraw::Only(redraw) = &redraw {
+            self.partial_frames += 1;
+            self.partial_redrawn_px += covered_px(redraw, output_rect);
+        }
+        // A skipped flip leaves the back buffer holding this frame, not the one before last.
+        self.last_frame = if skipped { None } else { next_frame };
 
         #[cfg(feature = "profiling")]
         if ii_stopwatch::every_expired!(self.render_every) {
+            let output_px = u64::try_from(output_rect.size.w * output_rect.size.h)
+                .expect("BUG: output area is positive");
+            let partial_pct = (self.partial_redrawn_px * 100)
+                .checked_div(
+                    output_px
+                        * u64::try_from(self.partial_frames)
+                            .expect("BUG: a 5 s window holds far fewer frames than u64 counts"),
+                )
+                .unwrap_or(0);
             tracing::info!(
                 "render_scene: bind={} compose={} finish={} swizzle={} gpu_wait={} diff={} \
-                 unchanged={} flip={} {}",
+                 unchanged={} partial={}:{partial_pct}% flip={} {}",
                 self.bind_w,
                 self.compose_w,
                 self.finish_w,
@@ -1051,10 +1149,13 @@ impl SceneRenderer {
                 self.gpu_wait_w,
                 self.diff_w,
                 self.unchanged_frames,
+                self.partial_frames,
                 self.flip_w,
                 self.output.take_transfer_report()
             );
             self.unchanged_frames = 0;
+            self.partial_frames = 0;
+            self.partial_redrawn_px = 0;
             ii_stopwatch::stopwatch_reset!(self.diff_w);
             ii_stopwatch::stopwatch_reset!(self.bind_w);
             ii_stopwatch::stopwatch_reset!(self.compose_w);

@@ -29,6 +29,7 @@ mod layer_surface;
 mod lifecycle_emitter;
 pub mod linear_pe;
 mod localization;
+mod output_damage;
 mod platform;
 mod protocol;
 mod render;

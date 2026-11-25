@@ -485,3 +485,17 @@ fn read_packages_version_reports_a_read_failure_other_than_absence() {
 
     assert_ne!(err.kind(), std::io::ErrorKind::NotFound);
 }
+
+#[test]
+fn only_boards_that_never_skip_a_flip_redraw_only_what_changed() {
+    let cases = [
+        (Product::Bmc100, FrameRedraw::Changed),
+        (Product::Bmm100, FrameRedraw::Whole),
+        (Product::Bmm101, FrameRedraw::Whole),
+        (Product::Bfm100, FrameRedraw::Changed),
+    ];
+    for (product, expected) in cases {
+        let profile = HardwareProfile::for_product(product);
+        assert_eq!(profile.display.frame_redraw, expected, "{product:?}");
+    }
+}

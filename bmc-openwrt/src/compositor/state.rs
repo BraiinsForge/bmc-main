@@ -24,6 +24,7 @@
 use std::collections::HashMap;
 
 use super::lifecycle_emitter::LifecycleEmitter;
+use super::output_damage::{OutputDamage, WidgetDamage};
 use super::protocol::{
     DeckWidgetHandler, DeckWidgetProtocolState, WidgetManagerUserData, WidgetSurfaceUserData,
 };
@@ -216,7 +217,7 @@ pub struct CompositorState {
     /// fail cleanly instead of poisoning normal rendering.
     pub capture_enabled: bool,
 
-    output_damaged: bool,
+    output_damage: OutputDamage,
 }
 
 #[derive(Debug)]
@@ -418,7 +419,7 @@ impl CompositorState {
             dirty_buffers: Vec::new(),
             pending_capture_frames: Vec::new(),
             capture_enabled: true,
-            output_damaged: true,
+            output_damage: OutputDamage::Full,
         }
     }
 
@@ -673,7 +674,12 @@ impl CompositorState {
     }
 
     pub fn mark_output_damage(&mut self) {
-        self.output_damaged = true;
+        self.output_damage.mark_full();
+    }
+
+    /// The change the next render has to draw.
+    pub fn output_damage(&self) -> &OutputDamage {
+        &self.output_damage
     }
 
     /// Derived from output damage — any pending damage means the next
@@ -681,11 +687,11 @@ impl CompositorState {
     /// truth removes a class of "marked damage but forgot to flag redraw"
     /// bugs.
     pub fn needs_redraw(&self) -> bool {
-        self.output_damaged
+        !self.output_damage.is_empty()
     }
 
     pub fn clear_output_damage(&mut self) {
-        self.output_damaged = false;
+        self.output_damage.clear();
     }
 
     /// Send the initial `lifecycle` event for a widget that has just
@@ -1015,7 +1021,8 @@ impl CompositorHandler for CompositorState {
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
                         if let Some(id) = instance_id.as_ref() {
-                            self.mark_output_damage();
+                            self.output_damage
+                                .mark_widget(id, WidgetDamage::of_commit(&attributes.damage));
                             // Release previous buffer so the client can reuse or
                             // destroy it.  Without this the client allocates a new
                             // buffer every frame and old textures leak.
@@ -1054,11 +1061,9 @@ impl CompositorHandler for CompositorState {
                 }
             }
 
-            // Any commit with frame callbacks indicates the client rendered
-            // and expects display feedback — mark damage to trigger a redraw.
-            // This covers Slint widgets that render to the same buffer without
-            // re-attaching.
-            if had_frame_callbacks {
+            // Frame callbacks without a new buffer mean the client rendered into the one
+            // already attached, as Slint widgets do, so nothing says what changed.
+            if had_frame_callbacks && !had_buffer_assignment {
                 self.mark_output_damage();
             }
 
@@ -1348,6 +1353,44 @@ wl::delegate_dispatch!(
     CompositorState: [DeckWidgetSurfaceV2: WidgetSurfaceUserData] => DeckWidgetProtocolState
 );
 
+/// An `Argb8888` SHM buffer of `width`×`height` for a test client to attach.
+#[cfg(test)]
+fn create_test_shm_buffer<D>(
+    shm: &wayland_client::protocol::wl_shm::WlShm,
+    qh: &wayland_client::QueueHandle<D>,
+    width: u32,
+    height: u32,
+) -> wayland_client::protocol::wl_buffer::WlBuffer
+where
+    D: wayland_client::Dispatch<wayland_client::protocol::wl_shm_pool::WlShmPool, ()>
+        + wayland_client::Dispatch<wayland_client::protocol::wl_buffer::WlBuffer, ()>
+        + 'static,
+{
+    use std::os::fd::AsFd as _;
+
+    let stride = width * 4;
+    let pool_size = stride * height;
+    let backing = tempfile::tempfile().expect("BUG: shm backing file should be creatable");
+    backing
+        .set_len(u64::from(pool_size))
+        .expect("BUG: shm backing file should grow to the pool size");
+    let pool = shm.create_pool(
+        backing.as_fd(),
+        i32::try_from(pool_size).expect("BUG: test pool size fits i32"),
+        qh,
+        (),
+    );
+    pool.create_buffer(
+        0,
+        i32::try_from(width).expect("BUG: test width fits i32"),
+        i32::try_from(height).expect("BUG: test height fits i32"),
+        i32::try_from(stride).expect("BUG: test stride fits i32"),
+        wayland_client::protocol::wl_shm::Format::Argb8888,
+        qh,
+        (),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{remove_destroyed_widget_buffers, should_complete_frame_callback};
@@ -1469,7 +1512,9 @@ mod compositor_protocol_test {
         CredentialSecrets, Language, SettingUpdate, ViewportShape, WidgetInitialConfig,
     };
     use smithay::reexports::wayland_server::{Display, Resource as _, backend::ClientId};
-    use wayland_client::protocol::{wl_callback, wl_compositor, wl_registry, wl_surface};
+    use wayland_client::protocol::{
+        wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface,
+    };
     use wayland_client::{Connection, Dispatch, EventQueue, Proxy as _, QueueHandle};
 
     use super::{ClientState, CompositorState};
@@ -1484,6 +1529,7 @@ mod compositor_protocol_test {
         /// The manager version to bind at; 1 unless a test asks for a later one.
         manager_version: Option<u32>,
         compositor: Option<wl_compositor::WlCompositor>,
+        shm: Option<wl_shm::WlShm>,
         manager: Option<DeckWidgetManagerV3>,
         params: Option<String>,
         credentials: Option<String>,
@@ -1510,6 +1556,9 @@ mod compositor_protocol_test {
                 match interface.as_str() {
                     "wl_compositor" => {
                         state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
+                    }
+                    "wl_shm" => {
+                        state.shm = Some(registry.bind(name, version.min(1), qh, ()));
                     }
                     "deck_widget_manager_v3" => {
                         let wanted = state.manager_version.unwrap_or(1);
@@ -1562,6 +1611,42 @@ mod compositor_protocol_test {
             _: &mut Self,
             _: &wl_callback::WlCallback,
             _: wl_callback::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<wl_shm::WlShm, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_shm::WlShm,
+            _: wl_shm::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<wl_shm_pool::WlShmPool, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_shm_pool::WlShmPool,
+            _: wl_shm_pool::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<wl_buffer::WlBuffer, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_buffer::WlBuffer,
+            _: wl_buffer::Event,
             (): &(),
             _: &Connection,
             _: &QueueHandle<Self>,
@@ -1963,6 +2048,93 @@ mod compositor_protocol_test {
         }
     }
 
+    /// A connected keyed widget's `wl_surface`, with the compositor's damage cleared.
+    fn connected_widget_surface(
+        display: &mut Display<CompositorState>,
+        compositor: &mut CompositorState,
+        key: WidgetInstanceKey,
+    ) -> (
+        Connection,
+        EventQueue<TestClient>,
+        TestClient,
+        wl_surface::WlSurface,
+    ) {
+        register_keyed_widget(compositor, key, config_with_params(serde_json::Map::new()));
+        let (conn, mut queue, mut client, _) = connect_client(display, compositor);
+        let qh = queue.handle();
+        let surface = client
+            .compositor
+            .as_ref()
+            .expect("BUG: compositor global should be advertised")
+            .create_surface(&qh, ());
+        client
+            .manager
+            .as_ref()
+            .expect("BUG: keyed manager global should be advertised")
+            .get_widget_surface(key.to_string(), &surface, &qh, ());
+        pump(display, compositor, &conn, &mut queue, &mut client);
+        compositor.clear_output_damage();
+        (conn, queue, client, surface)
+    }
+
+    fn dispatch_server(
+        display: &mut Display<CompositorState>,
+        compositor: &mut CompositorState,
+        conn: &Connection,
+    ) {
+        conn.flush()
+            .expect("BUG: test client flush should succeed on a live socket pair");
+        display
+            .dispatch_clients(compositor)
+            .expect("BUG: test server dispatch should succeed on a live socket pair");
+    }
+
+    #[test]
+    fn a_widget_buffer_commit_owes_only_that_widgets_damage() {
+        let (mut display, mut compositor) = new_server();
+        let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+        let (conn, queue, client, surface) =
+            connected_widget_surface(&mut display, &mut compositor, key);
+        let shm = client
+            .shm
+            .as_ref()
+            .expect("BUG: wl_shm global should be advertised");
+        let buffer = super::create_test_shm_buffer(shm, &queue.handle(), 100, 100);
+
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage_buffer(10, 20, 30, 40);
+        surface.frame(&queue.handle(), ());
+        surface.commit();
+        dispatch_server(&mut display, &mut compositor, &conn);
+
+        let damage = compositor.output_damage();
+        assert!(
+            !damage.is_full(),
+            "a widget commit must not redraw everything"
+        );
+        assert_eq!(
+            damage.widget(&key.to_string()),
+            Some(&super::WidgetDamage::Regions(vec![
+                smithay::utils::Rectangle::new((10, 20).into(), (30, 40).into())
+            ]))
+        );
+    }
+
+    /// A client rendering into the buffer already attached says nothing about what changed.
+    #[test]
+    fn a_widget_commit_with_only_a_frame_callback_redraws_everything() {
+        let (mut display, mut compositor) = new_server();
+        let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+        let (conn, queue, _client, surface) =
+            connected_widget_surface(&mut display, &mut compositor, key);
+
+        surface.frame(&queue.handle(), ());
+        surface.commit();
+        dispatch_server(&mut display, &mut compositor, &conn);
+
+        assert!(compositor.output_damage().is_full());
+    }
+
     #[test]
     fn unregistered_canonical_key_is_rejected_as_unknown_widget() {
         let (mut display, mut compositor) = new_server();
@@ -2134,7 +2306,6 @@ mod compositor_protocol_test {
 /// `send_layer_frame_callbacks` only ever runs after a render.
 #[cfg(test)]
 mod layer_frame_callback_damage_test {
-    use std::os::fd::AsFd;
     use std::os::unix::net::UnixStream;
     use std::sync::Arc;
 
@@ -2353,31 +2524,11 @@ mod layer_frame_callback_damage_test {
         width: u32,
         height: u32,
     ) -> wl_buffer::WlBuffer {
-        let stride = width * 4;
-        let pool_size = stride * height;
-        let backing = tempfile::tempfile().expect("BUG: shm backing file should be creatable");
-        backing
-            .set_len(u64::from(pool_size))
-            .expect("BUG: shm backing file should grow to the pool size");
         let shm = client
             .shm
             .as_ref()
             .expect("BUG: wl_shm global should have been advertised");
-        let pool = shm.create_pool(
-            backing.as_fd(),
-            i32::try_from(pool_size).expect("BUG: test pool size fits i32"),
-            qh,
-            (),
-        );
-        pool.create_buffer(
-            0,
-            i32::try_from(width).expect("BUG: test width fits i32"),
-            i32::try_from(height).expect("BUG: test height fits i32"),
-            i32::try_from(stride).expect("BUG: test stride fits i32"),
-            wl_shm::Format::Argb8888,
-            qh,
-            (),
-        )
+        super::create_test_shm_buffer(shm, qh, width, height)
     }
 
     #[test]
